@@ -3,24 +3,27 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
+# Directory Setup for Logs and Exports
+LOGS_DIR = BASE_DIR / "logs"
+EXPORTS_DIR = BASE_DIR / "exports"
+
+LOGS_DIR.mkdir(exist_ok=True)
+EXPORTS_DIR.mkdir(exist_ok=True)
+
 # Usernames to scrape
 TARGET_USERNAMES = [
     "tristanisepic",
-    # Add additional usernames here
 ]
 
-# Supported page types per user
 TARGET_LIST_TYPES = ["watchlist", "films"]
 
-# Database path
+# Database & File Paths
 DB_PATH = BASE_DIR / "letterboxd_data.db"
+LOG_FILE_PATH = LOGS_DIR / "scraper.log"
 
-# Scraper timing & requests
-REQUEST_DELAY_RANGE = (1.5, 3.0)  # Random sleep interval between requests (seconds)
-HTTP_TIMEOUT = 15  # Request timeout (seconds)
-MAX_RETRIES = 3
+REQUEST_DELAY_RANGE = (2.5, 4.5)
+HTTP_TIMEOUT = 15
 
-# HTTP Request Headers
 DEFAULT_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "

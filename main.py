@@ -3,6 +3,19 @@ from config import TARGET_LIST_TYPES, TARGET_USERNAMES
 from database import init_db, sync_scraped_records
 from logger import logger
 from scraper import LetterboxdScraper
+from flask import Flask, Response, request
+from rss_feed import generate_radarr_rss_xml
+
+app = Flask(__name__)
+
+@app.get("/rss/radarr")
+def get_radarr_rss():
+    """
+    Serves the RSS feed endpoint for Radarr list import.
+    """
+    list_type = request.args.get("list_type")
+    xml_payload = generate_radarr_rss_xml(list_type=list_type)
+    return Response(xml_payload, mimetype="application/rss+xml")
 
 def run():
     logger.info("=== Starting Letterboxd Daily Scrape Job ===")
