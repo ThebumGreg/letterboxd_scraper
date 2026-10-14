@@ -12,7 +12,7 @@ EXPORTS_DIR.mkdir(exist_ok=True)
 
 # Usernames to scrape
 TARGET_USERNAMES = [
-    "tristanisepic",
+    "gsocal",
 ]
 
 TARGET_LIST_TYPES = ["watchlist", "films"]

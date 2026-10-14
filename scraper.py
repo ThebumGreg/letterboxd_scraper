@@ -1,34 +1,67 @@
-from datetime import datetime, timezone
-from config import TARGET_LIST_TYPES, TARGET_USERNAMES
-from database import init_db, sync_scraped_records
+import random
+import time
+from typing import Dict, List, Optional
+from curl_cffi import requests
+
+from config import DEFAULT_HEADERS, HTTP_TIMEOUT, REQUEST_DELAY_RANGE
 from logger import logger
-from scraper import LetterboxdScraper
-from export_to_csv import export_database_to_csv
+from parser import parse_movie_posters, parse_next_page_url
 
-def run():
-    logger.info("=== Starting Letterboxd Daily Scrape Job ===")
-    init_db()
-    
-    scraper = LetterboxdScraper()
-    run_timestamp = datetime.now(timezone.utc).isoformat()
 
-    for username in TARGET_USERNAMES:
-        for list_type in TARGET_LIST_TYPES:
-            try:
-                records = scraper.scrape_user_list(username, list_type)
-                upserted, tombstoned, active = sync_scraped_records(
-                    username, list_type, records, run_timestamp
+class LetterboxdScraper:
+    def __init__(self):
+        # Initialize curl_cffi session with Chrome impersonation
+        self.session = requests.Session(impersonate="chrome")
+        self.session.headers.update(DEFAULT_HEADERS)
+
+    def _polite_delay(self):
+        # Slightly longer random pause between pagination requests
+        delay = random.uniform(*REQUEST_DELAY_RANGE)
+        time.sleep(delay)
+
+    def fetch_page(self, url: str) -> Optional[str]:
+        self._polite_delay()
+        try:
+            logger.debug(f"Fetching URL: {url}")
+            # Requests mimic Chrome browser TLS signatures
+            response = self.session.get(url, timeout=HTTP_TIMEOUT)
+
+            if response.status_code == 404:
+                logger.warning(f"Page not found (404): {url}")
+                return None
+
+            response.raise_for_status()
+            return response.text
+        except Exception as e:
+            logger.error(f"HTTP request failed for {url}: {e}")
+            return None
+
+    def scrape_user_list(self, username: str, list_type: str) -> List[Dict[str, str]]:
+        current_url = f"https://letterboxd.com/{username}/{list_type}/"
+        all_records = []
+        page_num = 1
+
+        logger.info(f"Starting scrape: [{username}] -> {list_type}")
+
+        while current_url:
+            logger.info(f"Scraping [{username}] {list_type} - Page {page_num}...")
+            html = self.fetch_page(current_url)
+
+            if not html:
+                logger.warning(
+                    f"Stopping pagination early due to fetch failure at {current_url}"
                 )
-                logger.info(
-                    f"Sync Summary [{username} - {list_type}]: "
-                    f"Processed {upserted} records | Tombstoned: {tombstoned} | Active Total: {active}"
-                )
-            except Exception as e:
-                logger.error(f"Error scraping [{username}] {list_type}: {e}", exc_info=True)
+                break
 
-    # Automatically generate updated CSV files inside /exports/
-    export_database_to_csv()
-    logger.info("=== Letterboxd Daily Scrape Job Finished ===")
+            records = parse_movie_posters(html, username)
+            all_records.extend(records)
+            logger.info(f"Extracted {len(records)} movies from Page {page_num}")
 
-if __name__ == "__main__":
-    run()
+            # Check for next page link
+            current_url = parse_next_page_url(html, current_url)
+            page_num += 1
+
+        logger.info(
+            f"Completed scrape: [{username}] {list_type}. Total extracted: {len(all_records)}"
+        )
+        return all_records
