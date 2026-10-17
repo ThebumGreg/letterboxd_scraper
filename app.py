@@ -3,8 +3,7 @@ import os
 import threading
 from pathlib import Path
 from apscheduler.schedulers.background import BackgroundScheduler
-from flask import Flask, Response, jsonify, render_template, request, send_from_directory
-from curl_cffi import requests as cffi_requests
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory, redirect
 
 from database import (
     get_aggregated_active_films,
@@ -14,10 +13,13 @@ from database import (
     set_setting,
 )
 from export_to_csv import generate_consolidated_csv_buffer
-from jellyfin_client import fetch_jellyfin_catalog, fetch_jellyfin_library_titles
-from logger import LOG_FILE_PATH, logger
+from jellyfin_client import (
+    fetch_jellyfin_catalog,
+    fetch_jellyfin_poster_bytes,
+)
+from logger import get_latest_logs, logger
 from radarr_client import add_movie_to_radarr, fetch_radarr_library_titles, normalize_title, sync_missing_to_radarr
-from sonarr_client import add_series_to_sonarr, fetch_sonarr_library_titles
+from sonarr_client import add_series_to_sonarr
 from rss_feed import generate_radarr_rss_xml
 from scraper import run_scraper_job
 
@@ -40,32 +42,10 @@ def update_scheduler_interval():
 update_scheduler_interval()
 scheduler.start()
 
-def cache_poster_locally(movie_slug: str, film_identifier: str) -> str:
-    """Safely retrieves or caches poster images locally with a strict 2-second timeout."""
-    if not film_identifier:
-        return "/static/favicon.svg"
-    
-    local_path = POSTER_DIR / f"{movie_slug}.jpg"
-    relative_url = f"/static/posters/{movie_slug}.jpg"
-
-    if local_path.exists():
-        return relative_url
-
-    # Construct Letterboxd standard poster CDN URL
-    id_parts = "/".join(list(film_identifier))
-    remote_url = f"https://a.ltrbxd.com/resized/film-poster/{id_parts}/{film_identifier}-0-230-0-345-crop.jpg"
-
-    try:
-        res = cffi_requests.get(remote_url, timeout=2)
-        if res.status_code == 200:
-            with open(local_path, "wb") as f:
-                f.write(res.content)
-            return relative_url
-    except Exception as e:
-        logger.warning(f"Failed or timed out fetching poster for {movie_slug}: {e}")
-
-    # Immediate fallback to local SVG icon on failure or timeout
-    return "/static/favicon.svg"
+@app.before_request
+def log_request_info():
+    if request.path not in ["/api/logs"]:
+        logger.info(f"HTTP {request.method} -> {request.path} [IP: {request.remote_addr}]")
 
 @app.get('/favicon.ico')
 def favicon():
@@ -78,8 +58,7 @@ def favicon():
 @app.get("/")
 def dashboard():
     active_films = get_aggregated_active_films()
-    
-    # Safely fetch API libraries with fast execution boundaries
+
     try:
         radarr_owned = fetch_radarr_library_titles()
     except Exception as e:
@@ -112,12 +91,16 @@ def dashboard():
         if has_radarr: in_radarr_count += 1
         if has_jellyfin: in_jellyfin_count += 1
 
-        poster_url = cache_poster_locally(film["movie_slug"], film["film_identifier"])
+        slug = film["movie_slug"]
+        
+        # Immediate route return - browser fetches images asynchronously
+        poster_url = f"/poster/{slug}"
+
         jelly_item = jellyfin_lookup.get(norm, {})
 
         processed_films.append({
             "title": display_title,
-            "slug": film["movie_slug"],
+            "slug": slug,
             "url": film["movie_url"],
             "poster_url": poster_url,
             "user_count": film["user_count"],
@@ -142,6 +125,36 @@ def dashboard():
         is_scraping=settings_data.get("is_scraping_active", "0") == "1",
     )
 
+@app.get("/poster/<slug>")
+def serve_poster(slug):
+    """Dynamic, cached poster endpoint to prevent dashboard loading hangs."""
+    local_poster = POSTER_DIR / f"{slug}.jpg"
+    
+    # Return local file if present
+    if local_poster.exists() and local_poster.stat().st_size > 0:
+        return send_from_directory(POSTER_DIR, f"{slug}.jpg")
+
+    # Match title from active database records
+    active_films = get_aggregated_active_films()
+    film_match = next((f for f in active_films if f["movie_slug"] == slug), None)
+    
+    if film_match:
+        title = film_match["full_display_name"] or film_match["movie_title"]
+        logger.info(f"Attempting Jellyfin poster download for '{title}' ({slug})...")
+        poster_bytes = fetch_jellyfin_poster_bytes(title)
+        
+        if poster_bytes:
+            try:
+                with open(local_poster, "wb") as f:
+                    f.write(poster_bytes)
+                logger.info(f"Successfully cached Jellyfin poster for '{title}'")
+                return send_from_directory(POSTER_DIR, f"{slug}.jpg")
+            except Exception as e:
+                logger.error(f"Error saving poster for {slug}: {e}")
+
+    # Fallback to static favicon if missing or Jellyfin fails
+    return redirect("/static/favicon.svg")
+
 @app.get("/settings")
 def settings_page():
     all_settings = get_all_settings()
@@ -154,7 +167,6 @@ def save_settings():
     form = request.form
     usernames_raw = form.get("target_usernames", "")
     usernames_array = [u.strip() for u in usernames_raw.split(",") if u.strip()]
-
     set_setting("target_usernames", json.dumps(usernames_array))
     set_setting("scrape_interval_hours", form.get("scrape_interval_hours", "24"))
     set_setting("request_delay_min", form.get("request_delay_min", "2.5"))
@@ -175,7 +187,6 @@ def save_settings():
     set_setting("jellyfin_api_key", form.get("jellyfin_api_key", ""))
     set_setting("enable_disk_scanner", "1" if form.get("enable_disk_scanner") else "0")
     set_setting("disk_scanner_path", form.get("disk_scanner_path", "/media/movies"))
-
     update_scheduler_interval()
     return jsonify({"status": "success", "message": "Settings updated successfully!"})
 
@@ -185,11 +196,7 @@ def logs_page():
 
 @app.get("/api/logs")
 def get_logs_json():
-    logs_content = ""
-    if LOG_FILE_PATH.exists():
-        with open(LOG_FILE_PATH, "r", encoding="utf-8") as f:
-            logs_content = f.read()[-12000:]
-    return jsonify({"logs": logs_content})
+    return jsonify({"logs": get_latest_logs()})
 
 @app.get("/api/export/csv")
 def download_csv():
@@ -204,7 +211,6 @@ def download_csv():
 def trigger_scrape():
     if get_setting("is_scraping_active", "0") == "1":
         return jsonify({"status": "error", "message": "A scrape job is already in progress."}), 400
-
     thread = threading.Thread(target=run_scraper_job)
     thread.start()
     return jsonify({"status": "success", "message": "Scraper execution started in background!"})
@@ -215,7 +221,6 @@ def radarr_add():
     title = data.get("title")
     if not title:
         return jsonify({"status": "error", "message": "Movie title required."}), 400
-
     result = add_movie_to_radarr(title)
     return jsonify(result)
 
@@ -225,7 +230,6 @@ def sonarr_add():
     title = data.get("title")
     if not title:
         return jsonify({"status": "error", "message": "TV Show title required."}), 400
-
     result = add_series_to_sonarr(title)
     return jsonify(result)
 

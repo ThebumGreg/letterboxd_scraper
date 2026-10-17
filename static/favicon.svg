@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#14181c" />
+      <stop offset="100%" stop-color="#2c3440" />
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00e054" />
+      <stop offset="50%" stop-color="#40bcf4" />
+      <stop offset="100%" stop-color="#ff8000" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Outer Rounded Square Background -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#bgGrad)" stroke="#303840" stroke-width="2" />
+  
+  <!-- Outer Film Reel / Circle Ring -->
+  <circle cx="32" cy="32" r="20" fill="none" stroke="url(#accentGrad)" stroke-width="4" />
+  
+  <!-- Reel Sprockets / Dots -->
+  <circle cx="32" cy="18" r="2.5" fill="#ffffff" />
+  <circle cx="32" cy="46" r="2.5" fill="#ffffff" />
+  <circle cx="18" cy="32" r="2.5" fill="#ffffff" />
+  <circle cx="46" cy="32" r="2.5" fill="#ffffff" />
+  
+  <!-- Center Play / Sync Icon -->
+  <polygon points="28,24 40,32 28,40" fill="url(#accentGrad)" />
+</svg>

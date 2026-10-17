@@ -5,6 +5,7 @@ from curl_cffi import requests
 from database import get_setting
 from logger import logger
 
+
 def normalize_title(title: str) -> str:
     title = re.sub(r"\s*\(\d{4}\)$", "", title)
     title = re.sub(r"[^\w\s]", "", title)
