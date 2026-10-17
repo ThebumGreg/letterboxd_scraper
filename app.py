@@ -92,8 +92,6 @@ def dashboard():
         if has_jellyfin: in_jellyfin_count += 1
 
         slug = film["movie_slug"]
-        
-        # Immediate route return - browser fetches images asynchronously
         poster_url = f"/poster/{slug}"
 
         jelly_item = jellyfin_lookup.get(norm, {})
@@ -127,32 +125,27 @@ def dashboard():
 
 @app.get("/poster/<slug>")
 def serve_poster(slug):
-    """Dynamic, cached poster endpoint to prevent dashboard loading hangs."""
+    """Non-blocking, cached poster endpoint."""
     local_poster = POSTER_DIR / f"{slug}.jpg"
     
-    # Return local file if present
     if local_poster.exists() and local_poster.stat().st_size > 0:
         return send_from_directory(POSTER_DIR, f"{slug}.jpg")
 
-    # Match title from active database records
     active_films = get_aggregated_active_films()
     film_match = next((f for f in active_films if f["movie_slug"] == slug), None)
     
     if film_match:
         title = film_match["full_display_name"] or film_match["movie_title"]
-        logger.info(f"Attempting Jellyfin poster download for '{title}' ({slug})...")
         poster_bytes = fetch_jellyfin_poster_bytes(title)
         
         if poster_bytes:
             try:
                 with open(local_poster, "wb") as f:
                     f.write(poster_bytes)
-                logger.info(f"Successfully cached Jellyfin poster for '{title}'")
                 return send_from_directory(POSTER_DIR, f"{slug}.jpg")
             except Exception as e:
                 logger.error(f"Error saving poster for {slug}: {e}")
 
-    # Fallback to static favicon if missing or Jellyfin fails
     return redirect("/static/favicon.svg")
 
 @app.get("/settings")

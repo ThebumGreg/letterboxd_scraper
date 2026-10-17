@@ -4,3 +4,32 @@ __pycache__/
 *.db
 *.log
 .vscode/
+
+
+# Python Virtual Environment
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+
+# Runtime Artifacts & SQLite Databases
+/data/
+*.db
+*.sqlite3
+
+# Log Files
+/logs/
+*.log
+
+# Dynamically Cached Posters
+/static/posters/*
+!/static/posters/.gitkeep
+
+# CSV Exports
+/exports/
+*.csv
+
+# Environment & IDE Configuration
+.env
+.vscode/
+.idea/
