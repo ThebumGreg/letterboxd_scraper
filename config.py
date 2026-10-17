@@ -1,27 +1,23 @@
-import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
-# Directory Setup for Logs and Exports
+# Directory Setup
 LOGS_DIR = BASE_DIR / "logs"
 EXPORTS_DIR = BASE_DIR / "exports"
-
 LOGS_DIR.mkdir(exist_ok=True)
 EXPORTS_DIR.mkdir(exist_ok=True)
 
-# Usernames to scrape
-TARGET_USERNAMES = [
-    "gsocal",
-]
-
-TARGET_LIST_TYPES = ["watchlist", "films"]
-
-# Database & File Paths
+# File Paths
 DB_PATH = BASE_DIR / "letterboxd_data.db"
 LOG_FILE_PATH = LOGS_DIR / "scraper.log"
 
-REQUEST_DELAY_RANGE = (2.5, 4.5)
+# Default Fallback Configurations
+DEFAULT_USERNAMES = ["tristanisepic"]
+DEFAULT_LIST_TYPES = ["watchlist", "films"]
+DEFAULT_REQUEST_DELAY_RANGE = (2.5, 4.5)
+DEFAULT_USER_DELAY_RANGE = (10.0, 20.0)
+DEFAULT_SCRAPE_INTERVAL_HOURS = 24
 HTTP_TIMEOUT = 15
 
 DEFAULT_HEADERS = {

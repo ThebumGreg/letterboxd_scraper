@@ -1,7 +1,14 @@
+import json
 import sqlite3
-from datetime import datetime, timezone
-from typing import Dict, List
-from config import DB_PATH
+from typing import Dict, List, Tuple
+from config import (
+    DB_PATH,
+    DEFAULT_LIST_TYPES,
+    DEFAULT_REQUEST_DELAY_RANGE,
+    DEFAULT_SCRAPE_INTERVAL_HOURS,
+    DEFAULT_USER_DELAY_RANGE,
+    DEFAULT_USERNAMES,
+)
 from logger import logger
 
 def get_connection() -> sqlite3.Connection:
@@ -10,7 +17,6 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 def init_db() -> None:
-    """Initializes the database schema."""
     with get_connection() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS user_films (
@@ -22,6 +28,7 @@ def init_db() -> None:
                 movie_url TEXT NOT NULL,
                 full_display_name TEXT,
                 film_identifier TEXT,
+                local_poster_path TEXT,
                 is_present INTEGER DEFAULT 1,
                 first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -29,11 +36,81 @@ def init_db() -> None:
             );
         """)
         conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_user_list 
-            ON user_films(username, list_type);
+            CREATE TABLE IF NOT EXISTS local_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_name TEXT NOT NULL,
+                file_path TEXT UNIQUE NOT NULL,
+                parsed_title TEXT,
+                file_size INTEGER,
+                scanned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
         """)
         conn.commit()
-    logger.info("Database initialized successfully.")
+
+    default_settings = {
+        "target_usernames": json.dumps(DEFAULT_USERNAMES),
+        "target_list_types": json.dumps(DEFAULT_LIST_TYPES),
+        "request_delay_min": str(DEFAULT_REQUEST_DELAY_RANGE[0]),
+        "request_delay_max": str(DEFAULT_REQUEST_DELAY_RANGE[1]),
+        "user_delay_min": str(DEFAULT_USER_DELAY_RANGE[0]),
+        "user_delay_max": str(DEFAULT_USER_DELAY_RANGE[1]),
+        "scrape_interval_hours": str(DEFAULT_SCRAPE_INTERVAL_HOURS),
+        "radarr_url": "http://localhost:7878",
+        "radarr_api_key": "",
+        "radarr_root_folder": "/movies",
+        "radarr_quality_profile_id": "1",
+        "auto_sync_radarr": "0",
+        "sonarr_url": "http://localhost:8989",
+        "sonarr_api_key": "",
+        "sonarr_root_folder": "/tv",
+        "sonarr_quality_profile_id": "1",
+        "auto_sync_sonarr": "0",
+        "jellyfin_url": "http://localhost:8096",
+        "jellyfin_api_key": "",
+        "enable_disk_scanner": "0",
+        "disk_scanner_path": "/media/movies",
+        "last_run_timestamp": "Never",
+        "is_scraping_active": "0",
+    }
+
+    with get_connection() as conn:
+        for key, val in default_settings.items():
+            conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?);", (key, val))
+        conn.commit()
+
+def get_setting(key: str, default: str = "") -> str:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM settings WHERE key = ?;", (key,))
+        row = cursor.fetchone()
+        return row["value"] if row else default
+
+def set_setting(key: str, value: str) -> None:
+    with get_connection() as conn:
+        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?);", (key, str(value)))
+        conn.commit()
+
+def get_all_settings() -> Dict[str, str]:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT key, value FROM settings;")
+        return {row["key"]: row["value"] for row in cursor.fetchall()}
+
+def save_disk_file_cache(files: List[Dict]) -> None:
+    with get_connection() as conn:
+        conn.execute("DELETE FROM local_files;")
+        for f in files:
+            conn.execute("""
+                INSERT OR REPLACE INTO local_files (file_name, file_path, parsed_title, file_size)
+                VALUES (?, ?, ?, ?);
+            """, (f["file_name"], f["file_path"], f["parsed_title"], f["file_size"]))
+        conn.commit()
 
 def sync_scraped_records(
     username: str, 
@@ -41,14 +118,8 @@ def sync_scraped_records(
     scraped_records: List[Dict[str, str]], 
     run_timestamp: str
 ) -> Tuple[int, int, int]:
-    """
-    Upserts newly scraped records and tombstones (marks is_present = 0) missing entries.
-    Returns (inserted_or_updated_count, tombstoned_count, total_active_count).
-    """
     with get_connection() as conn:
         cursor = conn.cursor()
-
-        # Step 1: Upsert scraped records
         for record in scraped_records:
             cursor.execute("""
                 INSERT INTO user_films (
@@ -74,27 +145,45 @@ def sync_scraped_records(
                 run_timestamp,
                 run_timestamp
             ))
-
         upserted_count = len(scraped_records)
 
-        # Step 2: Mark records as removed if they weren't seen in this run
         cursor.execute("""
             UPDATE user_films
             SET is_present = 0
-            WHERE username = ? 
-              AND list_type = ? 
-              AND last_seen_at < ?;
+            WHERE username = ? AND list_type = ? AND last_seen_at < ?;
         """, (username, list_type, run_timestamp))
-        
         tombstoned_count = cursor.rowcount
 
-        # Step 3: Count active items
         cursor.execute("""
             SELECT COUNT(*) FROM user_films 
             WHERE username = ? AND list_type = ? AND is_present = 1;
         """, (username, list_type))
         active_count = cursor.fetchone()[0]
-
         conn.commit()
-
     return upserted_count, tombstoned_count, active_count
+
+def get_aggregated_active_films(list_type: str = None) -> List[Dict]:
+    query = """
+        SELECT 
+            movie_slug,
+            movie_title,
+            full_display_name,
+            movie_url,
+            film_identifier,
+            GROUP_CONCAT(DISTINCT username) as added_by_users,
+            COUNT(DISTINCT username) as user_count,
+            MAX(last_seen_at) as latest_seen
+        FROM user_films
+        WHERE is_present = 1
+    """
+    params = []
+    if list_type:
+        query += " AND list_type = ?"
+        params.append(list_type)
+
+    query += " GROUP BY movie_slug ORDER BY user_count DESC, movie_title ASC;"
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]

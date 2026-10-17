@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configuration Settings - Letterboxd Manager</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.ico">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+</head>
+<body class="bg-light">
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+  <div class="container-fluid">
+    <a class="navbar-brand fw-bold" href="/">Letterboxd Manager</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <div class="navbar-nav me-auto">
+        <a class="nav-link" href="/">Dashboard</a>
+        <a class="nav-link active" href="/settings">Settings</a>
+        <a class="nav-link" href="/logs">Logs</a>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<div class="container my-4" style="max-width: 800px;">
+    <div class="card shadow-sm">
+        <div class="card-header bg-white"><h5 class="mb-0 fw-bold">Application Configuration</h5></div>
+        <div class="card-body">
+            <form id="settingsForm">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Target Usernames (Comma Separated)</label>
+                    <input type="text" name="target_usernames" class="form-control" value="{{ settings.target_usernames_str }}">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Scrape Schedule Interval (Hours)</label>
+                    <input type="number" name="scrape_interval_hours" class="form-control" value="{{ settings.scrape_interval_hours }}">
+                </div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Request Delay Range (Sec Min / Max)</label>
+                        <div class="input-group">
+                            <input type="number" step="0.1" name="request_delay_min" class="form-control" value="{{ settings.request_delay_min }}">
+                            <input type="number" step="0.1" name="request_delay_max" class="form-control" value="{{ settings.request_delay_max }}">
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">User Batch Delay Range (Sec Min / Max)</label>
+                        <div class="input-group">
+                            <input type="number" step="0.1" name="user_delay_min" class="form-control" value="{{ settings.user_delay_min }}">
+                            <input type="number" step="0.1" name="user_delay_max" class="form-control" value="{{ settings.user_delay_max }}">
+                        </div>
+                    </div>
+                </div>
+
+                <hr>
+                <h6 class="fw-bold text-primary">Radarr API Integration (Movies)</h6>
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" name="auto_sync_radarr" id="autoSyncRadarr" {% if settings.auto_sync_radarr == "1" %}checked{% endif %}>
+                    <label class="form-check-label fw-bold" for="autoSyncRadarr">Enable Live API Additions / Auto-Push (Unchecked = Read-Only Test Mode)</label>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Radarr URL</label>
+                    <input type="text" name="radarr_url" class="form-control" value="{{ settings.radarr_url }}">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Radarr API Key</label>
+                    <input type="password" name="radarr_api_key" class="form-control" value="{{ settings.radarr_api_key }}">
+                </div>
+
+                <hr>
+                <h6 class="fw-bold text-warning">Sonarr API Integration (TV Shows)</h6>
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" name="auto_sync_sonarr" id="autoSyncSonarr" {% if settings.auto_sync_sonarr == "1" %}checked{% endif %}>
+                    <label class="form-check-label fw-bold" for="autoSyncSonarr">Enable Live API Additions / Auto-Push (Unchecked = Read-Only Test Mode)</label>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Sonarr URL</label>
+                    <input type="text" name="sonarr_url" class="form-control" value="{{ settings.sonarr_url }}">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Sonarr API Key</label>
+                    <input type="password" name="sonarr_api_key" class="form-control" value="{{ settings.sonarr_api_key }}">
+                </div>
+
+                <hr>
+                <h6 class="fw-bold text-info">Jellyfin Integration & Local Disk Scanner</h6>
+                <div class="mb-3">
+                    <label class="form-label">Jellyfin URL</label>
+                    <input type="text" name="jellyfin_url" class="form-control" value="{{ settings.jellyfin_url }}">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Jellyfin API Key</label>
+                    <input type="password" name="jellyfin_api_key" class="form-control" value="{{ settings.jellyfin_api_key }}">
+                </div>
+
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" name="enable_disk_scanner" id="enableDisk" {% if settings.enable_disk_scanner == "1" %}checked{% endif %}>
+                    <label class="form-check-label fw-bold" for="enableDisk">Enable Local Disk File Scanner Framework</label>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Local Media Folder Path</label>
+                    <input type="text" name="disk_scanner_path" class="form-control" value="{{ settings.disk_scanner_path }}">
+                </div>
+
+                <button type="button" class="btn btn-primary fw-bold" onclick="saveSettings()">Save Configuration</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+function saveSettings() {
+    const formData = new FormData(document.getElementById('settingsForm'));
+    fetch('/settings', { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(data => alert(data.message));
+}
+</script>
+</body>
+</html>

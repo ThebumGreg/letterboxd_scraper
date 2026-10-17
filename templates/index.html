@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Letterboxd Manager - Phase 3</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.ico">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+</head>
+<body class="bg-light">
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+  <div class="container-fluid">
+    <a class="navbar-brand fw-bold" href="/">Letterboxd Manager</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarNav">
+      <div class="navbar-nav me-auto align-items-lg-center">
+        <a class="nav-link active" href="/">Dashboard</a>
+        <a class="nav-link" href="/settings">Settings</a>
+        <a class="nav-link" href="/logs">Logs</a>
+        <div class="ms-lg-3 my-2 my-lg-0">
+          <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-light active fw-bold" id="mediaMoviesBtn" onclick="setMediaType('movies')">Movies</button>
+            <button class="btn btn-outline-light fw-bold" id="mediaTvBtn" onclick="setMediaType('tv')">TV Shows</button>
+          </div>
+        </div>
+      </div>
+      <div class="d-flex flex-wrap gap-2 mt-2 mt-lg-0">
+        <a href="/api/export/csv" class="btn btn-outline-light btn-sm fw-bold">CSV Export</a>
+        <button class="btn btn-primary btn-sm fw-bold" onclick="syncAllRadarr()">Sync All Missing</button>
+        <button id="runBtn" class="btn btn-warning btn-sm fw-bold" onclick="triggerScrape()" {% if is_scraping %}disabled{% endif %}>
+          {% if is_scraping %}Scraping...{% else %}Run Scraper Now{% endif %}
+        </button>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<div class="container my-4">
+    <!-- Stat Cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3">
+            <div class="card text-center bg-white shadow-sm p-3">
+                <h6 class="text-muted small mb-1">Active Titles</h6>
+                <h3 class="fw-bold text-primary mb-0">{{ total_active }}</h3>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-center bg-white shadow-sm p-3">
+                <h6 class="text-muted small mb-1">In Radarr</h6>
+                <h3 class="fw-bold text-success mb-0">{{ in_radarr_count }}</h3>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-center bg-white shadow-sm p-3">
+                <h6 class="text-muted small mb-1">In Jellyfin</h6>
+                <h3 class="fw-bold text-info mb-0">{{ in_jellyfin_count }}</h3>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-center bg-white shadow-sm p-3">
+                <h6 class="text-muted small mb-1">Multi-User Duplicates</h6>
+                <h3 class="fw-bold text-warning mb-0">{{ duplicates_count }}</h3>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter & Search Control Bar -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body bg-white">
+            <div class="row g-2 align-items-center">
+                <div class="col-12 col-md-4">
+                    <label class="form-label small fw-bold mb-1">Search Titles / Users</label>
+                    <input type="text" id="searchInput" class="form-control form-control-sm" placeholder="Type title or username..." oninput="applyFilters()">
+                </div>
+                <div class="col-12 col-md-3">
+                    <label class="form-label small fw-bold mb-1">User Selection</label>
+                    <select id="userFilter" class="form-select form-select-sm" onchange="applyFilters()">
+                        <option value="all">All Users</option>
+                        <option value="multi">2+ Users (Multi-User Overlap)</option>
+                        {% for u in target_users %}
+                        <option value="user_{{ u }}">User: {{ u }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-6 col-md-3">
+                    <label class="form-label small fw-bold mb-1">Status Filter</label>
+                    <select id="statusFilter" class="form-select form-select-sm" onchange="applyFilters()">
+                        <option value="all">All Items</option>
+                        <option value="missing_radarr">Missing in Radarr/Sonarr</option>
+                        <option value="missing_jellyfin">Missing in Jellyfin</option>
+                        <option value="missing_both">Missing in Both</option>
+                        <option value="in_both">In Both Services</option>
+                    </select>
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label small fw-bold mb-1">Display View</label>
+                    <select id="viewToggle" class="form-select form-select-sm" onchange="switchView()">
+                        <option value="list">Table List View</option>
+                        <option value="grid">Poster Grid View</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Table View Container -->
+    <div id="tableView" class="card shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Title</th>
+                            <th>Users</th>
+                            <th>Radarr / Sonarr</th>
+                            <th>Jellyfin</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="movieTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Poster Grid View Container -->
+    <div id="gridView" class="row g-3 d-none"></div>
+
+    <!-- Pagination Footer -->
+    <div class="d-flex justify-content-between align-items-center mt-3">
+        <small class="text-muted" id="pageInfo">Showing 0-0</small>
+        <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-secondary" onclick="changePage(-1)">Previous</button>
+            <button class="btn btn-outline-secondary" onclick="changePage(1)">Next</button>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+<script id="filmsData" type="application/json">
+  {{ films | tojson | safe }}
+</script>
+
+<script>
+const rawFilms = JSON.parse(document.getElementById('filmsData').textContent || '[]');
+let filteredFilms = [...rawFilms];
+let currentPage = 1;
+let currentMediaType = 'movies';
+
+function setMediaType(type) {
+    currentMediaType = type;
+    document.getElementById('mediaMoviesBtn').classList.toggle('active', type === 'movies');
+    document.getElementById('mediaTvBtn').classList.toggle('active', type === 'tv');
+    applyFilters();
+}
+
+function applyFilters() {
+    const search = document.getElementById("searchInput").value.toLowerCase().strip ? document.getElementById("searchInput").value.toLowerCase().strip() : document.getElementById("searchInput").value.toLowerCase();
+    const userVal = document.getElementById("userFilter").value;
+    const status = document.getElementById("statusFilter").value;
+
+    filteredFilms = rawFilms.filter(f => {
+        let matchesSearch = !search || f.title.toLowerCase().includes(search) || f.added_by.some(u => u.toLowerCase().includes(search));
+
+        let matchesUser = true;
+        if (userVal === "multi") {
+            matchesUser = f.user_count > 1;
+        } else if (userVal.startsWith("user_")) {
+            const targetU = userVal.replace("user_", "");
+            matchesUser = f.added_by.includes(targetU);
+        }
+
+        let matchesStatus = true;
+        if (status === "missing_radarr") matchesStatus = !f.in_radarr;
+        else if (status === "missing_jellyfin") matchesStatus = !f.in_jellyfin;
+        else if (status === "missing_both") matchesStatus = !f.in_radarr && !f.in_jellyfin;
+        else if (status === "in_both") matchesStatus = f.in_radarr && f.in_jellyfin;
+
+        return matchesSearch && matchesUser && matchesStatus;
+    });
+
+    currentPage = 1;
+    render();
+}
+
+function render() {
+    const pageSize = 25;
+    const totalPages = Math.ceil(filteredFilms.length / pageSize) || 1;
+    if (currentPage > totalPages) currentPage = totalPages;
+
+    const startIdx = (currentPage - 1) * pageSize;
+    const endIdx = Math.min(startIdx + pageSize, filteredFilms.length);
+    const pageFilms = filteredFilms.slice(startIdx, endIdx);
+
+    document.getElementById("pageInfo").innerText = `Showing ${filteredFilms.length ? startIdx + 1 : 0}-${endIdx} of ${filteredFilms.length}`;
+
+    // Table View
+    const tbody = document.getElementById("movieTableBody");
+    tbody.innerHTML = pageFilms.map(f => `
+        <tr>
+            <td>
+                <a href="${f.url}" target="_blank" class="fw-bold text-dark text-decoration-none">${f.title}</a>
+                <div class="small text-muted">${f.added_by.map(u => `<span class="badge bg-info text-dark me-1">${u}</span>`).join('')}</div>
+            </td>
+            <td><span class="badge bg-secondary">${f.user_count}</span></td>
+            <td>${f.in_radarr ? '<span class="badge bg-success">Monitored</span>' : '<span class="badge bg-danger">Missing</span>'}</td>
+            <td>
+                ${f.in_jellyfin ? `<a href="${f.jellyfin_web_url}" target="_blank" class="badge bg-info text-decoration-none">Play on Jellyfin</a>` : '<span class="badge bg-secondary">Missing</span>'}
+            </td>
+            <td>
+                ${!f.in_radarr ? `<button class="btn btn-sm btn-outline-primary w-100 w-md-auto" onclick="addMedia('${f.title.replace(/'/g, "\\'")}', this)">Add to ${currentMediaType === 'movies' ? 'Radarr' : 'Sonarr'}</button>` : '<button class="btn btn-sm btn-light w-100 w-md-auto" disabled>Monitored</button>'}
+            </td>
+        </tr>
+    `).join('');
+
+    // Grid View
+    const gridView = document.getElementById("gridView");
+    gridView.innerHTML = pageFilms.map(f => `
+        <div class="col-6 col-sm-4 col-md-3 col-lg-2">
+            <div class="card h-100 shadow-sm text-center">
+                <img src="${f.poster_url || '/static/favicon.svg'}" class="card-img-top p-1" style="height: 220px; object-fit: cover;" alt="${f.title}" loading="lazy">
+                <div class="card-body p-2 d-flex flex-column justify-content-between">
+                    <h6 class="card-title small fw-bold text-truncate mb-1" title="${f.title}">${f.title}</h6>
+                    <div>
+                        <div class="mb-1">
+                            ${f.in_radarr ? '<span class="badge bg-success me-1">Arr</span>' : ''}
+                            ${f.in_jellyfin ? '<span class="badge bg-info">Jellyfin</span>' : ''}
+                        </div>
+                        ${!f.in_radarr ? `<button class="btn btn-xs btn-outline-primary w-100 mt-1" onclick="addMedia('${f.title.replace(/'/g, "\\'")}', this)">Add</button>` : ''}
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function switchView() {
+    const view = document.getElementById("viewToggle").value;
+    if (view === "grid") {
+        document.getElementById("tableView").classList.add("d-none");
+        document.getElementById("gridView").classList.remove("d-none");
+    } else {
+        document.getElementById("gridView").classList.add("d-none");
+        document.getElementById("tableView").classList.remove("d-none");
+    }
+}
+
+function changePage(delta) {
+    currentPage += delta;
+    render();
+}
+
+function addMedia(title, btn) {
+    btn.disabled = true;
+    btn.innerText = "Processing...";
+    const endpoint = currentMediaType === 'movies' ? '/api/radarr/add' : '/api/sonarr/add';
+    
+    fetch(endpoint, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({title: title})
+    })
+    .then(r => r.json())
+    .then(data => {
+        alert(data.message);
+        btn.disabled = false;
+        btn.innerText = "Add";
+    });
+}
+
+function triggerScrape() {
+    fetch('/api/scraper/run', {method: 'POST'})
+    .then(r => r.json())
+    .then(data => alert(data.message));
+}
+
+function syncAllRadarr() {
+    if(confirm("Bulk check missing items against API?")) {
+        fetch('/api/radarr/sync-all', {method: 'POST'})
+        .then(r => r.json())
+        .then(data => alert(data.message));
+    }
+}
+
+applyFilters();
+</script>
+</body>
+</html>
