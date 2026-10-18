@@ -195,6 +195,8 @@ def init_db():
             "season_number INTEGER DEFAULT NULL",
             "episode_number INTEGER DEFAULT NULL",
             "letterboxd_lists TEXT DEFAULT ''",
+            "id_source TEXT",            # letterboxd | tmdb-search | confirmed | rejected | manual
+            "id_checked_at TIMESTAMP",   # last time the ID resolver tried this film
         ):
             _ensure_column(conn, "user_films", col)
 
@@ -388,15 +390,99 @@ def save_user_film(username, film_title, film_year, movie_slug, tmdb_id=None, im
 
 
 def update_film_identifiers(movie_slug, tmdb_id=None, imdb_id=None, tvdb_id=None):
-    """Manual ID fix. Blank values leave the existing ID untouched. Applies to every user's row."""
+    """Manual ID fix. Blank values leave the existing ID untouched. Applies to every user's row.
+    Any manual change marks the film's ID source as 'manual' (so it is no longer up for review)."""
+    tmdb_id, imdb_id, tvdb_id = _clean(tmdb_id), _clean(imdb_id), _clean(tvdb_id)
+    any_given = 1 if (tmdb_id or imdb_id or tvdb_id) else 0
     with get_connection() as conn:
         conn.execute("""
             UPDATE user_films
             SET tmdb_id = COALESCE(?, tmdb_id),
                 imdb_id = COALESCE(?, imdb_id),
-                tvdb_id = COALESCE(?, tvdb_id)
+                tvdb_id = COALESCE(?, tvdb_id),
+                id_source = CASE WHEN ? THEN 'manual' ELSE id_source END
             WHERE movie_slug = ?
-        """, (_clean(tmdb_id), _clean(imdb_id), _clean(tvdb_id), movie_slug))
+        """, (tmdb_id, imdb_id, tvdb_id, any_given, movie_slug))
+
+
+# --------------------------------------------------------------------------
+# ID resolver support
+# --------------------------------------------------------------------------
+
+def get_films_needing_ids(retry_after_days=7, limit=None):
+    """Letterboxd films (one row per slug) that still have no TMDB ID and are due for a lookup.
+    Films the resolver failed on are skipped for `retry_after_days`; rejected guesses are never retried."""
+    sql = """
+        SELECT movie_slug,
+               MAX(film_title) AS title,
+               MAX(film_year) AS year,
+               MAX(id_checked_at) AS checked
+        FROM user_films
+        WHERE movie_slug NOT LIKE 'serializd-%'
+        GROUP BY movie_slug
+        HAVING MAX(NULLIF(tmdb_id, '')) IS NULL
+           AND COALESCE(MAX(id_source), '') != 'rejected'
+           AND (MAX(id_checked_at) IS NULL OR MAX(id_checked_at) < datetime('now', ?))
+        ORDER BY MAX(id_checked_at) IS NOT NULL, MAX(id_checked_at)
+    """
+    params = [f"-{int(retry_after_days)} days"]
+    if limit:
+        sql += " LIMIT ?"
+        params.append(int(limit))
+    with get_connection() as conn:
+        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+def set_resolved_ids(movie_slug, tmdb_id, imdb_id=None, source="letterboxd"):
+    """Stores a resolved ID on every user's row for this slug and records where it came from."""
+    with get_connection() as conn:
+        conn.execute("""
+            UPDATE user_films
+            SET tmdb_id = COALESCE(?, tmdb_id),
+                imdb_id = COALESCE(?, imdb_id),
+                id_source = ?,
+                id_checked_at = CURRENT_TIMESTAMP
+            WHERE movie_slug = ?
+        """, (_clean(tmdb_id), _clean(imdb_id), source, movie_slug))
+
+
+def mark_id_check_failed(movie_slug):
+    with get_connection() as conn:
+        conn.execute("UPDATE user_films SET id_checked_at = CURRENT_TIMESTAMP WHERE movie_slug = ?", (movie_slug,))
+
+
+def get_films_needing_review():
+    """Films whose ID was guessed from a TMDB title search and not yet confirmed."""
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT movie_slug,
+                   MAX(film_title) AS title,
+                   MAX(film_year) AS year,
+                   MAX(tmdb_id) AS tmdb_id,
+                   GROUP_CONCAT(DISTINCT username) AS added_by_users
+            FROM user_films
+            WHERE id_source = 'tmdb-search'
+            GROUP BY movie_slug
+            ORDER BY MAX(film_title)
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+
+def review_film_ids(movie_slug, decision):
+    """'confirm' keeps the guessed ID; 'reject' removes it and stops the resolver guessing again."""
+    with get_connection() as conn:
+        if decision == "confirm":
+            conn.execute("UPDATE user_films SET id_source = 'confirmed' WHERE movie_slug = ? AND id_source = 'tmdb-search'",
+                         (movie_slug,))
+        elif decision == "reject":
+            conn.execute("""
+                UPDATE user_films SET tmdb_id = NULL, imdb_id = NULL, id_source = 'rejected',
+                       id_checked_at = CURRENT_TIMESTAMP
+                WHERE movie_slug = ? AND id_source = 'tmdb-search'
+            """, (movie_slug,))
+        else:
+            return False
+    return True
 
 
 def get_film_by_slug(slug):
@@ -436,6 +522,7 @@ def get_aggregated_active_films(list_type=None, media_type=None):
                 MAX(NULLIF(imdb_id, '')) AS imdb_id,
                 MAX(NULLIF(tvdb_id, '')) AS tvdb_id,
                 MAX(poster_url) AS poster_url,
+                MAX(id_source) AS id_source,
                 GROUP_CONCAT(letterboxd_lists, ',') AS letterboxd_lists,
                 GROUP_CONCAT(DISTINCT username) AS added_by_users,
                 COUNT(DISTINCT username) AS user_count,
@@ -589,7 +676,7 @@ def update_job_status(job_name, status, message=""):
 
 
 def get_all_task_statuses():
-    default_tasks = ["scraper", "radarr", "sonarr", "jellyfin_movies", "jellyfin_tv", "all"]
+    default_tasks = ["scraper", "radarr", "sonarr", "jellyfin_movies", "jellyfin_tv", "id_resolver", "all"]
     statuses = {t: {"task_name": t, "status": "idle", "last_run": None, "message": "No active logs"}
                 for t in default_tasks}
     with get_connection() as conn:

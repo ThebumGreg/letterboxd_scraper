@@ -50,7 +50,8 @@ def run_radarr_automation_worker() -> None:
         for film in get_aggregated_active_films(list_type="Watchlist", media_type="movie"):
             tmdb = str(film.get("tmdb_id") or "")
             if (not tmdb or film.get("user_count", 0) < min_users
-                    or tmdb in in_jellyfin or tmdb in in_radarr):
+                    or tmdb in in_jellyfin or tmdb in in_radarr
+                    or film.get("id_source") == "tmdb-search"):   # unconfirmed title-search guess: review first
                 continue
 
             result = radarr_client.add_movie(tmdb, dry_run=dry_run)
