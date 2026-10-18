@@ -1,291 +1,329 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Letterboxd Manager - Phase 3</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.ico">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-</head>
-<body class="bg-light">
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-  <div class="container-fluid">
-    <a class="navbar-brand fw-bold" href="/">Letterboxd Manager</a>
-    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-      <span class="navbar-toggler-icon"></span>
-    </button>
-    <div class="collapse navbar-collapse" id="navbarNav">
-      <div class="navbar-nav me-auto align-items-lg-center">
-        <a class="nav-link active" href="/">Dashboard</a>
-        <a class="nav-link" href="/settings">Settings</a>
-        <a class="nav-link" href="/logs">Logs</a>
-        <div class="ms-lg-3 my-2 my-lg-0">
-          <div class="btn-group btn-group-sm">
-            <button class="btn btn-outline-light active fw-bold" id="mediaMoviesBtn" onclick="setMediaType('movies')">Movies</button>
-            <button class="btn btn-outline-light fw-bold" id="mediaTvBtn" onclick="setMediaType('tv')">TV Shows</button>
-          </div>
-        </div>
-      </div>
-      <div class="d-flex flex-wrap gap-2 mt-2 mt-lg-0">
-        <a href="/api/export/csv" class="btn btn-outline-light btn-sm fw-bold">CSV Export</a>
-        <button class="btn btn-primary btn-sm fw-bold" onclick="syncAllRadarr()">Sync All Missing</button>
-        <button id="runBtn" class="btn btn-warning btn-sm fw-bold" onclick="triggerScrape()" {% if is_scraping %}disabled{% endif %}>
-          {% if is_scraping %}Scraping...{% else %}Run Scraper Now{% endif %}
-        </button>
-      </div>
-    </div>
-  </div>
-</nav>
+{% extends "base.html" %}
 
-<div class="container my-4">
-    <!-- Stat Cards -->
-    <div class="row g-3 mb-4">
-        <div class="col-6 col-md-3">
-            <div class="card text-center bg-white shadow-sm p-3">
-                <h6 class="text-muted small mb-1">Active Titles</h6>
-                <h3 class="fw-bold text-primary mb-0">{{ total_active }}</h3>
-            </div>
-        </div>
-        <div class="col-6 col-md-3">
-            <div class="card text-center bg-white shadow-sm p-3">
-                <h6 class="text-muted small mb-1">In Radarr</h6>
-                <h3 class="fw-bold text-success mb-0">{{ in_radarr_count }}</h3>
-            </div>
-        </div>
-        <div class="col-6 col-md-3">
-            <div class="card text-center bg-white shadow-sm p-3">
-                <h6 class="text-muted small mb-1">In Jellyfin</h6>
-                <h3 class="fw-bold text-info mb-0">{{ in_jellyfin_count }}</h3>
-            </div>
-        </div>
-        <div class="col-6 col-md-3">
-            <div class="card text-center bg-white shadow-sm p-3">
-                <h6 class="text-muted small mb-1">Multi-User Duplicates</h6>
-                <h3 class="fw-bold text-warning mb-0">{{ duplicates_count }}</h3>
+{% block content %}
+<!-- Row 1 Analytics Header -->
+<div class="row g-3 mb-3">
+    <div class="col-md-3">
+        <div class="card text-center border-info">
+            <div class="card-body p-2">
+                <h6 class="card-title text-info mb-1">Total Active</h6>
+                <h3 class="fw-bold text-info mb-0">{{ stats.total_films }}</h3>
             </div>
         </div>
     </div>
-
-    <!-- Filter & Search Control Bar -->
-    <div class="card shadow-sm mb-4">
-        <div class="card-body bg-white">
-            <div class="row g-2 align-items-center">
-                <div class="col-12 col-md-4">
-                    <label class="form-label small fw-bold mb-1">Search Titles / Users</label>
-                    <input type="text" id="searchInput" class="form-control form-control-sm" placeholder="Type title or username..." oninput="applyFilters()">
-                </div>
-                <div class="col-12 col-md-3">
-                    <label class="form-label small fw-bold mb-1">User Selection</label>
-                    <select id="userFilter" class="form-select form-select-sm" onchange="applyFilters()">
-                        <option value="all">All Users</option>
-                        <option value="multi">2+ Users (Multi-User Overlap)</option>
-                        {% for u in target_users %}
-                        <option value="user_{{ u }}">User: {{ u }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="col-6 col-md-3">
-                    <label class="form-label small fw-bold mb-1">Status Filter</label>
-                    <select id="statusFilter" class="form-select form-select-sm" onchange="applyFilters()">
-                        <option value="all">All Items</option>
-                        <option value="missing_radarr">Missing in Radarr/Sonarr</option>
-                        <option value="missing_jellyfin">Missing in Jellyfin</option>
-                        <option value="missing_both">Missing in Both</option>
-                        <option value="in_both">In Both Services</option>
-                    </select>
-                </div>
-                <div class="col-6 col-md-2">
-                    <label class="form-label small fw-bold mb-1">Display View</label>
-                    <select id="viewToggle" class="form-select form-select-sm" onchange="switchView()">
-                        <option value="list">Table List View</option>
-                        <option value="grid">Poster Grid View</option>
-                    </select>
-                </div>
+    <div class="col-md-3">
+        <div class="card text-center border-warning">
+            <div class="card-body p-2">
+                <h6 class="card-title text-warning mb-1">Profiles</h6>
+                <h3 class="fw-bold text-warning mb-0">{{ stats.total_users }}</h3>
             </div>
         </div>
     </div>
-
-    <!-- Table View Container -->
-    <div id="tableView" class="card shadow-sm">
-        <div class="card-body p-0">
-            <div class="table-responsive">
-                <table class="table table-hover align-middle mb-0">
-                    <thead class="table-light">
-                        <tr>
-                            <th>Title</th>
-                            <th>Users</th>
-                            <th>Radarr / Sonarr</th>
-                            <th>Jellyfin</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="movieTableBody"></tbody>
-                </table>
+    <div class="col-md-3">
+        <div class="card text-center border-success">
+            <div class="card-body p-2">
+                <h6 class="card-title text-success mb-1">In Jellyfin</h6>
+                <h3 class="fw-bold text-success mb-0">{{ stats.jellyfin_count }}</h3>
             </div>
         </div>
     </div>
-
-    <!-- Poster Grid View Container -->
-    <div id="gridView" class="row g-3 d-none"></div>
-
-    <!-- Pagination Footer -->
-    <div class="d-flex justify-content-between align-items-center mt-3">
-        <small class="text-muted" id="pageInfo">Showing 0-0</small>
-        <div class="btn-group btn-group-sm">
-            <button class="btn btn-outline-secondary" onclick="changePage(-1)">Previous</button>
-            <button class="btn btn-outline-secondary" onclick="changePage(1)">Next</button>
+    <div class="col-md-3">
+        <div class="card text-center border-danger">
+            <div class="card-body p-2">
+                <h6 class="card-title text-danger mb-1">Missing / Wanted</h6>
+                <h3 class="fw-bold text-danger mb-0">{{ stats.missing_count }}</h3>
+            </div>
         </div>
     </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<!-- Row 2 Media Type & Servarr Analytics -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card text-center border-secondary">
+            <div class="card-body p-2">
+                <h6 class="card-title text-light opacity-75 mb-1">Movies</h6>
+                <h3 class="fw-bold text-light mb-0">{{ stats.movie_count|default(0) }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center border-secondary">
+            <div class="card-body p-2">
+                <h6 class="card-title text-light opacity-75 mb-1">TV Shows</h6>
+                <h3 class="fw-bold text-light mb-0">{{ stats.tv_count|default(0) }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center border-primary">
+            <div class="card-body p-2">
+                <h6 class="card-title text-primary mb-1">In Radarr</h6>
+                <h3 class="fw-bold text-primary mb-0">{{ stats.radarr_count|default(0) }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center border-info">
+            <div class="card-body p-2">
+                <h6 class="card-title text-info mb-1">In Sonarr</h6>
+                <h3 class="fw-bold text-info mb-0">{{ stats.sonarr_count|default(0) }}</h3>
+            </div>
+        </div>
+    </div>
+</div>
 
-<script id="filmsData" type="application/json">
-  {{ films | tojson | safe }}
-</script>
+<!-- Search, Filter, View Mode, and Pagination Controls -->
+<div class="row g-2 mb-4 p-3 rounded align-items-center" style="background-color: #1f252d; border: 1px solid #2c3440;">
+    <div class="col-md-3">
+        <input type="text" id="searchInput" class="form-control text-light bg-dark border-secondary" placeholder="Search title...">
+    </div>
+    <div class="col-md-2">
+        <select id="mediaTypeFilter" class="form-select text-light bg-dark border-secondary">
+            <option value="">All Media Types</option>
+            <option value="movie">Movies Only</option>
+            <option value="tv">TV Shows Only</option>
+        </select>
+    </div>
+    <div class="col-md-2">
+        <select id="userFilter" class="form-select text-light bg-dark border-secondary">
+            <option value="">All Profiles</option>
+            {% for user in all_users %}
+                <option value="{{ user }}">{{ user }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-2">
+        <select id="statusFilter" class="form-select text-light bg-dark border-secondary">
+            <option value="">All Statuses</option>
+            <option value="jellyfin">In Jellyfin</option>
+            <option value="missing">Missing</option>
+        </select>
+    </div>
+    <div class="col-md-3 d-flex justify-content-end align-items-center gap-2">
+        <select id="sortOrder" class="form-select text-light bg-dark border-secondary" style="min-width: 150px;">
+            <option value="users-desc">Most Requested</option>
+            <option value="title-asc">Title (A-Z)</option>
+        </select>
+        <div class="btn-group" role="group">
+            <button type="button" class="btn btn-outline-secondary active text-light" id="btnListView" title="List View">
+                <i class="bi bi-list-ul"></i>
+            </button>
+            <button type="button" class="btn btn-outline-secondary text-light" id="btnGridView" title="Grid View">
+                <i class="bi bi-grid-3x3-gap-fill"></i>
+            </button>
+        </div>
+    </div>
+</div>
 
-<script>
-const rawFilms = JSON.parse(document.getElementById('filmsData').textContent || '[]');
-let filteredFilms = [...rawFilms];
-let currentPage = 1;
-let currentMediaType = 'movies';
+<!-- TABLE LIST VIEW CONTAINER (DEFAULT VIEW) -->
+<div class="table-responsive" id="filmList">
+    <table class="table table-dark table-hover align-middle">
+        <thead>
+            <tr>
+                <th style="width: 60px;">Poster</th>
+                <th>Title</th>
+                <th>Type</th>
+                <th>Requested By</th>
+                <th>User Count</th>
+                <th>Status / Action</th>
+            </tr>
+        </thead>
+        <tbody id="listTableBody">
+            {% for film in films %}
+            <tr class="item-row"
+                data-title="{{ film.movie_title.lower() }}" 
+                data-users="{{ film.added_by_users }}" 
+                data-media-type="{{ film.media_type|default('movie') }}"
+                data-status="{% if film.in_jellyfin %}jellyfin{% else %}missing{% endif %}"
+                data-user-count="{{ film.user_count }}">
+                <td>
+                    <img src="/poster/{{ film.movie_slug }}" alt="{{ film.movie_title }}" style="width: 45px; height: 65px; object-fit: cover;" class="rounded" loading="lazy">
+                </td>
+                <td class="fw-bold">{{ film.movie_title }}</td>
+                <td>
+                    <span class="badge {% if film.media_type == 'tv' %}badge-tv{% else %}badge-movie{% endif %}">
+                        {{ film.media_type|default('movie')|upper }}
+                    </span>
+                </td>
+                <td>{{ film.added_by_users }}</td>
+                <td><span class="badge bg-primary">{{ film.user_count }}</span></td>
+                <td>
+                    {% if film.in_jellyfin %}
+                        <a href="{{ film.jellyfin_link }}" class="btn btn-sm btn-success" target="_blank">Watch on Jellyfin</a>
+                    {% else %}
+                        <span class="badge bg-danger">Missing</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 
-function setMediaType(type) {
-    currentMediaType = type;
-    document.getElementById('mediaMoviesBtn').classList.toggle('active', type === 'movies');
-    document.getElementById('mediaTvBtn').classList.toggle('active', type === 'tv');
-    applyFilters();
-}
-
-function applyFilters() {
-    const search = document.getElementById("searchInput").value.toLowerCase().strip ? document.getElementById("searchInput").value.toLowerCase().strip() : document.getElementById("searchInput").value.toLowerCase();
-    const userVal = document.getElementById("userFilter").value;
-    const status = document.getElementById("statusFilter").value;
-
-    filteredFilms = rawFilms.filter(f => {
-        let matchesSearch = !search || f.title.toLowerCase().includes(search) || f.added_by.some(u => u.toLowerCase().includes(search));
-
-        let matchesUser = true;
-        if (userVal === "multi") {
-            matchesUser = f.user_count > 1;
-        } else if (userVal.startsWith("user_")) {
-            const targetU = userVal.replace("user_", "");
-            matchesUser = f.added_by.includes(targetU);
-        }
-
-        let matchesStatus = true;
-        if (status === "missing_radarr") matchesStatus = !f.in_radarr;
-        else if (status === "missing_jellyfin") matchesStatus = !f.in_jellyfin;
-        else if (status === "missing_both") matchesStatus = !f.in_radarr && !f.in_jellyfin;
-        else if (status === "in_both") matchesStatus = f.in_radarr && f.in_jellyfin;
-
-        return matchesSearch && matchesUser && matchesStatus;
-    });
-
-    currentPage = 1;
-    render();
-}
-
-function render() {
-    const pageSize = 25;
-    const totalPages = Math.ceil(filteredFilms.length / pageSize) || 1;
-    if (currentPage > totalPages) currentPage = totalPages;
-
-    const startIdx = (currentPage - 1) * pageSize;
-    const endIdx = Math.min(startIdx + pageSize, filteredFilms.length);
-    const pageFilms = filteredFilms.slice(startIdx, endIdx);
-
-    document.getElementById("pageInfo").innerText = `Showing ${filteredFilms.length ? startIdx + 1 : 0}-${endIdx} of ${filteredFilms.length}`;
-
-    // Table View
-    const tbody = document.getElementById("movieTableBody");
-    tbody.innerHTML = pageFilms.map(f => `
-        <tr>
-            <td>
-                <a href="${f.url}" target="_blank" class="fw-bold text-dark text-decoration-none">${f.title}</a>
-                <div class="small text-muted">${f.added_by.map(u => `<span class="badge bg-info text-dark me-1">${u}</span>`).join('')}</div>
-            </td>
-            <td><span class="badge bg-secondary">${f.user_count}</span></td>
-            <td>${f.in_radarr ? '<span class="badge bg-success">Monitored</span>' : '<span class="badge bg-danger">Missing</span>'}</td>
-            <td>
-                ${f.in_jellyfin ? `<a href="${f.jellyfin_web_url}" target="_blank" class="badge bg-info text-decoration-none">Play on Jellyfin</a>` : '<span class="badge bg-secondary">Missing</span>'}
-            </td>
-            <td>
-                ${!f.in_radarr ? `<button class="btn btn-sm btn-outline-primary w-100 w-md-auto" onclick="addMedia('${f.title.replace(/'/g, "\\'")}', this)">Add to ${currentMediaType === 'movies' ? 'Radarr' : 'Sonarr'}</button>` : '<button class="btn btn-sm btn-light w-100 w-md-auto" disabled>Monitored</button>'}
-            </td>
-        </tr>
-    `).join('');
-
-    // Grid View
-    const gridView = document.getElementById("gridView");
-    gridView.innerHTML = pageFilms.map(f => `
-        <div class="col-6 col-sm-4 col-md-3 col-lg-2">
-            <div class="card h-100 shadow-sm text-center">
-                <img src="${f.poster_url || '/static/favicon.svg'}" class="card-img-top p-1" style="height: 220px; object-fit: cover;" alt="${f.title}" loading="lazy">
-                <div class="card-body p-2 d-flex flex-column justify-content-between">
-                    <h6 class="card-title small fw-bold text-truncate mb-1" title="${f.title}">${f.title}</h6>
-                    <div>
-                        <div class="mb-1">
-                            ${f.in_radarr ? '<span class="badge bg-success me-1">Arr</span>' : ''}
-                            ${f.in_jellyfin ? '<span class="badge bg-info">Jellyfin</span>' : ''}
-                        </div>
-                        ${!f.in_radarr ? `<button class="btn btn-xs btn-outline-primary w-100 mt-1" onclick="addMedia('${f.title.replace(/'/g, "\\'")}', this)">Add</button>` : ''}
+<!-- GRID VIEW CONTAINER (HIDDEN BY DEFAULT) -->
+<div class="row row-cols-2 row-cols-md-4 row-cols-lg-6 g-3 d-none" id="filmGrid">
+    {% for film in films %}
+    <div class="col item-card" 
+         data-title="{{ film.movie_title.lower() }}" 
+         data-users="{{ film.added_by_users }}" 
+         data-media-type="{{ film.media_type|default('movie') }}"
+         data-status="{% if film.in_jellyfin %}jellyfin{% else %}missing{% endif %}"
+         data-user-count="{{ film.user_count }}">
+        <div class="card h-100">
+            <img src="/poster/{{ film.movie_slug }}" class="card-img-top" alt="{{ film.movie_title }}" style="height: 260px; object-fit: cover;" loading="lazy">
+            <div class="card-body p-2 d-flex flex-column justify-content-between">
+                <div>
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <span class="badge {% if film.media_type == 'tv' %}badge-tv{% else %}badge-movie{% endif %} me-1">
+                            {{ film.media_type|default('movie')|upper }}
+                        </span>
+                        <span class="badge bg-primary">{{ film.user_count }} Profile{% if film.user_count > 1 %}s{% endif %}</span>
                     </div>
+                    <h6 class="card-title text-truncate mb-1" title="{{ film.movie_title }}">{{ film.movie_title }}</h6>
+                    <small class="text-light opacity-75 d-block text-truncate">Added by: {{ film.added_by_users }}</small>
+                </div>
+                <div class="mt-2 text-end">
+                    {% if film.in_jellyfin %}
+                        <a href="{{ film.jellyfin_link }}" class="btn btn-sm btn-success w-100 p-1 py-0" target="_blank">Watch</a>
+                    {% else %}
+                        <span class="badge bg-danger w-100 py-1">Missing</span>
+                    {% endif %}
                 </div>
             </div>
         </div>
-    `).join('');
-}
+    </div>
+    {% endfor %}
+</div>
 
-function switchView() {
-    const view = document.getElementById("viewToggle").value;
-    if (view === "grid") {
-        document.getElementById("tableView").classList.add("d-none");
-        document.getElementById("gridView").classList.remove("d-none");
-    } else {
-        document.getElementById("gridView").classList.add("d-none");
-        document.getElementById("tableView").classList.remove("d-none");
-    }
-}
+<!-- PAGINATION CONTROLS -->
+<div class="d-flex justify-content-between align-items-center mt-4 p-3 rounded" style="background-color: #1f252d;">
+    <div>
+        <span id="pageInfo" class="text-light">Showing items</span>
+    </div>
+    <div class="d-flex gap-2 align-items-center">
+        <label for="itemsPerPage" class="text-light me-2 mb-0">Per page:</label>
+        <select id="itemsPerPage" class="form-select form-select-sm" style="width: auto;">
+            <option value="18" selected>18</option>
+            <option value="36">36</option>
+            <option value="72">72</option>
+            <option value="all">All</option>
+        </select>
+        <button id="btnPrevPage" class="btn btn-sm btn-secondary" disabled>Previous</button>
+        <button id="btnNextPage" class="btn btn-sm btn-secondary">Next</button>
+    </div>
+</div>
 
-function changePage(delta) {
-    currentPage += delta;
-    render();
-}
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    let currentPage = 1;
+    let currentView = "list"; // List View default
 
-function addMedia(title, btn) {
-    btn.disabled = true;
-    btn.innerText = "Processing...";
-    const endpoint = currentMediaType === 'movies' ? '/api/radarr/add' : '/api/sonarr/add';
-    
-    fetch(endpoint, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({title: title})
-    })
-    .then(r => r.json())
-    .then(data => {
-        alert(data.message);
-        btn.disabled = false;
-        btn.innerText = "Add";
+    const searchInput = document.getElementById("searchInput");
+    const mediaTypeFilter = document.getElementById("mediaTypeFilter");
+    const userFilter = document.getElementById("userFilter");
+    const statusFilter = document.getElementById("statusFilter");
+    const sortOrder = document.getElementById("sortOrder");
+    const itemsPerPageSelect = document.getElementById("itemsPerPage");
+
+    const btnGridView = document.getElementById("btnGridView");
+    const btnListView = document.getElementById("btnListView");
+
+    const gridContainer = document.getElementById("filmGrid");
+    const listContainer = document.getElementById("filmList");
+
+    const gridItems = Array.from(gridContainer.getElementsByClassName("item-card"));
+    const listRows = Array.from(document.getElementsByClassName("item-row"));
+
+    const btnPrevPage = document.getElementById("btnPrevPage");
+    const btnNextPage = document.getElementById("btnNextPage");
+    const pageInfo = document.getElementById("pageInfo");
+
+    btnGridView.addEventListener("click", () => {
+        currentView = "grid";
+        btnGridView.classList.add("active");
+        btnListView.classList.remove("active");
+        gridContainer.classList.remove("d-none");
+        listContainer.classList.add("d-none");
+        render();
     });
-}
 
-function triggerScrape() {
-    fetch('/api/scraper/run', {method: 'POST'})
-    .then(r => r.json())
-    .then(data => alert(data.message));
-}
+    btnListView.addEventListener("click", () => {
+        currentView = "list";
+        btnListView.classList.add("active");
+        btnGridView.classList.remove("active");
+        listContainer.classList.remove("d-none");
+        gridContainer.classList.add("d-none");
+        render();
+    });
 
-function syncAllRadarr() {
-    if(confirm("Bulk check missing items against API?")) {
-        fetch('/api/radarr/sync-all', {method: 'POST'})
-        .then(r => r.json())
-        .then(data => alert(data.message));
+    function render() {
+        const searchVal = searchInput.value.toLowerCase();
+        const selectedType = mediaTypeFilter.value;
+        const selectedUser = userFilter.value.toLowerCase();
+        const selectedStatus = statusFilter.value;
+        const sortVal = sortOrder.value;
+        const itemsPerPageVal = itemsPerPageSelect.value;
+        const perPage = itemsPerPageVal === "all" ? 999999 : parseInt(itemsPerPageVal);
+
+        const items = currentView === "grid" ? gridItems : listRows;
+
+        let visibleItems = items.filter(item => {
+            const title = item.dataset.title;
+            const type = item.dataset.mediaType;
+            const users = item.dataset.users.toLowerCase();
+            const status = item.dataset.status;
+
+            const matchesSearch = title.includes(searchVal);
+            const matchesType = !selectedType || type === selectedType;
+            const matchesUser = !selectedUser || users.includes(selectedUser);
+            const matchesStatus = !selectedStatus || status === selectedStatus;
+
+            return matchesSearch && matchesType && matchesUser && matchesStatus;
+        });
+
+        visibleItems.sort((a, b) => {
+            if (sortVal === "users-desc") {
+                return parseInt(b.dataset.userCount) - parseInt(a.dataset.userCount);
+            } else if (sortVal === "title-asc") {
+                return a.dataset.title.localeCompare(b.dataset.title);
+            }
+        });
+
+        const totalItems = visibleItems.length;
+        const totalPages = Math.ceil(totalItems / perPage) || 1;
+
+        if (currentPage > totalPages) currentPage = totalPages;
+        if (currentPage < 1) currentPage = 1;
+
+        const startIndex = (currentPage - 1) * perPage;
+        const endIndex = startIndex + perPage;
+
+        items.forEach(item => item.style.display = "none");
+
+        visibleItems.slice(startIndex, endIndex).forEach(item => {
+            item.style.display = currentView === "grid" ? "" : "table-row";
+        });
+
+        btnPrevPage.disabled = currentPage <= 1;
+        btnNextPage.disabled = currentPage >= totalPages;
+
+        const startDisplay = totalItems === 0 ? 0 : startIndex + 1;
+        const endDisplay = Math.min(endIndex, totalItems);
+        pageInfo.textContent = `Showing ${startDisplay}-${endDisplay} of ${totalItems} items (Page ${currentPage} of ${totalPages})`;
     }
-}
 
-applyFilters();
+    btnPrevPage.addEventListener("click", () => { if (currentPage > 1) { currentPage--; render(); } });
+    btnNextPage.addEventListener("click", () => { currentPage++; render(); });
+
+    searchInput.addEventListener("input", () => { currentPage = 1; render(); });
+    mediaTypeFilter.addEventListener("change", () => { currentPage = 1; render(); });
+    userFilter.addEventListener("change", () => { currentPage = 1; render(); });
+    statusFilter.addEventListener("change", () => { currentPage = 1; render(); });
+    sortOrder.addEventListener("change", () => { currentPage = 1; render(); });
+    itemsPerPageSelect.addEventListener("change", () => { currentPage = 1; render(); });
+
+    render();
+});
 </script>
-</body>
-</html>
+{% endblock %}
