@@ -2,6 +2,10 @@ import csv
 import io
 import json
 import os
+import re
+import secrets
+from collections import deque
+from urllib.parse import urlparse
 
 from flask import (
     Flask,
@@ -11,10 +15,12 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_file,
     send_from_directory,
     url_for,
 )
 from automation import run_radarr_automation_worker, run_sonarr_automation_worker
+from config import DEFAULT_REQUEST_DELAY_RANGE, DEFAULT_USER_DELAY_RANGE, POSTER_DIR
 from database import (
     get_aggregated_active_films,
     get_all_settings,
@@ -48,15 +54,68 @@ from scheduler import (
 from scraper import run_all_scrapers
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "super-secret-key-change-this")
+# Set SECRET_KEY in the environment for a stable key. Without it a random key is generated per start
+# (sessions and flash messages reset on restart, but nobody can forge a session with a public default).
+app.secret_key = os.getenv("SECRET_KEY") or secrets.token_hex(32)
+
+# CSRF protection: pip install flask-wtf. The templates already emit the token.
+try:
+    from flask_wtf import CSRFProtect
+
+    CSRFProtect(app)
+except ImportError:
+    app.logger.warning("flask-wtf is not installed: CSRF protection is OFF (pip install flask-wtf).")
 
 init_db()
 init_scheduler()
 
 
+def _split_users(value):
+    return {u.strip() for u in (value or "").split(",") if u.strip()}
+
+
+def _merge_duplicate_titles(films):
+    """One row per movie/show, even when different slugs share a TMDB/TVDB ID.
+
+    The database already groups by slug (so several users wanting the same film are one row).
+    This also folds together separate slugs that point at the same title, combining their users,
+    so a title is only ever counted once in Total / Missing."""
+    merged, order = {}, []
+    for film in films:
+        mtype = "tv" if film.get("media_type") == "tv" else "movie"
+        if mtype == "tv" and film.get("tvdb_id"):
+            key = ("tv", "tvdb", str(film["tvdb_id"]))
+        elif film.get("tmdb_id"):
+            key = (mtype, "tmdb", str(film["tmdb_id"]))
+        else:
+            key = ("slug", film.get("movie_slug"))
+
+        users = _split_users(film.get("added_by_users"))
+        existing = merged.get(key)
+        if existing is None:
+            film["_users"] = users
+            merged[key] = film
+            order.append(key)
+            continue
+
+        existing["_users"] |= users
+        for field in ("tmdb_id", "imdb_id", "tvdb_id"):
+            existing[field] = existing.get(field) or film.get(field)
+
+    result = []
+    for key in order:
+        film = merged[key]
+        users = film.pop("_users")
+        if users:
+            film["added_by_users"] = ", ".join(sorted(users, key=str.lower))
+            film["user_count"] = len(users)
+        result.append(film)
+    return result
+
+
 @app.route("/")
 def index():
-    films = get_aggregated_active_films()
+    films = _merge_duplicate_titles(get_aggregated_active_films())
     jellyfin_disabled = get_setting("disable_jellyfin_connection", "0") == "1"
 
     jf_cache = [] if jellyfin_disabled else get_external_library_cache("jellyfin")
@@ -106,6 +165,8 @@ def index():
             film["in_jellyfin"] = False
             film["jellyfin_id"] = None
             film["jellyfin_link"] = None
+
+    real_users = set(all_users)   # actual profiles only, without the Jellyfin/Radarr pseudo-users below
 
     # --- Items in Jellyfin that are on no watchlist ---
     if jf_cache:
@@ -205,7 +266,7 @@ def index():
 
     stats = {
         "total_films": len(films),
-        "total_users": len(all_users),
+        "total_users": len(real_users),
         "jellyfin_count": matched_in_jellyfin_count,
         "missing_count": len(films) - matched_in_jellyfin_count,
         "movie_count": movie_count,
@@ -219,27 +280,45 @@ def index():
 
 @app.route("/poster/<slug>")
 def get_poster(slug):
-    film = get_film_by_slug(slug)
+    poster_filename = f"{slug}.jpg"
+
+    # Serve cached posters straight from the configured poster folder (absolute path from config.py,
+    # so it works no matter which directory the app was started from).
+    if (POSTER_DIR / poster_filename).exists():
+        return send_from_directory(POSTER_DIR, poster_filename, max_age=86400)
 
     jellyfin_id = None
     tmdb_id = None
 
-    if film:
-        tmdb_id = film.get("tmdb_id")
-        jf_cache = get_external_library_cache("jellyfin")
-        match = next((i for i in jf_cache if i.get("tmdb_id") == tmdb_id), None)
-        if match:
-            jellyfin_id = match.get("external_item_id")
+    if slug.startswith("jf-"):
+        # Items that only exist in Jellyfin (the slug carries the Jellyfin item id)
+        jellyfin_id = slug[len("jf-"):]
+    elif slug.startswith("radarr-"):
+        # Items that only exist in Radarr
+        radarr_id = slug[len("radarr-"):]
+        rd = next((i for i in get_external_library_cache("radarr") if str(i.get("external_item_id")) == radarr_id), None)
+        tmdb_id = rd.get("tmdb_id") if rd else None
+    else:
+        film = get_film_by_slug(slug)
+        if film:
+            tmdb_id = film.get("tmdb_id")
+            tvdb_id = film.get("tvdb_id")
+            for item in get_external_library_cache("jellyfin"):
+                if film.get("media_type") == "tv":
+                    hit = bool(tvdb_id) and str(item.get("tvdb_id")) == str(tvdb_id)
+                else:
+                    hit = bool(tmdb_id) and str(item.get("tmdb_id")) == str(tmdb_id)
+                if hit:
+                    jellyfin_id = item.get("external_item_id")
+                    break
 
     fetch_and_cache_poster(slug, jellyfin_id, tmdb_id)
-    poster_filename = f"{slug}.jpg"
-    poster_filepath = os.path.join("static", "posters", poster_filename)
 
-    if os.path.exists(poster_filepath):
-        return send_from_directory("static/posters", poster_filename)
+    if (POSTER_DIR / poster_filename).exists():
+        return send_from_directory(POSTER_DIR, poster_filename, max_age=86400)
 
-    if os.path.exists(os.path.join("static", "placeholder.jpg")):
-        return send_from_directory("static", "placeholder.jpg")
+    if os.path.exists(os.path.join(app.static_folder, "placeholder.jpg")):
+        return send_from_directory(app.static_folder, "placeholder.jpg")
 
     return ("Poster not found", 404)
 
@@ -270,28 +349,147 @@ def logs_page():
     return render_template("logs.html")
 
 
+SECRET_FIELDS = ("tmdb_api_key", "jellyfin_api_key", "radarr_api_key", "sonarr_api_key", "apprise_urls")
+_TOKEN_RE = re.compile(r"(?i)\b(api_?key|token|apikey)=([^&\s]+)")
+
+
+def _known_secrets():
+    """Stored secret values (and URL fragments) to scrub from anything shown in the UI."""
+    found = set()
+    for key in SECRET_FIELDS:
+        value = get_setting(key, "") or ""
+        for piece in [value] + re.split(r"[,\s]+", value):
+            if len(piece) >= 6:
+                found.add(piece)
+    return sorted(found, key=len, reverse=True)
+
+
+def _redact(line, secret_values):
+    for secret in secret_values:
+        line = line.replace(secret, "***")
+    return _TOKEN_RE.sub(r"\1=***", line)
+
+
 @app.route("/api/logs")
 def api_logs():
+    try:
+        tail = max(1, min(int(request.args.get("tail", 300)), 5000))
+    except ValueError:
+        tail = 300
+
     log_file = os.path.join("logs", "app.log")
     lines = []
     if os.path.exists(log_file):
         try:
-            with open(log_file, "r", encoding="utf-8") as f:
-                lines = [line.strip() for line in f.readlines()[-300:]]
+            secret_values = _known_secrets()
+            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+                lines = [_redact(line.strip(), secret_values) for line in deque(f, maxlen=tail)]
         except Exception:
             lines = ["Unable to read log file."]
     return jsonify({"logs": lines})
 
 
+@app.route("/api/tasks")
+def api_tasks():
+    """Live task statuses for the Tools page."""
+    tasks = get_all_task_statuses() or {}
+    return jsonify(tasks={key: (dict(value) if value else {}) for key, value in tasks.items()})
+
+
+def _http_url(value):
+    parsed = urlparse(value or "")
+    return value.rstrip("/") if parsed.scheme in ("http", "https") and parsed.netloc else None
+
+
+@app.route("/api/test-connection/<service>", methods=["POST"])
+def api_test_connection(service):
+    """Used by the Test buttons on the settings page. Blank fields fall back to the saved values."""
+    import requests
+
+    fields = (request.get_json(silent=True) or {}).get("fields", {})
+
+    def val(name):
+        return (fields.get(name) or "").strip() or (get_setting(name, "") or "")
+
+    def result(ok, message):
+        return jsonify(ok=ok, message=message)
+
+    try:
+        if service == "tmdb":
+            key = val("tmdb_api_key")
+            if not key:
+                return result(False, "No TMDB API key set.")
+            headers, params = {}, {}
+            if key.startswith("eyJ"):          # v4 read-access token
+                headers["Authorization"] = f"Bearer {key}"
+            else:
+                params["api_key"] = key
+            r = requests.get("https://api.themoviedb.org/3/configuration", headers=headers, params=params, timeout=8)
+            return result(r.ok, "TMDB key accepted." if r.ok else f"TMDB rejected the key (HTTP {r.status_code}).")
+
+        if service in ("jellyfin", "radarr", "sonarr"):
+            url = _http_url(val(f"{service}_url"))
+            key = val(f"{service}_api_key")
+            if not url:
+                return result(False, "Enter a valid http(s) URL.")
+            if not key:
+                return result(False, "No API key set.")
+            if service == "jellyfin":
+                r = requests.get(f"{url}/System/Info", headers={"X-Emby-Token": key}, timeout=8)
+            else:
+                r = requests.get(f"{url}/api/v3/system/status", headers={"X-Api-Key": key}, timeout=8)
+            if r.status_code in (401, 403):
+                return result(False, "The server rejected the API key.")
+            if not r.ok:
+                return result(False, f"Unexpected response (HTTP {r.status_code}).")
+            info = r.json()
+            name = info.get("ServerName") or info.get("appName") or service.title()
+            return result(True, f"Connected to {name} {info.get('Version') or info.get('version') or ''}".strip())
+
+        if service == "notifications":
+            urls = [u for u in re.split(r"[,\s]+", val("apprise_urls")) if u]
+            if not urls:
+                return result(False, "No Apprise URLs set.")
+            try:
+                import apprise
+            except ImportError:
+                ok = send_notification("SyncHub Test", "Test notification from SyncHub.")
+                return result(bool(ok), "Sent using the saved settings." if ok else "Sending failed.")
+            sender = apprise.Apprise()
+            if not sender.add(urls):
+                return result(False, "None of the URLs are valid Apprise URLs.")
+            ok = sender.notify(title="SyncHub Test", body="Test notification from SyncHub.")
+            return result(bool(ok), "Notification sent." if ok else "Sending failed. Check the URLs.")
+
+        return result(False, "Unknown service."), 404
+    except requests.RequestException as exc:
+        return result(False, f"Could not connect: {exc.__class__.__name__}")
+    except ValueError:
+        return result(False, "The server returned an unexpected response.")
+
+
 @app.route("/tools/fix-match", methods=["POST"])
 def fix_match():
-    slug = request.form.get("movie_slug")
-    tmdb_id = request.form.get("tmdb_id")
-    imdb_id = request.form.get("imdb_id")
-    tvdb_id = request.form.get("tvdb_id")
+    slug = (request.form.get("movie_slug") or "").strip()
+    tmdb_id = (request.form.get("tmdb_id") or "").strip()
+    imdb_id = (request.form.get("imdb_id") or "").strip()
+    tvdb_id = (request.form.get("tvdb_id") or "").strip()
 
-    update_film_identifiers(slug, tmdb_id, imdb_id, tvdb_id)
-    flash(f"Updated metadata IDs for {slug}", "success")
+    error = None
+    if not slug:
+        error = "Choose an item first."
+    elif not (tmdb_id or imdb_id or tvdb_id):
+        error = "Enter at least one ID (TMDB, IMDb or TVDB)."
+    elif (tmdb_id and not tmdb_id.isdigit()) or (tvdb_id and not tvdb_id.isdigit()):
+        error = "TMDB and TVDB IDs must be numbers."
+    elif imdb_id and not re.fullmatch(r"tt\d{6,}", imdb_id):
+        error = "IMDb IDs look like tt0092099."
+
+    if error:
+        flash(error, "danger")
+    else:
+        update_film_identifiers(slug, tmdb_id, imdb_id, tvdb_id)
+        flash(f"Updated metadata IDs for {slug}", "success")
     return redirect(url_for("tools"))
 
 
@@ -349,40 +547,73 @@ def test_notification():
     return redirect(url_for("tools"))
 
 
+SETTING_DEFAULTS = {
+    "scraper_interval_hours": "24",
+    "radarr_interval_hours": "6",
+    "sonarr_interval_hours": "6",
+    "jellyfin_interval_hours": "6",
+    "request_delay_min": str(DEFAULT_REQUEST_DELAY_RANGE[0]),
+    "request_delay_max": str(DEFAULT_REQUEST_DELAY_RANGE[1]),
+    "user_delay_min": str(DEFAULT_USER_DELAY_RANGE[0]),
+    "user_delay_max": str(DEFAULT_USER_DELAY_RANGE[1]),
+    "disable_jellyfin_connection": "0",
+    "jellyfin_url": "",
+    "enable_radarr_automation": "0",
+    "radarr_url": "",
+    "radarr_min_user_count": "1",
+    "enable_sonarr_automation": "0",
+    "sonarr_url": "",
+    "sonarr_min_user_count": "1",
+    "enable_notifications": "0",
+}
+
+
+def _clean_username_list(raw):
+    """Accept a JSON list or one name per line. Returns (json_string, None) or (None, error)."""
+    raw = (raw or "").strip()
+    names = None
+    if raw.startswith("["):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                names = [str(n).strip() for n in parsed]
+        except ValueError:
+            pass
+    if names is None:
+        names = [n.strip() for n in re.split(r"[\n,]+", raw)]
+    names = list(dict.fromkeys(n for n in names if n))
+    bad = next((n for n in names if not re.fullmatch(r"[\w.\-]+", n)), None)
+    if bad:
+        return None, f'"{bad}" is not a valid username.'
+    return json.dumps(names), None
+
+
 @app.route("/tools/update-settings", methods=["POST"])
 def update_settings():
-    set_setting("target_usernames", request.form.get("target_usernames", "[]"))
-    set_setting("target_serializd_usernames", request.form.get("target_serializd_usernames", "[]"))
-    
-    set_setting("scraper_interval_hours", request.form.get("scraper_interval_hours", "24"))
-    set_setting("radarr_interval_hours", request.form.get("radarr_interval_hours", "6"))
-    set_setting("sonarr_interval_hours", request.form.get("sonarr_interval_hours", "6"))
-    set_setting("jellyfin_interval_hours", request.form.get("jellyfin_interval_hours", "6"))
+    problems = []
 
-    set_setting("request_delay_min", request.form.get("request_delay_min", "1.0"))
-    set_setting("request_delay_max", request.form.get("request_delay_max", "3.0"))
-    set_setting("tmdb_api_key", request.form.get("tmdb_api_key", ""))
+    for key in ("target_usernames", "target_serializd_usernames"):
+        cleaned, error = _clean_username_list(request.form.get(key, "[]"))
+        if error:
+            problems.append(f"{key}: {error}")
+        else:
+            set_setting(key, cleaned)
 
-    set_setting("disable_jellyfin_connection", request.form.get("disable_jellyfin_connection", "0"))
-    set_setting("jellyfin_url", request.form.get("jellyfin_url", ""))
-    set_setting("jellyfin_api_key", request.form.get("jellyfin_api_key", ""))
+    for key, default in SETTING_DEFAULTS.items():
+        set_setting(key, (request.form.get(key, default) or default).strip())
 
-    set_setting("enable_radarr_automation", request.form.get("enable_radarr_automation", "0"))
-    set_setting("radarr_url", request.form.get("radarr_url", ""))
-    set_setting("radarr_api_key", request.form.get("radarr_api_key", ""))
-    set_setting("radarr_min_user_count", request.form.get("radarr_min_user_count", "1"))
-
-    set_setting("enable_sonarr_automation", request.form.get("enable_sonarr_automation", "0"))
-    set_setting("sonarr_url", request.form.get("sonarr_url", ""))
-    set_setting("sonarr_api_key", request.form.get("sonarr_api_key", ""))
-    set_setting("sonarr_min_user_count", request.form.get("sonarr_min_user_count", "1"))
-
-    set_setting("enable_notifications", request.form.get("enable_notifications", "0"))
-    set_setting("apprise_urls", request.form.get("apprise_urls", ""))
+    # Secrets are never sent back to the browser, so a blank field means "keep the saved value".
+    for key in SECRET_FIELDS:
+        value = (request.form.get(key) or "").strip()
+        if value:
+            set_setting(key, value)
 
     reconfigure_scheduler()
 
-    flash("Settings updated successfully.", "success")
+    if problems:
+        flash("Some settings were not saved. " + " ".join(problems), "danger")
+    else:
+        flash("Settings updated successfully.", "success")
     return redirect(url_for("settings_page"))
 
 
@@ -405,6 +636,7 @@ def trigger_playlist_sync():
         if film.get("tmdb_id") in jf_lookup
     ]
 
+    matching_item_ids = list(dict.fromkeys(matching_item_ids))   # each item once, even if two slugs map to it
     success, message = sync_jellyfin_playlist(playlist_name, matching_item_ids)
     flash(message, "success" if success else "danger")
     return redirect(url_for("tools"))
@@ -431,10 +663,13 @@ def export_csv():
 def trigger_disk_scan():
     """Web UI trigger for the disk scanner."""
     try:
-        run_disk_scan() 
-        return jsonify({"status": "success", "message": "Disk scan completed successfully."}), 200
+        run_disk_scan()
+        flash("Disk scan completed successfully.", "success")
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        flash(f"Disk scan failed: {e}", "danger")
+    return redirect(url_for("tools"))
+
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # Never run the Werkzeug debugger on 0.0.0.0: it allows remote code execution. Set FLASK_DEBUG=1 locally if needed.
+    app.run(host="0.0.0.0", port=5000, debug=os.getenv("FLASK_DEBUG") == "1")

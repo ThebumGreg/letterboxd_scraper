@@ -1,155 +1,195 @@
 {% extends "base.html" %}
+{% from "_macros.html" import csrf_field, secret_field, switch with context %}
+
+{% block title %}Settings{% endblock %}
 
 {% block content %}
-<h2 class="mb-4">System Settings & Configuration</h2>
+<h2 class="mb-4">System Settings &amp; Configuration</h2>
 
-<form action="/tools/update-settings" method="POST">
+<form action="{{ url_for('update_settings') }}" method="POST" id="settingsForm">
+    {{ csrf_field() }}
     <div class="row g-4">
-        <!-- Target Profiles Configuration -->
+
+        <!-- Monitored profiles -->
         <div class="col-md-6">
             <div class="card h-100">
                 <div class="card-body">
                     <h5 class="card-title text-success">Monitored Profiles</h5>
-                    <p class="card-text text-muted">Configure usernames for Letterboxd (Movies) and Serializd (TV Shows).</p>
-                    
+                    <p class="card-text text-body-secondary">Usernames to watch on Letterboxd (movies) and Serializd (TV shows).</p>
+
                     <div class="mb-3">
-                        <label for="target_usernames" class="form-label">Letterboxd Usernames</label>
-                        <textarea class="form-control" id="target_usernames" name="target_usernames" rows="3" placeholder='["user1", "user2"]'>{{ settings.target_usernames }}</textarea>
+                        <label for="target_usernames" class="form-label">Letterboxd usernames</label>
+                        <textarea class="form-control" id="target_usernames" name="target_usernames" rows="4" data-usernames
+                                  placeholder="One username per line">{{ settings.target_usernames }}</textarea>
+                        <div class="form-text">One username per line.</div>
                     </div>
 
                     <div class="mb-3">
-                        <label for="target_serializd_usernames" class="form-label">Serializd Usernames (TV)</label>
-                        <textarea class="form-control" id="target_serializd_usernames" name="target_serializd_usernames" rows="3" placeholder='["tvuser1", "tvuser2"]'>{{ settings.target_serializd_usernames }}</textarea>
+                        <label for="target_serializd_usernames" class="form-label">Serializd usernames (TV)</label>
+                        <textarea class="form-control" id="target_serializd_usernames" name="target_serializd_usernames" rows="4" data-usernames
+                                  placeholder="One username per line">{{ settings.target_serializd_usernames }}</textarea>
+                        <div class="form-text">One username per line.</div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Scheduler & Background Engine -->
+        <!-- Scheduler + metadata -->
         <div class="col-md-6">
-            <div class="card h-100">
+            <div class="card mb-4">
                 <div class="card-body">
-                    <h5 class="card-title text-success">Scheduler Engine Configuration</h5>
-                    <p class="card-text text-muted">View and modify background job timing rules.</p>
+                    <h5 class="card-title text-success">Scheduler Engine</h5>
+                    <p class="card-text text-body-secondary">Background job timing.</p>
 
-                    <div class="mb-3">
-                        <label for="scrape_interval_hours" class="form-label">Background Sync Interval (Hours)</label>
-                        <input type="number" class="form-control" id="scrape_interval_hours" name="scrape_interval_hours" value="{{ settings.scrape_interval_hours }}" min="1">
+                    <p class="small text-body-secondary mb-2">How often each background job runs (hours).</p>
+                    <div class="row">
+                        {% for key, label, default in [('scraper_interval_hours', 'Scraper', 24), ('radarr_interval_hours', 'Radarr', 6), ('sonarr_interval_hours', 'Sonarr', 6), ('jellyfin_interval_hours', 'Jellyfin', 6)] %}
+                        <div class="col-6 col-lg-3 mb-3">
+                            <label for="{{ key }}" class="form-label">{{ label }}</label>
+                            <input type="number" class="form-control" id="{{ key }}" name="{{ key }}"
+                                   value="{{ settings.get(key) or default }}" min="1" step="1" required>
+                        </div>
+                        {% endfor %}
                     </div>
 
                     <div class="row">
-                        <div class="col-6 mb-3">
-                            <label for="request_delay_min" class="form-label">Min Request Delay (s)</label>
-                            <input type="number" step="0.1" class="form-control" id="request_delay_min" name="request_delay_min" value="{{ settings.request_delay_min }}">
+                        <div class="col-6 mb-1">
+                            <label for="request_delay_min" class="form-label">Min request delay (s)</label>
+                            <input type="number" step="0.1" min="0" class="form-control" id="request_delay_min" name="request_delay_min" value="{{ settings.get('request_delay_min') or 2.5 }}">
                         </div>
-                        <div class="col-6 mb-3">
-                            <label for="request_delay_max" class="form-label">Max Request Delay (s)</label>
-                            <input type="number" step="0.1" class="form-control" id="request_delay_max" name="request_delay_max" value="{{ settings.request_delay_max }}">
+                        <div class="col-6 mb-1">
+                            <label for="request_delay_max" class="form-label">Max request delay (s)</label>
+                            <input type="number" step="0.1" min="0" class="form-control" id="request_delay_max" name="request_delay_max" value="{{ settings.get('request_delay_max') or 4.5 }}">
                         </div>
                     </div>
+                    <div class="form-text mb-3">A random pause in this range is used between page requests for one user.</div>
 
-                    <div class="mb-3">
-                        <label for="tmdb_api_key" class="form-label">TMDB API Key</label>
-                        <input type="password" class="form-control" id="tmdb_api_key" name="tmdb_api_key" value="{{ settings.tmdb_api_key }}">
+                    <div class="row">
+                        <div class="col-6 mb-1">
+                            <label for="user_delay_min" class="form-label">Min delay between users (s)</label>
+                            <input type="number" step="0.5" min="0" class="form-control" id="user_delay_min" name="user_delay_min" value="{{ settings.get('user_delay_min') or 10 }}">
+                        </div>
+                        <div class="col-6 mb-1">
+                            <label for="user_delay_max" class="form-label">Max delay between users (s)</label>
+                            <input type="number" step="0.5" min="0" class="form-control" id="user_delay_max" name="user_delay_max" value="{{ settings.get('user_delay_max') or 20 }}">
+                        </div>
                     </div>
+                    <div class="form-text">A random pause in this range is used before the scraper moves on to the next user.</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title text-success">Metadata (TMDB)</h5>
+                    <div class="mb-3">
+                        {{ secret_field('tmdb_api_key', 'TMDB API key', settings.tmdb_api_key) }}
+                    </div>
+                    <button type="button" class="btn btn-outline-info btn-sm" data-test-service="tmdb" data-test-fields="tmdb_api_key">Test connection</button>
+                    <span class="small ms-2" data-test-result="tmdb" role="status"></span>
                 </div>
             </div>
         </div>
 
-        <!-- Jellyfin Media Server -->
-        <div class="col-md-12">
+        <!-- Jellyfin -->
+        <div class="col-12">
             <div class="card">
                 <div class="card-body">
                     <h5 class="card-title text-success">Jellyfin Integration</h5>
-                    <div class="form-check form-switch mb-3">
-                        <input class="form-check-input" type="checkbox" id="disable_jellyfin_connection" name="disable_jellyfin_connection" value="1" {% if settings.disable_jellyfin_connection == '1' %}checked{% endif %}>
-                        <label class="form-check-label text-warning" for="disable_jellyfin_connection">Disable Jellyfin Integration & Playlist Sync</label>
-                    </div>
+                    {{ switch('disable_jellyfin_connection', 'Disable Jellyfin integration and playlist sync', settings.disable_jellyfin_connection, dims='#jellyfinFields', dims_when='checked', label_class='text-warning') }}
 
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label for="jellyfin_url" class="form-label">Jellyfin Server URL</label>
-                            <input type="text" class="form-control" id="jellyfin_url" name="jellyfin_url" value="{{ settings.jellyfin_url }}">
+                    <div id="jellyfinFields">
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="jellyfin_url" class="form-label">Jellyfin server URL</label>
+                                <input type="url" class="form-control" id="jellyfin_url" name="jellyfin_url" value="{{ settings.jellyfin_url }}" placeholder="http://192.168.1.10:8096">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                {{ secret_field('jellyfin_api_key', 'Jellyfin API key', settings.jellyfin_api_key) }}
+                            </div>
                         </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="jellyfin_api_key" class="form-label">Jellyfin API Key</label>
-                            <input type="password" class="form-control" id="jellyfin_api_key" name="jellyfin_api_key" value="{{ settings.jellyfin_api_key }}">
-                        </div>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-test-service="jellyfin" data-test-fields="jellyfin_url,jellyfin_api_key">Test connection</button>
+                        <span class="small ms-2" data-test-result="jellyfin" role="status"></span>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Radarr Configuration (Movies) -->
+        <!-- Radarr -->
         <div class="col-md-6">
             <div class="card h-100">
                 <div class="card-body">
-                    <h5 class="card-title text-primary"><i class="bi bi-film"></i> Radarr Automation (Movies)</h5>
-                    <div class="form-check form-switch mb-3">
-                        <input class="form-check-input" type="checkbox" id="enable_radarr_automation" name="enable_radarr_automation" value="1" {% if settings.enable_radarr_automation == '1' %}checked{% endif %}>
-                        <label class="form-check-label" for="enable_radarr_automation">Enable Automated Movie Searching</label>
-                    </div>
-                    <div class="mb-3">
-                        <label for="radarr_url" class="form-label">Radarr URL</label>
-                        <input type="text" class="form-control" id="radarr_url" name="radarr_url" value="{{ settings.radarr_url }}">
-                    </div>
-                    <div class="mb-3">
-                        <label for="radarr_api_key" class="form-label">Radarr API Key</label>
-                        <input type="password" class="form-control" id="radarr_api_key" name="radarr_api_key" value="{{ settings.radarr_api_key }}">
-                    </div>
-                    <div class="mb-3">
-                        <label for="radarr_min_user_count" class="form-label">Radarr Min Profile Threshold</label>
-                        <input type="number" class="form-control" id="radarr_min_user_count" name="radarr_min_user_count" value="{{ settings.radarr_min_user_count }}" min="1">
+                    <h5 class="card-title text-primary"><i class="bi bi-film" aria-hidden="true"></i> Radarr Automation (Movies)</h5>
+                    {{ switch('enable_radarr_automation', 'Enable automated movie searching', settings.enable_radarr_automation, dims='#radarrFields', dims_when='unchecked') }}
+
+                    <div id="radarrFields">
+                        <div class="mb-3">
+                            <label for="radarr_url" class="form-label">Radarr URL</label>
+                            <input type="url" class="form-control" id="radarr_url" name="radarr_url" value="{{ settings.radarr_url }}" placeholder="http://192.168.1.10:7878">
+                        </div>
+                        <div class="mb-3">
+                            {{ secret_field('radarr_api_key', 'Radarr API key', settings.radarr_api_key) }}
+                        </div>
+                        <div class="mb-3">
+                            <label for="radarr_min_user_count" class="form-label">Minimum profiles before sending to Radarr</label>
+                            <input type="number" class="form-control" id="radarr_min_user_count" name="radarr_min_user_count" value="{{ settings.radarr_min_user_count }}" min="1" step="1">
+                            <div class="form-text">A movie is only sent to Radarr once at least this many monitored profiles have it on their watchlist.</div>
+                        </div>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-test-service="radarr" data-test-fields="radarr_url,radarr_api_key">Test connection</button>
+                        <span class="small ms-2" data-test-result="radarr" role="status"></span>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Sonarr Configuration (TV Shows) -->
+        <!-- Sonarr -->
         <div class="col-md-6">
             <div class="card h-100">
                 <div class="card-body">
-                    <h5 class="card-title text-info"><i class="bi bi-tv"></i> Sonarr Automation (TV Shows)</h5>
-                    <div class="form-check form-switch mb-3">
-                        <input class="form-check-input" type="checkbox" id="enable_sonarr_automation" name="enable_sonarr_automation" value="1" {% if settings.enable_sonarr_automation == '1' %}checked{% endif %}>
-                        <label class="form-check-label" for="enable_sonarr_automation">Enable Automated TV Show Searching</label>
-                    </div>
-                    <div class="mb-3">
-                        <label for="sonarr_url" class="form-label">Sonarr URL</label>
-                        <input type="text" class="form-control" id="sonarr_url" name="sonarr_url" value="{{ settings.sonarr_url }}">
-                    </div>
-                    <div class="mb-3">
-                        <label for="sonarr_api_key" class="form-label">Sonarr API Key</label>
-                        <input type="password" class="form-control" id="sonarr_api_key" name="sonarr_api_key" value="{{ settings.sonarr_api_key }}">
-                    </div>
-                    <div class="mb-3">
-                        <label for="sonarr_min_user_count" class="form-label">Sonarr Min Profile Threshold</label>
-                        <input type="number" class="form-control" id="sonarr_min_user_count" name="sonarr_min_user_count" value="{{ settings.sonarr_min_user_count }}" min="1">
+                    <h5 class="card-title text-info"><i class="bi bi-tv" aria-hidden="true"></i> Sonarr Automation (TV Shows)</h5>
+                    {{ switch('enable_sonarr_automation', 'Enable automated TV show searching', settings.enable_sonarr_automation, dims='#sonarrFields', dims_when='unchecked') }}
+
+                    <div id="sonarrFields">
+                        <div class="mb-3">
+                            <label for="sonarr_url" class="form-label">Sonarr URL</label>
+                            <input type="url" class="form-control" id="sonarr_url" name="sonarr_url" value="{{ settings.sonarr_url }}" placeholder="http://192.168.1.10:8989">
+                        </div>
+                        <div class="mb-3">
+                            {{ secret_field('sonarr_api_key', 'Sonarr API key', settings.sonarr_api_key) }}
+                        </div>
+                        <div class="mb-3">
+                            <label for="sonarr_min_user_count" class="form-label">Minimum profiles before sending to Sonarr</label>
+                            <input type="number" class="form-control" id="sonarr_min_user_count" name="sonarr_min_user_count" value="{{ settings.sonarr_min_user_count }}" min="1" step="1">
+                            <div class="form-text">A show is only sent to Sonarr once at least this many monitored profiles have it on their watchlist.</div>
+                        </div>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-test-service="sonarr" data-test-fields="sonarr_url,sonarr_api_key">Test connection</button>
+                        <span class="small ms-2" data-test-result="sonarr" role="status"></span>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Push Notifications Setup -->
+        <!-- Notifications -->
         <div class="col-12">
             <div class="card">
                 <div class="card-body">
                     <h5 class="card-title text-success">Push Notifications (Apprise / Pushover)</h5>
-                    <div class="form-check form-switch mb-3">
-                        <input class="form-check-input" type="checkbox" id="enable_notifications" name="enable_notifications" value="1" {% if settings.enable_notifications == '1' %}checked{% endif %}>
-                        <label class="form-check-label" for="enable_notifications">Enable Push Alerts</label>
-                    </div>
-                    <div class="mb-3">
-                        <label for="apprise_urls" class="form-label">Apprise / Pushover Target URLs</label>
-                        <input type="text" class="form-control" id="apprise_urls" name="apprise_urls" value="{{ settings.apprise_urls }}" placeholder="pover://USER_KEY@API_TOKEN">
+                    {{ switch('enable_notifications', 'Enable push alerts', settings.enable_notifications, dims='#notifyFields', dims_when='unchecked') }}
+
+                    <div id="notifyFields">
+                        <div class="mb-3">
+                            {{ secret_field('apprise_urls', 'Apprise / Pushover target URLs', settings.apprise_urls, help='These URLs contain access tokens, so the saved value is hidden. Format: pover://USER_KEY@API_TOKEN') }}
+                        </div>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-test-service="notifications" data-test-fields="apprise_urls">Send test notification</button>
+                        <span class="small ms-2" data-test-result="notifications" role="status"></span>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <div class="mt-4 d-flex justify-content-end">
-        <button type="submit" class="btn btn-success btn-lg px-5">Save Configuration</button>
+    <div class="sticky-save d-flex justify-content-between align-items-center mt-4">
+        <span id="dirtyBadge" class="badge text-bg-warning d-none">Unsaved changes</span>
+        <button type="submit" class="btn btn-success btn-lg px-5 ms-auto">Save configuration</button>
     </div>
 </form>
 {% endblock %}

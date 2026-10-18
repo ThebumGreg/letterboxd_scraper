@@ -1,156 +1,121 @@
 {% extends "base.html" %}
+{% from "_macros.html" import stat_card with context %}
+
+{% block title %}Dashboard{% endblock %}
 
 {% block content %}
-<!-- Row 1 Analytics Header -->
+<!-- Row 1: library analytics (cards with a filter preset are clickable) -->
 <div class="row g-3 mb-3">
-    <div class="col-md-3">
-        <div class="card text-center border-info">
-            <div class="card-body p-2">
-                <h6 class="card-title text-info mb-1">Total Active</h6>
-                <h3 class="fw-bold text-info mb-0">{{ stats.total_films }}</h3>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card text-center border-warning">
-            <div class="card-body p-2">
-                <h6 class="card-title text-warning mb-1">Profiles</h6>
-                <h3 class="fw-bold text-warning mb-0">{{ stats.total_users }}</h3>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card text-center border-success">
-            <div class="card-body p-2">
-                <h6 class="card-title text-success mb-1">In Jellyfin</h6>
-                <h3 class="fw-bold text-success mb-0">{{ stats.jellyfin_count }}</h3>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card text-center border-danger">
-            <div class="card-body p-2">
-                <h6 class="card-title text-danger mb-1">Missing / Wanted</h6>
-                <h3 class="fw-bold text-danger mb-0">{{ stats.missing_count }}</h3>
-            </div>
-        </div>
-    </div>
+    {{ stat_card('Total Active', stats.total_films, 'info', '', '') }}
+    {{ stat_card('Profiles', stats.total_users, 'warning') }}
+    {{ stat_card('In Jellyfin', stats.jellyfin_count, 'success', '', 'jellyfin') }}
+    {{ stat_card('Missing / Wanted', stats.missing_count, 'danger', '', 'missing') }}
 </div>
 
-<!-- Row 2 Media Type & Servarr Analytics -->
+<!-- Row 2: media type and Servarr analytics -->
 <div class="row g-3 mb-4">
-    <div class="col-md-3">
-        <div class="card text-center border-secondary">
-            <div class="card-body p-2">
-                <h6 class="card-title text-light opacity-75 mb-1">Movies</h6>
-                <h3 class="fw-bold text-light mb-0">{{ stats.movie_count|default(0) }}</h3>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card text-center border-secondary">
-            <div class="card-body p-2">
-                <h6 class="card-title text-light opacity-75 mb-1">TV Shows</h6>
-                <h3 class="fw-bold text-light mb-0">{{ stats.tv_count|default(0) }}</h3>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card text-center border-primary">
-            <div class="card-body p-2">
-                <h6 class="card-title text-primary mb-1">In Radarr</h6>
-                <h3 class="fw-bold text-primary mb-0">{{ stats.radarr_count|default(0) }}</h3>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card text-center border-info">
-            <div class="card-body p-2">
-                <h6 class="card-title text-info mb-1">In Sonarr</h6>
-                <h3 class="fw-bold text-info mb-0">{{ stats.sonarr_count|default(0) }}</h3>
-            </div>
-        </div>
-    </div>
+    {{ stat_card('Movies', stats.movie_count|default(0), 'secondary', 'movie', '', 'text-body') }}
+    {{ stat_card('TV Shows', stats.tv_count|default(0), 'secondary', 'tv', '', 'text-body') }}
+    {{ stat_card('In Radarr', stats.radarr_count|default(0), 'primary') }}
+    {{ stat_card('In Sonarr', stats.sonarr_count|default(0), 'info') }}
 </div>
 
-<!-- Search, Filter, View Mode, and Pagination Controls -->
-<div class="row g-2 mb-4 p-3 rounded align-items-center" style="background-color: #1f252d; border: 1px solid #2c3440;">
+<!-- Search, filter, sort and view controls -->
+<div class="row g-2 mb-4 p-3 align-items-center panel mx-0" id="controls">
     <div class="col-md-3">
-        <input type="text" id="searchInput" class="form-control text-light bg-dark border-secondary" placeholder="Search title...">
+        <label for="searchInput" class="visually-hidden">Search title</label>
+        <input type="search" id="searchInput" class="form-control" placeholder="Search title (press / to focus)" autocomplete="off">
     </div>
-    <div class="col-md-2">
-        <select id="mediaTypeFilter" class="form-select text-light bg-dark border-secondary">
+    <div class="col-6 col-md-2">
+        <label for="mediaTypeFilter" class="visually-hidden">Media type</label>
+        <select id="mediaTypeFilter" class="form-select">
             <option value="">All Media Types</option>
             <option value="movie">Movies Only</option>
             <option value="tv">TV Shows Only</option>
         </select>
     </div>
-    <div class="col-md-2">
-        <select id="userFilter" class="form-select text-light bg-dark border-secondary">
+    <div class="col-6 col-md-2">
+        <label for="userFilter" class="visually-hidden">Profile</label>
+        <select id="userFilter" class="form-select">
             <option value="">All Profiles</option>
             {% for user in all_users %}
-                <option value="{{ user }}">{{ user }}</option>
+                <option value="{{ user|lower }}">{{ user }}</option>
             {% endfor %}
         </select>
     </div>
-    <div class="col-md-2">
-        <select id="statusFilter" class="form-select text-light bg-dark border-secondary">
+    <div class="col-6 col-md-2">
+        <label for="statusFilter" class="visually-hidden">Status</label>
+        <select id="statusFilter" class="form-select">
             <option value="">All Statuses</option>
             <option value="jellyfin">In Jellyfin</option>
-            <option value="missing">Missing</option>
+            <option value="queued">Queued in Radarr/Sonarr</option>
+            <option value="missing">Missing (incl. queued)</option>
         </select>
     </div>
-    <div class="col-md-3 d-flex justify-content-end align-items-center gap-2">
-        <select id="sortOrder" class="form-select text-light bg-dark border-secondary" style="min-width: 150px;">
+    <div class="col-6 col-md-3 d-flex justify-content-end align-items-center gap-2">
+        <label for="sortOrder" class="visually-hidden">Sort order</label>
+        <select id="sortOrder" class="form-select" style="min-width: 150px;">
             <option value="users-desc">Most Requested</option>
             <option value="title-asc">Title (A-Z)</option>
         </select>
-        <div class="btn-group" role="group">
-            <button type="button" class="btn btn-outline-secondary active text-light" id="btnListView" title="List View">
-                <i class="bi bi-list-ul"></i>
+        <div class="btn-group" role="group" aria-label="View mode">
+            <button type="button" class="btn btn-outline-secondary active" id="btnListView" title="List view" aria-label="List view" aria-pressed="true">
+                <i class="bi bi-list-ul" aria-hidden="true"></i>
             </button>
-            <button type="button" class="btn btn-outline-secondary text-light" id="btnGridView" title="Grid View">
-                <i class="bi bi-grid-3x3-gap-fill"></i>
+            <button type="button" class="btn btn-outline-secondary" id="btnGridView" title="Grid view" aria-label="Grid view" aria-pressed="false">
+                <i class="bi bi-grid-3x3-gap-fill" aria-hidden="true"></i>
             </button>
         </div>
     </div>
 </div>
 
-<!-- TABLE LIST VIEW CONTAINER (DEFAULT VIEW) -->
+{% if not films %}
+    <div class="alert alert-info">
+        No watchlist items yet. Run the scraper from <a href="{{ url_for('tools') }}" class="alert-link">Tools &amp; Operations</a> to import them.
+    </div>
+{% endif %}
+
+<!-- Each film is rendered once here. The grid view builds its cards from these rows in index.js. -->
 <div class="table-responsive" id="filmList">
-    <table class="table table-dark table-hover align-middle">
+    <table class="table table-hover align-middle">
         <thead>
             <tr>
-                <th style="width: 60px;">Poster</th>
+                <th style="width: 60px;"><span class="visually-hidden">Poster</span></th>
                 <th>Title</th>
                 <th>Type</th>
-                <th>Requested By</th>
-                <th>User Count</th>
+                <th class="d-none d-md-table-cell">Requested By</th>
+                <th>Users</th>
                 <th>Status / Action</th>
             </tr>
         </thead>
         <tbody id="listTableBody">
             {% for film in films %}
-            <tr class="item-row"
-                data-title="{{ film.movie_title.lower() }}" 
-                data-users="{{ film.added_by_users }}" 
-                data-media-type="{{ film.media_type|default('movie') }}"
-                data-status="{% if film.in_jellyfin %}jellyfin{% else %}missing{% endif %}"
-                data-user-count="{{ film.user_count }}">
+            {% set mtype = film.media_type or 'movie' %}
+            {% set status = 'jellyfin' if film.in_jellyfin else ('queued' if (film.in_radarr or film.in_sonarr) else 'missing') %}
+            <tr class="item-row d-none"
+                data-title="{{ (film.movie_title or film.movie_slug or '')|lower }}"
+                data-display-title="{{ film.movie_title or film.movie_slug }}"
+                data-slug="{{ film.movie_slug }}"
+                data-added-by="{{ film.added_by_users }}"
+                data-users="|{% for u in (film.added_by_users or '').split(',') %}{{ u|trim|lower }}|{% endfor %}"
+                data-media-type="{{ mtype }}"
+                data-status="{{ status }}"
+                data-user-count="{{ film.user_count }}"
+                data-link="{{ film.jellyfin_link if film.in_jellyfin else '' }}">
                 <td>
-                    <img src="/poster/{{ film.movie_slug }}" alt="{{ film.movie_title }}" style="width: 45px; height: 65px; object-fit: cover;" class="rounded" loading="lazy">
+                    <img src="/poster/{{ film.movie_slug }}" alt="" width="45" height="65" class="rounded poster poster-thumb" loading="lazy">
                 </td>
                 <td class="fw-bold">{{ film.movie_title }}</td>
                 <td>
-                    <span class="badge {% if film.media_type == 'tv' %}badge-tv{% else %}badge-movie{% endif %}">
-                        {{ film.media_type|default('movie')|upper }}
-                    </span>
+                    <span class="badge {% if mtype == 'tv' %}badge-tv{% else %}badge-movie{% endif %}">{{ mtype|upper }}</span>
                 </td>
-                <td>{{ film.added_by_users }}</td>
+                <td class="d-none d-md-table-cell">{{ film.added_by_users }}</td>
                 <td><span class="badge bg-primary">{{ film.user_count }}</span></td>
                 <td>
-                    {% if film.in_jellyfin %}
-                        <a href="{{ film.jellyfin_link }}" class="btn btn-sm btn-success" target="_blank">Watch on Jellyfin</a>
+                    {% if status == 'jellyfin' %}
+                        <a href="{{ film.jellyfin_link }}" class="btn btn-sm btn-success" target="_blank" rel="noopener noreferrer">Watch on Jellyfin</a>
+                    {% elif status == 'queued' %}
+                        <span class="badge bg-info text-dark">Queued</span>
                     {% else %}
                         <span class="badge bg-danger">Missing</span>
                     {% endif %}
@@ -161,169 +126,32 @@
     </table>
 </div>
 
-<!-- GRID VIEW CONTAINER (HIDDEN BY DEFAULT) -->
-<div class="row row-cols-2 row-cols-md-4 row-cols-lg-6 g-3 d-none" id="filmGrid">
-    {% for film in films %}
-    <div class="col item-card" 
-         data-title="{{ film.movie_title.lower() }}" 
-         data-users="{{ film.added_by_users }}" 
-         data-media-type="{{ film.media_type|default('movie') }}"
-         data-status="{% if film.in_jellyfin %}jellyfin{% else %}missing{% endif %}"
-         data-user-count="{{ film.user_count }}">
-        <div class="card h-100">
-            <img src="/poster/{{ film.movie_slug }}" class="card-img-top" alt="{{ film.movie_title }}" style="height: 260px; object-fit: cover;" loading="lazy">
-            <div class="card-body p-2 d-flex flex-column justify-content-between">
-                <div>
-                    <div class="d-flex justify-content-between align-items-center mb-1">
-                        <span class="badge {% if film.media_type == 'tv' %}badge-tv{% else %}badge-movie{% endif %} me-1">
-                            {{ film.media_type|default('movie')|upper }}
-                        </span>
-                        <span class="badge bg-primary">{{ film.user_count }} Profile{% if film.user_count > 1 %}s{% endif %}</span>
-                    </div>
-                    <h6 class="card-title text-truncate mb-1" title="{{ film.movie_title }}">{{ film.movie_title }}</h6>
-                    <small class="text-light opacity-75 d-block text-truncate">Added by: {{ film.added_by_users }}</small>
-                </div>
-                <div class="mt-2 text-end">
-                    {% if film.in_jellyfin %}
-                        <a href="{{ film.jellyfin_link }}" class="btn btn-sm btn-success w-100 p-1 py-0" target="_blank">Watch</a>
-                    {% else %}
-                        <span class="badge bg-danger w-100 py-1">Missing</span>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-    </div>
-    {% endfor %}
+<!-- Grid view (cards are generated by index.js) -->
+<div class="row row-cols-2 row-cols-md-4 row-cols-lg-6 g-3 d-none" id="filmGrid"></div>
+
+<!-- Empty state when filters match nothing -->
+<div id="emptyState" class="text-center text-body-secondary py-5 d-none">
+    <p class="mb-2">No items match your filters.</p>
+    <button type="button" id="btnResetFilters" class="btn btn-outline-secondary btn-sm">Reset filters</button>
 </div>
 
-<!-- PAGINATION CONTROLS -->
-<div class="d-flex justify-content-between align-items-center mt-4 p-3 rounded" style="background-color: #1f252d;">
-    <div>
-        <span id="pageInfo" class="text-light">Showing items</span>
-    </div>
+<!-- Pagination -->
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-4 p-3 panel">
+    <span id="pageInfo" aria-live="polite">Showing items</span>
     <div class="d-flex gap-2 align-items-center">
-        <label for="itemsPerPage" class="text-light me-2 mb-0">Per page:</label>
+        <label for="itemsPerPage" class="mb-0 me-1">Per page:</label>
         <select id="itemsPerPage" class="form-select form-select-sm" style="width: auto;">
             <option value="18" selected>18</option>
             <option value="36">36</option>
             <option value="72">72</option>
             <option value="all">All</option>
         </select>
-        <button id="btnPrevPage" class="btn btn-sm btn-secondary" disabled>Previous</button>
-        <button id="btnNextPage" class="btn btn-sm btn-secondary">Next</button>
+        <button id="btnPrevPage" type="button" class="btn btn-sm btn-secondary" disabled>Previous</button>
+        <button id="btnNextPage" type="button" class="btn btn-sm btn-secondary">Next</button>
     </div>
 </div>
+{% endblock %}
 
-<script>
-document.addEventListener("DOMContentLoaded", function() {
-    let currentPage = 1;
-    let currentView = "list"; // List View default
-
-    const searchInput = document.getElementById("searchInput");
-    const mediaTypeFilter = document.getElementById("mediaTypeFilter");
-    const userFilter = document.getElementById("userFilter");
-    const statusFilter = document.getElementById("statusFilter");
-    const sortOrder = document.getElementById("sortOrder");
-    const itemsPerPageSelect = document.getElementById("itemsPerPage");
-
-    const btnGridView = document.getElementById("btnGridView");
-    const btnListView = document.getElementById("btnListView");
-
-    const gridContainer = document.getElementById("filmGrid");
-    const listContainer = document.getElementById("filmList");
-
-    const gridItems = Array.from(gridContainer.getElementsByClassName("item-card"));
-    const listRows = Array.from(document.getElementsByClassName("item-row"));
-
-    const btnPrevPage = document.getElementById("btnPrevPage");
-    const btnNextPage = document.getElementById("btnNextPage");
-    const pageInfo = document.getElementById("pageInfo");
-
-    btnGridView.addEventListener("click", () => {
-        currentView = "grid";
-        btnGridView.classList.add("active");
-        btnListView.classList.remove("active");
-        gridContainer.classList.remove("d-none");
-        listContainer.classList.add("d-none");
-        render();
-    });
-
-    btnListView.addEventListener("click", () => {
-        currentView = "list";
-        btnListView.classList.add("active");
-        btnGridView.classList.remove("active");
-        listContainer.classList.remove("d-none");
-        gridContainer.classList.add("d-none");
-        render();
-    });
-
-    function render() {
-        const searchVal = searchInput.value.toLowerCase();
-        const selectedType = mediaTypeFilter.value;
-        const selectedUser = userFilter.value.toLowerCase();
-        const selectedStatus = statusFilter.value;
-        const sortVal = sortOrder.value;
-        const itemsPerPageVal = itemsPerPageSelect.value;
-        const perPage = itemsPerPageVal === "all" ? 999999 : parseInt(itemsPerPageVal);
-
-        const items = currentView === "grid" ? gridItems : listRows;
-
-        let visibleItems = items.filter(item => {
-            const title = item.dataset.title;
-            const type = item.dataset.mediaType;
-            const users = item.dataset.users.toLowerCase();
-            const status = item.dataset.status;
-
-            const matchesSearch = title.includes(searchVal);
-            const matchesType = !selectedType || type === selectedType;
-            const matchesUser = !selectedUser || users.includes(selectedUser);
-            const matchesStatus = !selectedStatus || status === selectedStatus;
-
-            return matchesSearch && matchesType && matchesUser && matchesStatus;
-        });
-
-        visibleItems.sort((a, b) => {
-            if (sortVal === "users-desc") {
-                return parseInt(b.dataset.userCount) - parseInt(a.dataset.userCount);
-            } else if (sortVal === "title-asc") {
-                return a.dataset.title.localeCompare(b.dataset.title);
-            }
-        });
-
-        const totalItems = visibleItems.length;
-        const totalPages = Math.ceil(totalItems / perPage) || 1;
-
-        if (currentPage > totalPages) currentPage = totalPages;
-        if (currentPage < 1) currentPage = 1;
-
-        const startIndex = (currentPage - 1) * perPage;
-        const endIndex = startIndex + perPage;
-
-        items.forEach(item => item.style.display = "none");
-
-        visibleItems.slice(startIndex, endIndex).forEach(item => {
-            item.style.display = currentView === "grid" ? "" : "table-row";
-        });
-
-        btnPrevPage.disabled = currentPage <= 1;
-        btnNextPage.disabled = currentPage >= totalPages;
-
-        const startDisplay = totalItems === 0 ? 0 : startIndex + 1;
-        const endDisplay = Math.min(endIndex, totalItems);
-        pageInfo.textContent = `Showing ${startDisplay}-${endDisplay} of ${totalItems} items (Page ${currentPage} of ${totalPages})`;
-    }
-
-    btnPrevPage.addEventListener("click", () => { if (currentPage > 1) { currentPage--; render(); } });
-    btnNextPage.addEventListener("click", () => { currentPage++; render(); });
-
-    searchInput.addEventListener("input", () => { currentPage = 1; render(); });
-    mediaTypeFilter.addEventListener("change", () => { currentPage = 1; render(); });
-    userFilter.addEventListener("change", () => { currentPage = 1; render(); });
-    statusFilter.addEventListener("change", () => { currentPage = 1; render(); });
-    sortOrder.addEventListener("change", () => { currentPage = 1; render(); });
-    itemsPerPageSelect.addEventListener("change", () => { currentPage = 1; render(); });
-
-    render();
-});
-</script>
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/index.js') }}"></script>
 {% endblock %}
