@@ -57,16 +57,17 @@ init_scheduler()
 @app.route("/")
 def index():
     films = get_aggregated_active_films()
-    jf_cache = get_external_library_cache("jellyfin")
+    jellyfin_disabled = get_setting("disable_jellyfin_connection", "0") == "1"
+
+    jf_cache = [] if jellyfin_disabled else get_external_library_cache("jellyfin")
     radarr_cache = get_external_library_cache("radarr")
     sonarr_cache = get_external_library_cache("sonarr")
 
     # Lookups indexed by TMDB ID / TVDB ID
-    jellyfin_tmdb_lookup = {str(item["tmdb_id"]): item for item in jf_cache if item.get("tmdb_id")}
-    jellyfin_tvdb_lookup = {str(item["tvdb_id"]): item for item in jf_cache if item.get("tvdb_id")}
-    
-    radarr_lookup = {str(item["tmdb_id"]): item for item in radarr_cache if item.get("tmdb_id")}
-    sonarr_lookup = {str(item["tvdb_id"]): item for item in sonarr_cache if item.get("tvdb_id")}
+    jellyfin_tmdb_lookup = {str(i["tmdb_id"]): i for i in jf_cache if i.get("tmdb_id")}
+    jellyfin_tvdb_lookup = {str(i["tvdb_id"]): i for i in jf_cache if i.get("tvdb_id")}
+    radarr_lookup = {str(i["tmdb_id"]): i for i in radarr_cache if i.get("tmdb_id")}
+    sonarr_lookup = {str(i["tvdb_id"]): i for i in sonarr_cache if i.get("tvdb_id")}
 
     user_agent = request.headers.get("User-Agent", "")
     all_users = set()
@@ -74,12 +75,12 @@ def index():
     movie_count = 0
     tv_count = 0
 
-    # Track identifiers already present from Letterboxd watchlists
+    # Track identifiers already present from user watchlists
     known_tmdb_ids = set()
     known_tvdb_ids = set()
 
     for film in films:
-        users = [u.strip() for u in film["added_by_users"].split(",") if u.strip()]
+        users = [u.strip() for u in (film.get("added_by_users") or "").split(",") if u.strip()]
         film["users_list"] = users
         all_users.update(users)
 
@@ -95,10 +96,10 @@ def index():
             movie_count += 1
             jf_match = jellyfin_tmdb_lookup.get(str(film.get("tmdb_id")))
 
-        if jf_match and get_setting("disable_jellyfin_connection", "0") != "1":
+        if jf_match:
             film["in_jellyfin"] = True
             film["jellyfin_id"] = jf_match.get("external_item_id")
-            links = get_jellyfin_item_link(jf_match.get("external_item_id"), user_agent)
+            links = get_jellyfin_item_link(film["jellyfin_id"], user_agent)
             film["jellyfin_link"] = links["primary_url"]
             matched_in_jellyfin_count += 1
         else:
@@ -106,21 +107,27 @@ def index():
             film["jellyfin_id"] = None
             film["jellyfin_link"] = None
 
-    # --- Append Items Present in Jellyfin But Missing From Watchlists ---
-    all_users.add("Jellyfin")
+    # --- Items in Jellyfin that are on no watchlist ---
+    if jf_cache:
+        all_users.add("Jellyfin")
 
     for jf_item in jf_cache:
-        tmdb_id = str(jf_item.get("tmdb_id")) if jf_item.get("tmdb_id") else None
-        tvdb_id = str(jf_item.get("tvdb_id")) if jf_item.get("tvdb_id") else None
+        # Episodes are cached for matching but would flood the grid; show shows/movies only
+        try:
+            if json.loads(jf_item.get("details_json") or "{}").get("type") == "Episode":
+                continue
+        except ValueError:
+            pass
 
-        # Skip if already represented by a Letterboxd / user film entry
+        tmdb_id = str(jf_item["tmdb_id"]) if jf_item.get("tmdb_id") else None
+        tvdb_id = str(jf_item["tvdb_id"]) if jf_item.get("tvdb_id") else None
+
         if (tmdb_id and tmdb_id in known_tmdb_ids) or (tvdb_id and tvdb_id in known_tvdb_ids):
             continue
 
         item_id = jf_item.get("external_item_id")
         links = get_jellyfin_item_link(item_id, user_agent)
-        
-        # Determine media type based on identifiers present
+
         media_type = "tv" if tvdb_id and not tmdb_id else "movie"
         if media_type == "tv":
             tv_count += 1
@@ -132,12 +139,10 @@ def index():
 
         matched_in_jellyfin_count += 1
 
-        # Synthesize entry for UI grid rendering
-        title = jf_item.get("details_json") or f"Jellyfin Item ({tmdb_id or tvdb_id or item_id})"
-        slug = f"jf-{item_id}"
+        title = jf_item.get("title") or f"Jellyfin Item ({tmdb_id or tvdb_id or item_id})"
 
-        virtual_film = {
-            "movie_slug": slug,
+        films.append({
+            "movie_slug": f"jf-{item_id}",
             "movie_title": title,
             "full_display_name": title,
             "media_type": media_type,
@@ -153,8 +158,50 @@ def index():
             "jellyfin_id": item_id,
             "jellyfin_link": links["primary_url"],
             "last_scraped": jf_item.get("last_updated"),
-        }
-        films.append(virtual_film)
+        })
+
+    # --- Movies in Radarr that are on no watchlist and not already listed ---
+    # (runs after the Jellyfin loop so anything already in Jellyfin shows as a Jellyfin entry)
+    radarr_base = get_setting("radarr_url", "").rstrip("/")
+    radarr_added = False
+
+    for rd in radarr_cache:
+        tmdb_id = str(rd["tmdb_id"]) if rd.get("tmdb_id") else None
+        if not tmdb_id or tmdb_id in known_tmdb_ids:
+            continue
+
+        known_tmdb_ids.add(tmdb_id)
+        movie_count += 1
+        radarr_added = True
+        title = rd.get("title") or f"Radarr Movie ({tmdb_id})"
+        link = f"{radarr_base}/movie/{tmdb_id}" if radarr_base else "#"
+
+        films.append({
+            "movie_slug": f"radarr-{rd.get('external_item_id')}",
+            "movie_title": title,
+            "full_display_name": title,
+            "media_type": "movie",
+            "tmdb_id": tmdb_id,
+            "imdb_id": rd.get("imdb_id"),
+            "tvdb_id": None,
+            "poster_url": None,
+            "added_by_users": "Radarr",
+            "users_list": ["Radarr"],
+            "user_count": 1,
+            "movie_url": link,
+            "in_jellyfin": False,
+            "jellyfin_id": None,
+            "jellyfin_link": None,
+            "last_scraped": rd.get("last_updated"),
+        })
+
+    if radarr_added:
+        all_users.add("Radarr")
+
+    # Flag everything Radarr / Sonarr already has so the template can show a badge
+    for f in films:
+        f["in_radarr"] = f.get("media_type") != "tv" and str(f.get("tmdb_id")) in radarr_lookup
+        f["in_sonarr"] = f.get("media_type") == "tv" and str(f.get("tvdb_id")) in sonarr_lookup
 
     stats = {
         "total_films": len(films),
@@ -167,7 +214,7 @@ def index():
         "sonarr_count": len(sonarr_lookup),
     }
 
-    return render_template("index.html", films=films, all_users=sorted(list(all_users)), stats=stats)
+    return render_template("index.html", films=films, all_users=sorted(all_users), stats=stats)    
 
 
 @app.route("/poster/<slug>")

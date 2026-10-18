@@ -1,185 +1,114 @@
 import logging
-import requests
-from database import (
-    get_aggregated_active_films,
-    get_external_library_cache,
-    get_setting,
-    update_external_cache,
-    update_job_status,
-)
+import json
+from datetime import datetime, timezone
+from database import (get_aggregated_active_films, get_external_library_cache,
+                      get_setting, update_external_cache, update_job_status, prune_external_cache )
+import radarr_client, sonarr_client
 
 logger = logging.getLogger(__name__)
 
+def sync_radarr_library():
+    """Mirrors every Radarr movie into the cache (runs regardless of the automation toggle).
+    Returns ({tmdb_id: radarr_id}, removed_count)."""
+    started = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    movies = radarr_client.get_library()
+
+    for m in movies:
+        title = f"{m['title']} ({m['year']})" if m.get("year") else m["title"]
+        update_external_cache(
+            "radarr",
+            tmdb_id=m["tmdb_id"],
+            imdb_id=m["imdb_id"],
+            status="downloaded" if m["has_file"] else "monitored",
+            in_library=1,
+            external_item_id=m["radarr_id"],
+            details_json=json.dumps({"title": title, "has_file": m["has_file"]}),
+        )
+
+    # Only reached if the fetch succeeded, so movies deleted from Radarr drop out of the cache
+    removed = prune_external_cache("radarr", started)
+    return {m["tmdb_id"]: m["radarr_id"] for m in movies}, removed
+
 
 def run_radarr_automation_worker() -> None:
-    """Evaluates active watchlists and sends missing movies to Radarr if enabled."""
-    enabled = get_setting("enable_radarr_automation", "0") == "1"
-    if not enabled:
-        update_job_status("radarr", "idle", "Radarr automation disabled in settings.")
-        return
-
-    radarr_url = get_setting("radarr_url").rstrip("/")
-    api_key = get_setting("radarr_api_key")
-    min_users = int(get_setting("radarr_min_user_count", "1"))
-    root_folder = get_setting("radarr_root_folder", "/movies")
-    quality_profile = int(get_setting("radarr_quality_profile_id", "1"))
-
-    if not radarr_url or not api_key:
-        update_job_status("radarr", "failed", "Radarr URL or API key missing.")
-        return
-
-    update_job_status("radarr", "in_progress", "Evaluating missing movies...")
-
+    update_job_status("radarr", "in_progress", "Fetching Radarr library...")
     try:
-        active_films = [f for f in get_aggregated_active_films() if f.get("media_type", "movie") == "movie"]
-        jf_cache = get_external_library_cache("jellyfin")
-        existing_tmdb_ids = {str(item["tmdb_id"]) for item in jf_cache if item.get("tmdb_id")}
+        in_radarr, removed = sync_radarr_library()
+        summary = f"Synced {len(in_radarr)} movie(s) from Radarr"
+        summary += f" ({removed} stale removed)." if removed else "."
 
-        headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
-        radarr_resp = requests.get(f"{radarr_url}/api/v3/movie", headers=headers, timeout=10)
-        radarr_tmdb_ids = set()
-        
-        if radarr_resp.status_code == 200:
-            for m in radarr_resp.json():
-                tmdb = m.get("tmdbId")
-                if tmdb:
-                    radarr_tmdb_ids.add(str(tmdb))
-                    update_external_cache("radarr", tmdb_id=str(tmdb), status="in_library", in_library=1, external_item_id=str(m.get("id")))
+        if get_setting("enable_radarr_automation", "0") != "1":
+            update_job_status("radarr", "completed", summary + " Automation is off, nothing added.")
+            return
 
-        added_count = 0
-        for film in active_films:
-            tmdb_id = film.get("tmdb_id")
-            user_count = film.get("user_count", 0)
+        update_job_status("radarr", "in_progress", summary + " Evaluating watchlist...")
+        min_users = int(get_setting("radarr_min_user_count", "1"))
+        dry_run = get_setting("radarr_dry_run", "0") == "1"
+        in_jellyfin = {str(i["tmdb_id"]) for i in get_external_library_cache("jellyfin") if i.get("tmdb_id")}
 
-            if not tmdb_id:
+        added = 0
+        for film in get_aggregated_active_films(list_type="Watchlist", media_type="movie"):
+            tmdb = str(film.get("tmdb_id") or "")
+            if (not tmdb or film.get("user_count", 0) < min_users
+                    or tmdb in in_jellyfin or tmdb in in_radarr):
                 continue
 
-            tmdb_str = str(tmdb_id)
+            result = radarr_client.add_movie(tmdb, dry_run=dry_run)
+            if result["status"] == "added":
+                added += 1
+                in_radarr[tmdb] = result["radarr_id"]
+                update_external_cache("radarr", tmdb_id=tmdb, status="monitored", in_library=1,
+                                      external_item_id=result["radarr_id"],
+                                      details_json=json.dumps({"title": film.get("full_display_name")}))
+            elif result["status"] == "error":
+                logger.warning(f"Radarr add failed for {tmdb}: {result['message']}")
 
-            if (
-                user_count >= min_users
-                and tmdb_str not in existing_tmdb_ids
-                and tmdb_str not in radarr_tmdb_ids
-            ):
-                payload = {
-                    "title": film.get("movie_title"),
-                    "qualityProfileId": quality_profile,
-                    "titleSlug": film.get("movie_slug"),
-                    "tmdbId": int(tmdb_id),
-                    "rootFolderPath": root_folder,
-                    "monitored": True,
-                    "addOptions": {"searchForMovie": True},
-                }
-                res = requests.post(f"{radarr_url}/api/v3/movie", json=payload, headers=headers, timeout=10)
-                if res.status_code in [200, 201]:
-                    added_count += 1
-                    radarr_tmdb_ids.add(tmdb_str)
-                    res_data = res.json()
-                    update_external_cache(
-                        "radarr",
-                        tmdb_id=tmdb_str,
-                        status="added",
-                        in_library=1,
-                        external_item_id=str(res_data.get("id"))
-                    )
-
-        update_job_status(
-            "radarr",
-            "completed",
-            f"Automated evaluation complete. Added {added_count} new movie(s) to Radarr.",
-        )
+        update_job_status("radarr", "completed",
+                          f"{summary} {'Dry run' if dry_run else 'Done'}. Added {added} new movie(s).")
     except Exception as e:
         logger.error(f"Radarr automation error: {e}")
         update_job_status("radarr", "failed", str(e))
+        raise
 
 
 def run_sonarr_automation_worker() -> None:
-    """Evaluates active watchlists and sends missing TV shows to Sonarr if enabled."""
-    enabled = get_setting("enable_sonarr_automation", "0") == "1"
-    if not enabled:
+    if get_setting("enable_sonarr_automation", "0") != "1":
         update_job_status("sonarr", "idle", "Sonarr automation disabled in settings.")
         return
 
-    sonarr_url = get_setting("sonarr_url").rstrip("/")
-    api_key = get_setting("sonarr_api_key")
-    min_users = int(get_setting("sonarr_min_user_count", "1"))
-    root_folder = get_setting("sonarr_root_folder", "/tv")
-    quality_profile = int(get_setting("sonarr_quality_profile_id", "1"))
-
-    if not sonarr_url or not api_key:
-        update_job_status("sonarr", "failed", "Sonarr URL or API key missing.")
-        return
-
     update_job_status("sonarr", "in_progress", "Evaluating missing TV shows...")
-
     try:
-        active_shows = [f for f in get_aggregated_active_films() if f.get("media_type") == "tv"]
-        jf_cache = get_external_library_cache("jellyfin")
-        existing_tvdb_ids = {str(item["tvdb_id"]) for item in jf_cache if item.get("tvdb_id")}
+        min_users = int(get_setting("sonarr_min_user_count", "1"))
+        dry_run = get_setting("sonarr_dry_run", "0") == "1"
 
-        headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
-        sonarr_resp = requests.get(f"{sonarr_url}/api/v3/series", headers=headers, timeout=10)
-        sonarr_tvdb_ids = set()
+        in_sonarr = sonarr_client.get_library_tvdb_ids()
+        for tvdb, sid in in_sonarr.items():
+            update_external_cache("sonarr", tvdb_id=tvdb, status="in_library",
+                                  in_library=1, external_item_id=sid)
 
-        if sonarr_resp.status_code == 200:
-            for s in sonarr_resp.json():
-                tvdb = s.get("tvdbId")
-                if tvdb:
-                    sonarr_tvdb_ids.add(str(tvdb))
-                    update_external_cache("sonarr", tvdb_id=str(tvdb), status="in_library", in_library=1, external_item_id=str(s.get("id")))
+        in_jellyfin = {str(i["tvdb_id"]) for i in get_external_library_cache("jellyfin") if i.get("tvdb_id")}
 
-        added_count = 0
-        for show in active_shows:
-            tvdb_id = show.get("tvdb_id")
-            user_count = show.get("user_count", 0)
-            season_num = show.get("season_number")
-
-            if not tvdb_id:
+        added = 0
+        for show in get_aggregated_active_films():
+            tvdb = str(show.get("tvdb_id") or "")
+            if (show.get("media_type") != "tv" or not tvdb
+                    or show.get("user_count", 0) < min_users
+                    or tvdb in in_jellyfin or tvdb in in_sonarr):
                 continue
 
-            tvdb_str = str(tvdb_id)
+            result = sonarr_client.add_series(
+                tvdb, season_number=show.get("season_number"), dry_run=dry_run
+            )
+            if result["status"] == "added":
+                added += 1
+                in_sonarr[tvdb] = result["sonarr_id"]
+                update_external_cache("sonarr", tvdb_id=tvdb, status="added",
+                                      in_library=1, external_item_id=result["sonarr_id"])
+            elif result["status"] == "error":
+                logger.warning(f"Sonarr add failed for {tvdb}: {result['message']}")
 
-            if (
-                user_count >= min_users
-                and tvdb_str not in existing_tvdb_ids
-                and tvdb_str not in sonarr_tvdb_ids
-            ):
-                payload = {
-                    "title": show.get("movie_title"),
-                    "qualityProfileId": quality_profile,
-                    "titleSlug": show.get("movie_slug"),
-                    "tvdbId": int(tvdb_id),
-                    "rootFolderPath": root_folder,
-                    "monitored": True,
-                    "addOptions": {
-                        "searchForMissingEpisodes": True,
-                        "ignoreEpisodesWithFiles": True,
-                        "searchForCutoffUnmetEpisodes": False
-                    },
-                }
-
-                # If a specific season was requested from Serializd/Letterboxd, set season monitoring
-                if season_num:
-                    payload["seasons"] = [{"seasonNumber": int(season_num), "monitored": True}]
-
-                res = requests.post(f"{sonarr_url}/api/v3/series", json=payload, headers=headers, timeout=10)
-                if res.status_code in [200, 201]:
-                    added_count += 1
-                    sonarr_tvdb_ids.add(tvdb_str)
-                    res_data = res.json()
-                    update_external_cache(
-                        "sonarr",
-                        tvdb_id=tvdb_str,
-                        status="added",
-                        in_library=1,
-                        external_item_id=str(res_data.get("id"))
-                    )
-
-        update_job_status(
-            "sonarr",
-            "completed",
-            f"Automated evaluation complete. Added {added_count} new show(s) to Sonarr.",
-        )
+        update_job_status("sonarr", "completed",
+                          f"{'Dry run' if dry_run else 'Done'}. Added {added} new show(s).")
     except Exception as e:
         logger.error(f"Sonarr automation error: {e}")
         update_job_status("sonarr", "failed", str(e))
