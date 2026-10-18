@@ -9,8 +9,8 @@ scheduler = BackgroundScheduler()
 def run_scraper_task():
     update_task_status("scraper", "in_progress", "Scraping watchlists...")
     try:
-        from scraper import run_watchlist_scrapers
-        run_watchlist_scrapers()
+        from scraper import run_all_scrapers
+        run_all_scrapers()
         update_task_status("scraper", "completed", "Scrape finished successfully.")
     except Exception as e:
         logger.error(f"Scraper job failed: {e}")

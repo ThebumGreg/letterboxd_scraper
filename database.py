@@ -31,6 +31,7 @@ def init_db():
                 season_number INTEGER DEFAULT NULL,
                 episode_number INTEGER DEFAULT NULL,
                 poster_url TEXT,
+                letterboxd_lists TEXT DEFAULT '',
                 last_scraped TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(username, movie_slug)
             )
@@ -49,6 +50,7 @@ def init_db():
                 episode_number INTEGER DEFAULT NULL,
                 item_slug TEXT,
                 raw_data TEXT,
+                letterboxd_lists TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -88,8 +90,19 @@ def init_db():
             )
         """)
 
-        # Safely attempt to add season/episode columns if upgrading existing database
-        for col in ["season_number INTEGER DEFAULT NULL", "episode_number INTEGER DEFAULT NULL"]:
+        # Disk scanner cache table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS disk_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                path TEXT,
+                size REAL,
+                last_scanned TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Safely attempt to add new columns if upgrading an existing database
+        for col in ["season_number INTEGER DEFAULT NULL", "episode_number INTEGER DEFAULT NULL", "letterboxd_lists TEXT DEFAULT ''"]:
             try:
                 cursor.execute(f"ALTER TABLE user_films ADD COLUMN {col};")
             except sqlite3.OperationalError:
@@ -107,6 +120,39 @@ def init_db():
         conn.commit()
 
 # --- Query & Data Operations ---
+
+def add_list_column_if_missing():
+    """Wrapper function to align with external scraper calls."""
+    init_db()
+
+def upsert_movie_with_list(slug, title, list_name):
+    """Inserts or updates a movie and appends the new list tag without duplicating them."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Querying user_films as the primary active table
+        cursor.execute("SELECT id, letterboxd_lists FROM user_films WHERE movie_slug = ?", (slug,))
+        row = cursor.fetchone()
+        
+        if row:
+            existing_lists = row['letterboxd_lists'] or ""
+            lists_set = set(filter(None, [x.strip() for x in existing_lists.split(',')]))
+            
+            if list_name not in lists_set:
+                lists_set.add(list_name)
+                new_lists = ", ".join(lists_set)
+                cursor.execute(
+                    "UPDATE user_films SET letterboxd_lists = ? WHERE id = ?", 
+                    (new_lists, row['id'])
+                )
+        else:
+            # Insert a brand new record if it wasn't already in the DB
+            cursor.execute("""
+                INSERT INTO user_films (username, film_title, movie_slug, media_type, letterboxd_lists, last_scraped) 
+                VALUES (?, ?, ?, 'movie', ?, CURRENT_TIMESTAMP)
+            """, ('default', title, slug, list_name))
+            
+        conn.commit()
 
 def save_user_film(username, film_title, film_year, movie_slug, tmdb_id=None, imdb_id=None, tvdb_id=None, media_type='movie', season_number=None, episode_number=None, poster_url=None):
     """Inserts or updates a film/show entry for a user."""
@@ -237,7 +283,7 @@ def get_aggregated_active_films():
             SELECT 
                 movie_slug,
                 film_title AS movie_title,
-                film_title || ' (' || film_year || ')' AS full_display_name,
+                film_title || ' (' || COALESCE(film_year, '') || ')' AS full_display_name,
                 media_type,
                 season_number,
                 episode_number,
@@ -245,6 +291,7 @@ def get_aggregated_active_films():
                 imdb_id,
                 tvdb_id,
                 poster_url,
+                letterboxd_lists,
                 GROUP_CONCAT(username, ', ') AS added_by_users,
                 COUNT(DISTINCT username) AS user_count,
                 'https://letterboxd.com/film/' || movie_slug || '/' AS movie_url,
@@ -303,3 +350,24 @@ def get_all_task_statuses():
             statuses[row["task_name"]] = dict(row)
 
     return statuses
+
+def save_disk_file_cache(file_data_list):
+    """Saves the scanned disk files into the database."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Clear old cache and insert new scan results
+        cursor.execute('DELETE FROM disk_cache')
+        
+        for item in file_data_list:
+            cursor.execute(
+                'INSERT INTO disk_cache (title, path, size) VALUES (?, ?, ?)',
+                (item.get('title'), item.get('path'), item.get('size'))
+            )
+            
+        conn.commit()
+
+if __name__ == '__main__':
+    # Initialize the database and safely update columns if executed directly
+    init_db()
+    print("Database schema verified and ready.")

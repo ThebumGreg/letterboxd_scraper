@@ -2,6 +2,7 @@ import csv
 import io
 import json
 import os
+
 from flask import (
     Flask,
     Response,
@@ -43,6 +44,8 @@ from scheduler import (
     run_all_sequential_pipeline,
     trigger_async_task,
 )
+
+from scraper import run_all_scrapers
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "super-secret-key-change-this")
@@ -359,39 +362,32 @@ def trigger_playlist_sync():
     flash(message, "success" if success else "danger")
     return redirect(url_for("tools"))
 
-
-@app.route("/tools/export-csv")
+@app.route("/tools/export-csv", methods=["POST", "GET"])
 def export_csv():
-    films = get_aggregated_active_films()
-    output = io.StringIO()
-    writer = csv.writer(output)
-
-    writer.writerow([
-        "Title", "Display Name", "Slug", "Media Type", "TMDB ID", "IMDb ID", "TVDB ID",
-        "Added By Users", "User Count", "Letterboxd URL"
-    ])
-
-    for f in films:
-        writer.writerow([
-            f["movie_title"],
-            f["full_display_name"],
-            f["movie_slug"],
-            f.get("media_type", "movie"),
-            f.get("tmdb_id", ""),
-            f.get("imdb_id", ""),
-            f.get("tvdb_id", ""),
-            f["added_by_users"],
-            f["user_count"],
-            f["movie_url"],
-        ])
-
-    output.seek(0)
-    return Response(
-        output.getvalue(),
-        mimetype="text/csv",
-        headers={"Content-Disposition": "attachment;filename=watchlist_export.csv"},
+    """Web UI trigger for exporting the database."""
+    csv_buffer = generate_consolidated_csv_buffer()
+    
+    # Convert StringIO to BytesIO for Flask send_file
+    mem = io.BytesIO()
+    mem.write(csv_buffer.getvalue().encode('utf-8'))
+    mem.seek(0)
+    csv_buffer.close()
+    
+    return send_file(
+        mem,
+        mimetype='text/csv',
+        as_attachment=True,
+        download_name='letterboxd_sync_export.csv'
     )
 
+@app.route("/tools/trigger-disk-scan", methods=["POST"])
+def trigger_disk_scan():
+    """Web UI trigger for the disk scanner."""
+    try:
+        run_disk_scan() 
+        return jsonify({"status": "success", "message": "Disk scan completed successfully."}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

@@ -1,37 +1,40 @@
 import csv
 import io
-from database import get_aggregated_active_films
-from logger import logger
+import os
+from datetime import datetime
+from database import get_db_connection
 
-def generate_consolidated_csv_buffer() -> io.StringIO:
-    """
-    Generates a single consolidated CSV buffer containing active films,
-    user attribution, user counts, and direct Letterboxd URLs.
-    """
-    active_films = get_aggregated_active_films()
+def generate_consolidated_csv_buffer():
+    """Generates a CSV in memory for the Flask Web UI."""
+    conn = get_db_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    # Fetch all records (update table name if yours differs)
+    cursor.execute("SELECT * FROM scraped_records")
+    rows = cursor.fetchall()
+    conn.close()
+
     output = io.StringIO()
-    writer = csv.writer(output)
-
-    # Header Row
-    writer.writerow([
-        "Movie Title",
-        "Movie Slug",
-        "Movie URL",
-        "Total Users Added",
-        "Added By Users",
-        "Latest Seen At"
-    ])
-
-    for film in active_films:
-        display_name = film["full_display_name"] or film["movie_title"]
-        writer.writerow([
-            display_name,
-            film["movie_slug"],
-            film["movie_url"],
-            film["user_count"],
-            film["added_by_users"],
-            film["latest_seen"]
-        ])
-
-    output.seek(0)
+    if rows:
+        writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(dict(row))
+            
     return output
+
+def export_database_to_csv():
+    """Writes the CSV to disk for the daily cron/scheduler job."""
+    buffer = generate_consolidated_csv_buffer()
+    export_dir = "exports"
+    os.makedirs(export_dir, exist_ok=True)
+    
+    filename = f"database_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    filepath = os.path.join(export_dir, filename)
+    
+    with open(filepath, 'w', newline='', encoding='utf-8') as f:
+        f.write(buffer.getvalue())
+        
+    print(f"Database successfully exported to {filepath}")
+    return filepath

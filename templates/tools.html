@@ -131,6 +131,24 @@
                 </div>
             </div>
         </div>
+
+        <!-- Disk Scanner (Restored!) -->
+        <div class="col">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title">Disk Scanner</h5>
+                    <p class="card-text text-muted">Scans local drives to update the external library cache for unmatched items.</p>
+                    {% set disk_task = task_statuses.get('disk_scanner') %}
+                    <div class="mb-3">
+                        {{ render_status_badge(disk_task) }}
+                        <small class="text-muted d-block mt-1">{{ (disk_task.message if disk_task else '') or 'No active logs' }}</small>
+                    </div>
+                    <form action="{{ url_for('trigger_disk_scan') }}" method="POST">
+                        <button type="submit" class="btn btn-outline-primary btn-sm">Run Disk Scan Now</button>
+                    </form>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Fix & Match Section -->
@@ -172,7 +190,7 @@
     </div>
 
     <!-- Export Section -->
-    <div class="card shadow-sm">
+    <div class="card shadow-sm mb-4">
         <div class="card-body d-flex justify-content-between align-items-center">
             <div>
                 <h5 class="card-title m-0">Export Watchlist Data</h5>
