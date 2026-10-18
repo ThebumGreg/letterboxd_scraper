@@ -19,6 +19,8 @@ from database import (
     get_all_settings,
     get_external_library_cache,
     get_setting,
+    get_film_by_slug,
+    get_all_task_statuses,
     init_db,
     set_setting,
     update_film_identifiers,
@@ -29,10 +31,21 @@ from jellyfin_integration import (
     sync_jellyfin_playlist,
 )
 from notifications import send_notification
-from scheduler import init_scheduler, job_sync_jellyfin, trigger_async_task
+from scheduler import (
+    init_scheduler,
+    reconfigure_scheduler,
+    start_async_task,
+    run_scraper_task,
+    run_radarr_task,
+    run_sonarr_task,
+    run_jellyfin_movies_task,
+    run_jellyfin_tv_task,
+    run_all_sequential_pipeline,
+    trigger_async_task,
+)
 
 app = Flask(__name__)
-app.secret_key = "super-secret-key-change-this"
+app.secret_key = os.getenv("SECRET_KEY", "super-secret-key-change-this")
 
 init_db()
 init_scheduler()
@@ -45,9 +58,12 @@ def index():
     radarr_cache = get_external_library_cache("radarr")
     sonarr_cache = get_external_library_cache("sonarr")
 
-    jellyfin_lookup = {item["tmdb_id"]: item for item in jf_cache if item.get("tmdb_id")}
-    radarr_lookup = {item["tmdb_id"]: item for item in radarr_cache if item.get("tmdb_id")}
-    sonarr_lookup = {item["tvdb_id"]: item for item in sonarr_cache if item.get("tvdb_id")}
+    # Lookups indexed by TMDB ID / TVDB ID
+    jellyfin_tmdb_lookup = {str(item["tmdb_id"]): item for item in jf_cache if item.get("tmdb_id")}
+    jellyfin_tvdb_lookup = {str(item["tvdb_id"]): item for item in jf_cache if item.get("tvdb_id")}
+    
+    radarr_lookup = {str(item["tmdb_id"]): item for item in radarr_cache if item.get("tmdb_id")}
+    sonarr_lookup = {str(item["tvdb_id"]): item for item in sonarr_cache if item.get("tvdb_id")}
 
     user_agent = request.headers.get("User-Agent", "")
     all_users = set()
@@ -55,27 +71,87 @@ def index():
     movie_count = 0
     tv_count = 0
 
+    # Track identifiers already present from Letterboxd watchlists
+    known_tmdb_ids = set()
+    known_tvdb_ids = set()
+
     for film in films:
         users = [u.strip() for u in film["added_by_users"].split(",") if u.strip()]
         film["users_list"] = users
         all_users.update(users)
 
+        if film.get("tmdb_id"):
+            known_tmdb_ids.add(str(film["tmdb_id"]))
+        if film.get("tvdb_id"):
+            known_tvdb_ids.add(str(film["tvdb_id"]))
+
         if film.get("media_type") == "tv":
             tv_count += 1
+            jf_match = jellyfin_tvdb_lookup.get(str(film.get("tvdb_id")))
         else:
             movie_count += 1
+            jf_match = jellyfin_tmdb_lookup.get(str(film.get("tmdb_id")))
 
-        jf_match = jellyfin_lookup.get(film.get("tmdb_id"))
         if jf_match and get_setting("disable_jellyfin_connection", "0") != "1":
             film["in_jellyfin"] = True
-            film["jellyfin_id"] = jf_match["external_item_id"]
-            links = get_jellyfin_item_link(jf_match["external_item_id"], user_agent)
+            film["jellyfin_id"] = jf_match.get("external_item_id")
+            links = get_jellyfin_item_link(jf_match.get("external_item_id"), user_agent)
             film["jellyfin_link"] = links["primary_url"]
             matched_in_jellyfin_count += 1
         else:
             film["in_jellyfin"] = False
             film["jellyfin_id"] = None
             film["jellyfin_link"] = None
+
+    # --- Append Items Present in Jellyfin But Missing From Watchlists ---
+    all_users.add("Jellyfin")
+
+    for jf_item in jf_cache:
+        tmdb_id = str(jf_item.get("tmdb_id")) if jf_item.get("tmdb_id") else None
+        tvdb_id = str(jf_item.get("tvdb_id")) if jf_item.get("tvdb_id") else None
+
+        # Skip if already represented by a Letterboxd / user film entry
+        if (tmdb_id and tmdb_id in known_tmdb_ids) or (tvdb_id and tvdb_id in known_tvdb_ids):
+            continue
+
+        item_id = jf_item.get("external_item_id")
+        links = get_jellyfin_item_link(item_id, user_agent)
+        
+        # Determine media type based on identifiers present
+        media_type = "tv" if tvdb_id and not tmdb_id else "movie"
+        if media_type == "tv":
+            tv_count += 1
+            known_tvdb_ids.add(tvdb_id)
+        else:
+            movie_count += 1
+            if tmdb_id:
+                known_tmdb_ids.add(tmdb_id)
+
+        matched_in_jellyfin_count += 1
+
+        # Synthesize entry for UI grid rendering
+        title = jf_item.get("details_json") or f"Jellyfin Item ({tmdb_id or tvdb_id or item_id})"
+        slug = f"jf-{item_id}"
+
+        virtual_film = {
+            "movie_slug": slug,
+            "movie_title": title,
+            "full_display_name": title,
+            "media_type": media_type,
+            "tmdb_id": tmdb_id,
+            "imdb_id": jf_item.get("imdb_id"),
+            "tvdb_id": tvdb_id,
+            "poster_url": None,
+            "added_by_users": "Jellyfin",
+            "users_list": ["Jellyfin"],
+            "user_count": 1,
+            "movie_url": links["primary_url"],
+            "in_jellyfin": True,
+            "jellyfin_id": item_id,
+            "jellyfin_link": links["primary_url"],
+            "last_scraped": jf_item.get("last_updated"),
+        }
+        films.append(virtual_film)
 
     stats = {
         "total_films": len(films),
@@ -93,8 +169,7 @@ def index():
 
 @app.route("/poster/<slug>")
 def get_poster(slug):
-    films = get_aggregated_active_films()
-    film = next((f for f in films if f["movie_slug"] == slug), None)
+    film = get_film_by_slug(slug)
 
     jellyfin_id = None
     tmdb_id = None
@@ -123,8 +198,15 @@ def get_poster(slug):
 def tools():
     settings = get_all_settings()
     job_status = json.loads(settings.get("job_status", "{}"))
+    task_statuses = get_all_task_statuses()
     unmatched_films = [f for f in get_aggregated_active_films() if not f.get("tmdb_id")]
-    return render_template("tools.html", settings=settings, job_status=job_status, unmatched_films=unmatched_films)
+    return render_template(
+        "tools.html",
+        settings=settings,
+        job_status=job_status,
+        task_statuses=task_statuses,
+        unmatched_films=unmatched_films,
+    )
 
 
 @app.route("/settings")
@@ -163,24 +245,47 @@ def fix_match():
     return redirect(url_for("tools"))
 
 
-@app.route("/tools/trigger-sync-jellyfin", methods=["POST"])
-def trigger_sync_jellyfin():
-    trigger_async_task(job_sync_jellyfin)
-    flash("Jellyfin library background sync initiated.", "info")
+# --- Operations Triggers ---
+
+@app.route("/tools/trigger-scraper", methods=["POST"])
+def trigger_scraper():
+    start_async_task(run_scraper_task)
+    flash("Watchlist scraper process initiated in background.", "info")
     return redirect(url_for("tools"))
 
 
 @app.route("/tools/trigger-radarr-sync", methods=["POST"])
 def trigger_radarr_sync():
-    trigger_async_task(run_radarr_automation_worker)
-    flash("Radarr movie automation search initiated.", "info")
+    start_async_task(run_radarr_task)
+    flash("Radarr movie automation search initiated in background.", "info")
     return redirect(url_for("tools"))
 
 
 @app.route("/tools/trigger-sonarr-sync", methods=["POST"])
 def trigger_sonarr_sync():
-    trigger_async_task(run_sonarr_automation_worker)
-    flash("Sonarr TV automation search initiated.", "info")
+    start_async_task(run_sonarr_task)
+    flash("Sonarr TV automation search initiated in background.", "info")
+    return redirect(url_for("tools"))
+
+
+@app.route("/tools/trigger-jellyfin-movies", methods=["POST"])
+def trigger_jellyfin_movies():
+    start_async_task(run_jellyfin_movies_task)
+    flash("Jellyfin movie catalog sync initiated in background.", "info")
+    return redirect(url_for("tools"))
+
+
+@app.route("/tools/trigger-jellyfin-tv", methods=["POST"])
+def trigger_jellyfin_tv():
+    start_async_task(run_jellyfin_tv_task)
+    flash("Jellyfin TV show catalog sync initiated in background.", "info")
+    return redirect(url_for("tools"))
+
+
+@app.route("/tools/trigger-all", methods=["POST"])
+def trigger_all():
+    start_async_task(run_all_sequential_pipeline)
+    flash("Sequential pipeline ('Run All') initiated. Tasks are queued.", "info")
     return redirect(url_for("tools"))
 
 
@@ -198,11 +303,16 @@ def test_notification():
 def update_settings():
     set_setting("target_usernames", request.form.get("target_usernames", "[]"))
     set_setting("target_serializd_usernames", request.form.get("target_serializd_usernames", "[]"))
-    set_setting("scrape_interval_hours", request.form.get("scrape_interval_hours", "6"))
+    
+    set_setting("scraper_interval_hours", request.form.get("scraper_interval_hours", "24"))
+    set_setting("radarr_interval_hours", request.form.get("radarr_interval_hours", "6"))
+    set_setting("sonarr_interval_hours", request.form.get("sonarr_interval_hours", "6"))
+    set_setting("jellyfin_interval_hours", request.form.get("jellyfin_interval_hours", "6"))
+
     set_setting("request_delay_min", request.form.get("request_delay_min", "1.0"))
     set_setting("request_delay_max", request.form.get("request_delay_max", "3.0"))
     set_setting("tmdb_api_key", request.form.get("tmdb_api_key", ""))
-    
+
     set_setting("disable_jellyfin_connection", request.form.get("disable_jellyfin_connection", "0"))
     set_setting("jellyfin_url", request.form.get("jellyfin_url", ""))
     set_setting("jellyfin_api_key", request.form.get("jellyfin_api_key", ""))
@@ -219,6 +329,8 @@ def update_settings():
 
     set_setting("enable_notifications", request.form.get("enable_notifications", "0"))
     set_setting("apprise_urls", request.form.get("apprise_urls", ""))
+
+    reconfigure_scheduler()
 
     flash("Settings updated successfully.", "success")
     return redirect(url_for("settings_page"))

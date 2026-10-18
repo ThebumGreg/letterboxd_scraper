@@ -1,165 +1,185 @@
 {% extends "base.html" %}
-
 {% block content %}
-<h2 class="mb-4">Tools & Operations Board</h2>
 
-<!-- Live Background Job Meters -->
-<div class="row g-3 mb-4" id="jobStatusSection">
-    {% for job_key, job_info in job_status.items() %}
-    <div class="col-md-3">
-        <div class="card text-light">
-            <div class="card-body p-3">
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                    <h6 class="card-title mb-0 text-capitalize">{{ job_key.replace('_', ' ') }}</h6>
-                    <span class="badge bg-{% if job_info.status == 'success' %}success{% elif job_info.status == 'running' %}warning{% elif job_info.status == 'failed' %}danger{% else %}secondary{% endif %}">
-                        {{ job_info.status }}
-                    </span>
+{% macro render_status_badge(status_obj) %}
+    {% set status_val = ((status_obj.status if status_obj else 'idle') | lower) %}
+    {% set badge_class = 'bg-secondary' %}
+    
+    {% if status_val == 'in_progress' %}
+        {% set badge_class = 'bg-primary' %}
+    {% elif status_val == 'pending' %}
+        {% set badge_class = 'bg-warning text-dark' %}
+    {% elif status_val == 'completed' %}
+        {% set badge_class = 'bg-success' %}
+    {% elif status_val == 'failed' %}
+        {% set badge_class = 'bg-danger' %}
+    {% endif %}
+
+    <span class="badge {{ badge_class }}">
+        {{ status_val | upper }}
+    </span>
+{% endmacro %}
+
+<div class="container my-4">
+    <h2 class="mb-4">Operations & Tools</h2>
+
+    <!-- Global Pipeline -->
+    <div class="card mb-4 shadow-sm">
+        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+            <h5 class="m-0">Global Automation Pipeline</h5>
+            <form action="{{ url_for('trigger_all') }}" method="POST" class="m-0">
+                <button type="submit" class="btn btn-warning btn-sm fw-bold">Run All (Sequential Queue)</button>
+            </form>
+        </div>
+        <div class="card-body">
+            <p class="text-muted m-0">Runs Scraper &rarr; Radarr &rarr; Sonarr &rarr; Jellyfin Movies &rarr; Jellyfin TV sequentially in the background.</p>
+            {% set all_task = task_statuses.get('all') %}
+            {% if all_task %}
+                <div class="mt-2">
+                    <span class="badge bg-secondary">Status: {{ all_task.status | upper }}</span>
+                    <small class="text-muted ms-2">Last Run: {{ all_task.last_run or 'Never' }}</small>
                 </div>
-                <small class="text-light opacity-75 d-block">Last: {{ job_info.last_run }}</small>
-                {% if job_info.message %}
-                    <small class="text-info d-block mt-1 text-truncate" title="{{ job_info.message }}">{{ job_info.message }}</small>
-                {% endif %}
-            </div>
-        </div>
-    </div>
-    {% endfor %}
-</div>
-
-<!-- Fix-Match Unmatched Section -->
-<div class="card text-light mb-4">
-    <div class="card-body">
-        <h5 class="card-title">Fix-Match: Unmatched Media Items</h5>
-        <p class="card-text text-muted">Manually bind TMDB/IMDb/TVDB IDs to items lacking automated metadata matching.</p>
-        
-        {% if unmatched_films %}
-        <div class="table-responsive">
-            <table class="table table-dark table-striped align-middle mb-0">
-                <thead>
-                    <tr>
-                        <th>Title</th>
-                        <th>Type</th>
-                        <th>Added By</th>
-                        <th>TMDB ID</th>
-                        <th>IMDb ID</th>
-                        <th>TVDB ID</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for film in unmatched_films %}
-                    <tr>
-                        <form action="/tools/fix-match" method="POST">
-                            <input type="hidden" name="movie_slug" value="{{ film.movie_slug }}">
-                            <td>{{ film.movie_title }}</td>
-                            <td><span class="badge {% if film.media_type == 'tv' %}badge-tv{% else %}badge-movie{% endif %}">{{ film.media_type|default('movie')|upper }}</span></td>
-                            <td>{{ film.added_by_users }}</td>
-                            <td><input type="text" class="form-control form-control-sm" name="tmdb_id" placeholder="TMDB ID"></td>
-                            <td><input type="text" class="form-control form-control-sm" name="imdb_id" placeholder="IMDb ID"></td>
-                            <td><input type="text" class="form-control form-control-sm" name="tvdb_id" placeholder="TVDB ID"></td>
-                            <td><button type="submit" class="btn btn-sm btn-primary">Save ID</button></td>
-                        </form>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% else %}
-            <p class="text-success mb-0">All active watchlisted items are successfully matched!</p>
-        {% endif %}
-    </div>
-</div>
-
-<!-- Trigger Operations Grid -->
-<div class="row g-4">
-    <!-- Manual Scraper Trigger -->
-    <div class="col-md-4">
-        <div class="card h-100">
-            <div class="card-body">
-                <h5 class="card-title text-success"><i class="bi bi-arrow-repeat"></i> Watchlist Scraper</h5>
-                <p class="card-text text-muted">Execute manual scrape job to ingest active watchlists from Letterboxd & Serializd profiles.</p>
-                <form action="/tools/trigger-scraper" method="POST">
-                    <button type="submit" class="btn btn-primary w-100">Run Scraper Now</button>
-                </form>
-            </div>
+            {% endif %}
         </div>
     </div>
 
-    <!-- Jellyfin Library Sync -->
-    <div class="col-md-4">
-        <div class="card h-100">
-            <div class="card-body">
-                <h5 class="card-title text-info"><i class="bi bi-server"></i> Jellyfin Library Sync</h5>
-                <p class="card-text text-muted">Refresh local cache of Jellyfin indexed movies and TV shows.</p>
-                <form action="/tools/trigger-sync-jellyfin" method="POST">
-                    <button type="submit" class="btn btn-info w-100">Sync Jellyfin Cache</button>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Radarr Automation Trigger -->
-    <div class="col-md-4">
-        <div class="card h-100">
-            <div class="card-body">
-                <h5 class="card-title text-primary"><i class="bi bi-film"></i> Radarr Movie Sync</h5>
-                <p class="card-text text-muted">Evaluate active watchlisted movies and send missing items to Radarr.</p>
-                <form action="/tools/trigger-radarr-sync" method="POST">
-                    <button type="submit" class="btn btn-primary w-100">Trigger Radarr Search</button>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Sonarr Automation Trigger -->
-    <div class="col-md-4">
-        <div class="card h-100">
-            <div class="card-body">
-                <h5 class="card-title text-info"><i class="bi bi-tv"></i> Sonarr TV Sync</h5>
-                <p class="card-text text-muted">Evaluate active watchlisted TV series and send missing shows to Sonarr.</p>
-                <form action="/tools/trigger-sonarr-sync" method="POST">
-                    <button type="submit" class="btn btn-info w-100">Trigger Sonarr Search</button>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Playlist Sync -->
-    <div class="col-md-4">
-        <div class="card h-100">
-            <div class="card-body">
-                <h5 class="card-title text-success"><i class="bi bi-list-stars"></i> Jellyfin Playlist</h5>
-                <form action="/tools/sync-playlist" method="POST">
-                    <div class="mb-2">
-                        <input type="text" class="form-control form-control-sm" name="playlist_name" value="Letterboxd Community Watchlist" required>
+    <!-- Maintenance Tasks & Triggers -->
+    <h4 class="mb-3">Maintenance Tasks</h4>
+    <div class="row row-cols-1 row-cols-md-2 g-4 mb-4">
+        <!-- Scraper -->
+        <div class="col">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title">Watchlist Scraper</h5>
+                    <p class="card-text text-muted">Scrapes updated watchlists for Letterboxd and Serializd.</p>
+                    {% set scraper_task = task_statuses.get('scraper') %}
+                    <div class="mb-3">
+                        {{ render_status_badge(scraper_task) }}
+                        <small class="text-muted d-block mt-1">{{ (scraper_task.message if scraper_task else '') or 'No active logs' }}</small>
                     </div>
-                    <button type="submit" class="btn btn-success w-100">Sync Playlist</button>
-                </form>
+                    <form action="{{ url_for('trigger_scraper') }}" method="POST">
+                        <button type="submit" class="btn btn-outline-primary btn-sm">Run Scraper Now</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Radarr -->
+        <div class="col">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title">Radarr Sync</h5>
+                    <p class="card-text text-muted">Syncs missing movie items with your Radarr instance.</p>
+                    {% set radarr_task = task_statuses.get('radarr') %}
+                    <div class="mb-3">
+                        {{ render_status_badge(radarr_task) }}
+                        <small class="text-muted d-block mt-1">{{ (radarr_task.message if radarr_task else '') or 'No active logs' }}</small>
+                    </div>
+                    <form action="{{ url_for('trigger_radarr_sync') }}" method="POST">
+                        <button type="submit" class="btn btn-outline-primary btn-sm">Sync Radarr Now</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sonarr -->
+        <div class="col">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title">Sonarr Sync</h5>
+                    <p class="card-text text-muted">Syncs missing TV shows with your Sonarr instance.</p>
+                    {% set sonarr_task = task_statuses.get('sonarr') %}
+                    <div class="mb-3">
+                        {{ render_status_badge(sonarr_task) }}
+                        <small class="text-muted d-block mt-1">{{ (sonarr_task.message if sonarr_task else '') or 'No active logs' }}</small>
+                    </div>
+                    <form action="{{ url_for('trigger_sonarr_sync') }}" method="POST">
+                        <button type="submit" class="btn btn-outline-primary btn-sm">Sync Sonarr Now</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Jellyfin Movies & TV -->
+        <div class="col">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title">Jellyfin Sync</h5>
+                    <p class="card-text text-muted">Updates catalog status and syncs playlists for Movies and TV Shows.</p>
+                    
+                    {% set jf_movies_task = task_statuses.get('jellyfin_movies') %}
+                    {% set jf_tv_task = task_statuses.get('jellyfin_tv') %}
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <small class="fw-bold d-block mb-1">Movies:</small>
+                            {{ render_status_badge(jf_movies_task) }}
+                        </div>
+                        <div class="col-6">
+                            <small class="fw-bold d-block mb-1">TV Shows:</small>
+                            {{ render_status_badge(jf_tv_task) }}
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <form action="{{ url_for('trigger_jellyfin_movies') }}" method="POST">
+                            <button type="submit" class="btn btn-outline-primary btn-sm">Sync Movies</button>
+                        </form>
+                        <form action="{{ url_for('trigger_jellyfin_tv') }}" method="POST">
+                            <button type="submit" class="btn btn-outline-primary btn-sm">Sync TV Shows</button>
+                        </form>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- CSV Export -->
-    <div class="col-md-4">
-        <div class="card h-100">
-            <div class="card-body">
-                <h5 class="card-title text-light"><i class="bi bi-file-earmark-spreadsheet"></i> Data Export</h5>
-                <p class="card-text text-muted">Export active watchlist items, IDs, and profile mapping as a CSV file.</p>
-                <a href="/tools/export-csv" class="btn btn-outline-light w-100">Download CSV</a>
+    <!-- Fix & Match Section -->
+    <h4 class="mb-3">Fix & Match Metadata</h4>
+    <div class="card mb-4 shadow-sm">
+        <div class="card-body">
+            <form action="{{ url_for('fix_match') }}" method="POST" class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">Select Item / Slug</label>
+                    <input type="text" name="movie_slug" class="form-control form-control-sm" placeholder="e.g. top-gun" required>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label fw-bold">TMDB ID</label>
+                    <input type="text" name="tmdb_id" class="form-control form-control-sm" placeholder="110">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label fw-bold">IMDb ID</label>
+                    <input type="text" name="imdb_id" class="form-control form-control-sm" placeholder="tt0092099">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label fw-bold">TVDB ID</label>
+                    <input type="text" name="tvdb_id" class="form-control form-control-sm" placeholder="78093">
+                </div>
+                <div class="col-md-3">
+                    <button type="submit" class="btn btn-success btn-sm w-100">Update Identifiers</button>
+                </div>
+            </form>
+
+            {% if unmatched_films %}
+                <hr class="my-3">
+                <h6>Unmatched Items (Missing TMDB ID):</h6>
+                <div class="d-flex flex-wrap gap-1">
+                    {% for item in unmatched_films %}
+                        <span class="badge bg-light text-dark border">{{ item.movie_title or item.movie_slug }}</span>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Export Section -->
+    <div class="card shadow-sm">
+        <div class="card-body d-flex justify-content-between align-items-center">
+            <div>
+                <h5 class="card-title m-0">Export Watchlist Data</h5>
+                <p class="card-text text-muted m-0">Download complete watchlist and sync database in CSV format.</p>
             </div>
+            <a href="{{ url_for('export_csv') }}" class="btn btn-secondary btn-sm">Export CSV</a>
         </div>
     </div>
 </div>
-
-<script>
-setInterval(function() {
-    fetch('/api/job-status')
-        .then(response => response.json())
-        .then(data => {
-            let isRunning = Object.values(data).some(job => job.status === 'running');
-            if (isRunning) {
-                location.reload();
-            }
-        });
-}, 5000);
-</script>
 {% endblock %}

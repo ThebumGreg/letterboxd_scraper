@@ -1,168 +1,157 @@
+import logging
 import os
+import json
 import requests
-from typing import Dict, List, Optional, Tuple
 from database import get_setting, update_external_library_cache
-from logger import logger
 
-MIN_POSTER_SIZE_BYTES = 5120
+logger = logging.getLogger(__name__)
 
+def get_jellyfin_item_link(item_id, user_agent=""):
+    jf_url = get_setting("jellyfin_url", "").rstrip("/")
+    primary_url = f"{jf_url}/web/index.html#/details?id={item_id}" if jf_url else "#"
+    app_link = f"jellyfin://details?id={item_id}"
+    return {"primary_url": primary_url, "app_link": app_link}
 
-def get_jellyfin_headers() -> Dict[str, str]:
-    return {
-        "X-Emby-Token": get_setting("jellyfin_api_key"),
-        "Accept": "application/json",
-    }
+def fetch_and_cache_poster(slug, jellyfin_id=None, tmdb_id=None):
+    posters_dir = os.path.join("static", "posters")
+    os.makedirs(posters_dir, exist_ok=True)
+    target_path = os.path.join(posters_dir, f"{slug}.jpg")
 
+    if os.path.exists(target_path) and os.path.getsize(target_path) > 5000:
+        return True
 
-def fetch_jellyfin_library() -> List[Dict]:
-    """Retrieves all Movies and TV Series from Jellyfin into external_library_cache."""
-    if get_setting("disable_jellyfin_connection", "0") == "1":
-        logger.info("Jellyfin integration is disabled in settings.")
-        return []
+    jf_url = get_setting("jellyfin_url", "").rstrip("/")
+    jf_key = get_setting("jellyfin_api_key", "")
 
-    url = get_setting("jellyfin_url").rstrip("/")
-    api_key = get_setting("jellyfin_api_key")
+    if jellyfin_id and jf_url and jf_key:
+        img_url = f"{jf_url}/Items/{jellyfin_id}/Images/Primary?api_key={jf_key}"
+        try:
+            res = requests.get(img_url, timeout=10)
+            if res.status_code == 200 and len(res.content) > 5000:
+                with open(target_path, "wb") as f:
+                    f.write(res.content)
+                return True
+        except Exception as e:
+            logger.warning(f"Failed fetching poster from Jellyfin for {slug}: {e}")
 
-    if not url or not api_key:
-        return []
-
-    try:
-        endpoint = f"{url}/Items"
-        params = {
-            "Recursive": "true",
-            "IncludeItemTypes": "Movie,Series",
-            "Fields": "ProviderIds,Path,Overview",
-        }
-        resp = requests.get(endpoint, headers=get_jellyfin_headers(), params=params, timeout=15)
-        if resp.status_code == 200:
-            raw_items = resp.json().get("Items", [])
-            parsed_items = []
-            for item in raw_items:
-                provider_ids = item.get("ProviderIds", {})
-                item_info = {
-                    "item_identifier": item.get("Id"),
-                    "title": item.get("Name"),
-                    "normalized_title": item.get("Name", "").lower().strip(),
-                    "media_type": "movie" if item.get("Type") == "Movie" else "tv",
-                    "tmdb_id": provider_ids.get("Tmdb"),
-                    "imdb_id": provider_ids.get("Imdb"),
-                    "tvdb_id": provider_ids.get("Tvdb"),
-                    "external_item_id": item.get("Id"),
-                    "details": item,
-                }
-                parsed_items.append(item_info)
-
-            update_external_library_cache("jellyfin", parsed_items)
-            return parsed_items
-    except Exception as e:
-        logger.error(f"Failed to fetch complete Jellyfin library: {e}")
-
-    return []
-
-
-def get_jellyfin_item_link(item_id: str, user_agent: str = "") -> Dict[str, str]:
-    base_url = get_setting("jellyfin_url").rstrip("/")
-    web_url = f"{base_url}/#/details?id={item_id}"
-    ios_deeplink = f"jellyfin://details?id={item_id}"
-    is_ios = any(device in user_agent for device in ["iPhone", "iPad", "iPod"])
-
-    return {
-        "web_url": web_url,
-        "ios_deeplink": ios_deeplink,
-        "primary_url": ios_deeplink if is_ios else web_url,
-        "is_ios": is_ios,
-    }
-
-
-def fetch_tmdb_poster(tmdb_id: Optional[str], save_path: str) -> bool:
-    tmdb_key = get_setting("tmdb_api_key")
-    if not tmdb_key or not tmdb_id:
-        return False
-
-    try:
-        url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={tmdb_key}"
-        res = requests.get(url, timeout=10)
-        if res.status_code == 200:
-            poster_path = res.json().get("poster_path")
-            if poster_path:
-                img_url = f"https://image.tmdb.org/t/p/w500{poster_path}"
-                img_res = requests.get(img_url, timeout=10)
-                if img_res.status_code == 200 and len(img_res.content) > MIN_POSTER_SIZE_BYTES:
-                    with open(save_path, "wb") as f:
-                        f.write(img_res.content)
-                    return True
-    except Exception as e:
-        logger.error(f"TMDB poster fetch failed for TMDB {tmdb_id}: {e}")
+    tmdb_key = get_setting("tmdb_api_key", "")
+    if tmdb_id and tmdb_key:
+        try:
+            meta_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={tmdb_key}"
+            meta_res = requests.get(meta_url, timeout=10)
+            if meta_res.status_code == 200:
+                poster_path = meta_res.json().get("poster_path")
+                if poster_path:
+                    dl_url = f"https://image.tmdb.org/t/p/w500{poster_path}"
+                    dl_res = requests.get(dl_url, timeout=10)
+                    if dl_res.status_code == 200 and len(dl_res.content) > 5000:
+                        with open(target_path, "wb") as f:
+                            f.write(dl_res.content)
+                        return True
+        except Exception as e:
+            logger.warning(f"Failed fetching TMDB poster for {slug}: {e}")
 
     return False
 
+def sync_jellyfin_library(media_type="all"):
+    jf_url = get_setting("jellyfin_url", "").rstrip("/")
+    jf_key = get_setting("jellyfin_api_key", "")
 
-def fetch_and_cache_poster(film_slug: str, jellyfin_id: Optional[str], tmdb_id: Optional[str]) -> Optional[str]:
-    os.makedirs("static/posters", exist_ok=True)
-    target_file = f"static/posters/{film_slug}.jpg"
+    if not jf_url or not jf_key:
+        logger.warning("Jellyfin URL or API Key unconfigured.")
+        return False
 
-    if os.path.exists(target_file):
-        if os.path.getsize(target_file) > MIN_POSTER_SIZE_BYTES:
-            return f"/static/posters/{film_slug}.jpg"
-        os.remove(target_file)
+    headers = {"X-Emby-Token": jf_key}
+    include_types = "Movie,Series,Episode"
+    if media_type == "movie":
+        include_types = "Movie"
+    elif media_type == "tv":
+        include_types = "Series,Episode"
 
-    if jellyfin_id and get_setting("disable_jellyfin_connection", "0") != "1":
-        jf_base = get_setting("jellyfin_url").rstrip("/")
-        img_url = f"{jf_base}/Items/{jellyfin_id}/Images/Primary"
-        try:
-            res = requests.get(img_url, headers=get_jellyfin_headers(), timeout=10)
-            if res.status_code == 200 and len(res.content) > MIN_POSTER_SIZE_BYTES:
-                with open(target_file, "wb") as f:
-                    f.write(res.content)
-                return f"/static/posters/{film_slug}.jpg"
-        except Exception as e:
-            logger.warning(f"Failed to fetch Jellyfin poster for {jellyfin_id}: {e}")
+    endpoint = f"{jf_url}/Items?IncludeItemTypes={include_types}&Recursive=true&Fields=ProviderIds,ProductionYear,ParentIndexNumber,IndexNumber,SeriesName"
 
-    if fetch_tmdb_poster(tmdb_id, target_file):
-        return f"/static/posters/{film_slug}.jpg"
-
-    return None
-
-
-def sync_jellyfin_playlist(playlist_name: str, item_ids: List[str]) -> Tuple[bool, str]:
-    if get_setting("disable_jellyfin_connection", "0") == "1":
-        return False, "Jellyfin connection is disabled in settings."
-
-    jf_base = get_setting("jellyfin_url").rstrip("/")
-    if not jf_base or not get_setting("jellyfin_api_key"):
-        return False, "Jellyfin API URL or Key not configured."
-
-    headers = get_jellyfin_headers()
     try:
-        search_res = requests.get(
-            f"{jf_base}/Items",
-            headers=headers,
-            params={"IncludeItemTypes": "Playlist", "SearchTerm": playlist_name},
-            timeout=10,
-        )
-        existing_id = None
-        if search_res.status_code == 200:
-            for item in search_res.json().get("Items", []):
-                if item.get("Name") == playlist_name:
-                    existing_id = item.get("Id")
-                    break
+        response = requests.get(endpoint, headers=headers, timeout=20)
+        if response.status_code != 200:
+            logger.error(f"Jellyfin API error: HTTP {response.status_code}")
+            return False
 
-        if existing_id:
-            requests.delete(f"{jf_base}/Playlists/{existing_id}/Items", headers=headers, timeout=10)
-            if item_ids:
-                requests.post(
-                    f"{jf_base}/Playlists/{existing_id}/Items",
-                    headers=headers,
-                    params={"ids": ",".join(item_ids)},
-                    timeout=10,
+        items = response.json().get("Items", [])
+        matched_count = 0
+
+        for item in items:
+            item_id = item.get("Id")
+            item_name = item.get("Name", "Unknown Title")
+            series_name = item.get("SeriesName")
+            season_num = item.get("ParentIndexNumber")
+            episode_num = item.get("IndexNumber")
+            prod_year = item.get("ProductionYear")
+
+            # Format title string
+            if series_name and season_num and episode_num:
+                display_title = f"{series_name} - S{season_num:02d}E{episode_num:02d} ({item_name})"
+            elif series_name:
+                display_title = f"{series_name} - {item_name}"
+            elif prod_year:
+                display_title = f"{item_name} ({prod_year})"
+            else:
+                display_title = item_name
+
+            providers = item.get("ProviderIds", {})
+            tmdb_id = str(providers.get("Tmdb")) if providers.get("Tmdb") else None
+            imdb_id = providers.get("Imdb")
+            tvdb_id = str(providers.get("Tvdb")) if providers.get("Tvdb") else None
+
+            details_data = {
+                "title": display_title,
+                "season_number": season_num,
+                "episode_number": episode_num,
+                "type": item.get("Type")
+            }
+
+            if tmdb_id or tvdb_id or imdb_id:
+                update_external_library_cache(
+                    service="jellyfin",
+                    tmdb_id=tmdb_id,
+                    imdb_id=imdb_id,
+                    tvdb_id=tvdb_id,
+                    status="in_library",
+                    in_library=1,
+                    external_item_id=item_id,
+                    details_json=json.dumps(details_data)
                 )
-            return True, f"Updated existing playlist '{playlist_name}' ({len(item_ids)} items)."
-        else:
-            payload = {"Name": playlist_name, "Ids": item_ids}
-            res = requests.post(f"{jf_base}/Playlists", headers=headers, json=payload, timeout=10)
-            if res.status_code in [200, 204]:
-                return True, f"Created new playlist '{playlist_name}' with {len(item_ids)} items."
-            return False, f"Failed to create playlist. Status: {res.status_code}"
+                matched_count += 1
+
+        logger.info(f"Jellyfin ({media_type}) sync completed: Cached {matched_count} titles in database.")
+        return True
     except Exception as e:
-        logger.error(f"Jellyfin playlist sync error: {e}")
-        return False, str(e)
+        logger.error(f"Error syncing Jellyfin library: {e}")
+        return False
+
+def sync_jellyfin_playlist(playlist_name, item_ids):
+    jf_url = get_setting("jellyfin_url", "").rstrip("/")
+    jf_key = get_setting("jellyfin_api_key", "")
+
+    if not jf_url or not jf_key:
+        return False, "Jellyfin credentials not configured."
+
+    headers = {"X-Emby-Token": jf_key}
+    
+    try:
+        search_url = f"{jf_url}/Items?IncludeItemTypes=Playlist&SearchTerm={playlist_name}&Recursive=true"
+        res = requests.get(search_url, headers=headers, timeout=10)
+        playlists = res.json().get("Items", []) if res.status_code == 200 else []
+
+        if playlists:
+            playlist_id = playlists[0]["Id"]
+            add_url = f"{jf_url}/Playlists/{playlist_id}/Items?Ids={','.join(item_ids)}"
+            requests.post(add_url, headers=headers, timeout=10)
+            return True, f"Updated existing playlist '{playlist_name}' with {len(item_ids)} items."
+        else:
+            create_url = f"{jf_url}/Playlists?Name={playlist_name}&Ids={','.join(item_ids)}"
+            res_create = requests.post(create_url, headers=headers, timeout=10)
+            if res_create.status_code in (200, 201):
+                return True, f"Created new playlist '{playlist_name}' with {len(item_ids)} items."
+            return False, f"Failed creating playlist: HTTP {res_create.status_code}"
+    except Exception as e:
+        return False, f"Playlist sync error: {e}"

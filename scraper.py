@@ -1,124 +1,170 @@
 import json
+import logging
 import random
+import re
 import time
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Dict, List, Optional
+from bs4 import BeautifulSoup
 from curl_cffi import requests
 
-from config import BASE_DIR, DEFAULT_HEADERS, HTTP_TIMEOUT
-from database import get_setting, init_db, set_setting, sync_scraped_records
-from logger import logger
-from parser import parse_movie_posters, parse_next_page_url
-from radarr_client import sync_missing_to_radarr
+from database import (
+    get_setting,
+    save_scraped_record,
+    save_user_film,
+    sync_scraped_records,
+    update_task_status,
+)
 
-POSTER_DIR = BASE_DIR / "static" / "posters"
-POSTER_DIR.mkdir(parents=True, exist_ok=True)
+logger = logging.getLogger(__name__)
 
-class LetterboxdScraper:
-    def __init__(self) -> None:
-        self.session = requests.Session()
-        self.session.headers.update(DEFAULT_HEADERS)
-
-    def cache_poster_in_background(self, movie_slug: str, film_identifier: str) -> None:
-        """Background helper to safely cache movie posters directly to disk."""
-        if not film_identifier or not movie_slug:
-            return
-        local_path = POSTER_DIR / f"{movie_slug}.jpg"
-        if local_path.exists():
-            return
-            
-        id_parts = "/".join(list(film_identifier))
-        remote_url = f"https://a.ltrbxd.com/resized/film-poster/{id_parts}/{film_identifier}-0-230-0-345-crop.jpg"
-        try:
-            res = self.session.get(remote_url, timeout=3)
-            if res.status_code == 200:
-                with open(local_path, "wb") as f:
-                    f.write(res.content)
-        except Exception as e:
-            logger.warning(f"Background poster caching failed for {movie_slug}: {e}")
-
-    def fetch_page(self, url: str) -> Optional[str]:
-        req_min = float(get_setting("request_delay_min", "2.5"))
-        req_max = float(get_setting("request_delay_max", "4.5"))
-        
-        time.sleep(random.uniform(req_min, req_max))
-        try:
-            response = self.session.get(url, impersonate="chrome120", timeout=HTTP_TIMEOUT)
-            return response.text if response.status_code == 200 else None
-        except Exception as e:
-            logger.error(f"Error requesting {url}: {e}")
-            return None
-
-    def scrape_user_list(self, username: str, list_type: str) -> List[Dict[str, str]]:
-        records: List[Dict[str, str]] = []
-        current_url = (
-            f"https://letterboxd.com/{username}/watchlist/"
-            if list_type == "watchlist"
-            else f"https://letterboxd.com/{username}/films/"
-        )
-        logger.info(f"Scraping [{username}] {list_type}...")
-        while current_url:
-            html = self.fetch_page(current_url)
-            if not html:
-                break
-            
-            parsed = parse_movie_posters(html, username)
-            for film in parsed:
-                self.cache_poster_in_background(film["movie_slug"], film["film_identifier"])
-                
-            records.extend(parsed)
-            next_url = parse_next_page_url(html, current_url)
-            if next_url == current_url:
-                break
-            current_url = next_url
-            
-        logger.info(f"Finished [{username}] {list_type}: extracted {len(records)} records.")
-        return records
-
-def run_scraper_job():
-    if get_setting("is_scraping_active", "0") == "1":
-        logger.warning("Scraper job requested, but another scrape is currently active. Skipping.")
-        return
-    set_setting("is_scraping_active", "1")
-    logger.info("=== Starting Letterboxd Multi-User Daily Scrape Job ===")
-    init_db()
-    scraper = LetterboxdScraper()
-    run_timestamp = datetime.now(timezone.utc).isoformat()
+def random_delay():
     try:
-        target_usernames = json.loads(get_setting("target_usernames", '["tristanisepic"]'))
-        target_list_types = json.loads(get_setting("target_list_types", '["watchlist", "films"]'))
-        user_min = float(get_setting("user_delay_min", "10.0"))
-        user_max = float(get_setting("user_delay_max", "20.0"))
+        min_delay = float(get_setting("request_delay_min", "1.0"))
+        max_delay = float(get_setting("request_delay_max", "3.0"))
+        time.sleep(random.uniform(min_delay, max_delay))
+    except Exception:
+        time.sleep(1.5)
 
-        for u_idx, username in enumerate(target_usernames):
-            if u_idx > 0:
-                user_delay = random.uniform(user_min, user_max)
-                logger.info(f"Batch Spacing: waiting {user_delay:.2f}s before scraping {username}...")
-                time.sleep(user_delay)
+def parse_season_episode(title_text, slug_text):
+    """Regex extracts season and episode numbers from title or slug."""
+    season_num = None
+    episode_num = None
+    media_type = "movie"
 
-            for list_type in target_list_types:
-                try:
-                    records = scraper.scrape_user_list(username, list_type)
-                    upserted, tombstoned, active = sync_scraped_records(
-                        username, list_type, records, run_timestamp
-                    )
-                    logger.info(
-                        f"Sync [{username} - {list_type}]: Processed {upserted} | "
-                        f"Tombstoned {tombstoned} | Active {active}"
-                    )
-                except Exception as e:
-                    logger.error(f"Error scraping [{username}] {list_type}: {e}", exc_info=True)
+    combined = f"{title_text} {slug_text}"
+    
+    # Check for S01E04 pattern
+    se_match = re.search(r"[Ss](\d{1,2})[Ee](\d{1,2})", combined)
+    if se_match:
+        season_num = int(se_match.group(1))
+        episode_num = int(se_match.group(2))
+        media_type = "tv"
+    else:
+        # Check for Season 1 pattern
+        s_match = re.search(r"[Ss]eason\s*(\d{1,2})", combined)
+        if s_match:
+            season_num = int(s_match.group(1))
+            media_type = "tv"
+        
+        # Check for Episode 4 pattern
+        e_match = re.search(r"[Ee]pisode\s*(\d{1,2})", combined)
+        if e_match:
+            episode_num = int(e_match.group(1))
+            media_type = "tv"
 
-        set_setting("last_run_timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    return media_type, season_num, episode_num
 
-        if get_setting("auto_sync_radarr", "0") == "1":
-            logger.info("Auto-Sync enabled: Pushing missing movies directly to Radarr API...")
-            sync_missing_to_radarr()
+def scrape_letterboxd_user(username):
+    base_url = f"https://letterboxd.com/{username}/watchlist/page/"
+    page = 1
+    scraped_items = []
 
-        logger.info("=== Letterboxd Daily Scrape Job Finished ===")
-    finally:
-        set_setting("is_scraping_active", "0")
+    while True:
+        url = f"{base_url}{page}/"
+        logger.info(f"Scraping Letterboxd [{username}] Page {page}: {url}")
+
+        try:
+            response = requests.get(url, impersonate="chrome110", timeout=15)
+            if response.status_code == 404:
+                break
+            elif response.status_code != 200:
+                break
+
+            soup = BeautifulSoup(response.text, "html.parser")
+            posters = soup.select("div.react-component[data-component-class='LazyPoster'], div[data-item-slug], div[data-target-link], li.poster-container, div.film-poster")
+
+            if not posters:
+                break
+
+            items_found = 0
+            seen_slugs = set()
+
+            for poster in posters:
+                slug = (
+                    poster.get("data-item-slug")
+                    or poster.get("data-film-slug")
+                    or poster.get("data-target-link", "").strip("/").split("/")[-1]
+                )
+
+                if not slug or slug in seen_slugs:
+                    continue
+
+                seen_slugs.add(slug)
+
+                full_display = poster.get("data-item-full-display-name") or poster.get("data-item-name")
+                title = ""
+                year = None
+
+                if full_display:
+                    year_match = re.search(r"^(.*?)\s*\((\d{4})\)$", full_display.strip())
+                    if year_match:
+                        title = year_match.group(1).strip()
+                        year = int(year_match.group(2))
+                    else:
+                        title = full_display.strip()
+                else:
+                    img = poster.select_one("img")
+                    title = img["alt"].strip() if img and img.get("alt") else slug.replace("-", " ").title()
+
+                media_type, season_num, episode_num = parse_season_episode(title, slug)
+                movie_url = f"https://letterboxd.com/film/{slug}/"
+
+                scraped_items.append({
+                    "username": username,
+                    "source": "letterboxd",
+                    "film_title": title,
+                    "film_year": year,
+                    "movie_slug": slug,
+                    "media_type": media_type,
+                    "season_number": season_num,
+                    "episode_number": episode_num,
+                    "movie_url": movie_url,
+                    "raw_data": json.dumps({"slug": slug, "title": title, "year": year, "season": season_num, "episode": episode_num})
+                })
+                items_found += 1
+
+            if items_found == 0:
+                break
+
+            page += 1
+            random_delay()
+
+        except Exception as e:
+            logger.error(f"Error scraping Letterboxd user {username} on page {page}: {e}")
+            break
+
+    return scraped_items
+
+def run_watchlist_scrapers():
+    update_task_status("scraper", "in_progress", "Parsing target watchlists...")
+
+    raw_usernames = get_setting("target_usernames", "[]")
+    try:
+        usernames = json.loads(raw_usernames)
+        if isinstance(usernames, str):
+            usernames = [u.strip() for u in usernames.split(",") if u.strip()]
+    except Exception:
+        usernames = [u.strip() for u in raw_usernames.split(",") if u.strip()]
+
+    if not usernames:
+        update_task_status("scraper", "completed", "No target usernames configured.")
+        return
+
+    all_scraped_records = []
+
+    for username in usernames:
+        user_records = scrape_letterboxd_user(username)
+        all_scraped_records.extend(user_records)
+
+    if all_scraped_records:
+        sync_scraped_records(all_scraped_records)
+        update_task_status(
+            "scraper",
+            "completed",
+            f"Successfully scraped {len(all_scraped_records)} items across {len(usernames)} user(s)."
+        )
+    else:
+        update_task_status("scraper", "completed", "Scrape completed. No items found.")
 
 if __name__ == "__main__":
-    run_scraper_job()
+    logging.basicConfig(level=logging.INFO)
+    run_watchlist_scrapers()
