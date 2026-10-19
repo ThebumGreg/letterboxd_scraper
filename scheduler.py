@@ -1,7 +1,8 @@
+# scheduler.py
 import logging
 import threading
 from apscheduler.schedulers.background import BackgroundScheduler
-from database import get_setting, update_task_status
+from database import get_setting, update_task_status, reconcile_master_catalog
 
 logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
@@ -15,6 +16,8 @@ def run_scraper_task():
     except Exception as e:
         logger.error(f"Scraper job failed: {e}")
         update_task_status("scraper", "failed", str(e))
+    finally:
+        reconcile_master_catalog()
 
 def run_radarr_task():
     update_task_status("radarr", "in_progress", "Syncing with Radarr...")
@@ -56,7 +59,6 @@ def run_jellyfin_tv_task():
         logger.error(f"Jellyfin TV job failed: {e}")
         update_task_status("jellyfin_tv", "failed", str(e))
 
-# Backward compatibility alias
 def run_jellyfin_task():
     run_jellyfin_movies_task()
     run_jellyfin_tv_task()
@@ -64,7 +66,7 @@ def run_jellyfin_task():
 job_sync_jellyfin = run_jellyfin_task
 
 def run_all_sequential_pipeline():
-    """Executes all operations sequentially with pending queue state tracking."""
+    """Executes all operations sequentially mapping from Jellyfin -> Scrapers -> Catalog."""
     update_task_status("all", "in_progress", "Sequential pipeline started.")
     update_task_status("scraper", "pending", "Waiting in queue...")
     update_task_status("radarr", "pending", "Waiting in queue...")
@@ -72,16 +74,15 @@ def run_all_sequential_pipeline():
     update_task_status("jellyfin_movies", "pending", "Waiting in queue...")
     update_task_status("jellyfin_tv", "pending", "Waiting in queue...")
     
-    run_scraper_task()
-    run_radarr_task()
-    run_sonarr_task()
     run_jellyfin_movies_task()
     run_jellyfin_tv_task()
+    run_radarr_task()
+    run_sonarr_task()
+    run_scraper_task()
     
     update_task_status("all", "completed", "All operations completed sequentially.")
 
 def start_async_task(task_fn):
-    """Spawns a background worker thread."""
     thread = threading.Thread(target=task_fn)
     thread.daemon = True
     thread.start()
@@ -89,7 +90,6 @@ def start_async_task(task_fn):
 trigger_async_task = start_async_task
 
 def reconfigure_scheduler():
-    """Dynamically applies individual schedule frequencies from database settings."""
     scheduler.remove_all_jobs()
     
     scraper_hours = int(get_setting("scraper_interval_hours", "24"))
@@ -108,7 +108,6 @@ def reconfigure_scheduler():
         scheduler.add_job(run_jellyfin_tv_task, 'interval', hours=jellyfin_hours, id='job_jf_tv')
 
 def init_scheduler():
-    """Initializes and starts the background scheduler."""
     reconfigure_scheduler()
     if not scheduler.running:
         scheduler.start()

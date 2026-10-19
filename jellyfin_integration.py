@@ -1,8 +1,8 @@
+# jellyfin_integration.py
 import logging
 import os
-import json
 import requests
-from database import get_setting, update_external_library_cache
+from database import get_setting, update_service_cache, reconcile_master_catalog
 
 logger = logging.getLogger(__name__)
 
@@ -84,34 +84,31 @@ def sync_jellyfin_library(media_type="all"):
             season_num = item.get("ParentIndexNumber")
             episode_num = item.get("IndexNumber")
             prod_year = item.get("ProductionYear")
-            
-            # Format title string
-            if series_name and season_num and episode_num:
-                display_title = f"{series_name} - S{season_num:02d}E{episode_num:02d} ({item_name})"
-            elif series_name:
-                display_title = f"{series_name} - {item_name}"
-            elif prod_year:
-                display_title = f"{item_name} ({prod_year})"
-            else:
-                display_title = item_name
-
             item_type = item.get("Type")
+
             if item_type == "Movie":
                 media_type_val = "movie"
+                display_title = item_name
             elif item_type == "Series":
                 media_type_val = "tv"
+                display_title = item_name
             elif item_type == "Episode":
                 media_type_val = "episode"
+                if series_name and season_num is not None and episode_num is not None:
+                    display_title = f"{series_name} - S{season_num:02d}E{episode_num:02d} ({item_name})"
+                else:
+                    display_title = item_name
             else:
                 media_type_val = "unknown"
+                display_title = item_name
 
             providers = item.get("ProviderIds", {})
             tmdb_id = str(providers.get("Tmdb")) if providers.get("Tmdb") else None
             imdb_id = providers.get("Imdb")
             tvdb_id = str(providers.get("Tvdb")) if providers.get("Tvdb") else None
 
-            if tmdb_id or tvdb_id or imdb_id:
-                update_external_library_cache(
+            if tmdb_id or tvdb_id or imdb_id or display_title:
+                update_service_cache(
                     service="jellyfin",
                     tmdb_id=tmdb_id,
                     imdb_id=imdb_id,
@@ -132,6 +129,8 @@ def sync_jellyfin_library(media_type="all"):
     except Exception as e:
         logger.error(f"Error syncing Jellyfin library: {e}")
         return False
+    finally:
+        reconcile_master_catalog()
 
 def sync_jellyfin_playlist(playlist_name, item_ids):
     jf_url = get_setting("jellyfin_url", "").rstrip("/")
@@ -140,7 +139,6 @@ def sync_jellyfin_playlist(playlist_name, item_ids):
         return False, "Jellyfin credentials not configured."
 
     headers = {"X-Emby-Token": jf_key}
-         
     try:
         search_url = f"{jf_url}/Items?IncludeItemTypes=Playlist&SearchTerm={playlist_name}&Recursive=true"
         res = requests.get(search_url, headers=headers, timeout=10)
@@ -161,16 +159,8 @@ def sync_jellyfin_playlist(playlist_name, item_ids):
         return False, f"Playlist sync error: {e}"
 
 def handle_playback_reporting(payload: dict):
-    """
-    Stub for processing Jellyfin playback reporting webhooks.
-    Future implementation will use this to sync watched states back to Letterboxd/Serializd.
-    """
     logger.info(f"Jellyfin playback event received: {payload.get('NotificationType')}")
 
 def evaluate_media_quality(external_item_id: str, current_quality: str, target_quality: str):
-    """
-    Stub for evaluating media file quality against user preferences.
-    Future implementation will trigger Radarr/Sonarr upgrades if thresholds are not met.
-    """
     logger.info(f"Evaluating quality for {external_item_id}: {current_quality} vs {target_quality}")
     pass

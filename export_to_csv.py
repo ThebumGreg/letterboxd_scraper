@@ -1,17 +1,24 @@
+# export_to_csv.py
 import csv
 import io
 import os
+import sqlite3
 from datetime import datetime
 from database import get_db_connection
 
 def generate_consolidated_csv_buffer():
-    """Generates a CSV in memory for the Flask Web UI."""
+    """Generates a CSV in memory combining the Master Catalog and UI state."""
     conn = get_db_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
-    # Fetch all records (update table name if yours differs)
-    cursor.execute("SELECT * FROM scraped_records")
+    cursor.execute("""
+        SELECT mc.title, mc.release_year, mc.media_type, mc.status, 
+               mc.in_jellyfin, mc.in_radarr, mc.in_sonarr, mc.requested_by_users,
+               mc.movie_slug, mc.tmdb_id, mc.tvdb_id, mc.last_updated
+        FROM media_catalog mc
+        ORDER BY mc.media_type, mc.title
+    """)
     rows = cursor.fetchall()
     conn.close()
 
@@ -25,16 +32,15 @@ def generate_consolidated_csv_buffer():
     return output
 
 def export_database_to_csv():
-    """Writes the CSV to disk for the daily cron/scheduler job."""
     buffer = generate_consolidated_csv_buffer()
     export_dir = "exports"
     os.makedirs(export_dir, exist_ok=True)
     
-    filename = f"database_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = f"master_catalog_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     filepath = os.path.join(export_dir, filename)
     
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
         f.write(buffer.getvalue())
         
-    print(f"Database successfully exported to {filepath}")
+    print(f"Master Catalog successfully exported to {filepath}")
     return filepath

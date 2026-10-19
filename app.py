@@ -1,3 +1,4 @@
+# app.py
 import csv
 import io
 import json
@@ -23,9 +24,8 @@ from flask import (
 from automation import run_radarr_automation_worker, run_sonarr_automation_worker
 from config import DEFAULT_REQUEST_DELAY_RANGE, DEFAULT_USER_DELAY_RANGE, POSTER_DIR
 from database import (
-    get_aggregated_active_films,
+    get_media_catalog,
     get_all_settings,
-    get_external_library_cache,
     get_setting,
     get_film_by_slug,
     get_all_task_statuses,
@@ -35,7 +35,6 @@ from database import (
 )
 from jellyfin_integration import (
     fetch_and_cache_poster,
-    get_jellyfin_item_link,
     sync_jellyfin_playlist,
 )
 from notifications import send_notification
@@ -58,7 +57,6 @@ from disk_scanner import scan_local_disk_directory as run_disk_scan
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY") or secrets.token_hex(32)
 
-# CSRF protection setup
 try:
     from flask_wtf import CSRFProtect
     csrf = CSRFProtect(app)
@@ -69,251 +67,50 @@ except ImportError:
 init_db()
 init_scheduler()
 
-def _split_users(value):
-    return {u.strip() for u in (value or "").split(",") if u.strip()}
-
-def _merge_duplicate_titles(films):
-    merged, order = {}, []
-    for film in films:
-        mtype = "tv" if film.get("media_type") == "tv" else "movie"
-        if mtype == "tv" and film.get("tvdb_id"):
-            key = ("tv", "tvdb", str(film["tvdb_id"]))
-        elif film.get("tmdb_id"):
-            key = (mtype, "tmdb", str(film["tmdb_id"]))
-        else:
-            key = ("slug", film.get("movie_slug"))
-
-        users = _split_users(film.get("added_by_users"))
-        existing = merged.get(key)
-        if existing is None:
-            film["_users"] = users
-            merged[key] = film
-            order.append(key)
-            continue
-
-        existing["_users"] |= users
-        for field in ("tmdb_id", "imdb_id", "tvdb_id"):
-            existing[field] = existing.get(field) or film.get(field)
-
-    result = []
-    for key in order:
-        film = merged[key]
-        users = film.pop("_users")
-        if users:
-            film["added_by_users"] = ", ".join(sorted(users, key=str.lower))
-            film["user_count"] = len(users)
-        result.append(film)
-    return result
-
-
 @app.route("/")
 def index():
-    films = _merge_duplicate_titles(get_aggregated_active_films())
-    jellyfin_disabled = get_setting("disable_jellyfin_connection", "0") == "1"
-    jf_cache = [] if jellyfin_disabled else get_external_library_cache("jellyfin")
-    radarr_cache = get_external_library_cache("radarr")
-    sonarr_cache = get_external_library_cache("sonarr")
-
-    jellyfin_tmdb_lookup = {str(i["tmdb_id"]): i for i in jf_cache if i.get("tmdb_id") and i.get("media_type") == "movie"}
-    jellyfin_tvdb_lookup = {str(i["tvdb_id"]): i for i in jf_cache if i.get("tvdb_id") and i.get("media_type") == "tv"}
+    films = get_media_catalog()
     
-    radarr_lookup = {str(i["tmdb_id"]): i for i in radarr_cache if i.get("tmdb_id")}
-    sonarr_lookup = {str(i["tvdb_id"]): i for i in sonarr_cache if i.get("tvdb_id")}
-
-    user_agent = request.headers.get("User-Agent", "")
+    movie_count = sum(1 for f in films if f["media_type"] == "movie")
+    tv_count = sum(1 for f in films if f["media_type"] in ("tv", "episode"))
+    matched_in_jellyfin_count = sum(1 for f in films if f["in_jellyfin"])
+    radarr_count = sum(1 for f in films if f["in_radarr"])
+    sonarr_count = sum(1 for f in films if f["in_sonarr"])
+    
     all_users = set()
-
-    matched_in_jellyfin_count = 0
-    movie_count = 0
-    tv_count = 0
-
-    known_tmdb_ids = set()
-    known_tvdb_ids = set()
-
-    # Create mapping of available Jellyfin seasons grouped by TVDB id
-    jf_seasons_map = {}
-    for item in jf_cache:
-        tvdb = str(item.get("tvdb_id")) if item.get("tvdb_id") else None
-        sn = item.get("season_number")
-        if tvdb and sn is not None and item.get("media_type") in ["episode", "season"]:
-            jf_seasons_map.setdefault(tvdb, set()).add(sn)
-
-    for film in films:
-        users = [u.strip() for u in (film.get("added_by_users") or "").split(",") if u.strip()]
-        film["users_list"] = users
-        all_users.update(users)
-
-        if film.get("tmdb_id"):
-            known_tmdb_ids.add(str(film.get("tmdb_id")))
-        if film.get("tvdb_id"):
-            known_tvdb_ids.add(str(film.get("tvdb_id")))
-
-        jf_match = None
-        if film.get("media_type") == "tv":
-            tv_count += 1
-            if film.get("tvdb_id"):
-                jf_match = jellyfin_tvdb_lookup.get(str(film.get("tvdb_id")))
-                
-                # Attach available seasons to the show object for the UI
-                tvdb_str = str(film.get("tvdb_id"))
-                if tvdb_str in jf_seasons_map:
-                    film["available_seasons"] = sorted(list(jf_seasons_map[tvdb_str]))
-                    
-        else:
-            movie_count += 1
-            if film.get("tmdb_id"):
-                jf_match = jellyfin_tmdb_lookup.get(str(film.get("tmdb_id")))
-
-        if jf_match:
-            film["in_jellyfin"] = True
-            film["jellyfin_id"] = jf_match.get("external_item_id")
-            links = get_jellyfin_item_link(film["jellyfin_id"], user_agent)
-            film["jellyfin_link"] = links["primary_url"]
-            film["jellyfin_app_link"] = links["app_link"]
-            matched_in_jellyfin_count += 1
-        else:
-            film["in_jellyfin"] = False
-            film["jellyfin_id"] = None
-            film["jellyfin_link"] = None
-            film["jellyfin_app_link"] = None
-
-    real_users = set(all_users)
-
-    if jf_cache:
-        all_users.add("Jellyfin")
-        
-    for jf_item in jf_cache:
-        if jf_item.get("media_type") == "episode" or jf_item.get("media_type") == "season":
-            continue
-
-        tmdb_id = str(jf_item["tmdb_id"]) if jf_item.get("tmdb_id") else None
-        tvdb_id = str(jf_item["tvdb_id"]) if jf_item.get("tvdb_id") else None
-
-        if (tmdb_id and tmdb_id in known_tmdb_ids) or (tvdb_id and tvdb_id in known_tvdb_ids):
-            continue
-
-        item_id = jf_item.get("external_item_id")
-        links = get_jellyfin_item_link(item_id, user_agent)
-
-        media_type = jf_item.get("media_type") or ("tv" if tvdb_id and not tmdb_id else "movie")
-
-        if media_type == "tv":
-            tv_count += 1
-            if tvdb_id: known_tvdb_ids.add(tvdb_id)
-            if tmdb_id: known_tmdb_ids.add(tmdb_id)
-        else:
-            movie_count += 1
-            if tmdb_id: known_tmdb_ids.add(tmdb_id)
-
-        matched_in_jellyfin_count += 1
-        title = jf_item.get("title") or f"Jellyfin Item ({tmdb_id or tvdb_id or item_id})"
-        
-        available_seasons = []
-        if media_type == "tv" and tvdb_id and tvdb_id in jf_seasons_map:
-            available_seasons = sorted(list(jf_seasons_map[tvdb_id]))
-            
-        films.append({
-            "movie_slug": f"jf-{item_id}",
-            "movie_title": title,
-            "full_display_name": title,
-            "media_type": media_type,
-            "tmdb_id": tmdb_id,
-            "imdb_id": jf_item.get("imdb_id"),
-            "tvdb_id": tvdb_id,
-            "poster_url": None,
-            "added_by_users": "Jellyfin",
-            "users_list": ["Jellyfin"],
-            "user_count": 1,
-            "movie_url": links["primary_url"],
-            "in_jellyfin": True,
-            "jellyfin_id": item_id,
-            "jellyfin_link": links["primary_url"],
-            "jellyfin_app_link": links["app_link"],
-            "last_scraped": jf_item.get("last_updated"),
-            "available_seasons": available_seasons
-        })
-
-    radarr_base = get_setting("radarr_url", "").rstrip("/")
-    radarr_added = False
-    for rd in radarr_cache:
-        tmdb_id = str(rd["tmdb_id"]) if rd.get("tmdb_id") else None
-        if not tmdb_id or tmdb_id in known_tmdb_ids:
-            continue
-        known_tmdb_ids.add(tmdb_id)
-        movie_count += 1
-        radarr_added = True
-        title = rd.get("title") or f"Radarr Movie ({tmdb_id})"
-        link = f"{radarr_base}/movie/{tmdb_id}" if radarr_base else "#"
-
-        films.append({
-            "movie_slug": f"radarr-{rd.get('external_item_id')}",
-            "movie_title": title,
-            "full_display_name": title,
-            "media_type": "movie",
-            "tmdb_id": tmdb_id,
-            "imdb_id": rd.get("imdb_id"),
-            "tvdb_id": None,
-            "poster_url": None,
-            "added_by_users": "Radarr",
-            "users_list": ["Radarr"],
-            "user_count": 1,
-            "movie_url": link,
-            "in_jellyfin": False,
-            "jellyfin_id": None,
-            "jellyfin_link": None,
-            "jellyfin_app_link": None,
-            "last_scraped": rd.get("last_updated"),
-        })
-
-    if radarr_added:
-        all_users.add("Radarr")
-
     for f in films:
-        f["in_radarr"] = f.get("media_type") != "tv" and str(f.get("tmdb_id")) in radarr_lookup
-        f["in_sonarr"] = f.get("media_type") == "tv" and str(f.get("tvdb_id")) in sonarr_lookup
-
+        if f["in_jellyfin"] and not f.get("jellyfin_app_link"):
+            f["jellyfin_app_link"] = f"jellyfin://details?id={f['jellyfin_id']}"
+        for u in f["users_list"]:
+            all_users.add(u)
+            
     stats = {
         "total_films": len(films),
-        "total_users": len(real_users),
+        "total_users": len(all_users),
         "jellyfin_count": matched_in_jellyfin_count,
         "missing_count": len(films) - matched_in_jellyfin_count,
         "movie_count": movie_count,
         "tv_count": tv_count,
-        "radarr_count": len(radarr_lookup),
-        "sonarr_count": len(sonarr_lookup),
+        "radarr_count": radarr_count,
+        "sonarr_count": sonarr_count,
     }
 
-    return render_template("index.html", films=films, all_users=sorted(all_users), stats=stats)
+    return render_template("index.html", films=films, all_users=sorted(list(all_users)), stats=stats)
     
-
 @app.route("/poster/<slug>")
 def get_poster(slug):
     poster_filename = f"{slug}.jpg"
-
     if (POSTER_DIR / poster_filename).exists():
         return send_from_directory(POSTER_DIR, poster_filename, max_age=86400)
 
     jellyfin_id = None
     tmdb_id = None
-    if slug.startswith("jf-"):
-        jellyfin_id = slug[len("jf-"):]
-    elif slug.startswith("radarr-"):
-        radarr_id = slug[len("radarr-"):]
-        rd = next((i for i in get_external_library_cache("radarr") if str(i.get("external_item_id")) == radarr_id), None)
-        tmdb_id = rd.get("tmdb_id") if rd else None
-    else:
-        film = get_film_by_slug(slug)
-        if film:
-            tmdb_id = film.get("tmdb_id")
-            tvdb_id = film.get("tvdb_id")
-            for item in get_external_library_cache("jellyfin"):
-                if film.get("media_type") == "tv":
-                    hit = bool(tvdb_id) and str(item.get("tvdb_id")) == str(tvdb_id)
-                else:
-                    hit = bool(tmdb_id) and str(item.get("tmdb_id")) == str(tmdb_id)
-                if hit:
-                    jellyfin_id = item.get("external_item_id")
-                    break
+    
+    catalog = get_media_catalog()
+    film = next((f for f in catalog if f["movie_slug"] == slug), None)
+    if film:
+        jellyfin_id = film.get("jellyfin_id")
+        tmdb_id = film.get("tmdb_id")
 
     fetch_and_cache_poster(slug, jellyfin_id, tmdb_id)
     if (POSTER_DIR / poster_filename).exists():
@@ -324,13 +121,12 @@ def get_poster(slug):
 
     return ("Poster not found", 404)
 
-
 @app.route("/tools")
 def tools():
     settings = get_all_settings()
     job_status = json.loads(settings.get("job_status", "{}"))
     task_statuses = get_all_task_statuses()
-    unmatched_films = [f for f in get_aggregated_active_films() if not f.get("tmdb_id")]
+    unmatched_films = [f for f in get_media_catalog() if not f.get("tmdb_id") and not f.get("tvdb_id")]
 
     return render_template(
         "tools.html",
@@ -340,21 +136,17 @@ def tools():
         unmatched_films=unmatched_films,
     )
 
-
 @app.route("/settings")
 def settings_page():
     settings = get_all_settings()
     return render_template("settings.html", settings=settings)
 
-
 @app.route("/logs")
 def logs_page():
     return render_template("logs.html")
 
-
 SECRET_FIELDS = ("tmdb_api_key", "jellyfin_api_key", "radarr_api_key", "sonarr_api_key", "apprise_urls")
 _TOKEN_RE = re.compile(r"(?i)\b(api_?key|token|apikey)=([^&\s]+)")
-
 
 def _known_secrets():
     found = set()
@@ -365,12 +157,10 @@ def _known_secrets():
                 found.add(piece)
     return sorted(found, key=len, reverse=True)
 
-
 def _redact(line, secret_values):
     for secret in secret_values:
         line = line.replace(secret, "***")
     return _TOKEN_RE.sub(r"\1=***", line)
-
 
 @app.route("/api/logs")
 def api_logs():
@@ -389,17 +179,14 @@ def api_logs():
             lines = ["Unable to read log file."]
     return jsonify({"logs": lines})
 
-
 @app.route("/api/tasks")
 def api_tasks():
     tasks = get_all_task_statuses() or {}
     return jsonify(tasks={key: (dict(value) if value else {}) for key, value in tasks.items()})
 
-
 def _http_url(value):
     parsed = urlparse(value or "")
     return value.rstrip("/") if parsed.scheme in ("http", "https") and parsed.netloc else None
-
 
 @app.route("/api/test-connection/<service>", methods=["POST"])
 def api_test_connection(service):
@@ -415,41 +202,33 @@ def api_test_connection(service):
     try:
         if service == "tmdb":
             key = val("tmdb_api_key")
-            if not key:
-                return result(False, "No TMDB API key set.")
+            if not key: return result(False, "No TMDB API key set.")
             headers, params = {}, {}
-            if key.startswith("eyJ"):
-                headers["Authorization"] = f"Bearer {key}"
-            else:
-                params["api_key"] = key
+            if key.startswith("eyJ"): headers["Authorization"] = f"Bearer {key}"
+            else: params["api_key"] = key
             r = requests.get("https://api.themoviedb.org/3/configuration", headers=headers, params=params, timeout=8)
             return result(r.ok, "TMDB key accepted." if r.ok else f"TMDB rejected the key (HTTP {r.status_code}).")
 
         if service in ("jellyfin", "radarr", "sonarr"):
             url = _http_url(val(f"{service}_url"))
             key = val(f"{service}_api_key")
-            if not url:
-                return result(False, "Enter a valid http(s) URL.")
-            if not key:
-                return result(False, "No API key set.")
+            if not url: return result(False, "Enter a valid http(s) URL.")
+            if not key: return result(False, "No API key set.")
 
             if service == "jellyfin":
                 r = requests.get(f"{url}/System/Info", headers={"X-Emby-Token": key}, timeout=8)
             else:
                 r = requests.get(f"{url}/api/v3/system/status", headers={"X-Api-Key": key}, timeout=8)
 
-            if r.status_code in (401, 403):
-                return result(False, "The server rejected the API key.")
-            if not r.ok:
-                return result(False, f"Unexpected response (HTTP {r.status_code}).")
+            if r.status_code in (401, 403): return result(False, "The server rejected the API key.")
+            if not r.ok: return result(False, f"Unexpected response (HTTP {r.status_code}).")
             info = r.json()
             name = info.get("ServerName") or info.get("appName") or service.title()
             return result(True, f"Connected to {name} {info.get('Version') or info.get('version') or ''}".strip())
 
         if service == "notifications":
             urls = [u for u in re.split(r"[,\s]+", val("apprise_urls")) if u]
-            if not urls:
-                return result(False, "No Apprise URLs set.")
+            if not urls: return result(False, "No Apprise URLs set.")
             try:
                 import apprise
             except ImportError:
@@ -457,8 +236,7 @@ def api_test_connection(service):
                 return result(bool(ok), "Sent using the saved settings." if ok else "Sending failed.")
 
             sender = apprise.Apprise()
-            if not sender.add(urls):
-                return result(False, "None of the URLs are valid Apprise URLs.")
+            if not sender.add(urls): return result(False, "None of the URLs are valid Apprise URLs.")
             ok = sender.notify(title="SyncHub Test", body="Test notification from SyncHub.")
             return result(bool(ok), "Notification sent." if ok else "Sending failed. Check the URLs.")
 
@@ -468,7 +246,6 @@ def api_test_connection(service):
     except ValueError:
         return result(False, "The server returned an unexpected response.")
 
-
 @app.route("/tools/fix-match", methods=["POST"])
 def fix_match():
     slug = (request.form.get("movie_slug") or "").strip()
@@ -477,22 +254,19 @@ def fix_match():
     tvdb_id = (request.form.get("tvdb_id") or "").strip()
     error = None
 
-    if not slug:
-        error = "Choose an item first."
-    elif not (tmdb_id or imdb_id or tvdb_id):
-        error = "Enter at least one ID (TMDB, IMDb or TVDB)."
-    elif (tmdb_id and not tmdb_id.isdigit()) or (tvdb_id and not tvdb_id.isdigit()):
-        error = "TMDB and TVDB IDs must be numbers."
-    elif imdb_id and not re.fullmatch(r"tt\d{6,}", imdb_id):
-        error = "IMDb IDs look like tt0092099."
+    if not slug: error = "Choose an item first."
+    elif not (tmdb_id or imdb_id or tvdb_id): error = "Enter at least one ID (TMDB, IMDb or TVDB)."
+    elif (tmdb_id and not tmdb_id.isdigit()) or (tvdb_id and not tvdb_id.isdigit()): error = "TMDB and TVDB IDs must be numbers."
+    elif imdb_id and not re.fullmatch(r"tt\d{6,}", imdb_id): error = "IMDb IDs look like tt0092099."
 
     if error:
         flash(error, "danger")
     else:
         update_film_identifiers(slug, tmdb_id, imdb_id, tvdb_id)
+        from database import reconcile_master_catalog
+        reconcile_master_catalog()
         flash(f"Updated metadata IDs for {slug}", "success")
     return redirect(url_for("tools"))
-
 
 @app.route("/tools/trigger-scraper", methods=["POST"])
 def trigger_scraper():
@@ -533,12 +307,9 @@ def trigger_all():
 @app.route("/tools/test-notification", methods=["POST"])
 def test_notification():
     success = send_notification("SyncHub Test", "Test notification from Letterboxd & Serializd SyncHub!")
-    if success:
-        flash("Push notification dispatched successfully!", "success")
-    else:
-        flash("Failed to send notification. Verify Apprise/Pushover settings.", "danger")
+    if success: flash("Push notification dispatched successfully!", "success")
+    else: flash("Failed to send notification. Verify Apprise/Pushover settings.", "danger")
     return redirect(url_for("tools"))
-
 
 SETTING_DEFAULTS = {
     "scraper_interval_hours": "24",
@@ -568,69 +339,50 @@ def _clean_username_list(raw):
     if raw.startswith("["):
         try:
             parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                names = [str(n).strip() for n in parsed]
+            if isinstance(parsed, list): names = [str(n).strip() for n in parsed]
         except ValueError:
             pass
-    if names is None:
-        names = [n.strip() for n in re.split(r"[\n,]+", raw)]
+    if names is None: names = [n.strip() for n in re.split(r"[\n,]+", raw)]
     names = list(dict.fromkeys(n for n in names if n))
     bad = next((n for n in names if not re.fullmatch(r"[\w.\-]+", n)), None)
-    if bad:
-        return None, f'"{bad}" is not a valid username.'
+    if bad: return None, f'"{bad}" is not a valid username.'
     return json.dumps(names), None
-
 
 @app.route("/tools/update-settings", methods=["POST"])
 def update_settings():
     problems = []
     for key in ("target_usernames", "target_serializd_usernames"):
         cleaned, error = _clean_username_list(request.form.get(key, "[]"))
-        if error:
-            problems.append(f"{key}: {error}")
-        else:
-            set_setting(key, cleaned)
+        if error: problems.append(f"{key}: {error}")
+        else: set_setting(key, cleaned)
 
     for key, default in SETTING_DEFAULTS.items():
         set_setting(key, (request.form.get(key, default) or default).strip())
 
     for key in SECRET_FIELDS:
         value = (request.form.get(key) or "").strip()
-        if value:
-            set_setting(key, value)
+        if value: set_setting(key, value)
 
     reconfigure_scheduler()
-    if problems:
-        flash("Some settings were not saved. " + " ".join(problems), "danger")
-    else:
-        flash("Settings updated successfully.", "success")
+    if problems: flash("Some settings were not saved. " + " ".join(problems), "danger")
+    else: flash("Settings updated successfully.", "success")
     return redirect(url_for("settings_page"))
-
 
 @app.route("/api/job-status")
 def api_job_status():
     status_data = json.loads(get_setting("job_status", "{}"))
     return jsonify(status_data)
 
-
 @app.route("/tools/sync-playlist", methods=["POST"])
 def trigger_playlist_sync():
     playlist_name = request.form.get("playlist_name", "Letterboxd Community Watchlist")
-    active_films = get_aggregated_active_films()
-    jf_cache = get_external_library_cache("jellyfin")
-    jf_lookup = {item["tmdb_id"]: item["external_item_id"] for item in jf_cache if item.get("tmdb_id")}
-
-    matching_item_ids = [
-        jf_lookup[film["tmdb_id"]]
-        for film in active_films
-        if film.get("tmdb_id") in jf_lookup
-    ]
+    active_films = get_media_catalog()
+    matching_item_ids = [film["jellyfin_id"] for film in active_films if film.get("in_jellyfin") and film.get("jellyfin_id")]
     matching_item_ids = list(dict.fromkeys(matching_item_ids))
 
     success, message = sync_jellyfin_playlist(playlist_name, matching_item_ids)
     flash(message, "success" if success else "danger")
     return redirect(url_for("tools"))
-
 
 @app.route("/tools/export-csv", methods=["POST", "GET"])
 def export_csv():
@@ -639,13 +391,7 @@ def export_csv():
     mem.write(csv_buffer.getvalue().encode('utf-8'))
     mem.seek(0)
     csv_buffer.close()
-    return send_file(
-        mem,
-        mimetype='text/csv',
-        as_attachment=True,
-        download_name='letterboxd_sync_export.csv'
-    )
-
+    return send_file(mem, mimetype='text/csv', as_attachment=True, download_name='letterboxd_sync_export.csv')
 
 @app.route("/tools/trigger-disk-scan", methods=["POST"])
 def trigger_disk_scan():
@@ -656,23 +402,17 @@ def trigger_disk_scan():
         flash(f"Disk scan failed: {e}", "danger")
     return redirect(url_for("tools"))
 
-
-# --- Webhook Engine Foundation ---
 @app.route("/api/webhook/<service>", methods=["POST"])
 def api_webhook(service):
-    """Receives event webhooks from Radarr, Sonarr, and Jellyfin for the reactive pipeline."""
     payload = request.get_json(silent=True) or {}
     app.logger.info(f"Webhook received from {service}: {payload.get('eventType') or payload.get('NotificationType') or 'unknown'}")
-    
     if service == "jellyfin":
         from jellyfin_integration import handle_playback_reporting
         handle_playback_reporting(payload)
-        
     return jsonify({"status": "received", "service": service}), 200
 
 if csrf:
     csrf.exempt(api_webhook)
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=os.getenv("FLASK_DEBUG") == "1")

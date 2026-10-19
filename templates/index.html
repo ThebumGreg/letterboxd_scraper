@@ -1,10 +1,10 @@
+<!-- templates/index.html -->
 {% extends "base.html" %}
 {% from "_macros.html" import stat_card with context %}
 
 {% block title %}Dashboard{% endblock %}
 
 {% block content %}
-<!-- Row 1: library analytics (cards with a filter preset are clickable) -->
 <div class="row g-3 mb-3">
     {{ stat_card('Total Active', stats.total_films, 'info', '', '') }}
     {{ stat_card('Profiles', stats.total_users, 'warning') }}
@@ -12,15 +12,13 @@
     {{ stat_card('Missing / Wanted', stats.missing_count, 'danger', '', 'missing') }}
 </div>
 
-<!-- Row 2: media type and Servarr analytics -->
 <div class="row g-3 mb-4">
     {{ stat_card('Movies', stats.movie_count|default(0), 'secondary', 'movie', '', 'text-body') }}
-    {{ stat_card('TV Shows', stats.tv_count|default(0), 'secondary', 'tv', '', 'text-body') }}
+    {{ stat_card('TV Shows & Episodes', stats.tv_count|default(0), 'secondary', 'tv', '', 'text-body') }}
     {{ stat_card('In Radarr', stats.radarr_count|default(0), 'primary') }}
     {{ stat_card('In Sonarr', stats.sonarr_count|default(0), 'info') }}
 </div>
 
-<!-- Search, filter, sort and view controls -->
 <div class="row g-2 mb-4 p-3 align-items-center panel mx-0" id="controls">
     <div class="col-md-3">
         <label for="searchInput" class="visually-hidden">Search title</label>
@@ -31,7 +29,7 @@
         <select id="mediaTypeFilter" class="form-select">
             <option value="">All Media Types</option>
             <option value="movie">Movies Only</option>
-            <option value="tv">TV Shows Only</option>
+            <option value="tv">TV Shows & Episodes Only</option>
         </select>
     </div>
     <div class="col-6 col-md-2">
@@ -58,6 +56,7 @@
         <select id="sortOrder" class="form-select" style="min-width: 150px;">
             <option value="users-desc">Most Requested</option>
             <option value="title-asc">Title (A-Z)</option>
+            <option value="year-desc">Release Year (Newest)</option>
         </select>
         <div class="btn-group" role="group" aria-label="View mode">
             <button type="button" class="btn btn-outline-secondary active" id="btnListView" title="List view" aria-label="List view" aria-pressed="true">
@@ -72,11 +71,10 @@
 
 {% if not films %}
     <div class="alert alert-info">
-        No watchlist items yet. Run the scraper from <a href="{{ url_for('tools') }}" class="alert-link">Tools &amp; Operations</a> to import them.
+        No catalog items yet. Run the Jellyfin sync and scraper from <a href="{{ url_for('tools') }}" class="alert-link">Tools &amp; Operations</a>.
     </div>
 {% endif %}
 
-<!-- Each film is rendered once here. The grid view builds its cards from these rows in index.js. -->
 <div class="table-responsive" id="filmList">
     <table class="table table-hover align-middle">
         <thead>
@@ -94,12 +92,13 @@
             {% set mtype = film.media_type or 'movie' %}
             {% set status = 'jellyfin' if film.in_jellyfin else ('queued' if (film.in_radarr or film.in_sonarr) else 'missing') %}
             <tr class="item-row d-none"
-                data-title="{{ (film.movie_title or film.movie_slug or '')|lower }}"
-                data-display-title="{{ film.movie_title or film.movie_slug }}"
+                data-title="{{ film.title|lower }}"
+                data-display-title="{{ film.title }}"
+                data-year="{{ film.release_year or '' }}"
                 data-slug="{{ film.movie_slug }}"
-                data-added-by="{{ film.added_by_users }}"
-                data-users="|{% for u in (film.added_by_users or '').split(',') %}{{ u|trim|lower }}|{% endfor %}"
-                data-media-type="{{ mtype }}"
+                data-added-by="{{ film.requested_by_users }}"
+                data-users="|{% for u in (film.requested_by_users or '').split(',') %}{{ u|trim|lower }}|{% endfor %}"
+                data-media-type="{{ 'tv' if mtype == 'episode' else mtype }}"
                 data-status="{{ status }}"
                 data-user-count="{{ film.user_count }}"
                 data-link="{{ film.jellyfin_link if film.in_jellyfin else '' }}"
@@ -112,7 +111,10 @@
                 </td>
                 <td>
                     <div class="fw-bold">
-                        {{ film.movie_title }}
+                        {{ film.title }}
+                        {% if film.release_year %}
+                            <span class="badge bg-secondary ms-1 fw-normal">{{ film.release_year }}</span>
+                        {% endif %}
                         {% if film.season_number %}
                             <small class="text-body-secondary ms-1">(S{{ film.season_number }}{% if film.episode_number %}E{{ film.episode_number }}{% endif %})</small>
                         {% endif %}
@@ -122,9 +124,9 @@
                     {% endif %}
                 </td>
                 <td>
-                    <span class="badge {% if mtype == 'tv' %}badge-tv{% else %}badge-movie{% endif %}">{{ mtype|upper }}</span>
+                    <span class="badge {% if mtype in ('tv', 'episode') %}badge-tv{% else %}badge-movie{% endif %}">{{ mtype|upper }}</span>
                 </td>
-                <td class="d-none d-md-table-cell">{{ film.added_by_users }}</td>
+                <td class="d-none d-md-table-cell text-truncate" style="max-width: 200px;" title="{{ film.requested_by_users }}">{{ film.requested_by_users }}</td>
                 <td><span class="badge bg-primary">{{ film.user_count }}</span></td>
                 <td>
                     {% if status == 'jellyfin' %}
@@ -141,16 +143,13 @@
     </table>
 </div>
 
-<!-- Grid view (cards are generated by index.js) -->
 <div class="row row-cols-2 row-cols-md-4 row-cols-lg-6 g-3 d-none" id="filmGrid"></div>
 
-<!-- Empty state when filters match nothing -->
 <div id="emptyState" class="text-center text-body-secondary py-5 d-none">
     <p class="mb-2">No items match your filters.</p>
     <button type="button" id="btnResetFilters" class="btn btn-outline-secondary btn-sm">Reset filters</button>
 </div>
 
-<!-- Pagination -->
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-4 p-3 panel">
     <span id="pageInfo" aria-live="polite">Showing items</span>
     <div class="d-flex gap-2 align-items-center">

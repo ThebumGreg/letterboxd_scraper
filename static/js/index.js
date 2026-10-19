@@ -1,3 +1,4 @@
+/* static/js/index.js */
 (() => {
     "use strict";
 
@@ -26,7 +27,6 @@
     let page = 1;
     let view = "list";
 
-    /* ---------- persistence (best effort) ---------- */
     function restore() {
         try {
             const s = JSON.parse(localStorage.getItem(KEY) || "{}");
@@ -34,7 +34,7 @@
                 if (typeof s[k] === "string") el.value = s[k];
             }
             if (s.view === "grid") view = "grid";
-        } catch (_) { /* storage unavailable or corrupt */ }
+        } catch (_) { }
         if (!sortSel.value) sortSel.value = "users-desc";
         if (!perSel.value) perSel.value = "18";
     }
@@ -44,10 +44,9 @@
             const s = { view };
             for (const [k, el] of Object.entries(FIELDS)) s[k] = el.value;
             localStorage.setItem(KEY, JSON.stringify(s));
-        } catch (_) { /* ignore */ }
+        } catch (_) { }
     }
 
-    /* ---------- grid card builder ---------- */
     function el(tag, cls, text) {
         const node = document.createElement(tag);
         if (cls) node.className = cls;
@@ -84,6 +83,9 @@
         
         const title = el("h6", "card-title text-truncate mb-1", displayTitle);
         title.title = displayTitle;
+        if (d.year) {
+            title.appendChild(el("span", "badge bg-secondary fw-normal ms-1", d.year));
+        }
         top.appendChild(title);
 
         if (d.availableSeasons) {
@@ -112,8 +114,8 @@
         return col;
     }
 
-    /* ---------- render ---------- */
     const titleCmp = (a, b) => a.dataset.title.localeCompare(b.dataset.title);
+    const yearCmp = (a, b) => (parseInt(b.dataset.year, 10) || 0) - (parseInt(a.dataset.year, 10) || 0);
 
     function render() {
         const q = searchInput.value.trim().toLowerCase();
@@ -133,9 +135,11 @@
                 );
         });
 
-        visible.sort(sortSel.value === "title-asc"
-            ? titleCmp
-            : (a, b) => (parseInt(b.dataset.userCount, 10) - parseInt(a.dataset.userCount, 10)) || titleCmp(a, b));
+        visible.sort((a, b) => {
+            if (sortSel.value === "title-asc") return titleCmp(a, b);
+            if (sortSel.value === "year-desc") return yearCmp(a, b) || titleCmp(a, b);
+            return (parseInt(b.dataset.userCount, 10) - parseInt(a.dataset.userCount, 10)) || titleCmp(a, b);
+        });
 
         const perPage = perSel.value === "all" ? 1e9 : parseInt(perSel.value, 10);
         const total = visible.length;
@@ -145,12 +149,10 @@
         const start = (page - 1) * perPage;
         const slice = visible.slice(start, start + perPage);
 
-        // List view: reorder the real DOM nodes so the sort is actually visible.
         const shown = new Set(slice);
         rows.forEach((r) => r.classList.toggle("d-none", view !== "list" || !shown.has(r)));
         if (view === "list") slice.forEach((r) => tbody.appendChild(r));
 
-        // Grid view: build only the cards on the current page.
         if (view === "grid") gridBox.replaceChildren(...slice.map(buildCard));
         else gridBox.replaceChildren();
 
@@ -182,7 +184,6 @@
         render();
     }
 
-    /* ---------- events ---------- */
     const rerenderFromStart = () => { page = 1; render(); };
     let debounce;
 
@@ -195,7 +196,6 @@
     btnNext.addEventListener("click", () => { page++; render(); });
     $("btnResetFilters").addEventListener("click", resetFilters);
 
-    // Clickable stat cards act as filter presets.
     function applyPreset(card) {
         searchInput.value = "";
         userSel.value = "";
@@ -211,7 +211,6 @@
         });
     });
 
-    // "/" focuses search (unless already typing somewhere).
     document.addEventListener("keydown", (e) => {
         const t = e.target;
         if (e.key === "/" && !/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && !t.isContentEditable) {
@@ -220,7 +219,6 @@
         }
     });
 
-    // Poster fallback (error events don't bubble, so listen in the capture phase).
     const PLACEHOLDER = "data:image/svg+xml;utf8," + encodeURIComponent(
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 130"><rect width="90" height="130" fill="#2c3440"/>' +
         '<text x="45" y="68" font-size="11" fill="#8899aa" text-anchor="middle" font-family="sans-serif">No poster</text></svg>');
@@ -233,7 +231,6 @@
         }
     }, true);
     
-    // iOS App Link Fallback
     document.addEventListener("click", (e) => {
         const btn = e.target.closest(".jellyfin-link");
         if (btn && /iPad|iPhone|iPod/.test(navigator.userAgent)) {
