@@ -3,11 +3,11 @@ import csv
 import io
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
+from config import EXPORTS_DIR
 from database import get_db_connection
 
 def generate_consolidated_csv_buffer():
-    """Generates a CSV in memory combining the Master Catalog and UI state."""
     conn = get_db_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -33,14 +33,10 @@ def generate_consolidated_csv_buffer():
 
 def export_database_to_csv():
     buffer = generate_consolidated_csv_buffer()
-    export_dir = "exports"
-    os.makedirs(export_dir, exist_ok=True)
-    
-    filename = f"master_catalog_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-    filepath = os.path.join(export_dir, filename)
+    filename = f"master_catalog_export_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+    filepath = EXPORTS_DIR / filename
     
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
         f.write(buffer.getvalue())
         
-    print(f"Master Catalog successfully exported to {filepath}")
-    return filepath
+    return str(filepath)

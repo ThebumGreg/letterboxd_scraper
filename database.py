@@ -3,7 +3,10 @@ import json
 import logging
 import re
 import sqlite3
+import time
+import requests
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from config import DB_PATH
@@ -58,6 +61,14 @@ def _ensure_column(conn, table, col_def):
     if name not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_def}")
 
+def reset_stale_tasks():
+    with get_connection() as conn:
+        conn.execute("""
+            UPDATE task_status 
+            SET status = 'failed', message = 'Job interrupted by system restart.'
+            WHERE status IN ('in_progress', 'pending')
+        """)
+
 def init_db():
     _migrate_legacy_db()
     conn = _connect()
@@ -89,6 +100,7 @@ def init_db():
                 letterboxd_lists TEXT DEFAULT '',
                 id_source TEXT,
                 id_checked_at TIMESTAMP,
+                ignore_match INTEGER DEFAULT 0,
                 last_scraped TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(username, movie_slug)
             )
@@ -113,13 +125,10 @@ def init_db():
                 details_json TEXT,
                 queue_status TEXT,
                 queue_progress REAL,
+                ignore_match INTEGER DEFAULT 0,
                 last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
-        # Apply Match & Merge Schema Updates safely
-        _ensure_column(conn, "user_requests", "ignore_match INTEGER DEFAULT 0")
-        _ensure_column(conn, "service_cache", "ignore_match INTEGER DEFAULT 0")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS media_catalog (
@@ -150,42 +159,118 @@ def init_db():
         """)
 
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS ddns_cache (
+            CREATE TABLE IF NOT EXISTS api_payload_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                last_known_ip TEXT,
-                last_update_status TEXT,
-                raw_dynu_json_payload TEXT,
-									  
-                last_sync_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                direction TEXT,
+                service TEXT,
+                event_type TEXT,
+                endpoint TEXT,
+                status_code INTEGER,
+                duration_ms INTEGER,
+                headers_json TEXT,
+                payload_json TEXT,
+                response_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
+        conn.execute("CREATE TABLE IF NOT EXISTS ddns_cache (id INTEGER PRIMARY KEY AUTOINCREMENT, last_known_ip TEXT, last_update_status TEXT, raw_dynu_json_payload TEXT, last_sync_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         conn.execute("CREATE TABLE IF NOT EXISTS user_profile_mappings (id INTEGER PRIMARY KEY AUTOINCREMENT, profile_name TEXT UNIQUE NOT NULL, letterboxd_username TEXT, serializd_username TEXT, jellyfin_user_id TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         conn.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)")
-        conn.execute("CREATE TABLE IF NOT EXISTS task_status (task_name TEXT PRIMARY KEY, status TEXT DEFAULT 'idle', last_run TIMESTAMP, message TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS task_status (task_name TEXT PRIMARY KEY, status TEXT DEFAULT 'idle', started_at TIMESTAMP, last_run TIMESTAMP, message TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS disk_cache (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, path TEXT, size REAL, last_scanned TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+
+        _ensure_column(conn, "user_requests", "ignore_match INTEGER DEFAULT 0")
+        _ensure_column(conn, "service_cache", "ignore_match INTEGER DEFAULT 0")
+        _ensure_column(conn, "task_status", "started_at TIMESTAMP")
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_requests_user ON user_requests(username)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_requests_slug ON user_requests(movie_slug)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_requests_tmdb ON user_requests(tmdb_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_service_cache_service ON service_cache(service, tmdb_id, tvdb_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_service_cache_ext ON service_cache(service, external_item_id)")
         
         conn.commit()
     finally:
         conn.close()
+    
+    reset_stale_tasks()
 
-								 
-			 
+def log_api_payload(direction, service, event_type, endpoint, status_code, duration_ms, headers, payload, response):
+    """Safely logs raw API payloads into the database, respecting the global toggle and cap limits."""
+    if get_setting("payload_logging_enabled", "0") != "1":
+        return
+    if get_setting(f"log_service_{service}", "0") != "1":
+        return
+        
+    limit = int(get_setting("payload_retention_limit", "500"))
+    
+    headers_str = json.dumps(headers) if isinstance(headers, dict) else str(headers)
+    payload_str = json.dumps(payload) if isinstance(payload, dict) else str(payload)
+    resp_str = json.dumps(response) if isinstance(response, dict) else str(response)
+
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO api_payload_logs 
+            (direction, service, event_type, endpoint, status_code, duration_ms, headers_json, payload_json, response_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (direction, service, event_type, endpoint, status_code, duration_ms, headers_str, payload_str, resp_str))
+        
+        conn.execute(f"""
+            DELETE FROM api_payload_logs 
+            WHERE id NOT IN (
+                SELECT id FROM api_payload_logs ORDER BY id DESC LIMIT {limit}
+            )
+        """)
+
+def logged_request(service, event_type, method, url, **kwargs):
+    """A wrapper for requests.request that measures timing and routes data to the payload logger."""
+    start = time.time()
+    try:
+        res = requests.request(method, url, **kwargs)
+        dur = int((time.time() - start) * 1000)
+        
+        is_error = res.status_code >= 400
+        is_state_change = method.upper() in ('POST', 'PUT', 'DELETE', 'PATCH')
+        
+        if is_error or is_state_change:
+            try:
+                resp_data = res.json()
+            except Exception:
+                resp_data = res.text[:2000]
+                
+            log_api_payload("OUT", service, event_type, url, res.status_code, dur, dict(res.request.headers), kwargs.get('json') or kwargs.get('data') or kwargs.get('params'), resp_data)
+        return res
+    except requests.RequestException as e:
+        dur = int((time.time() - start) * 1000)
+        log_api_payload("OUT", service, event_type, url, 0, dur, kwargs.get('headers', {}), kwargs.get('json') or kwargs.get('data') or kwargs.get('params'), str(e))
+        raise
+
+def get_payload_logs(limit=100, service=None, errors_only=False):
+    sql = "SELECT * FROM api_payload_logs WHERE 1=1"
+    params = []
+    if service:
+        sql += " AND service = ?"
+        params.append(service)
+    if errors_only:
+        sql += " AND status_code >= 400"
+        
+    sql += " ORDER BY id DESC LIMIT ?"
+    params.append(int(limit))
+    
+    with get_connection() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+def clear_payload_logs():
+    with get_connection() as conn:
+        conn.execute("DELETE FROM api_payload_logs")
 
 def _split_title_year(title, year=None):
-    if year is not None:
-        year = int(year) if str(year).isdigit() else None
-    if not title:
-        return title, year
+    if year is not None: year = int(year) if str(year).isdigit() else None
+    if not title: return title, year
     m = _YEAR_RE.match(title.strip())
-    if m:
-        title = m.group(1)
-        year = year or int(m.group(2))
+    if m: title, year = m.group(1), year or int(m.group(2))
     return title.strip(), year
 
 def _parse_lists(value):
@@ -195,8 +280,7 @@ def _format_lists(lists):
     return ", ".join(sorted(lists))
 
 def _clean(value):
-    if value is None:
-        return None
+    if value is None: return None
     value = str(value).strip()
     return value or None
 
@@ -225,10 +309,8 @@ def _prune_list(conn, username, list_name, seen_slugs):
         lists = _parse_lists(r["letterboxd_lists"])
         if list_name not in lists: continue
         lists.discard(list_name)
-        if lists:
-            conn.execute("UPDATE user_requests SET letterboxd_lists = ? WHERE id = ?", (_format_lists(lists), r["id"]))
-        else:
-            conn.execute("DELETE FROM user_requests WHERE id = ?", (r["id"],))
+        if lists: conn.execute("UPDATE user_requests SET letterboxd_lists = ? WHERE id = ?", (_format_lists(lists), r["id"]))
+        else: conn.execute("DELETE FROM user_requests WHERE id = ?", (r["id"],))
         removed += 1
     return removed
 
@@ -255,93 +337,84 @@ def sync_scraped_records(username, list_type, records, run_timestamp=None):
     return len(seen), removed, len(seen)
 
 def update_film_identifiers(movie_slug, tmdb_id=None, imdb_id=None, tvdb_id=None, set_ignore=False):
-    """Updates external IDs across BOTH user requests and service cache records."""
     tmdb_id, imdb_id, tvdb_id = _clean(tmdb_id), _clean(imdb_id), _clean(tvdb_id)
     any_given = 1 if (tmdb_id or imdb_id or tvdb_id) else 0
     ignore_flag = 1 if set_ignore else 0
-    
     with get_connection() as conn:
         conn.execute("""
             UPDATE user_requests 
-            SET tmdb_id = COALESCE(?, tmdb_id), 
-                imdb_id = COALESCE(?, imdb_id), 
-                tvdb_id = COALESCE(?, tvdb_id), 
-                ignore_match = ?,
-                id_source = CASE WHEN ? THEN 'manual' ELSE id_source END 
+            SET tmdb_id = COALESCE(?, tmdb_id), imdb_id = COALESCE(?, imdb_id), tvdb_id = COALESCE(?, tvdb_id), ignore_match = ?, id_source = CASE WHEN ? THEN 'manual' ELSE id_source END 
             WHERE movie_slug = ?
         """, (tmdb_id, imdb_id, tvdb_id, ignore_flag, any_given, movie_slug))
-        
-        # Apply the same IDs to any service cache record that matches this exact slug
         conn.execute("""
             UPDATE service_cache 
-            SET tmdb_id = COALESCE(?, tmdb_id), 
-                imdb_id = COALESCE(?, imdb_id), 
-                tvdb_id = COALESCE(?, tvdb_id), 
-                ignore_match = ?
+            SET tmdb_id = COALESCE(?, tmdb_id), imdb_id = COALESCE(?, imdb_id), tvdb_id = COALESCE(?, tvdb_id), ignore_match = ?
             WHERE movie_slug = ?
         """, (tmdb_id, imdb_id, tvdb_id, ignore_flag, movie_slug))
 
+def link_service_item_to_request(slug, action, service=None, external_id=None, tmdb_id=None, tvdb_id=None):
+    with get_connection() as conn:
+        if action == "dismiss":
+            conn.execute("UPDATE user_requests SET ignore_match = 1 WHERE movie_slug = ?", (slug,))
+            if service and external_id:
+                conn.execute("UPDATE service_cache SET ignore_match = 1 WHERE service = ? AND external_item_id = ?", (service, external_id))
+            return True
+        if action == "approve":
+            tmdb_id, tvdb_id = _clean(tmdb_id), _clean(tvdb_id)
+            if service and external_id:
+                srv_row = conn.execute("SELECT * FROM service_cache WHERE service = ? AND external_item_id = ?", (service, external_id)).fetchone()
+                if srv_row:
+                    tmdb_id, tvdb_id = tmdb_id or srv_row["tmdb_id"], tvdb_id or srv_row["tvdb_id"]
+                    conn.execute("UPDATE service_cache SET movie_slug = ?, tmdb_id = COALESCE(?, tmdb_id), tvdb_id = COALESCE(?, tvdb_id) WHERE service = ? AND external_item_id = ?", (slug, tmdb_id, tvdb_id, service, external_id))
+            if tmdb_id or tvdb_id:
+                conn.execute("UPDATE user_requests SET tmdb_id = COALESCE(?, tmdb_id), tvdb_id = COALESCE(?, tvdb_id), id_source = 'manual' WHERE movie_slug = ?", (tmdb_id, tvdb_id, slug))
+            return True
+    return False
+
 def get_fuzzy_matches():
-    """Identifies potential matches between missing-ID requests and unlinked service cache items."""
     def normalize(text):
         if not text: return ""
         text = re.sub(r'[^\w\s]', '', text.lower())
-        text = re.sub(r'\b(the|a|an)\b', '', text)
-        return text.strip()
+        return re.sub(r'\b(the|a|an)\b', '', text).strip()
 
     suggestions = []
     with get_connection() as conn:
-        unmatched_requests = conn.execute("""
-            SELECT id, movie_slug, film_title, film_year, media_type 
-            FROM user_requests 
-            WHERE (tmdb_id IS NULL AND tvdb_id IS NULL) AND ignore_match = 0
-            GROUP BY movie_slug
-        """).fetchall()
-
-        unmatched_services = conn.execute("""
-            SELECT id, title, year, media_type, external_item_id, service 
-            FROM service_cache 
-            WHERE (tmdb_id IS NULL AND tvdb_id IS NULL) AND ignore_match = 0 AND title IS NOT NULL
-        """).fetchall()
+        unmatched_requests = conn.execute("SELECT id, movie_slug, film_title, film_year, media_type FROM user_requests WHERE (tmdb_id IS NULL AND tvdb_id IS NULL) AND ignore_match = 0 GROUP BY movie_slug").fetchall()
+        unmatched_services = conn.execute("SELECT id, title, year, media_type, external_item_id, service FROM service_cache WHERE (tmdb_id IS NULL AND tvdb_id IS NULL) AND ignore_match = 0 AND title IS NOT NULL").fetchall()
 
     for req in unmatched_requests:
-        req_norm = normalize(req["film_title"])
-        req_year = int(req["film_year"]) if req["film_year"] and str(req["film_year"]).isdigit() else None
-        
+        req_norm, req_year = normalize(req["film_title"]), int(req["film_year"]) if req["film_year"] and str(req["film_year"]).isdigit() else None
         for srv in unmatched_services:
-            # Skip cross-media matches
-            if req["media_type"] != srv["media_type"]:
-                continue
-                
-            srv_norm = normalize(srv["title"])
-            if not req_norm or not srv_norm or req_norm != srv_norm:
-                continue
-
-            srv_year = int(srv["year"]) if srv["year"] and str(srv["year"]).isdigit() else None
-            
-            # Allow ±1 year variance
-            if req_year and srv_year and abs(req_year - srv_year) > 1:
-                continue
+            if req["media_type"] != srv["media_type"]: continue
+            srv_norm, srv_year = normalize(srv["title"]), int(srv["year"]) if srv["year"] and str(srv["year"]).isdigit() else None
+            if not req_norm or not srv_norm or req_norm != srv_norm: continue
+            if req_year and srv_year and abs(req_year - srv_year) > 1: continue
 
             suggestions.append({
-                "request_slug": req["movie_slug"],
-                "request_title": req["film_title"],
-                "request_year": req["film_year"],
-                "service_title": srv["title"],
-                "service_year": srv["year"],
-                "service": srv["service"],
-                "service_external_id": srv["external_item_id"]
+                "request_slug": req["movie_slug"], "request_title": req["film_title"], "request_year": req["film_year"],
+                "service_title": srv["title"], "service_year": srv["year"], "service": srv["service"], "service_external_id": srv["external_item_id"]
             })
-            break # Move to next request after finding a match
-            
+            break
     return suggestions
+
+def get_unconfirmed_guesses():
+    with get_connection() as conn:
+        rows = conn.execute("SELECT movie_slug as request_slug, film_title as request_title, film_year as request_year, tmdb_id FROM user_requests WHERE id_source = 'tmdb-search' AND tmdb_id IS NOT NULL GROUP BY movie_slug").fetchall()
+        return [dict(r) for r in rows]
+
+def confirm_guessed_id(slug):
+    with get_connection() as conn:
+        conn.execute("UPDATE user_requests SET id_source = 'tmdb-search-confirmed' WHERE movie_slug = ?", (slug,))
+
+def reject_guessed_id(slug):
+    with get_connection() as conn:
+        conn.execute("UPDATE user_requests SET tmdb_id = NULL, id_source = 'rejected' WHERE movie_slug = ?", (slug,))
 
 def get_films_needing_ids(retry_after_days=7, limit=None):
     sql = "SELECT movie_slug, MAX(film_title) AS title, MAX(film_year) AS year, MAX(id_checked_at) AS checked FROM user_requests WHERE movie_slug NOT LIKE 'serializd-%' GROUP BY movie_slug HAVING MAX(NULLIF(tmdb_id, '')) IS NULL AND COALESCE(MAX(id_source), '') != 'rejected' AND (MAX(id_checked_at) IS NULL OR MAX(id_checked_at) < datetime('now', ?)) ORDER BY MAX(id_checked_at) IS NOT NULL, MAX(id_checked_at)"
     params = [f"-{int(retry_after_days)} days"]
     if limit:
-        sql += " LIMIT ?"
-        params.append(int(limit))
+        sql += " LIMIT ?"; params.append(int(limit))
     with get_connection() as conn:
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
@@ -359,8 +432,7 @@ def get_film_by_slug(slug):
         return dict(row) if row else None
 
 def get_pending_requests(media_type="movie"):
-																			  
-    where_sql = "WHERE media_type = ? AND letterboxd_lists LIKE '%Watchlist%'"
+    where_sql = "WHERE media_type = ? AND letterboxd_lists LIKE '%Watchlist%' AND (id_source IS NULL OR id_source != 'tmdb-search')"
     with get_connection() as conn:
         rows = conn.execute(f"SELECT tmdb_id, tvdb_id, movie_slug, MAX(film_title) as full_display_name, COUNT(DISTINCT username) as user_count, MAX(season_number) as season_number FROM user_requests {where_sql} GROUP BY movie_slug", (media_type,)).fetchall()
         return [dict(r) for r in rows]
@@ -383,7 +455,6 @@ def prune_service_cache(service, older_than):
         return conn.execute("DELETE FROM service_cache WHERE service = ? AND last_updated < ?", (service, older_than)).rowcount
 
 def reconcile_master_catalog():
-																					
     with get_connection() as conn:
         conn.execute("DELETE FROM media_catalog")
         catalog = {}
@@ -392,9 +463,7 @@ def reconcile_master_catalog():
             if mtype == "tv" and tvdb: return ("tv", "tvdb", str(tvdb))
             if tmdb: return (mtype, "tmdb", str(tmdb))
             if slug: return ("slug", slug)
-            t = (title or "").lower().strip()
-            y = int(year) if year and str(year).isdigit() else 0
-            return (mtype, "title_year", t, y)
+            return (mtype, "title_year", (title or "").lower().strip(), int(year) if year and str(year).isdigit() else 0)
 
         jf_seasons = {}
         jf_url = get_setting("jellyfin_url", "").rstrip("/")
@@ -475,8 +544,6 @@ def reconcile_master_catalog():
             avail_seasons = []
             if item["media_type"] == "tv" and item["tvdb_id"] and str(item["tvdb_id"]) in jf_seasons:
                 avail_seasons = sorted(list(jf_seasons[str(item["tvdb_id"])]))
-				
-																															
                 if avail_seasons and item["status"] != "in_library":
                     item["status"] = "partially_available"
                     
@@ -518,25 +585,32 @@ def get_all_settings():
         return {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM app_settings")}
 
 def update_task_status(task_name, status, message=""):
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     with get_connection() as conn:
-        conn.execute("INSERT INTO task_status (task_name, status, last_run, message) VALUES (?, ?, CURRENT_TIMESTAMP, ?) ON CONFLICT(task_name) DO UPDATE SET status = excluded.status, last_run = CURRENT_TIMESTAMP, message = excluded.message", (task_name, status, message))
+        row = conn.execute("SELECT started_at FROM task_status WHERE task_name = ?", (task_name,)).fetchone()
+        started_at = now_str if status == "in_progress" else (row["started_at"] if row else None)
+        conn.execute("""
+            INSERT INTO task_status (task_name, status, started_at, last_run, message) 
+            VALUES (?, ?, ?, ?, ?) 
+            ON CONFLICT(task_name) DO UPDATE SET 
+                status = excluded.status, 
+                started_at = COALESCE(excluded.started_at, task_status.started_at),
+                last_run = CASE WHEN excluded.status IN ('completed', 'failed') THEN ? ELSE task_status.last_run END, 
+                message = excluded.message
+        """, (task_name, status, started_at, now_str, message, now_str))
 
 def update_job_status(job_name, status, message=""):
     update_task_status(job_name, status, message)
 
 def get_all_task_statuses():
-					 
-    default_tasks = ["scraper_letterboxd", "scraper_serializd", "radarr", "sonarr", "jellyfin_movies", "jellyfin_tv", "id_resolver", "all"]
-														  
-	 
-    statuses = {t: {"task_name": t, "status": "idle", "last_run": None, "message": "No active logs"} for t in default_tasks}
+    default_tasks = ["scraper_letterboxd", "scraper_serializd", "radarr", "sonarr", "jellyfin_movies", "jellyfin_tv", "id_resolver", "disk_scanner", "all"]
+    statuses = {t: {"task_name": t, "status": "idle", "started_at": None, "last_run": None, "message": "No active logs"} for t in default_tasks}
     with get_connection() as conn:
         for row in conn.execute("SELECT * FROM task_status"):
             statuses[row["task_name"]] = dict(row)
     return statuses
 
 def get_ddns_cache():
-																																																											 
     with get_connection() as conn:
         row = conn.execute("SELECT * FROM ddns_cache ORDER BY id DESC LIMIT 1").fetchone()
         return dict(row) if row else None
@@ -565,9 +639,7 @@ def delete_user_profile_mapping(profile_id):
         conn.execute("DELETE FROM user_profile_mappings WHERE id = ?", (profile_id,))
 
 def get_tv_show_details(tvdb_id):
-    import json
     with get_connection() as conn:
-        # 1. Get the base show info from the main catalog
         show_row = conn.execute("SELECT * FROM media_catalog WHERE tvdb_id = ? AND media_type IN ('tv', 'episode') LIMIT 1", (tvdb_id,)).fetchone()
         if not show_row:
             return None, {}
@@ -576,42 +648,32 @@ def get_tv_show_details(tvdb_id):
         show["available_seasons"] = json.loads(show["available_seasons"]) if show["available_seasons"] else []
         show["users_list"] = [u.strip() for u in (show["requested_by_users"] or "").split(",") if u.strip()]
 
-        # 2. Get individual episodes cached from Jellyfin
         ep_rows = conn.execute("""
             SELECT season_number, episode_number, title, in_library, external_item_id as jellyfin_id 
             FROM service_cache 
-            WHERE service = 'jellyfin' AND media_type = 'episode' AND tvdb_id = ? 
-            ORDER BY season_number, episode_number
+            WHERE service = 'jellyfin' AND media_type = 'episode' AND tvdb_id = ?
         """, (tvdb_id,)).fetchall()
 
-        # 3. Group the episodes by season for the UI accordion
         seasons = {}
         for ep in ep_rows:
-            sn = ep["season_number"]
-            if sn is None: 
-                sn = 0 # Catch-all for Specials
-            if sn not in seasons: 
-                seasons[sn] = []
-            seasons[sn].append(dict(ep))
+            ep_dict = dict(ep)
+            sn = ep_dict["season_number"] if ep_dict["season_number"] is not None else 0
+            seasons.setdefault(sn, []).append(ep_dict)
+
+        for sn in seasons:
+            seasons[sn].sort(key=lambda x: (x["episode_number"] if x["episode_number"] is not None else 0))
 
         return show, seasons
 
 def get_movie_details_by_slug(slug):
     with get_connection() as conn:
-        row = conn.execute(
-            "SELECT * FROM media_catalog WHERE movie_slug = ? AND media_type = 'movie' LIMIT 1", 
-            (slug,)
-        ).fetchone()
-        
-        if not row:
-            return None
-            
+        row = conn.execute("SELECT * FROM media_catalog WHERE movie_slug = ? AND media_type = 'movie' LIMIT 1", (slug,)).fetchone()
+        if not row: return None
         movie = dict(row)
         movie["users_list"] = [u.strip() for u in (movie["requested_by_users"] or "").split(",") if u.strip()]
         return movie
 
 def init_ddns_db():
-    """Ensures the ddns_history audit log table exists."""
     with get_connection() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS ddns_history (
@@ -625,27 +687,15 @@ def init_ddns_db():
         """)
 
 def log_ddns_history(old_ip, new_ip, status, message):
-    """Logs an IP update event or status check to the database."""
     init_ddns_db()
     with get_connection() as conn:
-        conn.execute("""
-            INSERT INTO ddns_history (old_ip, new_ip, status, message)
-            VALUES (?, ?, ?, ?)
-        """, (old_ip or "N/A", new_ip or "N/A", status, message))
+        conn.execute("INSERT INTO ddns_history (old_ip, new_ip, status, message) VALUES (?, ?, ?, ?)", (old_ip or "N/A", new_ip or "N/A", status, message))
 
 def get_ddns_history(limit=10):
-    """Retrieves recent DDNS history records for display."""
     init_ddns_db()
     with get_connection() as conn:
-        cursor = conn.execute("""
-            SELECT old_ip, new_ip, status, message, created_at
-            FROM ddns_history
-            ORDER BY id DESC
-            LIMIT ?
-        """, (limit,))
-        return [dict(row) for row in cursor.fetchall()]
+        return [dict(row) for row in conn.execute("SELECT old_ip, new_ip, status, message, created_at FROM ddns_history ORDER BY id DESC LIMIT ?", (limit,)).fetchall()]
 
-#its being called From Scraper ???
 def add_list_column_if_missing():
     init_db()
 
@@ -658,4 +708,3 @@ def save_disk_file_cache(file_data_list):
 if __name__ == "__main__":
     init_db()
     reconcile_master_catalog()
-    print(f"Database schema verified and migrated securely at {DB_FILE}")

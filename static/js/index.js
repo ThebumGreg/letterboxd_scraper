@@ -107,6 +107,10 @@
             foot.appendChild(a);
         } else if (d.status === "queued") {
             foot.appendChild(el("span", "badge bg-info text-dark w-100 py-1 sse-badge", "Queued"));
+        } else if (!d.tmdbId && !d.tvdbId) {
+            const a = el("a", "badge bg-warning text-dark text-decoration-none w-100 py-1", "Needs ID");
+            a.href = "/resolution";
+            foot.appendChild(a);
         } else {
             foot.appendChild(el("span", "badge bg-danger w-100 py-1 sse-badge", "Missing"));
         }
@@ -120,7 +124,7 @@
     const yearCmp = (a, b) => (parseInt(b.dataset.year, 10) || 0) - (parseInt(a.dataset.year, 10) || 0);
 
     function render() {
-        if (!searchInput) return; // Prevent errors on pages without the table
+        if (!searchInput) return;
 
         const q = searchInput.value.trim().toLowerCase();
         const type = typeSel.value;
@@ -219,14 +223,6 @@
         });
     });
 
-    document.addEventListener("keydown", (e) => {
-        const t = e.target;
-        if (e.key === "/" && searchInput && !/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && !t.isContentEditable) {
-            e.preventDefault();
-            searchInput.focus();
-        }
-    });
-
     const PLACEHOLDER = "data:image/svg+xml;utf8," + encodeURIComponent(
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 130"><rect width="90" height="130" fill="#2c3440"/>' +
         '<text x="45" y="68" font-size="11" fill="#8899aa" text-anchor="middle" font-family="sans-serif">No poster</text></svg>');
@@ -277,9 +273,8 @@
         evtSource.onmessage = function(event) {
             try {
                 const data = JSON.parse(event.data);
-                
-                // Find rows that match the incoming webhook's TMDB or TVDB ID
                 let matchedRows = [];
+                
                 if (data.tmdb_id) {
                     matchedRows = document.querySelectorAll(`[data-tmdb-id="${data.tmdb_id}"]`);
                 } else if (data.tvdb_id) {
@@ -287,19 +282,19 @@
                 }
 
                 matchedRows.forEach(row => {
-                    // Update the status dataset for grid rebuilds
                     row.dataset.status = "queued"; 
-                    
-                    // Update List View Badge
                     const badgeCell = row.querySelector("td:last-child");
-                    if (badgeCell && !badgeCell.innerHTML.includes("Queued") && !badgeCell.innerHTML.includes("Partially")) {
-                        badgeCell.innerHTML = `<span class="badge bg-info text-dark sse-badge">${data.queue_status || 'Downloading...'}</span>`;
-                    } else if (badgeCell && badgeCell.querySelector(".sse-badge")) {
-                        badgeCell.querySelector(".sse-badge").innerText = data.queue_status || 'Downloading...';
+                    
+                    if (badgeCell) {
+                        const existingBadge = badgeCell.querySelector('.sse-badge');
+                        if (existingBadge) {
+                            existingBadge.innerText = data.queue_status || 'Downloading...';
+                        } else if (!badgeCell.querySelector('.jellyfin-link') && !badgeCell.querySelector('.btn-outline-info')) {
+                            badgeCell.innerHTML = `<span class="badge bg-info text-dark sse-badge">${data.queue_status || 'Downloading...'}</span>`;
+                        }
                     }
                 });
 
-                // Re-render grid if applicable
                 if(matchedRows.length > 0 && view === "grid") {
                     render();
                 }

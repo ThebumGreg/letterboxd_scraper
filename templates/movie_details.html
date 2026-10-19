@@ -22,7 +22,7 @@
                 
                 <div class="mb-3 mt-2">
                     <span class="badge badge-movie me-1">MOVIE</span>
-                    {% if movie.status == 'jellyfin' %}
+                    {% if movie.in_jellyfin %}
                         <span class="badge bg-success">In Library</span>
                     {% elif movie.status == 'queued' %}
                         <span class="badge bg-info text-dark">Queued</span>

@@ -6,8 +6,43 @@
 {% block content %}
 <h2 class="mb-4">Resolution Center</h2>
 
-<!-- Section 1: Fuzzy Match Suggestions -->
-<h4 class="mb-3">Suggested Matches</h4>
+<!-- Section 1: ID Resolver Guesses -->
+{% if unconfirmed_guesses %}
+<h4 class="mb-3 text-warning">Pending ID Approvals</h4>
+<div class="row row-cols-1 row-cols-md-2 g-4 mb-5">
+    {% for guess in unconfirmed_guesses %}
+    <div class="col" id="guess-{{ loop.index }}">
+        <div class="card shadow-sm h-100 border-warning">
+            <div class="card-header bg-warning bg-opacity-25 d-flex justify-content-between align-items-center">
+                <span class="fw-bold">ID Guessed via Search</span>
+                <span class="badge bg-secondary">Review Needed</span>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-6 border-end">
+                        <small class="text-body-secondary d-block mb-1">Requested Watchlist Item</small>
+                        <h6 class="mb-0">{{ guess.request_title }}</h6>
+                        <small class="text-muted">{{ guess.request_year or 'Unknown Year' }}</small>
+                    </div>
+                    <div class="col-6">
+                        <small class="text-body-secondary d-block mb-1">Guessed TMDB Data</small>
+                        <h6 class="mb-0 text-info">TMDB ID: {{ guess.tmdb_id }}</h6>
+                        <a href="https://www.themoviedb.org/movie/{{ guess.tmdb_id }}" target="_blank" class="small text-decoration-none">Verify on TMDB <i class="bi bi-box-arrow-up-right"></i></a>
+                    </div>
+                </div>
+            </div>
+            <div class="card-footer d-flex justify-content-end gap-2 bg-transparent">
+                <button class="btn btn-sm btn-outline-danger" onclick="resolveMatch('{{ guess.request_slug }}', 'dismiss', null, null, 'guess-{{ loop.index }}')">Reject</button>
+                <button class="btn btn-sm btn-success" onclick="resolveMatch('{{ guess.request_slug }}', 'approve', '{{ guess.tmdb_id }}', null, 'guess-{{ loop.index }}')">Approve ID</button>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Section 2: Fuzzy Match Suggestions -->
+<h4 class="mb-3">Suggested Library Links</h4>
 {% if suggestions %}
     <div class="row row-cols-1 row-cols-md-2 g-4 mb-5">
         {% for match in suggestions %}
@@ -32,8 +67,8 @@
                     </div>
                 </div>
                 <div class="card-footer d-flex justify-content-end gap-2 bg-transparent">
-                    <button class="btn btn-sm btn-outline-danger" onclick="resolveMatch('{{ match.request_slug }}', 'dismiss', null, null, 'suggestion-{{ loop.index }}')">Dismiss</button>
-                    <button class="btn btn-sm btn-success" onclick="resolveMatch('{{ match.request_slug }}', 'approve', '{{ match.service_external_id if match.service == 'radarr' else '' }}', '{{ match.service_external_id if match.service == 'sonarr' else '' }}', 'suggestion-{{ loop.index }}')">Approve Merge</button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="resolveMatch('{{ match.request_slug }}', 'dismiss', null, null, 'suggestion-{{ loop.index }}', '{{ match.service }}', '{{ match.service_external_id }}')">Dismiss</button>
+                    <button class="btn btn-sm btn-success" onclick="resolveMatch('{{ match.request_slug }}', 'approve', null, null, 'suggestion-{{ loop.index }}', '{{ match.service }}', '{{ match.service_external_id }}')">Approve Merge</button>
                 </div>
             </div>
         </div>
@@ -45,7 +80,7 @@
     </div>
 {% endif %}
 
-<!-- Section 2: Unmatched Master Table -->
+<!-- Section 3: Unmatched Master Table -->
 <h4 class="mb-3">Unmatched Items <small class="text-muted">({{ unmatched_films|length }})</small></h4>
 <div class="card shadow-sm panel">
     <div class="card-body p-0 table-responsive">
@@ -82,7 +117,7 @@
 
 {% block scripts %}
 <script>
-    function resolveMatch(slug, action, tmdb_id, tvdb_id, elementId) {
+    function resolveMatch(slug, action, tmdb_id, tvdb_id, elementId, service, external_id) {
         const btnContainer = document.querySelector(`#${elementId} .card-footer`);
         if(btnContainer) btnContainer.innerHTML = '<span class="spinner-border spinner-border-sm text-secondary" role="status"></span>';
 
@@ -92,7 +127,7 @@
                 'Content-Type': 'application/json',
                 'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || ''
             },
-            body: JSON.stringify({ slug, action, tmdb_id, tvdb_id })
+            body: JSON.stringify({ slug, action, tmdb_id, tvdb_id, service, external_id })
         })
         .then(res => res.json())
         .then(data => {
@@ -113,7 +148,7 @@
         if(!idVal) return;
 
         const isTv = mediaType === 'tv' || mediaType === 'episode';
-        resolveMatch(slug, 'approve', isTv ? null : idVal, isTv ? idVal : null, elementId);
+        resolveMatch(slug, 'approve', isTv ? null : idVal, isTv ? idVal : null, elementId, null, null);
     }
 </script>
 {% endblock %}

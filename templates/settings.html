@@ -1,3 +1,4 @@
+<!-- templates/settings.html -->
 {% extends "base.html" %}
 {% from "_macros.html" import csrf_field, secret_field, switch with context %}
 
@@ -5,7 +6,7 @@
 
 {% block content %}
 <h2 class="mb-4">System Settings &amp; Configuration</h2>
-<!-- Add under System Settings in settings.html -->
+
 <div class="col-12 mb-4">
     <div class="card">
         <div class="card-body">
@@ -66,6 +67,7 @@
         </div>
     </div>
 </div>
+
 <form action="{{ url_for('update_settings') }}" method="POST" id="settingsForm">
     {{ csrf_field() }}
     <div class="row g-4">
@@ -82,7 +84,7 @@
                         <div class="form-text">One username per line.</div>
                     </div>
                     <div class="mb-3">
-                        <label for="target_serializd_usernames" class="form-label">Serializd usernames (TV)</label>
+                        <label for="target_serializd_usernames" class="form-label">Serializd usernames</label>
                         <textarea class="form-control" id="target_serializd_usernames" name="target_serializd_usernames" rows="4" data-usernames
                                   placeholder="One username per line">{{ settings.target_serializd_usernames }}</textarea>
                         <div class="form-text">One username per line.</div>
@@ -97,13 +99,13 @@
                 <div class="card-body">
                     <h5 class="card-title text-success">Scheduler Engine</h5>
                     <p class="card-text text-body-secondary">Background job timing.</p>
-                    <p class="small text-body-secondary mb-2">How often each background job runs (hours).</p>
+                    <p class="small text-body-secondary mb-2">How often each background job runs (hours). Set to 0 to disable scheduling for that job.</p>
                     <div class="row">
                         {% for key, label, default in [('scraper_interval_hours', 'Scraper', 24), ('radarr_interval_hours', 'Radarr', 6), ('sonarr_interval_hours', 'Sonarr', 6), ('jellyfin_interval_hours', 'Jellyfin', 6)] %}
                         <div class="col-6 col-lg-3 mb-3">
                             <label for="{{ key }}" class="form-label">{{ label }}</label>
                             <input type="number" class="form-control" id="{{ key }}" name="{{ key }}"
-                                   value="{{ settings.get(key) or default }}" min="1" step="1" required>
+                                   value="{{ settings.get(key) or default }}" min="0" step="1" required>
                         </div>
                         {% endfor %}
                     </div>
@@ -174,7 +176,8 @@
                     <h5 class="card-title text-primary"><i class="bi bi-film" aria-hidden="true"></i> Radarr Automation (Movies)</h5>
                     {{ switch('radarr_enable_library_sync', 'Enable automated library sync', settings.radarr_enable_library_sync) }}
                     {{ switch('radarr_enable_queue_addition', 'Enable automated queue addition', settings.radarr_enable_queue_addition) }}
-                    
+                    {{ switch('radarr_dry_run', 'Dry Run (Test searches without downloading)', settings.radarr_dry_run) }}
+
                     <div id="radarrFields" class="mt-3">
                         <div class="mb-3">
                             <label for="radarr_url" class="form-label">Radarr URL</label>
@@ -183,10 +186,19 @@
                         <div class="mb-3">
                             {{ secret_field('radarr_api_key', 'Radarr API key', settings.radarr_api_key) }}
                         </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="radarr_quality_profile_id" class="form-label">Quality Profile ID</label>
+                                <input type="number" class="form-control" id="radarr_quality_profile_id" name="radarr_quality_profile_id" value="{{ settings.radarr_quality_profile_id|default('1') }}" min="1">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="radarr_min_user_count" class="form-label">Minimum Profiles</label>
+                                <input type="number" class="form-control" id="radarr_min_user_count" name="radarr_min_user_count" value="{{ settings.radarr_min_user_count|default('1') }}" min="1" step="1">
+                            </div>
+                        </div>
                         <div class="mb-3">
-                            <label for="radarr_min_user_count" class="form-label">Minimum profiles before sending to Radarr</label>
-                            <input type="number" class="form-control" id="radarr_min_user_count" name="radarr_min_user_count" value="{{ settings.radarr_min_user_count }}" min="1" step="1">
-                            <div class="form-text">A movie is only sent to Radarr once at least this many monitored profiles have it on their watchlist.</div>
+                            <label for="radarr_root_folder" class="form-label">Root Folder Path</label>
+                            <input type="text" class="form-control" id="radarr_root_folder" name="radarr_root_folder" value="{{ settings.radarr_root_folder|default('/movies') }}">
                         </div>
                         <button type="button" class="btn btn-outline-info btn-sm" data-test-service="radarr" data-test-fields="radarr_url,radarr_api_key">Test connection</button>
                         <span class="small ms-2" data-test-result="radarr" role="status"></span>
@@ -202,6 +214,7 @@
                     <h5 class="card-title text-info"><i class="bi bi-tv" aria-hidden="true"></i> Sonarr Automation (TV Shows)</h5>
                     {{ switch('sonarr_enable_library_sync', 'Enable automated library sync', settings.sonarr_enable_library_sync) }}
                     {{ switch('sonarr_enable_queue_addition', 'Enable automated queue addition', settings.sonarr_enable_queue_addition) }}
+                    {{ switch('sonarr_dry_run', 'Dry Run (Test searches without downloading)', settings.sonarr_dry_run) }}
 
                     <div id="sonarrFields" class="mt-3">
                         <div class="mb-3">
@@ -211,10 +224,19 @@
                         <div class="mb-3">
                             {{ secret_field('sonarr_api_key', 'Sonarr API key', settings.sonarr_api_key) }}
                         </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="sonarr_quality_profile_id" class="form-label">Quality Profile ID</label>
+                                <input type="number" class="form-control" id="sonarr_quality_profile_id" name="sonarr_quality_profile_id" value="{{ settings.sonarr_quality_profile_id|default('1') }}" min="1">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="sonarr_min_user_count" class="form-label">Minimum Profiles</label>
+                                <input type="number" class="form-control" id="sonarr_min_user_count" name="sonarr_min_user_count" value="{{ settings.sonarr_min_user_count|default('1') }}" min="1" step="1">
+                            </div>
+                        </div>
                         <div class="mb-3">
-                            <label for="sonarr_min_user_count" class="form-label">Minimum profiles before sending to Sonarr</label>
-                            <input type="number" class="form-control" id="sonarr_min_user_count" name="sonarr_min_user_count" value="{{ settings.sonarr_min_user_count }}" min="1" step="1">
-                            <div class="form-text">A show is only sent to Sonarr once at least this many monitored profiles have it on their watchlist.</div>
+                            <label for="sonarr_root_folder" class="form-label">Root Folder Path</label>
+                            <input type="text" class="form-control" id="sonarr_root_folder" name="sonarr_root_folder" value="{{ settings.sonarr_root_folder|default('/tv') }}">
                         </div>
                         <button type="button" class="btn btn-outline-info btn-sm" data-test-service="sonarr" data-test-fields="sonarr_url,sonarr_api_key">Test connection</button>
                         <span class="small ms-2" data-test-result="sonarr" role="status"></span>
@@ -222,6 +244,7 @@
                 </div>
             </div>
         </div>
+
         <!-- Notifications -->
         <div class="col-12">
             <div class="card">

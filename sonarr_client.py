@@ -1,5 +1,5 @@
-import requests
-from database import get_setting
+# sonarr_client.py
+from database import get_setting, logged_request
 
 TIMEOUT = 15
 
@@ -12,7 +12,7 @@ def _conn():
 
 def get_library() -> list:
     url, headers = _conn()
-    r = requests.get(f"{url}/api/v3/series", headers=headers, timeout=60)
+    r = logged_request("sonarr", "GetLibrary", "GET", f"{url}/api/v3/series", headers=headers, timeout=60)
     r.raise_for_status()
     shows = []
     for s in r.json():
@@ -31,10 +31,24 @@ def get_library() -> list:
 def get_library_tvdb_ids() -> dict:
     return {s["tvdb_id"]: s["sonarr_id"] for s in get_library()}
 
-def add_series(tvdb_id, season_number=None, dry_run=False) -> dict:
+def get_series_by_tvdb(tvdb_id: str) -> dict:
     url, headers = _conn()
-    r = requests.get(f"{url}/api/v3/series/lookup", headers=headers,
-                     params={"term": f"tvdb:{tvdb_id}"}, timeout=TIMEOUT)
+    r = logged_request("sonarr", "GetSeriesByTvdb", "GET", f"{url}/api/v3/series", headers=headers, timeout=TIMEOUT)
+    r.raise_for_status()
+    for series in r.json():
+        if str(series.get("tvdbId")) == str(tvdb_id):
+            return series
+    return None
+
+def update_series(sonarr_id: str, series_payload: dict) -> dict:
+    url, headers = _conn()
+    res = logged_request("sonarr", "UpdateSeries", "PUT", f"{url}/api/v3/series/{sonarr_id}", json=series_payload, headers=headers, timeout=TIMEOUT)
+    res.raise_for_status()
+    return res.json()
+
+def add_series(tvdb_id, season_number=None, monitored_seasons=None, dry_run=False) -> dict:
+    url, headers = _conn()
+    r = logged_request("sonarr", "LookupSeries", "GET", f"{url}/api/v3/series/lookup", headers=headers, params={"term": f"tvdb:{tvdb_id}"}, timeout=TIMEOUT)
     r.raise_for_status()
     results = r.json()
     if not results:
@@ -45,14 +59,12 @@ def add_series(tvdb_id, season_number=None, dry_run=False) -> dict:
         return {"status": "dry_run", "message": f"Would add '{show['title']}'."}
     
     seasons = show.get("seasons", [])
-    if season_number is not None: 
-        if not isinstance(season_number, list):
-            season_number = [int(season_number)]
-        else:
-            season_number = [int(s) for s in season_number]
-            
+    target_seasons = monitored_seasons or (season_number if isinstance(season_number, list) else ([int(season_number)] if season_number is not None else None))
+    
+    if target_seasons is not None:
+        target_seasons = [int(s) for s in target_seasons]
         for s in seasons:
-            s["monitored"] = (s["seasonNumber"] in season_number)
+            s["monitored"] = (s.get("seasonNumber") in target_seasons)
             
     payload = {
         "title": show["title"],
@@ -67,7 +79,7 @@ def add_series(tvdb_id, season_number=None, dry_run=False) -> dict:
         "addOptions": {"searchForMissingEpisodes": True, "ignoreEpisodesWithFiles": True},
     }
     
-    res = requests.post(f"{url}/api/v3/series", json=payload, headers=headers, timeout=TIMEOUT)
+    res = logged_request("sonarr", "AddSeries", "POST", f"{url}/api/v3/series", json=payload, headers=headers, timeout=TIMEOUT)
     if res.status_code in (200, 201):
         return {"status": "added", "sonarr_id": str(res.json().get("id")), "message": f"Added '{show['title']}'."}
     return {"status": "error", "message": f"Sonarr HTTP {res.status_code}: {res.text[:200]}"}

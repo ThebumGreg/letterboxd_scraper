@@ -12,7 +12,6 @@ import radarr_client, sonarr_client
 logger = logging.getLogger(__name__)
 
 def sync_radarr_library():
-    """Mirrors every Radarr movie into the cache with clean titles."""
     started = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     movies = radarr_client.get_library()
     for m in movies:
@@ -32,7 +31,6 @@ def sync_radarr_library():
     return {m["tmdb_id"]: m["radarr_id"] for m in movies}, removed
 
 def sync_sonarr_library():
-    """Mirrors every Sonarr show into the cache with clean titles."""
     started = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     shows = sonarr_client.get_library()
     for s in shows:
@@ -52,12 +50,12 @@ def sync_sonarr_library():
     removed = prune_service_cache("sonarr", started)
     return {s["tvdb_id"]: s["sonarr_id"] for s in shows}, removed
 
-
 def run_radarr_automation_worker() -> None:
     update_job_status("radarr", "in_progress", "Starting Radarr automation...")
     try:
         sync_enabled = get_setting("radarr_enable_library_sync", "1") == "1"
         add_enabled = get_setting("radarr_enable_queue_addition", "0") == "1"
+        disable_jf = get_setting("disable_jellyfin_connection", "0") == "1"
 
         in_radarr = {}
         if sync_enabled:
@@ -78,7 +76,10 @@ def run_radarr_automation_worker() -> None:
         update_job_status("radarr", "in_progress", summary + " Evaluating watchlist requests...")
         min_users = int(get_setting("radarr_min_user_count", "1"))
         dry_run = get_setting("radarr_dry_run", "0") == "1"
-        in_jellyfin = {str(i["tmdb_id"]) for i in get_service_cache("jellyfin") if i.get("tmdb_id")}
+        
+        in_jellyfin = set()
+        if not disable_jf:
+            in_jellyfin = {str(i["tmdb_id"]) for i in get_service_cache("jellyfin") if i.get("tmdb_id") and i.get("media_type") == "movie"}
         
         added = 0
         for film in get_pending_requests(media_type="movie"):
@@ -104,29 +105,14 @@ def run_radarr_automation_worker() -> None:
         reconcile_master_catalog()
 
 def request_tv_seasons(tvdb_id, requested_seasons):
-    """
-    Sends targeted season requests to Sonarr.
-    Unmonitors the base series backlog and explicitly sets requested seasons to monitored: true.
-    """
-    import sonarr_client
-    
     if not tvdb_id or not requested_seasons:
         return {"status": "error", "message": "Invalid TVDB ID or season selection."}
         
     try:
-        # Fetch existing series in Sonarr or search if missing
         series_info = sonarr_client.get_series_by_tvdb(tvdb_id)
-        
         if not series_info:
-            # Add show with only specific seasons monitored
-            add_result = sonarr_client.add_series(
-                tvdb_id=tvdb_id, 
-                season_number=None, 
-                monitored_seasons=requested_seasons
-            )
-            return add_result
+            return sonarr_client.add_series(tvdb_id=tvdb_id, season_number=None, monitored_seasons=requested_seasons)
             
-        # Update existing series season monitoring flags
         sonarr_id = series_info["id"]
         seasons_payload = []
         for s in series_info.get("seasons", []):
@@ -137,18 +123,18 @@ def request_tv_seasons(tvdb_id, requested_seasons):
         series_info["seasons"] = seasons_payload
         series_info["monitored"] = True
         
-        update_res = sonarr_client.update_series(sonarr_id, series_info)
+        sonarr_client.update_series(sonarr_id, series_info)
         return {"status": "updated", "sonarr_id": sonarr_id, "seasons": requested_seasons}
-        
     except Exception as e:
         logger.error(f"Failed granular season request for TVDB {tvdb_id}: {e}")
         return {"status": "error", "message": str(e)}
-    
+
 def run_sonarr_automation_worker() -> None:
     update_job_status("sonarr", "in_progress", "Starting Sonarr automation...")
     try:
         sync_enabled = get_setting("sonarr_enable_library_sync", "1") == "1"
         add_enabled = get_setting("sonarr_enable_queue_addition", "0") == "1"
+        disable_jf = get_setting("disable_jellyfin_connection", "0") == "1"
 
         in_sonarr = {}
         if sync_enabled:
@@ -170,9 +156,11 @@ def run_sonarr_automation_worker() -> None:
         min_users = int(get_setting("sonarr_min_user_count", "1"))
         dry_run = get_setting("sonarr_dry_run", "0") == "1"
 
-        in_jellyfin = {str(i["tvdb_id"]) for i in get_service_cache("jellyfin") if i.get("tvdb_id")}
+        in_jellyfin = set()
+        if not disable_jf:
+            in_jellyfin = {str(i["tvdb_id"]) for i in get_service_cache("jellyfin") if i.get("tvdb_id") and i.get("media_type") in ("tv", "episode")}
+
         added = 0
-        
         for show in get_pending_requests(media_type="tv"):
             tvdb = str(show.get("tvdb_id") or "")
             if (not tvdb or show.get("user_count", 0) < min_users

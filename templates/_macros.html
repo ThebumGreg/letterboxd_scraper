@@ -1,3 +1,4 @@
+<!-- templates/_macros.html -->
 {# Shared macros for SyncHub templates. Import with:
    {% from "_macros.html" import ... with context %}
 #}
@@ -61,8 +62,7 @@
 {% if help %}<div class="form-text">{{ help }}</div>{% endif %}
 {% endmacro %}
 
-{# Switch that always submits a value. The hidden "0" comes AFTER the checkbox,
-   so request.form.get(name) returns "1" when checked and "0" when not. #}
+{# Switch that always submits a value. #}
 {% macro switch(name, label, value, dims=none, dims_when='checked', label_class='') %}
 {% set on = value in ['1', 1, true, 'true', 'True'] %}
 <div class="form-check form-switch mb-3">
@@ -71,5 +71,34 @@
            {% if dims %}data-dims="{{ dims }}" data-dims-when="{{ dims_when }}"{% endif %}>
     <input type="hidden" name="{{ name }}" value="0">
     <label class="form-check-label {{ label_class }}" for="{{ name }}">{{ label }}</label>
+</div>
+{% endmacro %}
+
+{# Reusable Season Request Modal for TV Shows #}
+{% macro season_modal() %}
+<div class="modal fade" id="seasonModal" tabindex="-1" aria-labelledby="seasonModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="seasonModalLabel">Request Specific Seasons</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Select the seasons you want to monitor and download for <strong id="modalShowTitle"></strong>:</p>
+                <form id="seasonRequestForm">
+                    <input type="hidden" id="modalTvdbId" name="tvdb_id">
+                    <div class="mb-3">
+                        <label for="seasonInput" class="form-label">Seasons (comma-separated integers, e.g., 1, 2, 3)</label>
+                        <input type="text" class="form-control" id="seasonInput" name="seasons" placeholder="1, 2, 3" required>
+                        <div class="form-text text-success fw-bold mt-2" id="modalAvailableSeasons"></div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-info" id="submitSeasonBtn" onclick="submitSeasonRequest()">Send to Sonarr</button>
+            </div>
+        </div>
+    </div>
 </div>
 {% endmacro %}
