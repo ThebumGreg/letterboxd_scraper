@@ -103,6 +103,47 @@ def run_radarr_automation_worker() -> None:
     finally:
         reconcile_master_catalog()
 
+def request_tv_seasons(tvdb_id, requested_seasons):
+    """
+    Sends targeted season requests to Sonarr.
+    Unmonitors the base series backlog and explicitly sets requested seasons to monitored: true.
+    """
+    import sonarr_client
+    
+    if not tvdb_id or not requested_seasons:
+        return {"status": "error", "message": "Invalid TVDB ID or season selection."}
+        
+    try:
+        # Fetch existing series in Sonarr or search if missing
+        series_info = sonarr_client.get_series_by_tvdb(tvdb_id)
+        
+        if not series_info:
+            # Add show with only specific seasons monitored
+            add_result = sonarr_client.add_series(
+                tvdb_id=tvdb_id, 
+                season_number=None, 
+                monitored_seasons=requested_seasons
+            )
+            return add_result
+            
+        # Update existing series season monitoring flags
+        sonarr_id = series_info["id"]
+        seasons_payload = []
+        for s in series_info.get("seasons", []):
+            s_num = s.get("seasonNumber")
+            s["monitored"] = (s_num in requested_seasons)
+            seasons_payload.append(s)
+            
+        series_info["seasons"] = seasons_payload
+        series_info["monitored"] = True
+        
+        update_res = sonarr_client.update_series(sonarr_id, series_info)
+        return {"status": "updated", "sonarr_id": sonarr_id, "seasons": requested_seasons}
+        
+    except Exception as e:
+        logger.error(f"Failed granular season request for TVDB {tvdb_id}: {e}")
+        return {"status": "error", "message": str(e)}
+    
 def run_sonarr_automation_worker() -> None:
     update_job_status("sonarr", "in_progress", "Starting Sonarr automation...")
     try:

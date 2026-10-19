@@ -29,6 +29,8 @@ from database import (
     get_setting,
     get_film_by_slug,
     get_all_task_statuses,
+    get_tv_show_details,
+    get_movie_details_by_slug,
     init_db,
     set_setting,
     update_film_identifiers,
@@ -38,11 +40,13 @@ from jellyfin_integration import (
     sync_jellyfin_playlist,
 )
 from notifications import send_notification
+
 from scheduler import (
     init_scheduler,
     reconfigure_scheduler,
     start_async_task,
-    run_scraper_task,
+    run_letterboxd_scraper_task,
+    run_serializd_scraper_task,
     run_radarr_task,
     run_sonarr_task,
     run_jellyfin_movies_task,
@@ -50,6 +54,7 @@ from scheduler import (
     run_all_sequential_pipeline,
     trigger_async_task,
 )
+
 from scraper import run_all_scrapers
 from export_to_csv import generate_consolidated_csv_buffer
 from disk_scanner import scan_local_disk_directory as run_disk_scan
@@ -312,7 +317,9 @@ def test_notification():
     return redirect(url_for("tools"))
 
 SETTING_DEFAULTS = {
-    "scraper_interval_hours": "24",
+    "letterboxd_interval_hours": "6",
+    "serializd_interval_hours": "6",
+    "scraper_interval_hours": "6",
     "radarr_interval_hours": "6",
     "sonarr_interval_hours": "6",
     "jellyfin_interval_hours": "6",
@@ -410,6 +417,76 @@ def api_webhook(service):
         from jellyfin_integration import handle_playback_reporting
         handle_playback_reporting(payload)
     return jsonify({"status": "received", "service": service}), 200
+
+@app.route("/api/request-seasons", methods=["POST"])
+def api_request_seasons():
+    data = request.get_json(silent=True) or {}
+    tvdb_id = data.get("tvdb_id")
+    seasons = data.get("seasons", [])
+    
+    if not tvdb_id or not isinstance(seasons, list):
+        return jsonify({"ok": False, "message": "Missing tvdb_id or seasons array."}), 400
+        
+    from automation import request_tv_seasons
+    res = request_tv_seasons(tvdb_id, seasons)
+    
+    if res.get("status") in ("added", "updated"):
+        from database import reconcile_master_catalog
+        reconcile_master_catalog()
+        return jsonify({"ok": True, "message": f"Monitored seasons {seasons} in Sonarr."})
+    else:
+        return jsonify({"ok": False, "message": res.get("message", "Sonarr request failed.")}), 500
+
+@app.route("/settings/profiles/save", methods=["POST"])
+def save_profile():
+    profile_name = request.form.get("profile_name", "").strip()
+    letterboxd = request.form.get("letterboxd_username", "").strip()
+    serializd = request.form.get("serializd_username", "").strip()
+    jellyfin_id = request.form.get("jellyfin_user_id", "").strip()
+    
+    if profile_name:
+        save_user_profile_mapping(profile_name, letterboxd, serializd, jellyfin_id)
+        flash(f"Profile mapping for '{profile_name}' saved.", "success")
+    else:
+        flash("Profile name is required.", "danger")
+    return redirect(url_for("settings_page"))
+
+@app.route("/settings/profiles/delete/<int:profile_id>", methods=["POST"])
+def delete_profile(profile_id):
+    delete_user_profile_mapping(profile_id)
+    flash("Profile mapping removed.", "info")
+    return redirect(url_for("settings_page"))
+
+@app.route("/tools/trigger-letterboxd-scraper", methods=["POST"])
+def trigger_letterboxd_scraper():
+    start_async_task(run_letterboxd_scraper_task)
+    flash("Letterboxd scraper initiated in background.", "info")
+    return redirect(url_for("tools"))
+
+@app.route("/tools/trigger-serializd-scraper", methods=["POST"])
+def trigger_serializd_scraper():
+    start_async_task(run_serializd_scraper_task)
+    flash("Serializd scraper initiated in background.", "info")
+    return redirect(url_for("tools"))
+
+@app.route("/movie/<slug>")
+def movie_details(slug):
+    movie = get_movie_details_by_slug(slug)
+    if not movie:
+        flash("Movie not found in the catalog.", "warning")
+        return redirect(url_for('index'))
+        
+    return render_template("movie_details.html", movie=movie)
+
+
+@app.route("/show/<tvdb_id>")
+def show_details(tvdb_id):
+    show, seasons = get_tv_show_details(tvdb_id)
+    if not show:
+        flash("TV Show not found in the catalog.", "warning")
+        return redirect(url_for('index'))
+        
+    return render_template("show_details.html", show=show, seasons=seasons)
 
 if csrf:
     csrf.exempt(api_webhook)

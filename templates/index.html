@@ -46,6 +46,7 @@
         <select id="statusFilter" class="form-select">
             <option value="">All Statuses</option>
             <option value="jellyfin">In Jellyfin</option>
+            <option value="partially_available">Partially Available (TV)</option>
             <option value="queued">Queued in Radarr/Sonarr</option>
             <option value="missing">Missing (incl. queued)</option>
             <option value="missing_not_queued">Missing (not queued)</option>
@@ -90,7 +91,7 @@
         <tbody id="listTableBody">
             {% for film in films %}
             {% set mtype = film.media_type or 'movie' %}
-            {% set status = 'jellyfin' if film.in_jellyfin else ('queued' if (film.in_radarr or film.in_sonarr) else 'missing') %}
+            {% set status = 'partially_available' if film.status == 'partially_available' else ('jellyfin' if film.in_jellyfin else ('queued' if (film.in_radarr or film.in_sonarr) else 'missing')) %}
             <tr class="item-row d-none"
                 data-title="{{ film.title|lower }}"
                 data-display-title="{{ film.title }}"
@@ -111,7 +112,14 @@
                 </td>
                 <td>
                     <div class="fw-bold">
-                        {{ film.title }}
+                        {% if mtype in ('tv', 'episode') and film.tvdb_id %}
+                            <a href="{{ url_for('show_details', tvdb_id=film.tvdb_id) }}" class="text-decoration-none text-info">{{ film.title }}</a>
+                        {% elif mtype == 'movie' and film.movie_slug %}
+                            <a href="{{ url_for('movie_details', slug=film.movie_slug) }}" class="text-decoration-none text-primary">{{ film.title }}</a>
+                        {% else %}
+                            {{ film.title }}
+                        {% endif %}
+                        
                         {% if film.release_year %}
                             <span class="badge bg-secondary ms-1 fw-normal">{{ film.release_year }}</span>
                         {% endif %}
@@ -129,7 +137,13 @@
                 <td class="d-none d-md-table-cell text-truncate" style="max-width: 200px;" title="{{ film.requested_by_users }}">{{ film.requested_by_users }}</td>
                 <td><span class="badge bg-primary">{{ film.user_count }}</span></td>
                 <td>
-                    {% if status == 'jellyfin' %}
+                    {% if status == 'partially_available' and mtype in ('tv', 'episode') %}
+                        <span class="badge bg-warning text-dark mb-1">Partially Available</span><br>
+                        <button type="button" class="btn btn-sm btn-outline-info" 
+                                onclick='openSeasonModal("{{ film.tvdb_id }}", {{ film.title|tojson }}, {{ film.available_seasons|tojson }})'>
+                            Request Seasons
+                        </button>
+                    {% elif status == 'jellyfin' %}
                         <a href="{{ film.jellyfin_link }}" class="btn btn-sm btn-success jellyfin-link" data-app-link="{{ film.jellyfin_app_link }}" target="_blank" rel="noopener noreferrer">Watch on Jellyfin</a>
                     {% elif status == 'queued' %}
                         <span class="badge bg-info text-dark">Queued</span>
@@ -164,8 +178,99 @@
         <button id="btnNextPage" type="button" class="btn btn-sm btn-secondary">Next</button>
     </div>
 </div>
+
+<!-- Manual Season Request Modal -->
+<div class="modal fade" id="seasonModal" tabindex="-1" aria-labelledby="seasonModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="seasonModalLabel">Request Specific Seasons</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Select the seasons you want to monitor and download for <strong id="modalShowTitle"></strong>:</p>
+                <form id="seasonRequestForm">
+                    <input type="hidden" id="modalTvdbId" name="tvdb_id">
+                    <div class="mb-3">
+                        <label for="seasonInput" class="form-label">Seasons (comma-separated integers, e.g., 1, 2, 3)</label>
+                        <input type="text" class="form-control" id="seasonInput" name="seasons" placeholder="1, 2, 3" required>
+                        <div class="form-text text-success fw-bold mt-2" id="modalAvailableSeasons"></div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-info" id="submitSeasonBtn" onclick="submitSeasonRequest()">Send to Sonarr</button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/index.js') }}"></script>
+<script>
+    let seasonModalInstance = null;
+
+    function openSeasonModal(tvdbId, title, availableSeasons) {
+        document.getElementById('modalTvdbId').value = tvdbId;
+        document.getElementById('modalShowTitle').innerText = title;
+        document.getElementById('seasonInput').value = '';
+        
+        const availText = (availableSeasons && availableSeasons.length > 0) 
+            ? 'Currently in Jellyfin: Season(s) ' + availableSeasons.join(', ') 
+            : 'No seasons currently available.';
+        document.getElementById('modalAvailableSeasons').innerText = availText;
+        
+        if (!seasonModalInstance) {
+            seasonModalInstance = new bootstrap.Modal(document.getElementById('seasonModal'));
+        }
+        seasonModalInstance.show();
+    }
+
+    function submitSeasonRequest() {
+        const tvdbId = document.getElementById('modalTvdbId').value;
+        const seasonStr = document.getElementById('seasonInput').value;
+        const submitBtn = document.getElementById('submitSeasonBtn');
+        
+        const seasons = seasonStr.split(',').map(s => parseInt(s.trim())).filter(s => !isNaN(s));
+        
+        if (seasons.length === 0) {
+            alert('Please enter valid season numbers (e.g. 1, 2).');
+            return;
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.innerText = 'Requesting...';
+
+        fetch('/api/request-seasons', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token() if csrf_token else "" }}'
+            },
+            body: JSON.stringify({
+                tvdb_id: tvdbId,
+                seasons: seasons
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.ok) {
+                seasonModalInstance.hide();
+                location.reload(); 
+            } else {
+                alert('Error: ' + data.message);
+                submitBtn.disabled = false;
+                submitBtn.innerText = 'Send to Sonarr';
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            alert('An error occurred while communicating with the server.');
+            submitBtn.disabled = false;
+            submitBtn.innerText = 'Send to Sonarr';
+        });
+    }
+</script>
 {% endblock %}

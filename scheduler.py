@@ -7,17 +7,50 @@ from database import get_setting, update_task_status, reconcile_master_catalog
 logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
 
-def run_scraper_task():
-    update_task_status("scraper", "in_progress", "Scraping watchlists...")
+def run_letterboxd_scraper_task():
+    update_task_status("scraper_letterboxd", "in_progress", "Scraping Letterboxd watchlists...")
     try:
-        from scraper import run_all_scrapers
-        run_all_scrapers()
-        update_task_status("scraper", "completed", "Scrape finished successfully.")
+        from scraper import run_letterboxd_scrapers
+        run_letterboxd_scrapers()
+        update_task_status("scraper_letterboxd", "completed", "Letterboxd scrape finished successfully.")
     except Exception as e:
-        logger.error(f"Scraper job failed: {e}")
-        update_task_status("scraper", "failed", str(e))
+        logger.error(f"Letterboxd scraper job failed: {e}")
+        update_task_status("scraper_letterboxd", "failed", str(e))
     finally:
         reconcile_master_catalog()
+
+def run_serializd_scraper_task():
+    update_task_status("scraper_serializd", "in_progress", "Scraping Serializd watchlists...")
+    try:
+        from scraper import run_serializd_scrapers
+        run_serializd_scrapers()
+        update_task_status("scraper_serializd", "completed", "Serializd scrape finished successfully.")
+    except Exception as e:
+        logger.error(f"Serializd scraper job failed: {e}")
+        update_task_status("scraper_serializd", "failed", str(e))
+    finally:
+        reconcile_master_catalog()
+
+def reconfigure_scheduler():
+    scheduler.remove_all_jobs()
+    
+    lb_hours = int(get_setting("letterboxd_interval_hours", "24"))
+    sz_hours = int(get_setting("serializd_interval_hours", "12"))
+    radarr_hours = int(get_setting("radarr_interval_hours", "6"))
+    sonarr_hours = int(get_setting("sonarr_interval_hours", "6"))
+    jellyfin_hours = int(get_setting("jellyfin_interval_hours", "6"))
+    
+    if lb_hours > 0:
+        scheduler.add_job(run_letterboxd_scraper_task, 'interval', hours=lb_hours, id='job_lb_scraper')
+    if sz_hours > 0:
+        scheduler.add_job(run_serializd_scraper_task, 'interval', hours=sz_hours, id='job_sz_scraper')
+    if radarr_hours > 0:
+        scheduler.add_job(run_radarr_task, 'interval', hours=radarr_hours, id='job_radarr')
+    if sonarr_hours > 0:
+        scheduler.add_job(run_sonarr_task, 'interval', hours=sonarr_hours, id='job_sonarr')
+    if jellyfin_hours > 0:
+        scheduler.add_job(run_jellyfin_movies_task, 'interval', hours=jellyfin_hours, id='job_jf_movies')
+        scheduler.add_job(run_jellyfin_tv_task, 'interval', hours=jellyfin_hours, id='job_jf_tv')
 
 def run_radarr_task():
     update_task_status("radarr", "in_progress", "Syncing with Radarr...")
@@ -68,7 +101,8 @@ job_sync_jellyfin = run_jellyfin_task
 def run_all_sequential_pipeline():
     """Executes all operations sequentially mapping from Jellyfin -> Scrapers -> Catalog."""
     update_task_status("all", "in_progress", "Sequential pipeline started.")
-    update_task_status("scraper", "pending", "Waiting in queue...")
+    update_task_status("scraper_letterboxd", "pending", "Waiting in queue...")
+    update_task_status("scraper_serializd", "pending", "Waiting in queue...")
     update_task_status("radarr", "pending", "Waiting in queue...")
     update_task_status("sonarr", "pending", "Waiting in queue...")
     update_task_status("jellyfin_movies", "pending", "Waiting in queue...")
@@ -78,7 +112,8 @@ def run_all_sequential_pipeline():
     run_jellyfin_tv_task()
     run_radarr_task()
     run_sonarr_task()
-    run_scraper_task()
+    run_letterboxd_scraper_task()
+    run_serializd_scraper_task()
     
     update_task_status("all", "completed", "All operations completed sequentially.")
 
@@ -98,11 +133,15 @@ def reconfigure_scheduler():
     jellyfin_hours = int(get_setting("jellyfin_interval_hours", "6"))
     
     if scraper_hours > 0:
-        scheduler.add_job(run_scraper_task, 'interval', hours=scraper_hours, id='job_scraper')
+        scheduler.add_job(run_letterboxd_scraper_task, 'interval', hours=scraper_hours, id='job_lb_scraper')
+        scheduler.add_job(run_serializd_scraper_task, 'interval', hours=scraper_hours, id='job_sz_scraper')
+        
     if radarr_hours > 0:
         scheduler.add_job(run_radarr_task, 'interval', hours=radarr_hours, id='job_radarr')
+        
     if sonarr_hours > 0:
         scheduler.add_job(run_sonarr_task, 'interval', hours=sonarr_hours, id='job_sonarr')
+        
     if jellyfin_hours > 0:
         scheduler.add_job(run_jellyfin_movies_task, 'interval', hours=jellyfin_hours, id='job_jf_movies')
         scheduler.add_job(run_jellyfin_tv_task, 'interval', hours=jellyfin_hours, id='job_jf_tv')

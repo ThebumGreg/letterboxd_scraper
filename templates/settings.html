@@ -5,6 +5,67 @@
 
 {% block content %}
 <h2 class="mb-4">System Settings &amp; Configuration</h2>
+<!-- Add under System Settings in settings.html -->
+<div class="col-12 mb-4">
+    <div class="card">
+        <div class="card-body">
+            <h5 class="card-title text-success"><i class="bi bi-people-fill"></i> Unified Profile Identity Mapping</h5>
+            <p class="card-text text-body-secondary">Map individual external usernames to a single SyncHub user profile for precise watch-states and notifications.</p>
+            
+            <div class="table-responsive mb-3">
+                <table class="table table-bordered align-middle">
+                    <thead>
+                        <tr>
+                            <th>SyncHub Profile</th>
+                            <th>Letterboxd Username</th>
+                            <th>Serializd Username</th>
+                            <th>Jellyfin User ID</th>
+                            <th style="width: 100px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for prof in profiles %}
+                        <tr>
+                            <td><strong>{{ prof.profile_name }}</strong></td>
+                            <td>{{ prof.letterboxd_username or '—' }}</td>
+                            <td>{{ prof.serializd_username or '—' }}</td>
+                            <td><code>{{ prof.jellyfin_user_id or '—' }}</code></td>
+                            <td>
+                                <form action="{{ url_for('delete_profile', profile_id=prof.id) }}" method="POST" class="d-inline">
+                                    {{ csrf_field() }}
+                                    <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete this profile mapping?');">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="5" class="text-center text-muted">No unified profile mappings configured yet.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <h6>Add / Update Profile Mapping</h6>
+            <form action="{{ url_for('save_profile') }}" method="POST" class="row g-2">
+                {{ csrf_field() }}
+                <div class="col-md-3">
+                    <input type="text" name="profile_name" class="form-control form-control-sm" placeholder="SyncHub Profile Name" required>
+                </div>
+                <div class="col-md-3">
+                    <input type="text" name="letterboxd_username" class="form-control form-control-sm" placeholder="Letterboxd Username">
+                </div>
+                <div class="col-md-3">
+                    <input type="text" name="serializd_username" class="form-control form-control-sm" placeholder="Serializd Username">
+                </div>
+                <div class="col-md-3 d-flex gap-2">
+                    <input type="text" name="jellyfin_user_id" class="form-control form-control-sm" placeholder="Jellyfin User ID">
+                    <button type="submit" class="btn btn-sm btn-success text-nowrap">Save Profile</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 <form action="{{ url_for('update_settings') }}" method="POST" id="settingsForm">
     {{ csrf_field() }}
     <div class="row g-4">
@@ -161,7 +222,6 @@
                 </div>
             </div>
         </div>
-
         <!-- Notifications -->
         <div class="col-12">
             <div class="card">

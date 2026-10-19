@@ -1,0 +1,63 @@
+<!-- templates/movie_details.html -->
+{% extends "base.html" %}
+
+{% block title %}{{ movie.title }} - Details{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+    <a href="{{ url_for('index') }}" class="btn btn-sm btn-outline-secondary">&larr; Back to Dashboard</a>
+</div>
+
+<div class="card mb-4 panel border-0 shadow-sm">
+    <div class="row g-0">
+        <div class="col-md-2 text-center p-3">
+            <img src="/poster/{{ movie.movie_slug }}" alt="{{ movie.title }}" class="img-fluid rounded shadow" style="max-height: 250px;">
+        </div>
+        <div class="col-md-10">
+            <div class="card-body">
+                <h2 class="card-title fw-bold">
+                    {{ movie.title }} 
+                    {% if movie.release_year %}<span class="text-muted fs-5 fw-normal">({{ movie.release_year }})</span>{% endif %}
+                </h2>
+                
+                <div class="mb-3 mt-2">
+                    <span class="badge badge-movie me-1">MOVIE</span>
+                    {% if movie.status == 'jellyfin' %}
+                        <span class="badge bg-success">In Library</span>
+                    {% elif movie.status == 'queued' %}
+                        <span class="badge bg-info text-dark">Queued</span>
+                    {% else %}
+                        <span class="badge bg-danger">Missing</span>
+                    {% endif %}
+                </div>
+
+                <p class="mb-1"><strong>Requested By:</strong> 
+                    {% for u in movie.users_list %}
+                        <span class="badge bg-secondary">{{ u }}</span>
+                    {% else %}
+                        <span class="text-muted">No specific user</span>
+                    {% endfor %}
+                </p>
+                
+                <div class="mt-4">
+                    <!-- Placeholder for future Radarr/Search manual triggers -->
+                    <button type="button" class="btn btn-outline-secondary disabled" title="Coming soon">
+                        <i class="bi bi-search"></i> Manual Search
+                    </button>
+                    
+                    {% if movie.jellyfin_link %}
+                        <a href="{{ movie.jellyfin_link }}" class="btn btn-success ms-2" target="_blank" rel="noopener noreferrer">
+                            <i class="bi bi-play-circle"></i> Watch on Jellyfin
+                        </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Placeholder for future metadata (e.g., TMDB overview, cast, Radarr queue status) -->
+<div class="alert alert-light border shadow-sm">
+    <i class="bi bi-tools text-muted me-2"></i> <em>Extended movie details, cast, and granular download status will appear here in a future update.</em>
+</div>
+{% endblock %}

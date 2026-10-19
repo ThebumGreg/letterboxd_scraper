@@ -152,6 +152,17 @@ def init_db():
             )
         """)
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_profile_mappings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_name TEXT UNIQUE NOT NULL,
+                letterboxd_username TEXT,
+                serializd_username TEXT,
+                jellyfin_user_id TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         conn.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS task_status (task_name TEXT PRIMARY KEY, status TEXT DEFAULT 'idle', last_run TIMESTAMP, message TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS disk_cache (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, path TEXT, size REAL, last_scanned TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
@@ -296,7 +307,6 @@ def get_service_cache(service):
 def prune_service_cache(service, older_than):
     with get_connection() as conn:
         return conn.execute("DELETE FROM service_cache WHERE service = ? AND last_updated < ?", (service, older_than)).rowcount
-
 def reconcile_master_catalog():
     """Aggregates service caches and user requests into the Master media_catalog."""
     with get_connection() as conn:
@@ -387,7 +397,14 @@ def reconcile_master_catalog():
 
         rows_to_insert = []
         for key, item in catalog.items():
-            avail_seasons = sorted(list(jf_seasons[str(item["tvdb_id"])])) if item["media_type"] == "tv" and item["tvdb_id"] and str(item["tvdb_id"]) in jf_seasons else []
+            avail_seasons = []
+            if item["media_type"] == "tv" and item["tvdb_id"] and str(item["tvdb_id"]) in jf_seasons:
+                avail_seasons = sorted(list(jf_seasons[str(item["tvdb_id"])]))
+                
+                # Flag status as partially available if some seasons exist in Jellyfin but the show isn't fully 'in_library'
+                if avail_seasons and item["status"] != "in_library":
+                    item["status"] = "partially_available"
+                    
             users = sorted(list(item["requested_by_users"]), key=str.lower)
             if item["in_jellyfin"] and not users: users = ["Jellyfin"]
             elif item["in_radarr"] and not users: users = ["Radarr"]
@@ -400,7 +417,7 @@ def reconcile_master_catalog():
             ))
             
         conn.executemany("INSERT INTO media_catalog (tmdb_id, imdb_id, tvdb_id, movie_slug, title, release_year, media_type, season_number, episode_number, poster_url, in_jellyfin, jellyfin_id, jellyfin_link, in_radarr, radarr_id, in_sonarr, sonarr_id, available_seasons, status, requested_by_users, user_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows_to_insert)
-
+        
 def get_media_catalog():
     with get_connection() as conn:
         rows = conn.execute("SELECT * FROM media_catalog ORDER BY user_count DESC, title ASC").fetchall()
@@ -433,7 +450,10 @@ def update_job_status(job_name, status, message=""):
     update_task_status(job_name, status, message)
 
 def get_all_task_statuses():
-    default_tasks = ["scraper", "radarr", "sonarr", "jellyfin_movies", "jellyfin_tv", "id_resolver", "all"]
+    default_tasks = [
+    "scraper_letterboxd", "scraper_serializd", "radarr", "sonarr", 
+    "jellyfin_movies", "jellyfin_tv", "id_resolver", "all"
+    ]
     statuses = {t: {"task_name": t, "status": "idle", "last_run": None, "message": "No active logs"} for t in default_tasks}
     with get_connection() as conn:
         for row in conn.execute("SELECT * FROM task_status"):
@@ -449,8 +469,74 @@ def save_disk_file_cache(file_data_list):
 def get_disk_file_cache():
     with get_connection() as conn:
         return [dict(r) for r in conn.execute("SELECT * FROM disk_cache ORDER BY title")]
+    
+def get_user_profile_mappings():
+    with get_connection() as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM user_profile_mappings ORDER BY profile_name ASC").fetchall()]
+    
+def save_user_profile_mapping(profile_name, letterboxd_username="", serializd_username="", jellyfin_user_id=""):
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO user_profile_mappings (profile_name, letterboxd_username, serializd_username, jellyfin_user_id)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(profile_name) DO UPDATE SET
+                letterboxd_username = excluded.letterboxd_username,
+                serializd_username = excluded.serializd_username,
+                jellyfin_user_id = excluded.jellyfin_user_id
+        """, (profile_name.strip(), letterboxd_username.strip(), serializd_username.strip(), jellyfin_user_id.strip()))
+
+def delete_user_profile_mapping(profile_id):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM user_profile_mappings WHERE id = ?", (profile_id,))
+
+def get_tv_show_details(tvdb_id):
+    import json
+    with get_connection() as conn:
+        # 1. Get the base show info from the main catalog
+        show_row = conn.execute("SELECT * FROM media_catalog WHERE tvdb_id = ? AND media_type IN ('tv', 'episode') LIMIT 1", (tvdb_id,)).fetchone()
+        if not show_row:
+            return None, {}
+        
+        show = dict(show_row)
+        show["available_seasons"] = json.loads(show["available_seasons"]) if show["available_seasons"] else []
+        show["users_list"] = [u.strip() for u in (show["requested_by_users"] or "").split(",") if u.strip()]
+
+        # 2. Get individual episodes cached from Jellyfin
+        ep_rows = conn.execute("""
+            SELECT season_number, episode_number, title, in_library, external_item_id as jellyfin_id 
+            FROM service_cache 
+            WHERE service = 'jellyfin' AND media_type = 'episode' AND tvdb_id = ? 
+            ORDER BY season_number, episode_number
+        """, (tvdb_id,)).fetchall()
+
+        # 3. Group the episodes by season for the UI accordion
+        seasons = {}
+        for ep in ep_rows:
+            sn = ep["season_number"]
+            if sn is None: 
+                sn = 0 # Catch-all for Specials
+            if sn not in seasons: 
+                seasons[sn] = []
+            seasons[sn].append(dict(ep))
+
+        return show, seasons
+
+def get_movie_details_by_slug(slug):
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM media_catalog WHERE movie_slug = ? AND media_type = 'movie' LIMIT 1", 
+            (slug,)
+        ).fetchone()
+        
+        if not row:
+            return None
+            
+        movie = dict(row)
+        movie["users_list"] = [u.strip() for u in (movie["requested_by_users"] or "").split(",") if u.strip()]
+        return movie
 
 if __name__ == "__main__":
     init_db()
     reconcile_master_catalog()
     print(f"Database schema verified and migrated securely at {DB_FILE}")
+

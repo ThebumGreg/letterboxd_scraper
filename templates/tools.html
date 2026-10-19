@@ -1,3 +1,4 @@
+<!-- templates/tools.html -->
 {% extends "base.html" %}
 {% from "_macros.html" import csrf_field, status_badge, task_card with context %}
 
@@ -12,13 +13,13 @@
     <div class="card-header d-flex justify-content-between align-items-center">
         <h5 class="m-0">Global Automation Pipeline</h5>
         <form action="{{ url_for('trigger_all') }}" method="POST" class="m-0"
-              data-confirm="Run the full pipeline (Scraper, Radarr, Sonarr, Jellyfin Movies, Jellyfin TV)? This can take a while.">
+              data-confirm="Run the full pipeline (Scrapers, Radarr, Sonarr, Jellyfin Movies, Jellyfin TV)? This can take a while.">
             {{ csrf_field() }}
             <button type="submit" class="btn btn-warning btn-sm fw-bold" data-task-btn="all">Run all (sequential queue)</button>
         </form>
     </div>
     <div class="card-body">
-        <p class="text-body-secondary mb-2">Runs Scraper &rarr; Radarr &rarr; Sonarr &rarr; Jellyfin Movies &rarr; Jellyfin TV sequentially in the background.</p>
+        <p class="text-body-secondary mb-2">Runs Scrapers &rarr; Radarr &rarr; Sonarr &rarr; Jellyfin Movies &rarr; Jellyfin TV sequentially in the background.</p>
         {{ status_badge(all_task, 'all') }}
         <small class="text-body-secondary ms-2">Last run: <span data-task-last="all">{{ (all_task.last_run if all_task else '') or 'Never' }}</span></small>
     </div>
@@ -27,7 +28,42 @@
 <!-- Maintenance tasks -->
 <h4 class="mb-3">Maintenance Tasks</h4>
 <div class="row row-cols-1 row-cols-md-2 g-4 mb-4">
-    {{ task_card('scraper', 'Watchlist Scraper', 'Scrapes updated watchlists for Letterboxd and Serializd.', task_statuses.get('scraper'), url_for('trigger_scraper'), 'Run scraper now') }}
+    
+    <!-- Scrapers: two tasks in one card -->
+    {% set lb_task = task_statuses.get('scraper_letterboxd') %}
+    {% set sz_task = task_statuses.get('scraper_serializd') %}
+    <div class="col">
+        <div class="card h-100 shadow-sm">
+            <div class="card-body d-flex flex-column">
+                <h5 class="card-title">Watchlist Scrapers</h5>
+                <p class="card-text text-body-secondary">Scrapes updated watchlists for connected user profiles.</p>
+                <div class="row mb-3">
+                    <div class="col-6">
+                        <small class="fw-bold d-block mb-1">Letterboxd (Movies)</small>
+                        {{ status_badge(lb_task, 'scraper_letterboxd') }}
+                        <small class="text-body-secondary d-block mt-1" data-task-msg="scraper_letterboxd">{{ (lb_task.message if lb_task else '') or 'No active logs' }}</small>
+                        <small class="text-body-secondary d-block mt-1">Last run: <span data-task-last="scraper_letterboxd">{{ (lb_task.last_run if lb_task else '') or 'Never' }}</span></small>
+                    </div>
+                    <div class="col-6">
+                        <small class="fw-bold d-block mb-1">Serializd (TV Shows)</small>
+                        {{ status_badge(sz_task, 'scraper_serializd') }}
+                        <small class="text-body-secondary d-block mt-1" data-task-msg="scraper_serializd">{{ (sz_task.message if sz_task else '') or 'No active logs' }}</small>
+                        <small class="text-body-secondary d-block mt-1">Last run: <span data-task-last="scraper_serializd">{{ (sz_task.last_run if sz_task else '') or 'Never' }}</span></small>
+                    </div>
+                </div>
+                <div class="d-flex gap-2 mt-auto">
+                    <form action="{{ url_for('trigger_letterboxd_scraper') }}" method="POST">
+                        {{ csrf_field() }}
+                        <button type="submit" class="btn btn-outline-primary btn-sm" data-task-btn="scraper_letterboxd">Scrape Letterboxd</button>
+                    </form>
+                    <form action="{{ url_for('trigger_serializd_scraper') }}" method="POST">
+                        {{ csrf_field() }}
+                        <button type="submit" class="btn btn-outline-primary btn-sm" data-task-btn="scraper_serializd">Scrape Serializd</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
     
     {{ task_card('radarr', 'Radarr Sync', 'Syncs missing movie items with your Radarr instance.', task_statuses.get('radarr'), url_for('trigger_radarr_sync'), 'Sync Radarr now') }}
     
