@@ -11,8 +11,9 @@ scheduler = BackgroundScheduler()
 def run_letterboxd_scraper_task():
     update_task_status("scraper_letterboxd", "in_progress", "Scraping Letterboxd watchlists...")
     try:
-        from letterboxd_scraper import scrape_letterboxd_page
-        scrape_letterboxd_page()
+        # Import the master scraper instead of the single-page parser
+        from letterboxd_scraper import run_all_scrapers
+        run_all_scrapers()
         update_task_status("scraper_letterboxd", "completed", "Letterboxd scrape finished successfully.")
     except Exception as e:
         logger.error(f"Letterboxd scraper job failed: {e}")
@@ -23,8 +24,14 @@ def run_letterboxd_scraper_task():
 def run_serializd_scraper_task():
     update_task_status("scraper_serializd", "in_progress", "Scraping Serializd watchlists...")
     try:
+        # Import the scraper AND the helper that gets your target usernames
         from serializd_scraper import scrape_serializd_watchlist
-        scrape_serializd_watchlist()
+        from letterboxd_scraper import get_target_usernames
+        
+        # Loop through all configured users and pass the username
+        for username in get_target_usernames():
+            scrape_serializd_watchlist(username)
+            
         update_task_status("scraper_serializd", "completed", "Serializd scrape finished successfully.")
     except Exception as e:
         logger.error(f"Serializd scraper job failed: {e}")

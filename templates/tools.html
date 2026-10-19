@@ -171,3 +171,25 @@
     </div>
 </div>
 {% endblock %}
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    document.querySelectorAll('[data-task-last]').forEach(el => {
+        let val = el.textContent.trim();
+        
+        if (val && val !== 'Never') {
+            // Replace space with T to ensure cross-browser parsing of SQL timestamps (YYYY-MM-DDTHH:MM:SS)
+            let dateObj = new Date(val.replace(' ', 'T'));
+            
+            if (!isNaN(dateObj)) {
+                // Formats to something like: "Oct 19, 12:56 PM"
+                el.textContent = dateObj.toLocaleString(undefined, {
+                    month: 'short', 
+                    day: 'numeric',
+                    hour: 'numeric', 
+                    minute: '2-digit'
+                });
+            }
+        }
+    });
+});
+</script>

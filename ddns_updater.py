@@ -1,116 +1,158 @@
 # ddns_updater.py
-import os
-import json
+import datetime
 import logging
-import hashlib
-import re
-from datetime import datetime, timezone, timedelta
 import requests
-from database import get_connection, get_setting, set_setting
+from database import get_setting, set_setting, log_ddns_history
 
 logger = logging.getLogger(__name__)
 
-IP_RESOLVER_URL = "https://api.ipify.org?format=json"
-DYNU_UPDATE_URL = "https://api.dynu.com/nic/update"
+DYNU_API_BASE = "https://api.dynu.com/v2"
 
 def get_dynu_credentials():
-    hostname = get_setting("dynu_hostname", "") or os.getenv("DYNU_HOSTNAME", "")
-    raw_password = get_setting("dynu_password", "") or os.getenv("DYNU_PASSWORD", "")
-    enabled = get_setting("dynu_enabled", "1") == "1"
+    """Retrieves full Dynu configuration and cached metadata."""
+    return {
+        "domain": get_setting("dynu_domain") or get_setting("dynu_hostname") or "",
+        "api_key": get_setting("dynu_api_key") or "",
+        "enabled": get_setting("dynu_enabled", "0") == "1",
+        "last_ip": get_setting("ddns_last_ip") or "",
+        "dns_id": get_setting("dynu_dns_id") or "",
+        "record_id": get_setting("dynu_record_id") or "Root Domain",
+        "created_on": get_setting("dynu_created_on") or "N/A",
+        "remote_updated_on": get_setting("dynu_remote_updated_on") or "N/A",
+        "state": get_setting("dynu_domain_state") or "Unknown",
+        "ttl": get_setting("dynu_ttl") or "60"
+    }
 
-    if not raw_password:
-        return hostname, "", enabled
+def fetch_and_cache_dynu_metadata(domain, api_key):
+    """Queries Dynu v2 REST API to resolve DNS_ID, createdOn, and updatedOn."""
+    headers = {"API-Key": api_key, "Accept": "application/json"}
 
-    # Check if raw_password is already a 32-character hex string (MD5)
-    if re.fullmatch(r"[a-fA-F0-9]{32}", raw_password):
-        password_md5 = raw_password
-    else:
-        # Convert plaintext password to MD5 hash automatically
-        password_md5 = hashlib.md5(raw_password.encode("utf-8")).hexdigest()
-
-    return hostname, password_md5, enabled
-
-def _get_public_ip():
     try:
-        response = requests.get(IP_RESOLVER_URL, timeout=10)
+        # Step 1: Query domain list from Dynu
+        resp = requests.get(f"{DYNU_API_BASE}/dns", headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        domains = data.get("domains", [])
+
+        target_domain = next((d for d in domains if d.get("name", "").lower() == domain.lower()), None)
+        if not target_domain:
+            logger.error(f"DDNS Error: Domain '{domain}' not found in Dynu account.")
+            return None
+
+        dns_id = str(target_domain.get("id"))
+        set_setting("dynu_dns_id", dns_id)
+        set_setting("dynu_record_id", "Root Domain")
+        set_setting("dynu_domain_state", target_domain.get("state", "Complete"))
+        set_setting("dynu_ttl", str(target_domain.get("ttl", 60)))
+        set_setting("dynu_created_on", target_domain.get("createdOn", ""))
+        set_setting("dynu_remote_updated_on", target_domain.get("updatedOn", ""))
+        
+        # Cache existing IP if set on Dynu
+        if target_domain.get("ipv4Address"):
+            set_setting("ddns_last_ip", target_domain.get("ipv4Address"))
+
+        return dns_id
+
+    except Exception as e:
+        logger.error(f"DDNS Error: Failed fetching Dynu metadata: {e}")
+        return None
+
+def get_current_ip():
+    """Fetches public IP address via ipify."""
+    try:
+        response = requests.get("https://api.ipify.org", timeout=10)
         response.raise_for_status()
-        return response.json().get("ip")
-    except requests.RequestException as e:
-        logger.error(f"DDNS: Failed to resolve public IP: {e}")
+        return response.text.strip()
+    except Exception as e:
+        logger.error(f"DDNS Error: Failed getting public IP: {e}")
         return None
 
 def run_ddns_update(force=False):
-    """Background or manually triggered task to synchronize public IP with Dynu DDNS."""
-    hostname, password_md5, enabled = get_dynu_credentials()
+    """Executes DDNS IP update against Dynu REST API v2 Domain endpoint."""
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    set_setting("ddns_last_run", now_str)
 
-    if not enabled and not force:
-        logger.debug("DDNS: Module is disabled in settings. Skipping update.")
-        return False, "DDNS module is disabled."
+    creds = get_dynu_credentials()
 
-    if not hostname or not password_md5:
-        logger.debug("DDNS: Configuration missing (Hostname or Password). Skipping.")
-        return False, "DDNS configuration missing (Hostname or Password)."
+    if not creds["enabled"] and not force:
+        msg = "DDNS update skipped: Disabled in settings."
+        set_setting("ddns_last_status", "SKIPPED")
+        set_setting("ddns_last_message", msg)
+        return False, msg
 
-    current_ip = _get_public_ip()
+    domain = creds["domain"]
+    api_key = creds["api_key"]
+
+    if not domain or not api_key:
+        msg = "DDNS update skipped: Domain or API Key missing."
+        set_setting("ddns_last_status", "FAILED")
+        set_setting("ddns_last_message", msg)
+        return False, msg
+
+    current_ip = get_current_ip()
     if not current_ip:
-        return False, "Could not resolve public IP address."
+        msg = "DDNS update failed: Public IP check failed."
+        set_setting("ddns_last_status", "FAILED")
+        set_setting("ddns_last_message", msg)
+        log_ddns_history(creds["last_ip"], "N/A", "FAILED", msg)
+        return False, msg
 
-    with get_connection() as conn:
-        row = conn.execute("SELECT * FROM ddns_cache ORDER BY id DESC LIMIT 1").fetchone()
+    # Resolve or fetch DNS_ID if missing
+    dns_id = creds["dns_id"]
+    if not dns_id:
+        dns_id = fetch_and_cache_dynu_metadata(domain, api_key)
+        if not dns_id:
+            msg = "DDNS update failed: Could not resolve DNS_ID from Dynu API."
+            set_setting("ddns_last_status", "FAILED")
+            set_setting("ddns_last_message", msg)
+            log_ddns_history(creds["last_ip"], current_ip, "FAILED", msg)
+            return False, msg
+
+    # Skip if IP has not changed and force is False
+    if current_ip == creds["last_ip"] and not force:
+        msg = f"No IP change detected ({current_ip}). Update skipped."
+        set_setting("ddns_last_status", "SUCCESS")
+        set_setting("ddns_last_message", msg)
+        return True, msg
+
+    # Execute update directly via POST /v2/dns/{DNS_ID}
+    headers = {
+        "API-Key": api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    payload = {
+        "name": domain,
+        "ipv4Address": current_ip,
+        "ipv4": True
+    }
+
+    url = f"{DYNU_API_BASE}/dns/{dns_id}"
+
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
         
-        last_ip = row["last_known_ip"] if row else None
-        last_sync = row["last_sync_timestamp"] if row else None
-        
-        # Check heartbeat threshold (14 days)
-        heartbeat_reached = False
-        if last_sync:
-            try:
-                last_sync_dt = datetime.strptime(last_sync, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) - last_sync_dt > timedelta(days=14):
-                    heartbeat_reached = True
-            except ValueError:
-                heartbeat_reached = True
+        if response.status_code == 200:
+            msg = f"Dynu DDNS successfully updated to {current_ip}."
+            set_setting("ddns_last_ip", current_ip)
+            set_setting("ddns_last_status", "SUCCESS")
+            set_setting("ddns_last_message", msg)
+            set_setting("dynu_remote_updated_on", now_str)
+            log_ddns_history(creds["last_ip"], current_ip, "SUCCESS", msg)
+            return True, msg
+        else:
+            msg = f"Dynu update failed (HTTP {response.status_code}): {response.text}"
+            set_setting("ddns_last_status", "FAILED")
+            set_setting("ddns_last_message", msg)
+            log_ddns_history(creds["last_ip"], current_ip, "FAILED", msg)
+            return False, msg
 
-        if current_ip == last_ip and not heartbeat_reached and not force:
-            logger.debug(f"DDNS: IP ({current_ip}) unchanged and within 14-day window. Skipping API call.")
-            return True, f"IP ({current_ip}) unchanged. Sync not required."
+    except Exception as e:
+        msg = f"DDNS Error connecting to Dynu API: {e}"
+        set_setting("ddns_last_status", "FAILED")
+        set_setting("ddns_last_message", msg)
+        log_ddns_history(creds["last_ip"], current_ip, "FAILED", msg)
+        return False, msg
 
-        logger.info(f"DDNS: Update triggered. Target IP: {current_ip} (Force={force})")
-
-        params = {
-            "hostname": hostname,
-            "myip": current_ip,
-            "password": password_md5
-        }
-
-        status = "ERROR"
-        raw_payload = "{}"
-        message = ""
-
-        try:
-            response = requests.get(DYNU_UPDATE_URL, params=params, timeout=15)
-            raw_payload = response.text
-            
-            if response.status_code == 200 and ("good" in raw_payload or "nochg" in raw_payload):
-                status = "SUCCESS"
-                message = f"Successfully synchronized {hostname} to {current_ip}"
-                logger.info(f"DDNS: {message}")
-            else:
-                status = "API_REJECTED"
-                message = f"Dynu API rejected update: {raw_payload}"
-                logger.warning(f"DDNS: {message}")
-                
-        except requests.RequestException as e:
-            status = "NETWORK_ERROR"
-            raw_payload = str(e)
-            message = f"Network error during Dynu update: {e}"
-            logger.error(f"DDNS: {message}")
-
-        # Update Local Cache
-        conn.execute("DELETE FROM ddns_cache")
-        conn.execute("""
-            INSERT INTO ddns_cache (last_known_ip, last_update_status, raw_dynu_json_payload, last_sync_timestamp)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-        """, (current_ip, status, json.dumps({"response": raw_payload})))
-
-        return status == "SUCCESS", message
+if __name__ == "__main__":
+    run_ddns_update()

@@ -1,11 +1,4 @@
 # database.py
-   
-													 
-								
-																					 
-										   
-																	
-   
 import json
 import logging
 import re
@@ -616,6 +609,41 @@ def get_movie_details_by_slug(slug):
         movie = dict(row)
         movie["users_list"] = [u.strip() for u in (movie["requested_by_users"] or "").split(",") if u.strip()]
         return movie
+
+def init_ddns_db():
+    """Ensures the ddns_history audit log table exists."""
+    with get_connection() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ddns_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                old_ip TEXT,
+                new_ip TEXT,
+                status TEXT NOT NULL,
+                message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+def log_ddns_history(old_ip, new_ip, status, message):
+    """Logs an IP update event or status check to the database."""
+    init_ddns_db()
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO ddns_history (old_ip, new_ip, status, message)
+            VALUES (?, ?, ?, ?)
+        """, (old_ip or "N/A", new_ip or "N/A", status, message))
+
+def get_ddns_history(limit=10):
+    """Retrieves recent DDNS history records for display."""
+    init_ddns_db()
+    with get_connection() as conn:
+        cursor = conn.execute("""
+            SELECT old_ip, new_ip, status, message, created_at
+            FROM ddns_history
+            ORDER BY id DESC
+            LIMIT ?
+        """, (limit,))
+        return [dict(row) for row in cursor.fetchall()]
 
 #its being called From Scraper ???
 def add_list_column_if_missing():

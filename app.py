@@ -23,6 +23,9 @@ from flask import (
     url_for,
 )
 
+from database import get_setting, set_setting, get_ddns_history
+from ddns_updater import run_ddns_update, get_dynu_credentials, fetch_and_cache_dynu_metadata
+
 from automation import run_radarr_automation_worker, run_sonarr_automation_worker
 from config import DEFAULT_REQUEST_DELAY_RANGE, DEFAULT_USER_DELAY_RANGE, POSTER_DIR
 from database import (
@@ -60,7 +63,7 @@ from scheduler import (
     trigger_async_task,
 )
 
-from projects.letterboxd_scraper.letterboxd_scraper import run_all_scrapers
+#from projects.letterboxd_scraper.letterboxd_scraper import run_all_scrapers
 from export_to_csv import generate_consolidated_csv_buffer
 from disk_scanner import scan_local_disk_directory as run_disk_scan
 
@@ -140,6 +143,43 @@ def index():
 
     return render_template("index.html", films=films, all_users=sorted(list(all_users)), stats=stats)
 
+@app.route("/ddns", methods=["GET"])
+def ddns_page():
+    creds = get_dynu_credentials()
+    
+    ddns_status = {
+        "last_update_status": get_setting("ddns_last_status", "UNKNOWN"),
+        "last_ip": creds["last_ip"],
+        "message": get_setting("ddns_last_message", ""),
+        "last_run": get_setting("ddns_last_run", "")
+    }
+
+    history = get_ddns_history(limit=10)
+
+    return render_template(
+        "ddns.html",
+        dynu_hostname=creds["domain"],
+        dynu_api_key=creds["api_key"],
+        dynu_enabled=creds["enabled"],
+        dynu_created_on=creds["created_on"],
+        dynu_remote_updated_on=creds["remote_updated_on"],
+        dynu_domain_state=creds["state"],
+        dynu_ttl=creds["ttl"],
+        dynu_dns_id=creds["dns_id"],
+        dynu_record_id=creds["record_id"],
+        ddns_status=ddns_status,
+        ddns_history=history
+    )
+
+@app.route("/ddns/trigger-update", methods=["POST"])
+def ddns_trigger_update():
+    success, message = run_ddns_update(force=True)
+    if success:
+        flash(message, "success")
+    else:
+        flash(message, "danger")
+    return redirect(url_for("ddns_page"))
+
 @app.route("/resolution")
 def resolution_center():
     suggestions = get_fuzzy_matches()
@@ -169,39 +209,6 @@ def merge_resolution():
 
     return jsonify({"ok": False, "message": "Invalid action."}), 400
 
-@app.route("/ddns")
-def ddns_page():
-    hostname, raw_password, enabled = get_dynu_credentials()
-    ddns_status = get_ddns_cache() or {}
-    return render_template("ddns.html", hostname=hostname, raw_password=raw_password, enabled=enabled, ddns_status=ddns_status)
-
-@app.route("/ddns/update-settings", methods=["POST"])
-def ddns_update_settings():
-    hostname = (request.form.get("dynu_hostname") or "").strip()
-    password = (request.form.get("dynu_password") or "").strip()
-    enabled = "1" if request.form.get("dynu_enabled") == "1" else "0"
-
-    set_setting("dynu_hostname", hostname)
-    if password:
-        # Check if password is raw plaintext or MD5 hash
-        if not re.fullmatch(r"[a-fA-F0-9]{32}", password):
-            hashed_pw = hashlib.md5(password.encode("utf-8")).hexdigest()
-            set_setting("dynu_password", hashed_pw)
-        else:
-            set_setting("dynu_password", password)
-            
-    set_setting("dynu_enabled", enabled)
-    flash("DDNS configuration saved successfully.", "success")
-    return redirect(url_for("ddns_page"))
-
-@app.route("/ddns/trigger-update", methods=["POST"])
-def ddns_trigger_update():
-    success, message = run_ddns_update(force=True)
-    if success:
-        flash(f"DDNS Sync Success: {message}", "success")
-    else:
-        flash(f"DDNS Sync Failed: {message}", "danger")
-    return redirect(url_for("ddns_page"))
 
 @app.route("/poster/<slug>")
 def get_poster(slug):
@@ -599,6 +606,30 @@ def show_details(tvdb_id):
         return redirect(url_for('index'))
         
     return render_template("show_details.html", show=show, seasons=seasons)
+
+@app.route("/ddns/update-settings", methods=["POST"])
+def ddns_update_settings():
+    domain = (request.form.get("dynu_hostname") or "").strip()
+    apikey = (request.form.get("dynu_api_key") or "").strip()
+    enabled = "1" if request.form.get("dynu_enabled") == "1" else "0"
+
+    old_domain = get_setting("dynu_domain")
+    old_key = get_setting("dynu_api_key")
+
+    set_setting("dynu_domain", domain)
+    set_setting("dynu_api_key", apikey)
+    set_setting("dynu_enabled", enabled)
+
+    # Invalidate cached IDs if domain or API key changed
+    if domain != old_domain or apikey != old_key:
+        set_setting("dynu_dns_id", "")
+        set_setting("dynu_record_id", "")
+        if domain and apikey:
+            fetch_and_cache_dynu_metadata(domain, apikey)
+
+    flash("DDNS configuration saved successfully.", "success")
+    return redirect(url_for("ddns_page"))
+
 
 if csrf:
     csrf.exempt(api_webhook)
