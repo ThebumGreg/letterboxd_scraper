@@ -5,6 +5,8 @@ import json
 import os
 import re
 import secrets
+import queue
+import hashlib
 from collections import deque
 from urllib.parse import urlparse
 
@@ -34,11 +36,14 @@ from database import (
     init_db,
     set_setting,
     update_film_identifiers,
+    get_fuzzy_matches,
+    get_ddns_cache,
 )
 from jellyfin_integration import (
     fetch_and_cache_poster,
     sync_jellyfin_playlist,
 )
+from ddns_updater import run_ddns_update, get_dynu_credentials
 from notifications import send_notification
 
 from scheduler import (
@@ -55,7 +60,7 @@ from scheduler import (
     trigger_async_task,
 )
 
-from scraper import run_all_scrapers
+from projects.letterboxd_scraper.letterboxd_scraper import run_all_scrapers
 from export_to_csv import generate_consolidated_csv_buffer
 from disk_scanner import scan_local_disk_directory as run_disk_scan
 
@@ -72,10 +77,43 @@ except ImportError:
 init_db()
 init_scheduler()
 
+# SSE Message Announcer Pattern
+class MessageAnnouncer:
+    def __init__(self):
+        self.listeners = []
+        
+    def listen(self):
+        q = queue.Queue(maxsize=5)
+        self.listeners.append(q)
+        return q
+        
+    def announce(self, msg):
+        for i in reversed(range(len(self.listeners))):
+            try:
+                self.listeners[i].put_nowait(msg)
+            except queue.Full:
+                del self.listeners[i]
+
+announcer = MessageAnnouncer()
+
+def format_sse(data: str, event=None) -> str:
+    msg = f"data: {data}\n\n"
+    if event is not None:
+        msg = f"event: {event}\n{msg}"
+    return msg
+
+@app.route("/api/stream/events")
+def stream_events():
+    def stream():
+        messages = announcer.listen()
+        while True:
+            msg = messages.get()
+            yield msg
+    return Response(stream(), mimetype="text/event-stream")
+
 @app.route("/")
 def index():
     films = get_media_catalog()
-    
     movie_count = sum(1 for f in films if f["media_type"] == "movie")
     tv_count = sum(1 for f in films if f["media_type"] in ("tv", "episode"))
     matched_in_jellyfin_count = sum(1 for f in films if f["in_jellyfin"])
@@ -101,7 +139,70 @@ def index():
     }
 
     return render_template("index.html", films=films, all_users=sorted(list(all_users)), stats=stats)
-    
+
+@app.route("/resolution")
+def resolution_center():
+    suggestions = get_fuzzy_matches()
+    unmatched_films = [f for f in get_media_catalog() if not f.get("tmdb_id") and not f.get("tvdb_id")]
+    return render_template("resolution.html", suggestions=suggestions, unmatched_films=unmatched_films)
+
+@app.route("/api/resolution/merge", methods=["POST"])
+def merge_resolution():
+    data = request.get_json(silent=True) or {}
+    slug = data.get("slug")
+    action = data.get("action")
+    tmdb_id = data.get("tmdb_id")
+    tvdb_id = data.get("tvdb_id")
+
+    if not slug or not action:
+        return jsonify({"ok": False, "message": "Missing slug or action payload"}), 400
+
+    if action == "approve":
+        update_film_identifiers(slug, tmdb_id=tmdb_id, tvdb_id=tvdb_id, set_ignore=False)
+        from database import reconcile_master_catalog
+        reconcile_master_catalog()
+        return jsonify({"ok": True, "message": f"Successfully linked IDs to {slug}."})
+        
+    elif action == "dismiss":
+        update_film_identifiers(slug, set_ignore=True)
+        return jsonify({"ok": True, "message": f"Successfully ignored match for {slug}."})
+
+    return jsonify({"ok": False, "message": "Invalid action."}), 400
+
+@app.route("/ddns")
+def ddns_page():
+    hostname, raw_password, enabled = get_dynu_credentials()
+    ddns_status = get_ddns_cache() or {}
+    return render_template("ddns.html", hostname=hostname, raw_password=raw_password, enabled=enabled, ddns_status=ddns_status)
+
+@app.route("/ddns/update-settings", methods=["POST"])
+def ddns_update_settings():
+    hostname = (request.form.get("dynu_hostname") or "").strip()
+    password = (request.form.get("dynu_password") or "").strip()
+    enabled = "1" if request.form.get("dynu_enabled") == "1" else "0"
+
+    set_setting("dynu_hostname", hostname)
+    if password:
+        # Check if password is raw plaintext or MD5 hash
+        if not re.fullmatch(r"[a-fA-F0-9]{32}", password):
+            hashed_pw = hashlib.md5(password.encode("utf-8")).hexdigest()
+            set_setting("dynu_password", hashed_pw)
+        else:
+            set_setting("dynu_password", password)
+            
+    set_setting("dynu_enabled", enabled)
+    flash("DDNS configuration saved successfully.", "success")
+    return redirect(url_for("ddns_page"))
+
+@app.route("/ddns/trigger-update", methods=["POST"])
+def ddns_trigger_update():
+    success, message = run_ddns_update(force=True)
+    if success:
+        flash(f"DDNS Sync Success: {message}", "success")
+    else:
+        flash(f"DDNS Sync Failed: {message}", "danger")
+    return redirect(url_for("ddns_page"))
+
 @app.route("/poster/<slug>")
 def get_poster(slug):
     poster_filename = f"{slug}.jpg"
@@ -150,8 +251,8 @@ def settings_page():
 def logs_page():
     return render_template("logs.html")
 
-SECRET_FIELDS = ("tmdb_api_key", "jellyfin_api_key", "radarr_api_key", "sonarr_api_key", "apprise_urls")
-_TOKEN_RE = re.compile(r"(?i)\b(api_?key|token|apikey)=([^&\s]+)")
+SECRET_FIELDS = ("tmdb_api_key", "jellyfin_api_key", "radarr_api_key", "sonarr_api_key", "apprise_urls", "dynu_password")
+_TOKEN_RE = re.compile(r"(?i)\b(api_?key|token|apikey|password)=([^&\s]+)")
 
 def _known_secrets():
     found = set()
@@ -271,12 +372,6 @@ def fix_match():
         from database import reconcile_master_catalog
         reconcile_master_catalog()
         flash(f"Updated metadata IDs for {slug}", "success")
-    return redirect(url_for("tools"))
-
-@app.route("/tools/trigger-scraper", methods=["POST"])
-def trigger_scraper():
-    start_async_task(run_scraper_task)
-    flash("Watchlist scraper process initiated in background.", "info")
     return redirect(url_for("tools"))
 
 @app.route("/tools/trigger-radarr-sync", methods=["POST"])
@@ -412,10 +507,26 @@ def trigger_disk_scan():
 @app.route("/api/webhook/<service>", methods=["POST"])
 def api_webhook(service):
     payload = request.get_json(silent=True) or {}
-    app.logger.info(f"Webhook received from {service}: {payload.get('eventType') or payload.get('NotificationType') or 'unknown'}")
+    event_type = payload.get('eventType') or payload.get('NotificationType') or 'unknown'
+    app.logger.info(f"Webhook received from {service}: {event_type}")
+    
     if service == "jellyfin":
         from jellyfin_integration import handle_playback_reporting
         handle_playback_reporting(payload)
+    
+    if service in ("radarr", "sonarr") and event_type in ("Grab", "Download"):
+        series = payload.get("series", {})
+        movie = payload.get("movie", {})
+        
+        sse_data = {
+            "service": service,
+            "event": event_type,
+            "tvdb_id": series.get("tvdbId"),
+            "tmdb_id": movie.get("tmdbId"),
+            "queue_status": "Downloading" if event_type == "Grab" else "Downloaded"
+        }
+        announcer.announce(format_sse(json.dumps(sse_data)))
+
     return jsonify({"status": "received", "service": service}), 200
 
 @app.route("/api/request-seasons", methods=["POST"])
@@ -445,6 +556,7 @@ def save_profile():
     jellyfin_id = request.form.get("jellyfin_user_id", "").strip()
     
     if profile_name:
+        from database import save_user_profile_mapping
         save_user_profile_mapping(profile_name, letterboxd, serializd, jellyfin_id)
         flash(f"Profile mapping for '{profile_name}' saved.", "success")
     else:
@@ -453,6 +565,7 @@ def save_profile():
 
 @app.route("/settings/profiles/delete/<int:profile_id>", methods=["POST"])
 def delete_profile(profile_id):
+    from database import delete_user_profile_mapping
     delete_user_profile_mapping(profile_id)
     flash("Profile mapping removed.", "info")
     return redirect(url_for("settings_page"))
@@ -477,7 +590,6 @@ def movie_details(slug):
         return redirect(url_for('index'))
         
     return render_template("movie_details.html", movie=movie)
-
 
 @app.route("/show/<tvdb_id>")
 def show_details(tvdb_id):

@@ -24,7 +24,7 @@ from database import (
     update_task_status,
 )
 from logger import logger
-from scraper import _delay_range, _pause
+from projects.letterboxd_scraper.letterboxd_scraper import _delay_range, _pause
 
 TASK_NAME = "id_resolver"
 MAX_PER_RUN = 150            # keeps a single run to roughly ten minutes at the default delays

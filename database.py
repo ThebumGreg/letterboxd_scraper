@@ -1,11 +1,11 @@
 # database.py
-"""
-SQLite data layer for Letterboxd & Serializd SyncHub.
-Features a 3-table architecture:
-1. media_catalog: Master table for all media (Jellyfin + Servarrs + Matched Requests)
-2. user_requests: Tracks who requested what
-3. service_cache: Raw API payloads from Jellyfin, Radarr, and Sonarr
-"""
+   
+													 
+								
+																					 
+										   
+																	
+   
 import json
 import logging
 import re
@@ -123,6 +123,10 @@ def init_db():
                 last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
+        # Apply Match & Merge Schema Updates safely
+        _ensure_column(conn, "user_requests", "ignore_match INTEGER DEFAULT 0")
+        _ensure_column(conn, "service_cache", "ignore_match INTEGER DEFAULT 0")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS media_catalog (
@@ -153,16 +157,17 @@ def init_db():
         """)
 
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS user_profile_mappings (
+            CREATE TABLE IF NOT EXISTS ddns_cache (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                profile_name TEXT UNIQUE NOT NULL,
-                letterboxd_username TEXT,
-                serializd_username TEXT,
-                jellyfin_user_id TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                last_known_ip TEXT,
+                last_update_status TEXT,
+                raw_dynu_json_payload TEXT,
+									  
+                last_sync_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
+        conn.execute("CREATE TABLE IF NOT EXISTS user_profile_mappings (id INTEGER PRIMARY KEY AUTOINCREMENT, profile_name TEXT UNIQUE NOT NULL, letterboxd_username TEXT, serializd_username TEXT, jellyfin_user_id TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         conn.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS task_status (task_name TEXT PRIMARY KEY, status TEXT DEFAULT 'idle', last_run TIMESTAMP, message TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS disk_cache (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, path TEXT, size REAL, last_scanned TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
@@ -176,8 +181,8 @@ def init_db():
     finally:
         conn.close()
 
-def add_list_column_if_missing():
-    init_db()
+								 
+			 
 
 def _split_title_year(title, year=None):
     if year is not None:
@@ -256,11 +261,87 @@ def sync_scraped_records(username, list_type, records, run_timestamp=None):
         removed = _prune_list(conn, username, list_type, seen) if seen else 0
     return len(seen), removed, len(seen)
 
-def update_film_identifiers(movie_slug, tmdb_id=None, imdb_id=None, tvdb_id=None):
+def update_film_identifiers(movie_slug, tmdb_id=None, imdb_id=None, tvdb_id=None, set_ignore=False):
+    """Updates external IDs across BOTH user requests and service cache records."""
     tmdb_id, imdb_id, tvdb_id = _clean(tmdb_id), _clean(imdb_id), _clean(tvdb_id)
     any_given = 1 if (tmdb_id or imdb_id or tvdb_id) else 0
+    ignore_flag = 1 if set_ignore else 0
+    
     with get_connection() as conn:
-        conn.execute("UPDATE user_requests SET tmdb_id = COALESCE(?, tmdb_id), imdb_id = COALESCE(?, imdb_id), tvdb_id = COALESCE(?, tvdb_id), id_source = CASE WHEN ? THEN 'manual' ELSE id_source END WHERE movie_slug = ?", (tmdb_id, imdb_id, tvdb_id, any_given, movie_slug))
+        conn.execute("""
+            UPDATE user_requests 
+            SET tmdb_id = COALESCE(?, tmdb_id), 
+                imdb_id = COALESCE(?, imdb_id), 
+                tvdb_id = COALESCE(?, tvdb_id), 
+                ignore_match = ?,
+                id_source = CASE WHEN ? THEN 'manual' ELSE id_source END 
+            WHERE movie_slug = ?
+        """, (tmdb_id, imdb_id, tvdb_id, ignore_flag, any_given, movie_slug))
+        
+        # Apply the same IDs to any service cache record that matches this exact slug
+        conn.execute("""
+            UPDATE service_cache 
+            SET tmdb_id = COALESCE(?, tmdb_id), 
+                imdb_id = COALESCE(?, imdb_id), 
+                tvdb_id = COALESCE(?, tvdb_id), 
+                ignore_match = ?
+            WHERE movie_slug = ?
+        """, (tmdb_id, imdb_id, tvdb_id, ignore_flag, movie_slug))
+
+def get_fuzzy_matches():
+    """Identifies potential matches between missing-ID requests and unlinked service cache items."""
+    def normalize(text):
+        if not text: return ""
+        text = re.sub(r'[^\w\s]', '', text.lower())
+        text = re.sub(r'\b(the|a|an)\b', '', text)
+        return text.strip()
+
+    suggestions = []
+    with get_connection() as conn:
+        unmatched_requests = conn.execute("""
+            SELECT id, movie_slug, film_title, film_year, media_type 
+            FROM user_requests 
+            WHERE (tmdb_id IS NULL AND tvdb_id IS NULL) AND ignore_match = 0
+            GROUP BY movie_slug
+        """).fetchall()
+
+        unmatched_services = conn.execute("""
+            SELECT id, title, year, media_type, external_item_id, service 
+            FROM service_cache 
+            WHERE (tmdb_id IS NULL AND tvdb_id IS NULL) AND ignore_match = 0 AND title IS NOT NULL
+        """).fetchall()
+
+    for req in unmatched_requests:
+        req_norm = normalize(req["film_title"])
+        req_year = int(req["film_year"]) if req["film_year"] and str(req["film_year"]).isdigit() else None
+        
+        for srv in unmatched_services:
+            # Skip cross-media matches
+            if req["media_type"] != srv["media_type"]:
+                continue
+                
+            srv_norm = normalize(srv["title"])
+            if not req_norm or not srv_norm or req_norm != srv_norm:
+                continue
+
+            srv_year = int(srv["year"]) if srv["year"] and str(srv["year"]).isdigit() else None
+            
+            # Allow ±1 year variance
+            if req_year and srv_year and abs(req_year - srv_year) > 1:
+                continue
+
+            suggestions.append({
+                "request_slug": req["movie_slug"],
+                "request_title": req["film_title"],
+                "request_year": req["film_year"],
+                "service_title": srv["title"],
+                "service_year": srv["year"],
+                "service": srv["service"],
+                "service_external_id": srv["external_item_id"]
+            })
+            break # Move to next request after finding a match
+            
+    return suggestions
 
 def get_films_needing_ids(retry_after_days=7, limit=None):
     sql = "SELECT movie_slug, MAX(film_title) AS title, MAX(film_year) AS year, MAX(id_checked_at) AS checked FROM user_requests WHERE movie_slug NOT LIKE 'serializd-%' GROUP BY movie_slug HAVING MAX(NULLIF(tmdb_id, '')) IS NULL AND COALESCE(MAX(id_source), '') != 'rejected' AND (MAX(id_checked_at) IS NULL OR MAX(id_checked_at) < datetime('now', ?)) ORDER BY MAX(id_checked_at) IS NOT NULL, MAX(id_checked_at)"
@@ -285,7 +366,7 @@ def get_film_by_slug(slug):
         return dict(row) if row else None
 
 def get_pending_requests(media_type="movie"):
-    """Used by Radarr/Sonarr automation to find actively watchlisted items."""
+																			  
     where_sql = "WHERE media_type = ? AND letterboxd_lists LIKE '%Watchlist%'"
     with get_connection() as conn:
         rows = conn.execute(f"SELECT tmdb_id, tvdb_id, movie_slug, MAX(film_title) as full_display_name, COUNT(DISTINCT username) as user_count, MAX(season_number) as season_number FROM user_requests {where_sql} GROUP BY movie_slug", (media_type,)).fetchall()
@@ -307,8 +388,9 @@ def get_service_cache(service):
 def prune_service_cache(service, older_than):
     with get_connection() as conn:
         return conn.execute("DELETE FROM service_cache WHERE service = ? AND last_updated < ?", (service, older_than)).rowcount
+
 def reconcile_master_catalog():
-    """Aggregates service caches and user requests into the Master media_catalog."""
+																					
     with get_connection() as conn:
         conn.execute("DELETE FROM media_catalog")
         catalog = {}
@@ -400,8 +482,8 @@ def reconcile_master_catalog():
             avail_seasons = []
             if item["media_type"] == "tv" and item["tvdb_id"] and str(item["tvdb_id"]) in jf_seasons:
                 avail_seasons = sorted(list(jf_seasons[str(item["tvdb_id"])]))
-                
-                # Flag status as partially available if some seasons exist in Jellyfin but the show isn't fully 'in_library'
+				
+																															
                 if avail_seasons and item["status"] != "in_library":
                     item["status"] = "partially_available"
                     
@@ -417,7 +499,7 @@ def reconcile_master_catalog():
             ))
             
         conn.executemany("INSERT INTO media_catalog (tmdb_id, imdb_id, tvdb_id, movie_slug, title, release_year, media_type, season_number, episode_number, poster_url, in_jellyfin, jellyfin_id, jellyfin_link, in_radarr, radarr_id, in_sonarr, sonarr_id, available_seasons, status, requested_by_users, user_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows_to_insert)
-        
+
 def get_media_catalog():
     with get_connection() as conn:
         rows = conn.execute("SELECT * FROM media_catalog ORDER BY user_count DESC, title ASC").fetchall()
@@ -450,21 +532,21 @@ def update_job_status(job_name, status, message=""):
     update_task_status(job_name, status, message)
 
 def get_all_task_statuses():
-    default_tasks = [
-    "scraper_letterboxd", "scraper_serializd", "radarr", "sonarr", 
-    "jellyfin_movies", "jellyfin_tv", "id_resolver", "all"
-    ]
+					 
+    default_tasks = ["scraper_letterboxd", "scraper_serializd", "radarr", "sonarr", "jellyfin_movies", "jellyfin_tv", "id_resolver", "all"]
+														  
+	 
     statuses = {t: {"task_name": t, "status": "idle", "last_run": None, "message": "No active logs"} for t in default_tasks}
     with get_connection() as conn:
         for row in conn.execute("SELECT * FROM task_status"):
             statuses[row["task_name"]] = dict(row)
     return statuses
 
-def save_disk_file_cache(file_data_list):
-    rows = [(item.get("parsed_title") or item.get("title") or item.get("file_name"), item.get("file_path") or item.get("path"), item.get("file_size") if item.get("file_size") is not None else item.get("size")) for item in file_data_list]
+def get_ddns_cache():
+																																																											 
     with get_connection() as conn:
-        conn.execute("DELETE FROM disk_cache")
-        conn.executemany("INSERT INTO disk_cache (title, path, size) VALUES (?, ?, ?)", rows)
+        row = conn.execute("SELECT * FROM ddns_cache ORDER BY id DESC LIMIT 1").fetchone()
+        return dict(row) if row else None
 
 def get_disk_file_cache():
     with get_connection() as conn:
@@ -535,8 +617,17 @@ def get_movie_details_by_slug(slug):
         movie["users_list"] = [u.strip() for u in (movie["requested_by_users"] or "").split(",") if u.strip()]
         return movie
 
+#its being called From Scraper ???
+def add_list_column_if_missing():
+    init_db()
+
+def save_disk_file_cache(file_data_list):
+    rows = [(item.get("parsed_title") or item.get("title") or item.get("file_name"), item.get("file_path") or item.get("path"), item.get("file_size") if item.get("file_size") is not None else item.get("size")) for item in file_data_list]
+    with get_connection() as conn:
+        conn.execute("DELETE FROM disk_cache")
+        conn.executemany("INSERT INTO disk_cache (title, path, size) VALUES (?, ?, ?)", rows)
+
 if __name__ == "__main__":
     init_db()
     reconcile_master_catalog()
     print(f"Database schema verified and migrated securely at {DB_FILE}")
-

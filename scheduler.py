@@ -3,6 +3,7 @@ import logging
 import threading
 from apscheduler.schedulers.background import BackgroundScheduler
 from database import get_setting, update_task_status, reconcile_master_catalog
+from ddns_updater import run_ddns_update
 
 logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
@@ -10,8 +11,8 @@ scheduler = BackgroundScheduler()
 def run_letterboxd_scraper_task():
     update_task_status("scraper_letterboxd", "in_progress", "Scraping Letterboxd watchlists...")
     try:
-        from scraper import run_letterboxd_scrapers
-        run_letterboxd_scrapers()
+        from letterboxd_scraper import scrape_letterboxd_page
+        scrape_letterboxd_page()
         update_task_status("scraper_letterboxd", "completed", "Letterboxd scrape finished successfully.")
     except Exception as e:
         logger.error(f"Letterboxd scraper job failed: {e}")
@@ -22,35 +23,14 @@ def run_letterboxd_scraper_task():
 def run_serializd_scraper_task():
     update_task_status("scraper_serializd", "in_progress", "Scraping Serializd watchlists...")
     try:
-        from scraper import run_serializd_scrapers
-        run_serializd_scrapers()
+        from serializd_scraper import scrape_serializd_watchlist
+        scrape_serializd_watchlist()
         update_task_status("scraper_serializd", "completed", "Serializd scrape finished successfully.")
     except Exception as e:
         logger.error(f"Serializd scraper job failed: {e}")
         update_task_status("scraper_serializd", "failed", str(e))
     finally:
         reconcile_master_catalog()
-
-def reconfigure_scheduler():
-    scheduler.remove_all_jobs()
-    
-    lb_hours = int(get_setting("letterboxd_interval_hours", "24"))
-    sz_hours = int(get_setting("serializd_interval_hours", "12"))
-    radarr_hours = int(get_setting("radarr_interval_hours", "6"))
-    sonarr_hours = int(get_setting("sonarr_interval_hours", "6"))
-    jellyfin_hours = int(get_setting("jellyfin_interval_hours", "6"))
-    
-    if lb_hours > 0:
-        scheduler.add_job(run_letterboxd_scraper_task, 'interval', hours=lb_hours, id='job_lb_scraper')
-    if sz_hours > 0:
-        scheduler.add_job(run_serializd_scraper_task, 'interval', hours=sz_hours, id='job_sz_scraper')
-    if radarr_hours > 0:
-        scheduler.add_job(run_radarr_task, 'interval', hours=radarr_hours, id='job_radarr')
-    if sonarr_hours > 0:
-        scheduler.add_job(run_sonarr_task, 'interval', hours=sonarr_hours, id='job_sonarr')
-    if jellyfin_hours > 0:
-        scheduler.add_job(run_jellyfin_movies_task, 'interval', hours=jellyfin_hours, id='job_jf_movies')
-        scheduler.add_job(run_jellyfin_tv_task, 'interval', hours=jellyfin_hours, id='job_jf_tv')
 
 def run_radarr_task():
     update_task_status("radarr", "in_progress", "Syncing with Radarr...")
@@ -99,7 +79,6 @@ def run_jellyfin_task():
 job_sync_jellyfin = run_jellyfin_task
 
 def run_all_sequential_pipeline():
-    """Executes all operations sequentially mapping from Jellyfin -> Scrapers -> Catalog."""
     update_task_status("all", "in_progress", "Sequential pipeline started.")
     update_task_status("scraper_letterboxd", "pending", "Waiting in queue...")
     update_task_status("scraper_serializd", "pending", "Waiting in queue...")
@@ -126,6 +105,9 @@ trigger_async_task = start_async_task
 
 def reconfigure_scheduler():
     scheduler.remove_all_jobs()
+    
+    # DDNS Job runs constantly regardless of user settings
+    scheduler.add_job(run_ddns_update, 'interval', minutes=5, id='job_ddns_updater')
     
     scraper_hours = int(get_setting("scraper_interval_hours", "24"))
     radarr_hours = int(get_setting("radarr_interval_hours", "6"))

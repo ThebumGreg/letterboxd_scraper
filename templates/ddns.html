@@ -1,0 +1,102 @@
+<!-- templates/ddns.html -->
+{% extends "base.html" %}
+
+{% block title %}Dynamic DNS{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="m-0"><i class="bi bi-globe text-primary me-2"></i>Dynamic DNS Automation</h2>
+    <form action="{{ url_for('ddns_trigger_update') }}" method="POST" class="m-0">
+        {% if csrf_token is defined %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+        <button type="submit" class="btn btn-primary fw-bold">
+            <i class="bi bi-arrow-repeat me-1"></i> Force Sync Now
+        </button>
+    </form>
+</div>
+
+<!-- Status & Health Card -->
+<div class="card mb-4 shadow-sm border-0">
+    <div class="card-header bg-dark bg-opacity-50 d-flex justify-content-between align-items-center">
+        <h5 class="m-0"><i class="bi bi-activity text-info me-2"></i>Service Status</h5>
+        {% if ddns_status.last_update_status == "SUCCESS" %}
+            <span class="badge bg-success">HEALTHY</span>
+        {% elif ddns_status.last_update_status %}
+            <span class="badge bg-danger">{{ ddns_status.last_update_status }}</span>
+        {% else %}
+            <span class="badge bg-secondary">AWAITING FIRST SYNC</span>
+        {% endif %}
+    </div>
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-3">
+                <small class="text-body-secondary d-block mb-1">Target Hostname</small>
+                <div class="fw-bold fs-5 text-truncate" title="{{ hostname }}">{{ hostname or 'Not Configured' }}</div>
+            </div>
+            <div class="col-md-3">
+                <small class="text-body-secondary d-block mb-1">Last Known Public IP</small>
+                <div class="fw-bold fs-5 text-info">{{ ddns_status.last_known_ip or 'Unknown' }}</div>
+            </div>
+            <div class="col-md-3">
+                <small class="text-body-secondary d-block mb-1">Last Sync Timestamp (UTC)</small>
+                <div class="fw-bold">{{ ddns_status.last_sync_timestamp or 'Never' }}</div>
+            </div>
+            <div class="col-md-3">
+                <small class="text-body-secondary d-block mb-1">Automation Status</small>
+                {% if enabled %}
+                    <span class="badge bg-success">ENABLED (5-Min Interval)</span>
+                {% else %}
+                    <span class="badge bg-warning text-dark">DISABLED</span>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if ddns_status.raw_dynu_json_payload %}
+        <div class="mt-4">
+            <a class="text-decoration-none small text-muted" data-bs-toggle="collapse" href="#ddnsDebug" role="button" aria-expanded="false" aria-controls="ddnsDebug">
+                <i class="bi bi-code-slash"></i> Show Raw API Response Payload
+            </a>
+            <div class="collapse mt-2" id="ddnsDebug">
+                <pre class="bg-dark text-light p-3 rounded" style="font-size: 0.85rem;">{{ ddns_status.raw_dynu_json_payload }}</pre>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- DDNS Settings Configuration Form -->
+<div class="card shadow-sm border-0">
+    <div class="card-header bg-dark bg-opacity-50">
+        <h5 class="m-0"><i class="bi bi-gear-fill text-secondary me-2"></i>Dynu DDNS Credentials & Settings</h5>
+    </div>
+    <div class="card-body">
+        <form action="{{ url_for('ddns_update_settings') }}" method="POST">
+            {% if csrf_token is defined %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+
+            <div class="mb-3 form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="dynu_enabled" name="dynu_enabled" value="1" {% if enabled %}checked{% endif %}>
+                <label class="form-check-label fw-bold" for="dynu_enabled">Enable Automatic DDNS Updates (Every 5 minutes)</label>
+            </div>
+
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label for="dynu_hostname" class="form-label fw-bold">Dynu Hostname</label>
+                    <input type="text" class="form-control" id="dynu_hostname" name="dynu_hostname" value="{{ hostname }}" placeholder="example.dynu.net" required>
+                    <div class="form-text">Your configured Dynu domain or hostname.</div>
+                </div>
+
+                <div class="col-md-6">
+                    <label for="dynu_password" class="form-label fw-bold">Dynu Password / MD5 Hash</label>
+                    <input type="password" class="form-control" id="dynu_password" name="dynu_password" value="{{ raw_password }}" placeholder="Enter password or MD5 hash...">
+                    <div class="form-text">Enter plaintext password (automatically converted to MD5 hash) or a 32-character MD5 hash. Never stored in plaintext.</div>
+                </div>
+            </div>
+
+            <div class="mt-4 text-end">
+                <button type="submit" class="btn btn-success fw-bold">
+                    <i class="bi bi-check-lg me-1"></i> Save DDNS Settings
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,21 @@
+{
+    "name": "SyncHub",
+    "short_name": "SyncHub",
+    "description": "Media synchronization and watchlist manager",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#212529",
+    "theme_color": "#212529",
+    "icons": [
+        {
+            "src": "placeholder.jpg",
+            "sizes": "192x192",
+            "type": "image/jpeg"
+        },
+        {
+            "src": "placeholder.jpg",
+            "sizes": "512x512",
+            "type": "image/jpeg"
+        }
+    ]
+}

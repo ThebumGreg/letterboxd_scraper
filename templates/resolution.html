@@ -1,0 +1,119 @@
+<!-- templates/resolution.html -->
+{% extends "base.html" %}
+
+{% block title %}Resolution Center{% endblock %}
+
+{% block content %}
+<h2 class="mb-4">Resolution Center</h2>
+
+<!-- Section 1: Fuzzy Match Suggestions -->
+<h4 class="mb-3">Suggested Matches</h4>
+{% if suggestions %}
+    <div class="row row-cols-1 row-cols-md-2 g-4 mb-5">
+        {% for match in suggestions %}
+        <div class="col" id="suggestion-{{ loop.index }}">
+            <div class="card shadow-sm h-100">
+                <div class="card-header bg-secondary bg-opacity-25 d-flex justify-content-between align-items-center">
+                    <span class="fw-bold">Potential Link Found</span>
+                    <span class="badge {{ 'badge-movie' if match.service == 'radarr' else 'badge-tv' if match.service == 'sonarr' else 'bg-primary' }}">{{ match.service|upper }}</span>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-6 border-end">
+                            <small class="text-body-secondary d-block mb-1">Requested Watchlist Item</small>
+                            <h6 class="mb-0">{{ match.request_title }}</h6>
+                            <small class="text-muted">{{ match.request_year or 'Unknown Year' }}</small>
+                        </div>
+                        <div class="col-6">
+                            <small class="text-body-secondary d-block mb-1">Unlinked Cache Item</small>
+                            <h6 class="mb-0 text-info">{{ match.service_title }}</h6>
+                            <small class="text-muted">{{ match.service_year or 'Unknown Year' }}</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer d-flex justify-content-end gap-2 bg-transparent">
+                    <button class="btn btn-sm btn-outline-danger" onclick="resolveMatch('{{ match.request_slug }}', 'dismiss', null, null, 'suggestion-{{ loop.index }}')">Dismiss</button>
+                    <button class="btn btn-sm btn-success" onclick="resolveMatch('{{ match.request_slug }}', 'approve', '{{ match.service_external_id if match.service == 'radarr' else '' }}', '{{ match.service_external_id if match.service == 'sonarr' else '' }}', 'suggestion-{{ loop.index }}')">Approve Merge</button>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+{% else %}
+    <div class="alert alert-secondary shadow-sm mb-5">
+        <i class="bi bi-info-circle"></i> No fuzzy matches found between watchlists and cached items.
+    </div>
+{% endif %}
+
+<!-- Section 2: Unmatched Master Table -->
+<h4 class="mb-3">Unmatched Items <small class="text-muted">({{ unmatched_films|length }})</small></h4>
+<div class="card shadow-sm panel">
+    <div class="card-body p-0 table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Title</th>
+                    <th>Year</th>
+                    <th>Type</th>
+                    <th>Manual Link (TMDB/TVDB ID)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for film in unmatched_films %}
+                <tr id="unmatched-{{ film.movie_slug }}">
+                    <td class="fw-bold">{{ film.title }}</td>
+                    <td>{{ film.release_year or '-' }}</td>
+                    <td><span class="badge {{ 'badge-tv' if film.media_type in ['tv', 'episode'] else 'badge-movie' }}">{{ film.media_type|upper }}</span></td>
+                    <td style="max-width: 300px;">
+                        <form onsubmit="submitManualId(event, '{{ film.movie_slug }}', '{{ film.media_type }}', 'unmatched-{{ film.movie_slug }}')" class="d-flex gap-2">
+                            <input type="number" class="form-control form-control-sm" placeholder="ID Number..." required>
+                            <button type="submit" class="btn btn-sm btn-outline-info">Link</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="4" class="text-center text-muted py-4">All catalog items have been matched with IDs!</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function resolveMatch(slug, action, tmdb_id, tvdb_id, elementId) {
+        const btnContainer = document.querySelector(`#${elementId} .card-footer`);
+        if(btnContainer) btnContainer.innerHTML = '<span class="spinner-border spinner-border-sm text-secondary" role="status"></span>';
+
+        fetch('/api/resolution/merge', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || ''
+            },
+            body: JSON.stringify({ slug, action, tmdb_id, tvdb_id })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.ok) {
+                document.getElementById(elementId).style.display = 'none';
+            } else {
+                alert('Error: ' + data.message);
+                location.reload();
+            }
+        })
+        .catch(err => alert('Network Error.'));
+    }
+
+    function submitManualId(e, slug, mediaType, elementId) {
+        e.preventDefault();
+        const input = e.target.querySelector('input');
+        const idVal = input.value.trim();
+        if(!idVal) return;
+
+        const isTv = mediaType === 'tv' || mediaType === 'episode';
+        resolveMatch(slug, 'approve', isTv ? null : idVal, isTv ? idVal : null, elementId);
+    }
+</script>
+{% endblock %}

@@ -21,7 +21,7 @@
     const btnNext = $("btnNextPage");
     const pageInfo = $("pageInfo");
     const emptyState = $("emptyState");
-    const rows = Array.from(tbody.querySelectorAll(".item-row"));
+    const rows = Array.from(tbody ? tbody.querySelectorAll(".item-row") : []);
 
     const FIELDS = { q: searchInput, type: typeSel, user: userSel, status: statusSel, sort: sortSel, per: perSel };
     let page = 1;
@@ -31,18 +31,20 @@
         try {
             const s = JSON.parse(localStorage.getItem(KEY) || "{}");
             for (const [k, el] of Object.entries(FIELDS)) {
-                if (typeof s[k] === "string") el.value = s[k];
+                if (el && typeof s[k] === "string") el.value = s[k];
             }
             if (s.view === "grid") view = "grid";
         } catch (_) { }
-        if (!sortSel.value) sortSel.value = "users-desc";
-        if (!perSel.value) perSel.value = "18";
+        if (sortSel && !sortSel.value) sortSel.value = "users-desc";
+        if (perSel && !perSel.value) perSel.value = "18";
     }
 
     function persist() {
         try {
             const s = { view };
-            for (const [k, el] of Object.entries(FIELDS)) s[k] = el.value;
+            for (const [k, el] of Object.entries(FIELDS)) {
+                if(el) s[k] = el.value;
+            }
             localStorage.setItem(KEY, JSON.stringify(s));
         } catch (_) { }
     }
@@ -81,7 +83,7 @@
             displayTitle += `)`;
         }
         
-        const title = el("h6", "card-title text-truncate mb-1", displayTitle);
+        const title = el("h6", "card-title text-truncate mb-1 sse-title", displayTitle);
         title.title = displayTitle;
         if (d.year) {
             title.appendChild(el("span", "badge bg-secondary fw-normal ms-1", d.year));
@@ -95,7 +97,7 @@
         top.appendChild(el("small", "text-body-secondary d-block text-truncate", "Added by: " + d.addedBy));
         body.appendChild(top);
 
-        const foot = el("div", "mt-2 text-end");
+        const foot = el("div", "mt-2 text-end sse-badge-container");
         if (d.status === "jellyfin" && d.link) {
             const a = el("a", "btn btn-sm btn-success w-100 p-1 py-0 jellyfin-link", "Watch");
             a.href = d.link;
@@ -104,9 +106,9 @@
             a.rel = "noopener noreferrer";
             foot.appendChild(a);
         } else if (d.status === "queued") {
-            foot.appendChild(el("span", "badge bg-info text-dark w-100 py-1", "Queued"));
+            foot.appendChild(el("span", "badge bg-info text-dark w-100 py-1 sse-badge", "Queued"));
         } else {
-            foot.appendChild(el("span", "badge bg-danger w-100 py-1", "Missing"));
+            foot.appendChild(el("span", "badge bg-danger w-100 py-1 sse-badge", "Missing"));
         }
         body.appendChild(foot);
         card.appendChild(body);
@@ -118,6 +120,8 @@
     const yearCmp = (a, b) => (parseInt(b.dataset.year, 10) || 0) - (parseInt(a.dataset.year, 10) || 0);
 
     function render() {
+        if (!searchInput) return; // Prevent errors on pages without the table
+
         const q = searchInput.value.trim().toLowerCase();
         const type = typeSel.value;
         const user = userSel.value.toLowerCase();
@@ -176,6 +180,7 @@
     }
 
     function resetFilters() {
+        if(!searchInput) return;
         searchInput.value = "";
         typeSel.value = "";
         userSel.value = "";
@@ -187,16 +192,19 @@
     const rerenderFromStart = () => { page = 1; render(); };
     let debounce;
 
-    searchInput.addEventListener("input", () => { clearTimeout(debounce); debounce = setTimeout(rerenderFromStart, 150); });
-    [typeSel, userSel, statusSel, sortSel, perSel].forEach((s) => s.addEventListener("change", rerenderFromStart));
+    if (searchInput) {
+        searchInput.addEventListener("input", () => { clearTimeout(debounce); debounce = setTimeout(rerenderFromStart, 150); });
+        [typeSel, userSel, statusSel, sortSel, perSel].forEach((s) => s.addEventListener("change", rerenderFromStart));
 
-    btnList.addEventListener("click", () => { view = "list"; render(); });
-    btnGrid.addEventListener("click", () => { view = "grid"; render(); });
-    btnPrev.addEventListener("click", () => { page--; render(); });
-    btnNext.addEventListener("click", () => { page++; render(); });
-    $("btnResetFilters").addEventListener("click", resetFilters);
+        btnList.addEventListener("click", () => { view = "list"; render(); });
+        btnGrid.addEventListener("click", () => { view = "grid"; render(); });
+        btnPrev.addEventListener("click", () => { page--; render(); });
+        btnNext.addEventListener("click", () => { page++; render(); });
+        $("btnResetFilters").addEventListener("click", resetFilters);
+    }
 
     function applyPreset(card) {
+        if(!searchInput) return;
         searchInput.value = "";
         userSel.value = "";
         typeSel.value = card.dataset.setType || "";
@@ -213,7 +221,7 @@
 
     document.addEventListener("keydown", (e) => {
         const t = e.target;
-        if (e.key === "/" && !/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && !t.isContentEditable) {
+        if (e.key === "/" && searchInput && !/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && !t.isContentEditable) {
             e.preventDefault();
             searchInput.focus();
         }
@@ -231,23 +239,75 @@
         }
     }, true);
     
+    // Page Visibility API Fallback for Jellyfin Deep Links
     document.addEventListener("click", (e) => {
         const btn = e.target.closest(".jellyfin-link");
-        if (btn && /iPad|iPhone|iPod/.test(navigator.userAgent)) {
+        if (btn && /iPad|iPhone|iPod|android/i.test(navigator.userAgent)) {
             e.preventDefault();
             const appLink = btn.dataset.appLink;
             const webLink = btn.href;
             
             if (appLink) {
                 window.location.href = appLink;
+                
+                let appOpened = false;
+                const visibilityHandler = () => {
+                    if (document.hidden) {
+                        appOpened = true; // OS launched the app and backgrounded the browser
+                    }
+                };
+                document.addEventListener("visibilitychange", visibilityHandler);
+                
                 setTimeout(() => {
-                    window.location.href = webLink;
+                    document.removeEventListener("visibilitychange", visibilityHandler);
+                    // Only redirect if the document never hid
+                    if (!appOpened && !document.hidden) {
+                        window.location.href = webLink;
+                    }
                 }, 1500);
             } else {
                 window.location.href = webLink;
             }
         }
     });
+
+    // Server-Sent Events (SSE) Listener
+    if (window.EventSource) {
+        const evtSource = new EventSource("/api/stream/events");
+        evtSource.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                
+                // Find rows that match the incoming webhook's TMDB or TVDB ID
+                let matchedRows = [];
+                if (data.tmdb_id) {
+                    matchedRows = document.querySelectorAll(`[data-tmdb-id="${data.tmdb_id}"]`);
+                } else if (data.tvdb_id) {
+                    matchedRows = document.querySelectorAll(`[data-tvdb-id="${data.tvdb_id}"]`);
+                }
+
+                matchedRows.forEach(row => {
+                    // Update the status dataset for grid rebuilds
+                    row.dataset.status = "queued"; 
+                    
+                    // Update List View Badge
+                    const badgeCell = row.querySelector("td:last-child");
+                    if (badgeCell && !badgeCell.innerHTML.includes("Queued") && !badgeCell.innerHTML.includes("Partially")) {
+                        badgeCell.innerHTML = `<span class="badge bg-info text-dark sse-badge">${data.queue_status || 'Downloading...'}</span>`;
+                    } else if (badgeCell && badgeCell.querySelector(".sse-badge")) {
+                        badgeCell.querySelector(".sse-badge").innerText = data.queue_status || 'Downloading...';
+                    }
+                });
+
+                // Re-render grid if applicable
+                if(matchedRows.length > 0 && view === "grid") {
+                    render();
+                }
+            } catch (err) {
+                console.warn("Error parsing SSE data", err);
+            }
+        };
+    }
 
     restore();
     render();
