@@ -28,7 +28,9 @@
 <h4 class="mb-3">Maintenance Tasks</h4>
 <div class="row row-cols-1 row-cols-md-2 g-4 mb-4">
     {{ task_card('scraper', 'Watchlist Scraper', 'Scrapes updated watchlists for Letterboxd and Serializd.', task_statuses.get('scraper'), url_for('trigger_scraper'), 'Run scraper now') }}
+    
     {{ task_card('radarr', 'Radarr Sync', 'Syncs missing movie items with your Radarr instance.', task_statuses.get('radarr'), url_for('trigger_radarr_sync'), 'Sync Radarr now') }}
+    
     {{ task_card('sonarr', 'Sonarr Sync', 'Syncs missing TV shows with your Sonarr instance.', task_statuses.get('sonarr'), url_for('trigger_sonarr_sync'), 'Sync Sonarr now') }}
 
     <!-- Jellyfin: two tasks in one card -->
@@ -44,11 +46,13 @@
                         <small class="fw-bold d-block mb-1">Movies</small>
                         {{ status_badge(jf_movies, 'jellyfin_movies') }}
                         <small class="text-body-secondary d-block mt-1" data-task-msg="jellyfin_movies">{{ (jf_movies.message if jf_movies else '') or 'No active logs' }}</small>
+                        <small class="text-body-secondary d-block mt-1">Last run: <span data-task-last="jellyfin_movies">{{ (jf_movies.last_run if jf_movies else '') or 'Never' }}</span></small>
                     </div>
                     <div class="col-6">
                         <small class="fw-bold d-block mb-1">TV shows</small>
                         {{ status_badge(jf_tv, 'jellyfin_tv') }}
                         <small class="text-body-secondary d-block mt-1" data-task-msg="jellyfin_tv">{{ (jf_tv.message if jf_tv else '') or 'No active logs' }}</small>
+                        <small class="text-body-secondary d-block mt-1">Last run: <span data-task-last="jellyfin_tv">{{ (jf_tv.last_run if jf_tv else '') or 'Never' }}</span></small>
                     </div>
                 </div>
                 <div class="d-flex gap-2 mt-auto">
@@ -64,7 +68,7 @@
             </div>
         </div>
     </div>
-
+    
     {{ task_card('disk_scanner', 'Disk Scanner', 'Scans local drives to update the external library cache for unmatched items.', task_statuses.get('disk_scanner'), url_for('trigger_disk_scan'), 'Run disk scan now') }}
 </div>
 

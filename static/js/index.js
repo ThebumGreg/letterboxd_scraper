@@ -10,6 +10,7 @@
     const statusSel = $("statusFilter");
     const sortSel = $("sortOrder");
     const perSel = $("itemsPerPage");
+
     const btnList = $("btnListView");
     const btnGrid = $("btnGridView");
     const listBox = $("filmList");
@@ -19,10 +20,9 @@
     const btnNext = $("btnNextPage");
     const pageInfo = $("pageInfo");
     const emptyState = $("emptyState");
-
     const rows = Array.from(tbody.querySelectorAll(".item-row"));
-    const FIELDS = { q: searchInput, type: typeSel, user: userSel, status: statusSel, sort: sortSel, per: perSel };
 
+    const FIELDS = { q: searchInput, type: typeSel, user: userSel, status: statusSel, sort: sortSel, per: perSel };
     let page = 1;
     let view = "list";
 
@@ -58,7 +58,6 @@
     function buildCard(row) {
         const d = row.dataset;
         const count = parseInt(d.userCount, 10) || 0;
-
         const col = el("div", "col");
         const card = el("div", "card h-100");
 
@@ -76,16 +75,29 @@
         badges.appendChild(el("span", "badge bg-primary", count + " Profile" + (count === 1 ? "" : "s")));
         top.appendChild(badges);
 
-        const title = el("h6", "card-title text-truncate mb-1", d.displayTitle);
-        title.title = d.displayTitle;
+        let displayTitle = d.displayTitle;
+        if (d.season) {
+            displayTitle += ` (S${d.season}`;
+            if (d.episode) displayTitle += `E${d.episode}`;
+            displayTitle += `)`;
+        }
+        
+        const title = el("h6", "card-title text-truncate mb-1", displayTitle);
+        title.title = displayTitle;
         top.appendChild(title);
+
+        if (d.availableSeasons) {
+            top.appendChild(el("small", "text-success d-block text-truncate fw-bold", `Available: S${d.availableSeasons.split(', ').join(', S')}`));
+        }
+
         top.appendChild(el("small", "text-body-secondary d-block text-truncate", "Added by: " + d.addedBy));
         body.appendChild(top);
 
         const foot = el("div", "mt-2 text-end");
         if (d.status === "jellyfin" && d.link) {
-            const a = el("a", "btn btn-sm btn-success w-100 p-1 py-0", "Watch");
+            const a = el("a", "btn btn-sm btn-success w-100 p-1 py-0 jellyfin-link", "Watch");
             a.href = d.link;
+            a.dataset.appLink = d.appLink || "";
             a.target = "_blank";
             a.rel = "noopener noreferrer";
             foot.appendChild(a);
@@ -95,7 +107,6 @@
             foot.appendChild(el("span", "badge bg-danger w-100 py-1", "Missing"));
         }
         body.appendChild(foot);
-
         card.appendChild(body);
         col.appendChild(card);
         return col;
@@ -114,8 +125,12 @@
             const d = r.dataset;
             return d.title.includes(q)
                 && (!type || d.mediaType === type)
-                && (!user || d.users.includes("|" + user + "|"))   // exact profile match, not substring
-                && (!status || d.status === status || (status === "missing" && d.status === "queued")); // "missing" = not in Jellyfin, matching the server count
+                && (!user || d.users.includes("|" + user + "|"))
+                && (!status ||
+                    (status === "missing" && (d.status === "missing" || d.status === "queued")) ||
+                    (status === "missing_not_queued" && d.status === "missing") ||
+                    (d.status === status)
+                );
         });
 
         visible.sort(sortSel.value === "title-asc"
@@ -125,6 +140,7 @@
         const perPage = perSel.value === "all" ? 1e9 : parseInt(perSel.value, 10);
         const total = visible.length;
         const totalPages = Math.max(1, Math.ceil(total / perPage));
+
         page = Math.min(Math.max(page, 1), totalPages);
         const start = (page - 1) * perPage;
         const slice = visible.slice(start, start + perPage);
@@ -149,6 +165,7 @@
 
         btnPrev.disabled = page <= 1;
         btnNext.disabled = page >= totalPages;
+
         pageInfo.textContent = total === 0
             ? "No items to show"
             : `Showing ${start + 1}-${Math.min(start + perPage, total)} of ${total} items (Page ${page} of ${totalPages})`;
@@ -168,6 +185,7 @@
     /* ---------- events ---------- */
     const rerenderFromStart = () => { page = 1; render(); };
     let debounce;
+
     searchInput.addEventListener("input", () => { clearTimeout(debounce); debounce = setTimeout(rerenderFromStart, 150); });
     [typeSel, userSel, statusSel, sortSel, perSel].forEach((s) => s.addEventListener("change", rerenderFromStart));
 
@@ -185,6 +203,7 @@
         statusSel.value = card.dataset.setStatus || "";
         rerenderFromStart();
     }
+
     document.querySelectorAll(".stat-card-link").forEach((card) => {
         card.addEventListener("click", () => applyPreset(card));
         card.addEventListener("keydown", (e) => {
@@ -205,6 +224,7 @@
     const PLACEHOLDER = "data:image/svg+xml;utf8," + encodeURIComponent(
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 130"><rect width="90" height="130" fill="#2c3440"/>' +
         '<text x="45" y="68" font-size="11" fill="#8899aa" text-anchor="middle" font-family="sans-serif">No poster</text></svg>');
+
     document.addEventListener("error", (e) => {
         const t = e.target;
         if (t && t.tagName === "IMG" && t.classList.contains("poster") && !t.dataset.fallback) {
@@ -212,6 +232,25 @@
             t.src = PLACEHOLDER;
         }
     }, true);
+    
+    // iOS App Link Fallback
+    document.addEventListener("click", (e) => {
+        const btn = e.target.closest(".jellyfin-link");
+        if (btn && /iPad|iPhone|iPod/.test(navigator.userAgent)) {
+            e.preventDefault();
+            const appLink = btn.dataset.appLink;
+            const webLink = btn.href;
+            
+            if (appLink) {
+                window.location.href = appLink;
+                setTimeout(() => {
+                    window.location.href = webLink;
+                }, 1500);
+            } else {
+                window.location.href = webLink;
+            }
+        }
+    });
 
     restore();
     render();

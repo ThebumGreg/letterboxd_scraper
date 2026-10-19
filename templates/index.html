@@ -50,6 +50,7 @@
             <option value="jellyfin">In Jellyfin</option>
             <option value="queued">Queued in Radarr/Sonarr</option>
             <option value="missing">Missing (incl. queued)</option>
+            <option value="missing_not_queued">Missing (not queued)</option>
         </select>
     </div>
     <div class="col-6 col-md-3 d-flex justify-content-end align-items-center gap-2">
@@ -101,11 +102,25 @@
                 data-media-type="{{ mtype }}"
                 data-status="{{ status }}"
                 data-user-count="{{ film.user_count }}"
-                data-link="{{ film.jellyfin_link if film.in_jellyfin else '' }}">
+                data-link="{{ film.jellyfin_link if film.in_jellyfin else '' }}"
+                data-app-link="{{ film.jellyfin_app_link if film.in_jellyfin else '' }}"
+                data-season="{{ film.season_number or '' }}"
+                data-episode="{{ film.episode_number or '' }}"
+                data-available-seasons="{{ film.available_seasons|join(', ') if film.available_seasons else '' }}">
                 <td>
                     <img src="/poster/{{ film.movie_slug }}" alt="" width="45" height="65" class="rounded poster poster-thumb" loading="lazy">
                 </td>
-                <td class="fw-bold">{{ film.movie_title }}</td>
+                <td>
+                    <div class="fw-bold">
+                        {{ film.movie_title }}
+                        {% if film.season_number %}
+                            <small class="text-body-secondary ms-1">(S{{ film.season_number }}{% if film.episode_number %}E{{ film.episode_number }}{% endif %})</small>
+                        {% endif %}
+                    </div>
+                    {% if film.available_seasons %}
+                        <small class="text-success fw-bold"><i class="bi bi-hdd-fill"></i> Available: S{{ film.available_seasons|join(', S') }}</small>
+                    {% endif %}
+                </td>
                 <td>
                     <span class="badge {% if mtype == 'tv' %}badge-tv{% else %}badge-movie{% endif %}">{{ mtype|upper }}</span>
                 </td>
@@ -113,7 +128,7 @@
                 <td><span class="badge bg-primary">{{ film.user_count }}</span></td>
                 <td>
                     {% if status == 'jellyfin' %}
-                        <a href="{{ film.jellyfin_link }}" class="btn btn-sm btn-success" target="_blank" rel="noopener noreferrer">Watch on Jellyfin</a>
+                        <a href="{{ film.jellyfin_link }}" class="btn btn-sm btn-success jellyfin-link" data-app-link="{{ film.jellyfin_app_link }}" target="_blank" rel="noopener noreferrer">Watch on Jellyfin</a>
                     {% elif status == 'queued' %}
                         <span class="badge bg-info text-dark">Queued</span>
                     {% else %}

@@ -1,5 +1,6 @@
 {# Shared macros for SyncHub templates. Import with:
-   {% from "_macros.html" import ... with context %} #}
+   {% from "_macros.html" import ... with context %}
+#}
 
 {# Hidden CSRF input. Renders nothing until Flask-WTF CSRFProtect is enabled. #}
 {% macro csrf_field() %}{% if csrf_token is defined %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}{% endmacro %}
@@ -37,6 +38,7 @@
             <div class="mb-3">
                 {{ status_badge(task, key) }}
                 <small class="text-body-secondary d-block mt-1" data-task-msg="{{ key }}">{{ (task.message if task else '') or 'No active logs' }}</small>
+                <small class="text-body-secondary d-block mt-1">Last run: <span data-task-last="{{ key }}">{{ (task.last_run if task else '') or 'Never' }}</span></small>
             </div>
             <form action="{{ action }}" method="POST" class="mt-auto">
                 {{ csrf_field() }}

@@ -1,9 +1,7 @@
 """
 SQLite data layer for Letterboxd & Serializd SyncHub.
-
 Single source of truth for the DB location is config.DB_PATH.
-If an old <project>/data.db exists and the new DB does not, it is copied over
-automatically on first init_db().
+If an old <project>/data.db exists and the new DB does not, it is copied over automatically on first init_db().
 """
 import json
 import logging
@@ -21,7 +19,6 @@ LEGACY_DB_FILE = Path(__file__).resolve().parent / "data.db"
 
 _YEAR_RE = re.compile(r"^(.*?)\s*\((\d{4})\)\s*$")
 
-
 # --------------------------------------------------------------------------
 # Connections
 # --------------------------------------------------------------------------
@@ -32,7 +29,6 @@ def _connect():
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA synchronous = NORMAL")  # safe with WAL, much faster bulk writes
     return conn
-
 
 @contextmanager
 def get_connection():
@@ -47,11 +43,9 @@ def get_connection():
     finally:
         conn.close()
 
-
 def get_db_connection():
     """Raw connection (caller closes it). Kept for export_to_csv.py compatibility."""
     return _connect()
-
 
 # --------------------------------------------------------------------------
 # Schema / migrations
@@ -64,14 +58,21 @@ EXTERNAL_CACHE_DDL = """
         tmdb_id TEXT,
         imdb_id TEXT,
         tvdb_id TEXT,
+        movie_slug TEXT,
+        title TEXT,
+        year INTEGER,
+        media_type TEXT,
+        season_number INTEGER,
+        episode_number INTEGER,
         status TEXT,
         in_library INTEGER DEFAULT 0,
         external_item_id TEXT,
         details_json TEXT,
+        queue_status TEXT,
+        queue_progress REAL,
         last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
 """
-
 
 def _migrate_legacy_db():
     """One-time copy of <project>/data.db into config.DB_PATH."""
@@ -79,6 +80,7 @@ def _migrate_legacy_db():
     if (target.exists() and target.stat().st_size > 0) or not LEGACY_DB_FILE.exists():
         return
     target.parent.mkdir(parents=True, exist_ok=True)
+    
     src = sqlite3.connect(str(LEGACY_DB_FILE))
     dst = sqlite3.connect(DB_FILE)
     try:
@@ -88,13 +90,11 @@ def _migrate_legacy_db():
         dst.close()
         src.close()
 
-
 def _ensure_column(conn, table, col_def):
     name = col_def.split()[0]
     existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
     if name not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_def}")
-
 
 def _rebuild_external_cache_if_needed(conn):
     """Old schema had UNIQUE(service, tmdb_id, tvdb_id), which never matches when an ID is NULL,
@@ -108,6 +108,7 @@ def _rebuild_external_cache_if_needed(conn):
     logger.info("Rebuilding external_library_cache (removing broken UNIQUE constraint, de-duplicating).")
     conn.execute("ALTER TABLE external_library_cache RENAME TO external_library_cache_old")
     conn.execute(EXTERNAL_CACHE_DDL)
+    
     conn.execute("""
         INSERT INTO external_library_cache
             (tmdb_id, imdb_id, tvdb_id, service, status, in_library, external_item_id, details_json, last_updated)
@@ -121,11 +122,9 @@ def _rebuild_external_cache_if_needed(conn):
     """)
     conn.execute("DROP TABLE external_library_cache_old")
 
-
 def init_db():
     """Creates/upgrades all tables and indexes. Safe to call repeatedly."""
     _migrate_legacy_db()
-
     conn = _connect()
     try:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -163,6 +162,26 @@ def init_db():
             )
         """)
 
+        conn.execute("""
+            INSERT OR IGNORE INTO app_settings (key, value)
+            SELECT 'radarr_enable_queue_addition', value FROM app_settings WHERE key = 'enable_radarr_automation'
+        """)
+        conn.execute("""
+            INSERT OR IGNORE INTO app_settings (key, value)
+            SELECT 'radarr_enable_library_sync', '1' FROM app_settings WHERE key = 'enable_radarr_automation'
+        """)
+        conn.execute("DELETE FROM app_settings WHERE key = 'enable_radarr_automation'")
+
+        conn.execute("""
+            INSERT OR IGNORE INTO app_settings (key, value)
+            SELECT 'sonarr_enable_queue_addition', value FROM app_settings WHERE key = 'enable_sonarr_automation'
+        """)
+        conn.execute("""
+            INSERT OR IGNORE INTO app_settings (key, value)
+            SELECT 'sonarr_enable_library_sync', '1' FROM app_settings WHERE key = 'enable_sonarr_automation'
+        """)
+        conn.execute("DELETE FROM app_settings WHERE key = 'enable_sonarr_automation'")
+
         # Task execution state
         conn.execute("""
             CREATE TABLE IF NOT EXISTS task_status (
@@ -184,7 +203,6 @@ def init_db():
             )
         """)
 
-        # Upgrade older user_films tables
         for col in (
             "film_year INTEGER",
             "media_type TEXT DEFAULT 'movie'",
@@ -195,12 +213,41 @@ def init_db():
             "season_number INTEGER DEFAULT NULL",
             "episode_number INTEGER DEFAULT NULL",
             "letterboxd_lists TEXT DEFAULT ''",
-            "id_source TEXT",            # letterboxd | tmdb-search | confirmed | rejected | manual
-            "id_checked_at TIMESTAMP",   # last time the ID resolver tried this film
+            "id_source TEXT",           
+            "id_checked_at TIMESTAMP",
         ):
             _ensure_column(conn, "user_films", col)
 
-        # Collapse any remaining duplicates, then enforce identity going forward
+        # Upgrade external library cache for robust granularity
+        for col in (
+            "queue_status TEXT",
+            "queue_progress REAL",
+            "movie_slug TEXT",
+            "title TEXT",
+            "year INTEGER",
+            "media_type TEXT",
+            "season_number INTEGER",
+            "episode_number INTEGER"
+        ):
+            _ensure_column(conn, "external_library_cache", col)
+
+        # Migrate JSON data to explicit columns to fix granularity issues
+        conn.execute("""
+            UPDATE external_library_cache
+            SET title = json_extract(details_json, '$.title'),
+                media_type = CASE
+                    WHEN json_extract(details_json, '$.type') = 'Movie' THEN 'movie'
+                    WHEN json_extract(details_json, '$.type') = 'Series' THEN 'tv'
+                    WHEN json_extract(details_json, '$.type') = 'Episode' THEN 'episode'
+                    WHEN service = 'radarr' THEN 'movie'
+                    WHEN service = 'sonarr' THEN 'tv'
+                    ELSE NULL
+                END,
+                season_number = json_extract(details_json, '$.season_number'),
+                episode_number = json_extract(details_json, '$.episode_number')
+            WHERE title IS NULL AND details_json IS NOT NULL AND details_json != ''
+        """)
+
         conn.execute("""
             DELETE FROM external_library_cache
             WHERE external_item_id IS NOT NULL
@@ -221,54 +268,45 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_films_tmdb ON user_films(tmdb_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_films_tvdb ON user_films(tvdb_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ext_cache_service ON external_library_cache(service, tmdb_id, tvdb_id)")
-
+        
         conn.commit()
     finally:
         conn.close()
 
-
 def add_list_column_if_missing():
-    """Compatibility wrapper for scraper.py."""
     init_db()
-
 
 # --------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------
 
 def _split_title_year(title, year=None):
-    """'The Social Network (2010)' -> ('The Social Network', 2010)."""
     if year is not None:
         year = int(year) if str(year).isdigit() else None
     if not title:
         return title, year
+
     m = _YEAR_RE.match(title.strip())
     if m:
         title = m.group(1)
         year = year or int(m.group(2))
     return title.strip(), year
 
-
 def _parse_lists(value):
     return {x.strip() for x in (value or "").split(",") if x.strip()}
-
 
 def _format_lists(lists):
     return ", ".join(sorted(lists))
 
-
 def _clean(value):
-    """Blank strings -> None so empty form fields never overwrite real IDs."""
     if value is None:
         return None
     value = str(value).strip()
     return value or None
 
-
 def _upsert_film(conn, username, slug, title, year=None, media_type=None,
                  tmdb_id=None, imdb_id=None, tvdb_id=None,
                  season_number=None, episode_number=None, poster_url=None, list_name=None):
-    """Single place that writes user_films. Existing values are kept when new ones are None."""
     title, year = _split_title_year(title, year)
     tmdb_id, imdb_id, tvdb_id = _clean(tmdb_id), _clean(imdb_id), _clean(tvdb_id)
 
@@ -281,6 +319,7 @@ def _upsert_film(conn, username, slug, title, year=None, media_type=None,
         lists = _parse_lists(row["letterboxd_lists"])
         if list_name:
             lists.add(list_name)
+        
         conn.execute("""
             UPDATE user_films SET
                 film_title = COALESCE(?, film_title),
@@ -307,20 +346,20 @@ def _upsert_film(conn, username, slug, title, year=None, media_type=None,
               media_type or "movie", season_number, episode_number, poster_url,
               _format_lists({list_name} if list_name else set())))
 
-
 def _prune_list(conn, username, list_name, seen_slugs):
-    """Removes list_name from this user's films that were NOT seen in the latest scrape.
-    A film left on no lists at all is deleted. Returns how many entries were removed."""
     removed = 0
     rows = conn.execute(
         "SELECT id, movie_slug, letterboxd_lists FROM user_films WHERE username = ?", (username,)
     ).fetchall()
+
     for r in rows:
         if r["movie_slug"] in seen_slugs:
             continue
+        
         lists = _parse_lists(r["letterboxd_lists"])
         if list_name not in lists:
             continue
+            
         lists.discard(list_name)
         if lists:
             conn.execute("UPDATE user_films SET letterboxd_lists = ? WHERE id = ?",
@@ -328,41 +367,37 @@ def _prune_list(conn, username, list_name, seen_slugs):
         else:
             conn.execute("DELETE FROM user_films WHERE id = ?", (r["id"],))
         removed += 1
-    return removed
 
+    return removed
 
 # --------------------------------------------------------------------------
 # Film / watchlist operations
 # --------------------------------------------------------------------------
 
 def upsert_movie_with_list(slug, title, list_name, username="default"):
-    """Per-item upsert used by scraper.py: adds the film for this user and tags the list."""
     with get_connection() as conn:
         _upsert_film(conn, username, slug, title, list_name=list_name)
 
-
 def prune_list(username, list_name, seen_slugs):
-    """Call after a COMPLETE, successful scrape of one list so removed titles drop off.
-    Does nothing if seen_slugs is empty (an empty result usually means a failed scrape)."""
     seen_slugs = set(seen_slugs or [])
     if not seen_slugs:
         logger.warning(f"prune_list skipped for [{username}] {list_name}: no slugs seen.")
         return 0
+
     with get_connection() as conn:
         return _prune_list(conn, username, list_name, seen_slugs)
 
-
 def sync_scraped_records(username, list_type, records, run_timestamp=None):
-    """Bulk sync of one user's list. Returns (processed, removed, active).
-    records: dicts with movie_slug/slug and movie_title/film_title/title (+ optional ids, media_type...)."""
     seen = set()
     with get_connection() as conn:
         for item in records:
             slug = (item.get("movie_slug") or item.get("slug") or "").strip()
             if not slug:
                 continue
+            
             title = (item.get("film_title") or item.get("movie_title")
                      or item.get("title") or item.get("full_display_name"))
+            
             _upsert_film(
                 conn, username, slug, title,
                 year=item.get("film_year") or item.get("year"),
@@ -376,24 +411,21 @@ def sync_scraped_records(username, list_type, records, run_timestamp=None):
         removed = _prune_list(conn, username, list_type, seen) if seen else 0
         if not seen:
             logger.warning(f"sync_scraped_records: no records for [{username}] {list_type}; nothing pruned.")
+            
     return len(seen), removed, len(seen)
-
 
 def save_user_film(username, film_title, film_year, movie_slug, tmdb_id=None, imdb_id=None,
                    tvdb_id=None, media_type="movie", season_number=None, episode_number=None,
                    poster_url=None):
-    """Inserts or updates a single film/show entry for a user (no list tag)."""
     with get_connection() as conn:
         _upsert_film(conn, username, movie_slug, film_title, year=film_year, media_type=media_type,
                      tmdb_id=tmdb_id, imdb_id=imdb_id, tvdb_id=tvdb_id,
                      season_number=season_number, episode_number=episode_number, poster_url=poster_url)
 
-
 def update_film_identifiers(movie_slug, tmdb_id=None, imdb_id=None, tvdb_id=None):
-    """Manual ID fix. Blank values leave the existing ID untouched. Applies to every user's row.
-    Any manual change marks the film's ID source as 'manual' (so it is no longer up for review)."""
     tmdb_id, imdb_id, tvdb_id = _clean(tmdb_id), _clean(imdb_id), _clean(tvdb_id)
     any_given = 1 if (tmdb_id or imdb_id or tvdb_id) else 0
+
     with get_connection() as conn:
         conn.execute("""
             UPDATE user_films
@@ -404,14 +436,11 @@ def update_film_identifiers(movie_slug, tmdb_id=None, imdb_id=None, tvdb_id=None
             WHERE movie_slug = ?
         """, (tmdb_id, imdb_id, tvdb_id, any_given, movie_slug))
 
-
 # --------------------------------------------------------------------------
 # ID resolver support
 # --------------------------------------------------------------------------
 
 def get_films_needing_ids(retry_after_days=7, limit=None):
-    """Letterboxd films (one row per slug) that still have no TMDB ID and are due for a lookup.
-    Films the resolver failed on are skipped for `retry_after_days`; rejected guesses are never retried."""
     sql = """
         SELECT movie_slug,
                MAX(film_title) AS title,
@@ -429,12 +458,11 @@ def get_films_needing_ids(retry_after_days=7, limit=None):
     if limit:
         sql += " LIMIT ?"
         params.append(int(limit))
+        
     with get_connection() as conn:
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
-
 def set_resolved_ids(movie_slug, tmdb_id, imdb_id=None, source="letterboxd"):
-    """Stores a resolved ID on every user's row for this slug and records where it came from."""
     with get_connection() as conn:
         conn.execute("""
             UPDATE user_films
@@ -445,14 +473,11 @@ def set_resolved_ids(movie_slug, tmdb_id, imdb_id=None, source="letterboxd"):
             WHERE movie_slug = ?
         """, (_clean(tmdb_id), _clean(imdb_id), source, movie_slug))
 
-
 def mark_id_check_failed(movie_slug):
     with get_connection() as conn:
         conn.execute("UPDATE user_films SET id_checked_at = CURRENT_TIMESTAMP WHERE movie_slug = ?", (movie_slug,))
 
-
 def get_films_needing_review():
-    """Films whose ID was guessed from a TMDB title search and not yet confirmed."""
     with get_connection() as conn:
         rows = conn.execute("""
             SELECT movie_slug,
@@ -467,9 +492,7 @@ def get_films_needing_review():
         """).fetchall()
         return [dict(r) for r in rows]
 
-
 def review_film_ids(movie_slug, decision):
-    """'confirm' keeps the guessed ID; 'reject' removes it and stops the resolver guessing again."""
     with get_connection() as conn:
         if decision == "confirm":
             conn.execute("UPDATE user_films SET id_source = 'confirmed' WHERE movie_slug = ? AND id_source = 'tmdb-search'",
@@ -484,7 +507,6 @@ def review_film_ids(movie_slug, decision):
             return False
     return True
 
-
 def get_film_by_slug(slug):
     with get_connection() as conn:
         row = conn.execute(
@@ -492,20 +514,18 @@ def get_film_by_slug(slug):
         ).fetchone()
         return dict(row) if row else None
 
-
 def get_aggregated_active_films(list_type=None, media_type=None):
-    """One row per film across all users.
-    list_type='Watchlist' limits to films on that list (and counts only users who have it there).
-    media_type='movie' or 'tv' filters by type."""
     where, params = [], []
+    
     if list_type:
         where.append("(',' || REPLACE(IFNULL(letterboxd_lists, ''), ' ', '') || ',') LIKE ?")
         params.append(f"%,{list_type.replace(' ', '')},%")
     if media_type:
         where.append("COALESCE(media_type, 'movie') = ?")
         params.append(media_type)
+        
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-
+    
     with get_connection() as conn:
         rows = conn.execute(f"""
             SELECT
@@ -541,9 +561,7 @@ def get_aggregated_active_films(list_type=None, media_type=None):
         f["letterboxd_lists"] = _format_lists(_parse_lists(f["letterboxd_lists"]))
     return films
 
-
 def get_export_rows():
-    """Rows for the CSV export (replaces the old scraped_records table)."""
     with get_connection() as conn:
         rows = conn.execute("""
             SELECT username, film_title, film_year, movie_slug, media_type,
@@ -554,17 +572,18 @@ def get_export_rows():
         """).fetchall()
         return [dict(r) for r in rows]
 
-
 # --------------------------------------------------------------------------
 # Radarr / Sonarr / Jellyfin cache
 # --------------------------------------------------------------------------
 
-def update_external_cache(service, tmdb_id=None, imdb_id=None, tvdb_id=None, status="unknown",
+def update_external_cache(service, tmdb_id=None, imdb_id=None, tvdb_id=None, 
+                          movie_slug=None, title=None, year=None, media_type=None,
+                          season_number=None, episode_number=None, status="unknown",
                           in_library=0, external_item_id=None, details_json=None):
-    """Upsert keyed on (service, external_item_id). If no external id is supplied,
-    falls back to a NULL-safe match on tmdb/tvdb."""
+    """Upsert keyed on (service, external_item_id) updating to explicit schema columns."""
     tmdb_id, imdb_id, tvdb_id = _clean(tmdb_id), _clean(imdb_id), _clean(tvdb_id)
     external_item_id = _clean(external_item_id)
+    movie_slug = _clean(movie_slug)
 
     if external_item_id:
         where = "service = ? AND external_item_id = ?"
@@ -579,56 +598,48 @@ def update_external_cache(service, tmdb_id=None, imdb_id=None, tvdb_id=None, sta
                 tmdb_id = COALESCE(?, tmdb_id),
                 imdb_id = COALESCE(?, imdb_id),
                 tvdb_id = COALESCE(?, tvdb_id),
+                movie_slug = COALESCE(?, movie_slug),
+                title = COALESCE(?, title),
+                year = COALESCE(?, year),
+                media_type = COALESCE(?, media_type),
+                season_number = COALESCE(?, season_number),
+                episode_number = COALESCE(?, episode_number),
                 status = ?,
                 in_library = ?,
                 details_json = COALESCE(?, details_json),
                 last_updated = CURRENT_TIMESTAMP
             WHERE {where}
-        """, (tmdb_id, imdb_id, tvdb_id, status, in_library, details_json) + where_params)
-
+        """, (tmdb_id, imdb_id, tvdb_id, movie_slug, title, year, media_type, season_number, episode_number, status, in_library, details_json) + where_params)
+        
         if cur.rowcount == 0:
             conn.execute("""
                 INSERT INTO external_library_cache
-                    (service, tmdb_id, imdb_id, tvdb_id, status, in_library,
+                    (service, tmdb_id, imdb_id, tvdb_id, movie_slug, title, year, media_type, season_number, episode_number, status, in_library,
                      external_item_id, details_json, last_updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """, (service, tmdb_id, imdb_id, tvdb_id, status, in_library, external_item_id, details_json))
-
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (service, tmdb_id, imdb_id, tvdb_id, movie_slug, title, year, media_type, season_number, episode_number, status, in_library, external_item_id, details_json))
 
 update_external_library_cache = update_external_cache
 
-
 def get_external_cache(service):
-    """All cached rows for a service. Adds a parsed 'title' key when details_json holds one."""
+    """All cached rows for a service using explicit database columns."""
     with get_connection() as conn:
         rows = conn.execute("SELECT * FROM external_library_cache WHERE service = ?", (service,)).fetchall()
-
+        
     results = []
     for r in rows:
-        d = dict(r)
-        d["title"] = None
-        if d.get("details_json"):
-            try:
-                d["title"] = json.loads(d["details_json"]).get("title")
-            except (ValueError, AttributeError):
-                pass
-        results.append(d)
+        results.append(dict(r))
     return results
-
 
 get_external_library_cache = get_external_cache
 
-
 def prune_external_cache(service, older_than):
-    """Deletes cache rows for a service not refreshed since `older_than` ('YYYY-MM-DD HH:MM:SS', UTC).
-    Call after a fully successful sync, passing the time the sync started."""
     with get_connection() as conn:
         cur = conn.execute(
             "DELETE FROM external_library_cache WHERE service = ? AND last_updated < ?",
             (service, older_than),
         )
         return cur.rowcount
-
 
 # --------------------------------------------------------------------------
 # Settings & task tracking
@@ -639,25 +650,20 @@ def get_setting(key, default_val=""):
         row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
         return row["value"] if row and row["value"] is not None else default_val
 
-
 def set_setting(key, value):
     with get_connection() as conn:
         conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", (key, str(value)))
 
-
 def set_settings(mapping):
-    """Saves many settings in one transaction."""
     with get_connection() as conn:
         conn.executemany(
             "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
             [(k, str(v)) for k, v in mapping.items()],
         )
 
-
 def get_all_settings():
     with get_connection() as conn:
         return {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM app_settings")}
-
 
 def update_task_status(task_name, status, message=""):
     with get_connection() as conn:
@@ -670,28 +676,24 @@ def update_task_status(task_name, status, message=""):
                 message = excluded.message
         """, (task_name, status, message))
 
-
 def update_job_status(job_name, status, message=""):
     update_task_status(job_name, status, message)
-
 
 def get_all_task_statuses():
     default_tasks = ["scraper", "radarr", "sonarr", "jellyfin_movies", "jellyfin_tv", "id_resolver", "all"]
     statuses = {t: {"task_name": t, "status": "idle", "last_run": None, "message": "No active logs"}
                 for t in default_tasks}
+    
     with get_connection() as conn:
         for row in conn.execute("SELECT * FROM task_status"):
             statuses[row["task_name"]] = dict(row)
     return statuses
-
 
 # --------------------------------------------------------------------------
 # Disk scanner cache
 # --------------------------------------------------------------------------
 
 def save_disk_file_cache(file_data_list):
-    """Replaces the disk cache. Accepts disk_scanner keys (parsed_title/file_path/file_size)
-    as well as the table-style keys (title/path/size)."""
     rows = []
     for item in file_data_list:
         size = item.get("file_size") if item.get("file_size") is not None else item.get("size")
@@ -700,15 +702,14 @@ def save_disk_file_cache(file_data_list):
             item.get("file_path") or item.get("path"),
             size,
         ))
+        
     with get_connection() as conn:
         conn.execute("DELETE FROM disk_cache")
         conn.executemany("INSERT INTO disk_cache (title, path, size) VALUES (?, ?, ?)", rows)
 
-
 def get_disk_file_cache():
     with get_connection() as conn:
         return [dict(r) for r in conn.execute("SELECT * FROM disk_cache ORDER BY title")]
-
 
 if __name__ == "__main__":
     init_db()
