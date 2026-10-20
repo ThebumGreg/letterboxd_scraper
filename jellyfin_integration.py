@@ -1,6 +1,7 @@
 # jellyfin_integration.py
 import logging
 import os
+import time
 import requests
 from datetime import datetime, timezone
 from urllib.parse import quote, urlencode
@@ -52,7 +53,13 @@ def fetch_and_cache_poster(slug, jellyfin_id=None, tmdb_id=None, media_type="mov
     if target_path.exists() and target_path.stat().st_size > 3000:
         return True
     if neg_cache_path.exists():
-        return False
+        if (time.time() - neg_cache_path.stat().st_mtime) < 604800:
+            return False
+        else:
+            try:
+                neg_cache_path.unlink()
+            except Exception:
+                pass
 
     jf_url, jf_key = get_setting("jellyfin_url", "").rstrip("/"), get_setting("jellyfin_api_key", "")
     if not (get_setting("disable_jellyfin_connection", "0") == "1") and jellyfin_id and jf_url and jf_key:
@@ -67,6 +74,11 @@ def fetch_and_cache_poster(slug, jellyfin_id=None, tmdb_id=None, media_type="mov
             if res.status_code == 200 and len(res.content) > 3000:
                 with open(target_path, "wb") as f:
                     f.write(res.content)
+                if neg_cache_path.exists():
+                    try:
+                        neg_cache_path.unlink()
+                    except Exception:
+                        pass
                 return True
         except Exception:
             pass
@@ -95,6 +107,11 @@ def fetch_and_cache_poster(slug, jellyfin_id=None, tmdb_id=None, media_type="mov
                 if dl_res.status_code == 200 and len(dl_res.content) > 3000:
                     with open(target_path, "wb") as f:
                         f.write(dl_res.content)
+                    if neg_cache_path.exists():
+                        try:
+                            neg_cache_path.unlink()
+                        except Exception:
+                            pass
                     return True
         except Exception:
             pass
@@ -121,7 +138,6 @@ def sync_jellyfin_library(media_type="all"):
     try:
         series_tvdb_map = {}
 
-        # Pre-fetch parent series TVDB IDs if syncing TV shows/episodes to avoid pagination race conditions
         if media_type in ("tv", "all"):
             try:
                 series_res = logged_request(
@@ -193,7 +209,7 @@ def sync_jellyfin_library(media_type="all"):
             
             start_index += limit
 
-        prune_service_cache("jellyfin", started)
+        prune_service_cache("jellyfin", started, media_type=media_type)
         logger.info(f"Jellyfin ({media_type}) sync completed: Cached {matched_count} item(s).")
         return True
     except Exception as e:

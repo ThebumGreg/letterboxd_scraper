@@ -122,6 +122,16 @@
                     <div class="mb-3">
                         {{ secret_field('tmdb_api_key', 'TMDB API key', settings.tmdb_api_key) }}
                     </div>
+                    
+                    <div class="mb-3">
+                        <label for="tv_metadata_provider" class="form-label fw-bold">TV Show Episode Metadata Source</label>
+                        <select class="form-select" id="tv_metadata_provider" name="tv_metadata_provider">
+                            <option value="tmdb" {% if settings.get('tv_metadata_provider', 'tmdb') == 'tmdb' %}selected{% endif %}>TMDB (Primary) + Sonarr (Fallback)</option>
+                            <option value="sonarr" {% if settings.get('tv_metadata_provider', 'tmdb') == 'sonarr' %}selected{% endif %}>Sonarr (Primary) + TMDB (Fallback)</option>
+                        </select>
+                        <div class="form-text">If TVDB IDs are missing, TMDB will automatically fetch the episode list and attempt to auto-resolve the ID behind the scenes.</div>
+                    </div>
+
                     <button type="button" class="btn btn-outline-info btn-sm" data-test-service="tmdb" data-test-fields="tmdb_api_key">Test connection</button>
                     <span class="small ms-2" data-test-result="tmdb" role="status"></span>
                 </div>

@@ -115,7 +115,7 @@
                 <td>
                     <div class="fw-bold">
                         {% if mtype in ('tv', 'episode') and film.tvdb_id %}
-                            <a href="{{ url_for('show_details', tvdb_id=film.tvdb_id) }}" class="text-decoration-none text-info">{{ film.title }}</a>
+                            <a href="{{ url_for('show_details', identifier=(film.tvdb_id or film.movie_slug)) }}" class="text-decoration-none text-info">{{ film.title }}</a>
                         {% elif mtype == 'movie' and film.movie_slug %}
                             <a href="{{ url_for('movie_details', slug=film.movie_slug) }}" class="text-decoration-none text-primary">{{ film.title }}</a>
                         {% else %}

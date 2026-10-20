@@ -401,6 +401,7 @@ SETTING_DEFAULTS = {
     "sonarr_dry_run": "0", "enable_notifications": "0", "payload_logging_enabled": "0",
     "payload_retention_limit": "500", "log_service_jellyfin": "0", "log_service_radarr": "0",
     "log_service_sonarr": "0", "log_service_tmdb": "0", "log_service_dynu": "0",
+    "tv_metadata_provider": "tmdb"
 }
 
 @app.route("/tools/update-settings", methods=["POST"])
@@ -480,9 +481,9 @@ def api_request_seasons():
         return jsonify({"ok": True, "message": f"Monitored seasons {data['seasons']}."})
     return jsonify({"ok": False, "message": res.get("message", "Request failed.")}), 500
 
-@app.route("/api/show/<tvdb_id>/episodes", methods=["GET"])
-def api_get_show_episodes(tvdb_id):
-    episodes = get_full_tv_show_episodes(tvdb_id)
+@app.route("/api/show/<identifier>/episodes", methods=["GET"])
+def api_get_show_episodes(identifier):
+    episodes = get_full_tv_show_episodes(identifier)
     return jsonify({"ok": True, "seasons": episodes})
 
 @app.route("/api/request-episodes", methods=["POST"])
@@ -537,9 +538,9 @@ def movie_details(slug):
     if not movie: flash("Movie not found in catalog.", "warning"); return redirect(url_for('index'))
     return render_template("movie_details.html", movie=movie)
 
-@app.route("/show/<tvdb_id>")
-def show_details(tvdb_id):
-    show, seasons = get_tv_show_details(tvdb_id)
+@app.route("/show/<identifier>")
+def show_details(identifier):
+    show, seasons = get_tv_show_details(identifier)
     if not show: flash("TV Show not found in catalog.", "warning"); return redirect(url_for('index'))
     return render_template("show_details.html", show=show, seasons=seasons)
 

@@ -63,8 +63,9 @@
         const card = el("div", "card h-100");
 
         let detailsUrl = "/movie/" + encodeURIComponent(d.slug);
-        if (d.mediaType === "tv" && d.tvdbId) {
-            detailsUrl = "/show/" + encodeURIComponent(d.tvdbId);
+        if (d.mediaType === "tv") {
+            // Pass the TVDB ID if we have it, otherwise pass the slug identifier
+            detailsUrl = "/show/" + encodeURIComponent(d.tvdbId || d.slug);
         }
 
         const imgLink = el("a", "d-block text-decoration-none");
@@ -227,7 +228,8 @@
             const d = row.dataset;
             let detailsUrl = "/movie/" + encodeURIComponent(d.slug);
             if (d.mediaType === "tv" && d.tvdbId) {
-                detailsUrl = "/show/" + encodeURIComponent(d.tvdbId);
+                // Pass the TVDB ID if we have it, otherwise pass the slug identifier
+                detailsUrl = "/show/" + encodeURIComponent(d.tvdbId || d.slug);
             }
             window.location.href = detailsUrl;
         });

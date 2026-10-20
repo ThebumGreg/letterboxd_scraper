@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from config import DB_PATH
+from config import DB_PATH, HTTP_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -696,60 +696,147 @@ def delete_user_profile_mapping(profile_id):
         conn.execute("DELETE FROM user_profile_mappings WHERE id = ?", (profile_id,))
         conn.execute("UPDATE user_requests SET profile_id = NULL WHERE profile_id = ?", (profile_id,))
 
-def get_tv_show_details(tvdb_id):
+def _fetch_tmdb_episodes(tmdb_id):
+    api_key = get_setting("tmdb_api_key", "").strip()
+    if not api_key: 
+        return None, None
+    
+    headers, params = {}, {}
+    if api_key.startswith("eyJ"): 
+        headers["Authorization"] = f"Bearer {api_key}"
+    else: 
+        params["api_key"] = api_key
+    
+    params["append_to_response"] = "external_ids"
+    try:
+        r = requests.get(f"https://api.themoviedb.org/3/tv/{tmdb_id}", headers=headers, params=params, timeout=HTTP_TIMEOUT)
+        if r.status_code != 200: 
+            return None, None
+        
+        data = r.json()
+        fetched_tvdb_id = data.get("external_ids", {}).get("tvdb_id")
+        
+        episodes = []
+        for season in data.get("seasons", []):
+            sn = season.get("season_number")
+            if sn is None: 
+                continue 
+            
+            sr = requests.get(f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{sn}", headers=headers, params={"api_key": params.get("api_key")}, timeout=HTTP_TIMEOUT)
+            if sr.status_code == 200:
+                s_data = sr.json()
+                for ep in s_data.get("episodes", []):
+                    episodes.append({
+                        "seasonNumber": ep.get("season_number"),
+                        "episodeNumber": ep.get("episode_number"),
+                        "title": ep.get("name"),
+                        "overview": ep.get("overview"),
+                        "airDate": ep.get("air_date")
+                    })
+        return episodes, fetched_tvdb_id
+    except Exception as e:
+        logger.warning(f"Failed fetching TMDB episodes for TMDB {tmdb_id}: {e}")
+        return None, None
+
+def get_full_tv_show_episodes(identifier):
     with get_connection() as conn:
-        show_row = conn.execute("SELECT * FROM media_catalog WHERE tvdb_id = ? AND media_type IN ('tv', 'episode') LIMIT 1", (tvdb_id,)).fetchone()
+        show_row = conn.execute("SELECT * FROM media_catalog WHERE tvdb_id = ? OR movie_slug = ? LIMIT 1", (identifier, identifier)).fetchone()
+        if not show_row: 
+            return {}
+        show = dict(show_row)
+    
+    tvdb_id = show.get("tvdb_id")
+    tmdb_id = show.get("tmdb_id")
+    slug = show.get("movie_slug")
+    
+    jf_episodes = set()
+    with get_connection() as conn:
+        rows = conn.execute("SELECT season_number, episode_number FROM service_cache WHERE service = 'jellyfin' AND media_type = 'episode' AND (tvdb_id = ? OR movie_slug LIKE ?)", (str(tvdb_id) if tvdb_id else "NONE", f"{slug}%")).fetchall()
+        for r in rows:
+            if r["season_number"] is not None and r["episode_number"] is not None:
+                jf_episodes.add((int(r["season_number"]), int(r["episode_number"])))
+                
+    provider = get_setting("tv_metadata_provider", "tmdb")
+    base_eps = []
+    sonarr_eps_map = {}
+    
+    if tvdb_id:
+        try:
+            import sonarr_client
+            s_eps = sonarr_client.get_episodes_by_tvdb(tvdb_id)
+            for ep in s_eps:
+                sonarr_eps_map[(ep.get("seasonNumber", 0), ep.get("episodeNumber", 0))] = ep
+            if provider == "sonarr":
+                base_eps = s_eps
+        except Exception as e:
+            logger.warning(f"Failed fetching Sonarr episodes for TVDB {tvdb_id}: {e}")
+            
+    if provider == "tmdb" or (not base_eps and tmdb_id):
+        if tmdb_id:
+            tmdb_eps, auto_tvdb_id = _fetch_tmdb_episodes(tmdb_id)
+            if tmdb_eps:
+                base_eps = tmdb_eps
+            if auto_tvdb_id and str(auto_tvdb_id) != str(tvdb_id):
+                update_film_identifiers(slug, tvdb_id=auto_tvdb_id)
+                tvdb_id = auto_tvdb_id
+                try:
+                    import sonarr_client
+                    s_eps = sonarr_client.get_episodes_by_tvdb(tvdb_id)
+                    for ep in s_eps:
+                        sonarr_eps_map[(ep.get("seasonNumber", 0), ep.get("episodeNumber", 0))] = ep
+                except Exception:
+                    pass
+                    
+    seasons = {}
+    if not base_eps:
+        for (sn, en) in jf_episodes:
+            base_eps.append({"seasonNumber": sn, "episodeNumber": en, "title": f"Episode {en}"})
+            
+    processed = set()
+    for ep in base_eps:
+        sn = ep.get("seasonNumber", 0)
+        en = ep.get("episodeNumber", 0)
+        processed.add((sn, en))
+        
+        s_ep = sonarr_eps_map.get((sn, en), {})
+        
+        ep_data = {
+            "episode_id": s_ep.get("id"),
+            "season_number": sn,
+            "episode_number": en,
+            "title": ep.get("title") or ep.get("name") or s_ep.get("title") or f"Episode {en}",
+            "overview": ep.get("overview") or s_ep.get("overview", ""),
+            "has_file": s_ep.get("hasFile", False),
+            "monitored": s_ep.get("monitored", False),
+            "in_jellyfin": (sn, en) in jf_episodes,
+            "air_date": ep.get("airDate") or ep.get("air_date") or s_ep.get("airDate")
+        }
+        seasons.setdefault(sn, []).append(ep_data)
+        
+    for (sn, en) in jf_episodes:
+        if (sn, en) not in processed:
+            seasons.setdefault(sn, []).append({
+                "episode_id": None, "season_number": sn, "episode_number": en,
+                "title": f"Episode {en}", "overview": "", "has_file": False, "monitored": False,
+                "in_jellyfin": True, "air_date": None
+            })
+            
+    for sn in seasons:
+        seasons[sn].sort(key=lambda x: x["episode_number"])
+
+    return seasons
+
+def get_tv_show_details(identifier):
+    with get_connection() as conn:
+        show_row = conn.execute("SELECT * FROM media_catalog WHERE tvdb_id = ? OR movie_slug = ? LIMIT 1", (identifier, identifier)).fetchone()
         if not show_row:
             return None, {}
         show = dict(show_row)
         show["available_seasons"] = json.loads(show["available_seasons"]) if show["available_seasons"] else []
         show["users_list"] = [u.strip() for u in (show["requested_by_users"] or "").split(",") if u.strip()]
-        ep_rows = conn.execute("SELECT season_number, episode_number, title, in_library, external_item_id as jellyfin_id FROM service_cache WHERE service = 'jellyfin' AND media_type = 'episode' AND tvdb_id = ?", (tvdb_id,)).fetchall()
-        seasons = {}
-        for ep in ep_rows:
-            ep_dict = dict(ep)
-            sn = ep_dict["season_number"] if ep_dict["season_number"] is not None else 0
-            seasons.setdefault(sn, []).append(ep_dict)
-        for sn in seasons:
-            seasons[sn].sort(key=lambda x: (x["episode_number"] if x["episode_number"] is not None else 0))
-        return show, seasons
-
-def get_full_tv_show_episodes(tvdb_id):
-    import sonarr_client
-    jf_episodes = set()
-    with get_connection() as conn:
-        rows = conn.execute("SELECT season_number, episode_number FROM service_cache WHERE service = 'jellyfin' AND media_type = 'episode' AND tvdb_id = ?", (str(tvdb_id),)).fetchall()
-        for r in rows:
-            if r["season_number"] is not None and r["episode_number"] is not None:
-                jf_episodes.add((int(r["season_number"]), int(r["episode_number"])))
-
-    try:
-        sonarr_eps = sonarr_client.get_episodes_by_tvdb(tvdb_id)
-    except Exception as e:
-        logger.warning(f"Failed fetching Sonarr episodes for TVDB {tvdb_id}: {e}")
-        sonarr_eps = []
-
-    seasons = {}
-    for ep in sonarr_eps:
-        sn = ep.get("seasonNumber", 0)
-        en = ep.get("episodeNumber", 0)
-        ep_data = {
-            "episode_id": ep.get("id"),
-            "season_number": sn,
-            "episode_number": en,
-            "title": ep.get("title") or f"Episode {en}",
-            "overview": ep.get("overview", ""),
-            "has_file": ep.get("hasFile", False),
-            "monitored": ep.get("monitored", False),
-            "in_jellyfin": (sn, en) in jf_episodes,
-            "air_date": ep.get("airDate")
-        }
-        seasons.setdefault(sn, []).append(ep_data)
-
-    for sn in seasons:
-        seasons[sn].sort(key=lambda x: x["episode_number"])
-
-    return seasons
+        
+    seasons = get_full_tv_show_episodes(identifier)
+    return show, seasons
 
 def get_movie_details_by_slug(slug):
     with get_connection() as conn:
