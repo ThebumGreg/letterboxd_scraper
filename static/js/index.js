@@ -62,11 +62,19 @@
         const col = el("div", "col");
         const card = el("div", "card h-100");
 
+        let detailsUrl = "/movie/" + encodeURIComponent(d.slug);
+        if (d.mediaType === "tv" && d.tvdbId) {
+            detailsUrl = "/show/" + encodeURIComponent(d.tvdbId);
+        }
+
+        const imgLink = el("a", "d-block text-decoration-none");
+        imgLink.href = detailsUrl;
         const img = el("img", "card-img-top poster poster-grid");
         img.src = "/poster/" + encodeURIComponent(d.slug);
         img.alt = "";
         img.loading = "lazy";
-        card.appendChild(img);
+        imgLink.appendChild(img);
+        card.appendChild(imgLink);
 
         const body = el("div", "card-body p-2 d-flex flex-column justify-content-between");
         const top = el("div");
@@ -83,12 +91,15 @@
             displayTitle += `)`;
         }
         
+        const titleLink = el("a", "text-decoration-none text-reset");
+        titleLink.href = detailsUrl;
         const title = el("h6", "card-title text-truncate mb-1 sse-title", displayTitle);
         title.title = displayTitle;
         if (d.year) {
             title.appendChild(el("span", "badge bg-secondary fw-normal ms-1", d.year));
         }
-        top.appendChild(title);
+        titleLink.appendChild(title);
+        top.appendChild(titleLink);
 
         if (d.availableSeasons) {
             top.appendChild(el("small", "text-success d-block text-truncate fw-bold", `Available: S${d.availableSeasons.split(', ').join(', S')}`));
@@ -207,6 +218,21 @@
         $("btnResetFilters").addEventListener("click", resetFilters);
     }
 
+    if (tbody) {
+        tbody.addEventListener("click", (e) => {
+            const row = e.target.closest(".item-row");
+            if (!row) return;
+            if (e.target.closest("a, button, input, select")) return;
+
+            const d = row.dataset;
+            let detailsUrl = "/movie/" + encodeURIComponent(d.slug);
+            if (d.mediaType === "tv" && d.tvdbId) {
+                detailsUrl = "/show/" + encodeURIComponent(d.tvdbId);
+            }
+            window.location.href = detailsUrl;
+        });
+    }
+
     function applyPreset(card) {
         if(!searchInput) return;
         searchInput.value = "";
@@ -249,14 +275,13 @@
                 let appOpened = false;
                 const visibilityHandler = () => {
                     if (document.hidden) {
-                        appOpened = true; // OS launched the app and backgrounded the browser
+                        appOpened = true;
                     }
                 };
                 document.addEventListener("visibilitychange", visibilityHandler);
                 
                 setTimeout(() => {
                     document.removeEventListener("visibilitychange", visibilityHandler);
-                    // Only redirect if the document never hid
                     if (!appOpened && !document.hidden) {
                         window.location.href = webLink;
                     }

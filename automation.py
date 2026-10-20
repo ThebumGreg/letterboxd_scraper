@@ -129,6 +129,58 @@ def request_tv_seasons(tvdb_id, requested_seasons):
         logger.error(f"Failed granular season request for TVDB {tvdb_id}: {e}")
         return {"status": "error", "message": str(e)}
 
+def request_tv_episodes(tvdb_id, episode_ids=None, episodes_spec=None, search=True):
+    if not tvdb_id:
+        return {"status": "error", "message": "Invalid TVDB ID."}
+    
+    try:
+        series_info = sonarr_client.get_series_by_tvdb(tvdb_id)
+        if not series_info:
+            add_res = sonarr_client.add_series(tvdb_id=tvdb_id, season_number=None)
+            if add_res.get("status") not in ("added", "already_exists"):
+                return add_res
+            series_info = sonarr_client.get_series_by_tvdb(tvdb_id)
+            if not series_info:
+                return {"status": "error", "message": "Series added but unable to retrieve details from Sonarr."}
+
+        sonarr_id = str(series_info["id"])
+        all_episodes = sonarr_client.get_episodes_for_series(sonarr_id)
+        
+        target_ep_ids = set()
+        if episode_ids:
+            target_ep_ids.update(int(eid) for eid in episode_ids)
+
+        if episodes_spec:
+            spec_set = {(int(item.get("season")), int(item.get("episode"))) for item in episodes_spec if item.get("season") is not None and item.get("episode") is not None}
+            for ep in all_episodes:
+                sn = ep.get("seasonNumber")
+                en = ep.get("episodeNumber")
+                if (sn, en) in spec_set:
+                    target_ep_ids.add(ep["id"])
+
+        if not target_ep_ids:
+            return {"status": "error", "message": "No matching episodes found to request."}
+
+        target_list = list(target_ep_ids)
+        mon_res = sonarr_client.monitor_episodes(target_list, monitored=True)
+        if mon_res.get("status") == "error":
+            return mon_res
+
+        if search:
+            sonarr_client.search_episodes(target_list)
+
+        return {
+            "status": "updated",
+            "sonarr_id": sonarr_id,
+            "requested_count": len(target_list),
+            "message": f"Successfully monitored and requested {len(target_list)} episode(s) in Sonarr."
+        }
+    except Exception as e:
+        logger.error(f"Failed granular episode request for TVDB {tvdb_id}: {e}")
+        return {"status": "error", "message": str(e)}
+    finally:
+        reconcile_master_catalog()
+
 def run_sonarr_automation_worker() -> None:
     update_job_status("sonarr", "in_progress", "Starting Sonarr automation...")
     try:

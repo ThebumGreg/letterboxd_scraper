@@ -9,9 +9,9 @@
 
 <!-- Global pipeline -->
 {% set all_task = task_statuses.get('all') %}
-<div class="card mb-4 shadow-sm">
-    <div class="card-header d-flex justify-content-between align-items-center">
-        <h5 class="m-0">Global Automation Pipeline</h5>
+<div class="card mb-4 shadow-sm border-warning">
+    <div class="card-header bg-warning bg-opacity-25 d-flex justify-content-between align-items-center">
+        <h5 class="m-0 fw-bold">Global Automation Pipeline</h5>
         <form action="{{ url_for('trigger_all') }}" method="POST" class="m-0"
               data-confirm="Run the full pipeline (Scrapers, Radarr, Sonarr, Jellyfin Movies, Jellyfin TV)? This can take a while.">
             {{ csrf_field() }}
@@ -76,7 +76,7 @@
         <div class="card h-100 shadow-sm">
             <div class="card-body d-flex flex-column">
                 <h5 class="card-title">Jellyfin Sync</h5>
-                <p class="card-text text-body-secondary">Updates catalog status and syncs playlists for movies and TV shows.</p>
+                <p class="card-text text-body-secondary">Updates catalog status for movies and TV shows.</p>
                 <div class="row mb-3">
                     <div class="col-6">
                         <small class="fw-bold d-block mb-1">Movies</small>
@@ -105,13 +105,31 @@
         </div>
     </div>
     
+    <!-- Playlist Sync -->
+    <div class="col">
+        <div class="card h-100 shadow-sm">
+            <div class="card-body d-flex flex-column">
+                <h5 class="card-title">Jellyfin Playlist Sync</h5>
+                <p class="card-text text-body-secondary">Synchronize available catalog items into a unified Jellyfin playlist.</p>
+                <form action="{{ url_for('trigger_playlist_sync') }}" method="POST" class="mt-auto">
+                    {{ csrf_field() }}
+                    <label for="playlist_name" class="form-label small fw-bold">Target Playlist Name</label>
+                    <div class="input-group input-group-sm mb-2">
+                        <input type="text" id="playlist_name" name="playlist_name" class="form-control" value="SyncHub Master Watchlist">
+                        <button type="submit" class="btn btn-success">Sync Playlist</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     {{ task_card('disk_scanner', 'Disk Scanner', 'Scans local drives to update the external library cache for unmatched items.', task_statuses.get('disk_scanner'), url_for('trigger_disk_scan'), 'Run disk scan now') }}
 </div>
 
 <!-- Fix & match -->
 {% set unmatched = (unmatched_films or [])|list %}
 <h4 class="mb-3">Fix &amp; Match Metadata</h4>
-<div class="card mb-4 shadow-sm">
+<div class="card mb-4 shadow-sm panel">
     <div class="card-body">
         <form action="{{ url_for('fix_match') }}" method="POST" id="fixMatchForm" class="row g-3 align-items-end">
             {{ csrf_field() }}
@@ -144,12 +162,14 @@
 
         {% if unmatched %}
             <hr class="my-3">
-            <h6>Unmatched items (missing TMDB ID)</h6>
-            <p class="small text-body-secondary mb-2">Select an item to fill in the slug above.</p>
+            <h6>Unmatched items (missing IDs)</h6>
+            <p class="small text-body-secondary mb-2">Select an item to fill in the slug above. 
+                <a href="{{ url_for('resolution_center') }}" class="text-decoration-none">Review matches in the Resolution Center <i class="bi bi-arrow-right"></i></a>
+            </p>
             <div class="d-flex flex-wrap gap-1">
                 {% for item in unmatched[:50] %}
                     <button type="button" class="btn btn-sm btn-outline-secondary" data-fill-slug="{{ item.movie_slug }}" data-fill-type="{{ item.media_type or 'movie' }}">
-                        {{ item.movie_title or item.movie_slug }}
+                        {{ item.title or item.movie_slug }}
                     </button>
                 {% endfor %}
                 {% if unmatched|length > 50 %}
@@ -171,17 +191,18 @@
     </div>
 </div>
 {% endblock %}
+
+{% block scripts %}
 <script>
 document.addEventListener("DOMContentLoaded", function() {
     document.querySelectorAll('[data-task-last]').forEach(el => {
         let val = el.textContent.trim();
         
         if (val && val !== 'Never') {
-            // Replace space with T to ensure cross-browser parsing of SQL timestamps (YYYY-MM-DDTHH:MM:SS)
-            let dateObj = new Date(val.replace(' ', 'T'));
+            // Replace space with T to ensure cross-browser parsing of SQL UTC timestamps (YYYY-MM-DDTHH:MM:SSZ)
+            let dateObj = new Date(val.replace(' ', 'T') + "Z");
             
             if (!isNaN(dateObj)) {
-                // Formats to something like: "Oct 19, 12:56 PM"
                 el.textContent = dateObj.toLocaleString(undefined, {
                     month: 'short', 
                     day: 'numeric',
@@ -193,3 +214,4 @@ document.addEventListener("DOMContentLoaded", function() {
     });
 });
 </script>
+{% endblock %}

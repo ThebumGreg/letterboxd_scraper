@@ -5,11 +5,14 @@
 {% block content %}
 <div class="container-fluid mt-4">
     <div class="row mb-3">
-        <div class="col-md-8">
+        <div class="col-md-7">
             <h2 class="mb-0">API Payload Inspector</h2>
-            <p class="text-muted">Monitor incoming webhooks and outgoing API requests in real-time.</p>
+            <p class="text-secondary">Monitor incoming webhooks and outgoing API requests in real-time.</p>
         </div>
-        <div class="col-md-4 text-end">
+        <div class="col-md-5 text-end">
+            <button class="btn btn-outline-info" id="exportLogsBtn">
+                <i class="bi bi-download"></i> Export JSON
+            </button>
             <button class="btn btn-outline-danger" id="clearLogsBtn">
                 <i class="bi bi-trash"></i> Clear History
             </button>
@@ -20,8 +23,8 @@
     </div>
 
     <!-- Control Panel -->
-    <div class="card mb-4">
-        <div class="card-header bg-light">
+    <div class="card bg-dark text-white border-secondary mb-4">
+        <div class="card-header border-secondary bg-dark">
             <h5 class="mb-0">Logging Configuration</h5>
         </div>
         <div class="card-body">
@@ -33,14 +36,14 @@
                 <div class="row align-items-center mb-3">
                     <div class="col-md-3">
                         <label class="form-label fw-bold">Master Toggle</label>
-                        <select name="payload_logging_enabled" class="form-select">
+                        <select name="payload_logging_enabled" class="form-select text-white bg-dark border-secondary">
                             <option value="0" {% if settings.get('payload_logging_enabled', '0') == '0' %}selected{% endif %}>Disabled</option>
                             <option value="1" {% if settings.get('payload_logging_enabled') == '1' %}selected{% endif %}>Enabled</option>
                         </select>
                     </div>
                     <div class="col-md-3">
                         <label class="form-label fw-bold">Retention Limit</label>
-                        <select name="payload_retention_limit" class="form-select">
+                        <select name="payload_retention_limit" class="form-select text-white bg-dark border-secondary">
                             {% for opt in ['100', '500', '1000', '2500', '5000'] %}
                             <option value="{{ opt }}" {% if settings.get('payload_retention_limit', '500') == opt %}selected{% endif %}>{{ opt }} records</option>
                             {% endfor %}
@@ -54,28 +57,28 @@
                 <div class="mb-2 fw-bold">Services to Log</div>
                 <div class="d-flex flex-wrap gap-3">
                     <div class="form-check">
-                        <input type="hidden" name="log_service_jellyfin" value="0">
-                        <input class="form-check-input" type="checkbox" id="log_jellyfin" name="log_service_jellyfin" value="1" {% if settings.get('log_service_jellyfin') == '1' %}checked{% endif %}>
+                        <input type="hidden" name="log_service_jellyfin" id="hidden_jellyfin" value="{{ settings.get('log_service_jellyfin', '0') }}">
+                        <input class="form-check-input" type="checkbox" id="log_jellyfin" {% if settings.get('log_service_jellyfin') == '1' %}checked{% endif %} onchange="document.getElementById('hidden_jellyfin').value = this.checked ? '1' : '0';">
                         <label class="form-check-label" for="log_jellyfin">Jellyfin</label>
                     </div>
                     <div class="form-check">
-                        <input type="hidden" name="log_service_radarr" value="0">
-                        <input class="form-check-input" type="checkbox" id="log_radarr" name="log_service_radarr" value="1" {% if settings.get('log_service_radarr') == '1' %}checked{% endif %}>
+                        <input type="hidden" name="log_service_radarr" id="hidden_radarr" value="{{ settings.get('log_service_radarr', '0') }}">
+                        <input class="form-check-input" type="checkbox" id="log_radarr" {% if settings.get('log_service_radarr') == '1' %}checked{% endif %} onchange="document.getElementById('hidden_radarr').value = this.checked ? '1' : '0';">
                         <label class="form-check-label" for="log_radarr">Radarr</label>
                     </div>
                     <div class="form-check">
-                        <input type="hidden" name="log_service_sonarr" value="0">
-                        <input class="form-check-input" type="checkbox" id="log_sonarr" name="log_service_sonarr" value="1" {% if settings.get('log_service_sonarr') == '1' %}checked{% endif %}>
+                        <input type="hidden" name="log_service_sonarr" id="hidden_sonarr" value="{{ settings.get('log_service_sonarr', '0') }}">
+                        <input class="form-check-input" type="checkbox" id="log_sonarr" {% if settings.get('log_service_sonarr') == '1' %}checked{% endif %} onchange="document.getElementById('hidden_sonarr').value = this.checked ? '1' : '0';">
                         <label class="form-check-label" for="log_sonarr">Sonarr</label>
                     </div>
                     <div class="form-check">
-                        <input type="hidden" name="log_service_tmdb" value="0">
-                        <input class="form-check-input" type="checkbox" id="log_tmdb" name="log_service_tmdb" value="1" {% if settings.get('log_service_tmdb') == '1' %}checked{% endif %}>
+                        <input type="hidden" name="log_service_tmdb" id="hidden_tmdb" value="{{ settings.get('log_service_tmdb', '0') }}">
+                        <input class="form-check-input" type="checkbox" id="log_tmdb" {% if settings.get('log_service_tmdb') == '1' %}checked{% endif %} onchange="document.getElementById('hidden_tmdb').value = this.checked ? '1' : '0';">
                         <label class="form-check-label" for="log_tmdb">TMDB</label>
                     </div>
                     <div class="form-check">
-                        <input type="hidden" name="log_service_dynu" value="0">
-                        <input class="form-check-input" type="checkbox" id="log_dynu" name="log_service_dynu" value="1" {% if settings.get('log_service_dynu') == '1' %}checked{% endif %}>
+                        <input type="hidden" name="log_service_dynu" id="hidden_dynu" value="{{ settings.get('log_service_dynu', '0') }}">
+                        <input class="form-check-input" type="checkbox" id="log_dynu" {% if settings.get('log_service_dynu') == '1' %}checked{% endif %} onchange="document.getElementById('hidden_dynu').value = this.checked ? '1' : '0';">
                         <label class="form-check-label" for="log_dynu">Dynu DDNS</label>
                     </div>
                 </div>
@@ -84,15 +87,15 @@
     </div>
 
     <!-- Quick Filters & Table -->
-    <div class="card">
-        <div class="card-header d-flex justify-content-between align-items-center bg-light">
+    <div class="card bg-dark text-white border-secondary">
+        <div class="card-header border-secondary bg-dark d-flex justify-content-between align-items-center">
             <h5 class="mb-0">Captured Traffic</h5>
             <div class="btn-group btn-group-sm" role="group">
                 <input type="radio" class="btn-check" name="trafficFilter" id="filterAll" autocomplete="off" checked>
-                <label class="btn btn-outline-secondary" for="filterAll">All Traffic</label>
+                <label class="btn btn-outline-light" for="filterAll">All Traffic</label>
 
                 <input type="radio" class="btn-check" name="trafficFilter" id="filterWebhooks" autocomplete="off">
-                <label class="btn btn-outline-secondary" for="filterWebhooks">Webhooks (IN)</label>
+                <label class="btn btn-outline-light" for="filterWebhooks">Webhooks (IN)</label>
 
                 <input type="radio" class="btn-check" name="trafficFilter" id="filterErrors" autocomplete="off">
                 <label class="btn btn-outline-danger" for="filterErrors">Errors Only (>=400)</label>
@@ -100,7 +103,7 @@
         </div>
         <div class="card-body p-0">
             <div class="table-responsive">
-                <table class="table table-hover table-striped align-middle mb-0" id="payloadTable">
+                <table class="table table-dark table-hover table-striped align-middle mb-0" id="payloadTable">
                     <thead class="table-dark">
                         <tr>
                             <th scope="col">Timestamp (UTC)</th>
@@ -124,45 +127,45 @@
 <!-- JSON Inspector Modal -->
 <div class="modal fade" id="payloadModal" tabindex="-1" aria-labelledby="payloadModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-xl modal-dialog-scrollable">
-        <div class="modal-content">
-            <div class="modal-header bg-dark text-white">
+        <div class="modal-content border-secondary">
+            <div class="modal-header bg-dark text-white border-secondary">
                 <h5 class="modal-title" id="payloadModalLabel">Payload Details</h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
-            <div class="modal-body p-0">
-                <ul class="nav nav-tabs px-3 pt-3 bg-light" id="payloadTabs" role="tablist">
+            <div class="modal-body p-0 bg-dark text-white">
+                <ul class="nav nav-tabs px-3 pt-3 bg-dark border-secondary" id="payloadTabs" role="tablist">
                     <li class="nav-item" role="presentation">
-                        <button class="nav-link active" id="headers-tab" data-bs-toggle="tab" data-bs-target="#headers" type="button" role="tab">Headers</button>
+                        <button class="nav-link active bg-dark text-white border-secondary border-bottom-0" id="headers-tab" data-bs-toggle="tab" data-bs-target="#headers" type="button" role="tab">Headers</button>
                     </li>
                     <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="request-tab" data-bs-toggle="tab" data-bs-target="#request" type="button" role="tab">Request Payload</button>
+                        <button class="nav-link text-white" id="request-tab" data-bs-toggle="tab" data-bs-target="#request" type="button" role="tab">Request Payload</button>
                     </li>
                     <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="response-tab" data-bs-toggle="tab" data-bs-target="#response" type="button" role="tab">Response</button>
+                        <button class="nav-link text-white" id="response-tab" data-bs-toggle="tab" data-bs-target="#response" type="button" role="tab">Response</button>
                     </li>
                 </ul>
                 <div class="tab-content p-3" id="payloadTabsContent">
                     <div class="tab-pane fade show active" id="headers" role="tabpanel">
                         <div class="d-flex justify-content-end mb-2">
-                            <button class="btn btn-sm btn-outline-secondary copy-btn" data-target="headers-code">Copy JSON</button>
+                            <button class="btn btn-sm btn-outline-light copy-btn" data-target="headers-code">Copy JSON</button>
                         </div>
-                        <pre class="bg-dark text-light p-3 rounded"><code id="headers-code"></code></pre>
+                        <pre class="bg-black text-light p-3 rounded border border-secondary"><code id="headers-code"></code></pre>
                     </div>
                     <div class="tab-pane fade" id="request" role="tabpanel">
                         <div class="d-flex justify-content-end mb-2">
-                            <button class="btn btn-sm btn-outline-secondary copy-btn" data-target="request-code">Copy JSON</button>
+                            <button class="btn btn-sm btn-outline-light copy-btn" data-target="request-code">Copy JSON</button>
                         </div>
-                        <pre class="bg-dark text-light p-3 rounded"><code id="request-code"></code></pre>
+                        <pre class="bg-black text-light p-3 rounded border border-secondary"><code id="request-code"></code></pre>
                     </div>
                     <div class="tab-pane fade" id="response" role="tabpanel">
                         <div class="d-flex justify-content-end mb-2">
-                            <button class="btn btn-sm btn-outline-secondary copy-btn" data-target="response-code">Copy JSON</button>
+                            <button class="btn btn-sm btn-outline-light copy-btn" data-target="response-code">Copy JSON</button>
                         </div>
-                        <pre class="bg-dark text-light p-3 rounded"><code id="response-code"></code></pre>
+                        <pre class="bg-black text-light p-3 rounded border border-secondary"><code id="response-code"></code></pre>
                     </div>
                 </div>
             </div>
-            <div class="modal-footer">
+            <div class="modal-footer bg-dark border-secondary">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
             </div>
         </div>

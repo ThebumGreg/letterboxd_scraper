@@ -26,15 +26,18 @@ from flask import (
 from config import DEFAULT_REQUEST_DELAY_RANGE, DEFAULT_USER_DELAY_RANGE, POSTER_DIR
 from database import (
     get_media_catalog,
+    get_catalog_item_by_slug,
     get_all_settings,
     get_setting,
     get_film_by_slug,
     get_all_task_statuses,
     get_tv_show_details,
+    get_full_tv_show_episodes,
     get_movie_details_by_slug,
     get_user_profile_mappings,
     save_user_profile_mapping,
     delete_user_profile_mapping,
+    toggle_profile_mapping,
     init_db,
     set_setting,
     update_film_identifiers,
@@ -46,13 +49,13 @@ from database import (
     get_ddns_cache,
     get_ddns_history,
     log_api_payload,
+    logged_request,
     get_payload_logs,
     clear_payload_logs
 )
-from jellyfin_integration import (
-    fetch_and_cache_poster,
-    sync_jellyfin_playlist,
-)
+from jellyfin_integration import fetch_and_cache_poster, sync_jellyfin_playlist, get_jellyfin_users
+from radarr_client import get_quality_profiles as radarr_quality, get_root_folders as radarr_root
+from sonarr_client import get_quality_profiles as sonarr_quality, get_root_folders as sonarr_root
 from ddns_updater import run_ddns_update, get_dynu_credentials, fetch_and_cache_dynu_metadata
 from notifications import send_notification
 
@@ -118,8 +121,11 @@ def stream_events():
     def stream():
         messages = announcer.listen()
         while True:
-            msg = messages.get()
-            yield msg
+            try:
+                msg = messages.get(timeout=15)
+                yield msg
+            except queue.Empty:
+                yield format_sse('{"status": "ping"}', event="ping")
     return Response(stream(), mimetype="text/event-stream")
 
 @app.route("/")
@@ -148,7 +154,6 @@ def index():
         "radarr_count": radarr_count,
         "sonarr_count": sonarr_count,
     }
-
     return render_template("index.html", films=films, all_users=sorted(list(all_users)), stats=stats)
 
 @app.route("/ddns", methods=["GET"])
@@ -160,20 +165,12 @@ def ddns_page():
         "message": get_setting("ddns_last_message", ""),
         "last_run": get_setting("ddns_last_run", "")
     }
-
     return render_template(
-        "ddns.html",
-        dynu_hostname=creds["domain"],
-        dynu_api_key=creds["api_key"],
-        dynu_enabled=creds["enabled"],
-        dynu_created_on=creds["created_on"],
-        dynu_remote_updated_on=creds["remote_updated_on"],
-        dynu_domain_state=creds["state"],
-        dynu_ttl=creds["ttl"],
-        dynu_dns_id=creds["dns_id"],
-        dynu_record_id=creds["record_id"],
-        ddns_status=ddns_status,
-        ddns_history=get_ddns_history(limit=10)
+        "ddns.html", dynu_hostname=creds["domain"], dynu_api_key=creds["api_key"],
+        dynu_enabled=creds["enabled"], dynu_created_on=creds["created_on"],
+        dynu_remote_updated_on=creds["remote_updated_on"], dynu_domain_state=creds["state"],
+        dynu_ttl=creds["ttl"], dynu_dns_id=creds["dns_id"], dynu_record_id=creds["record_id"],
+        ddns_status=ddns_status, ddns_history=get_ddns_history(limit=10)
     )
 
 @app.route("/ddns/trigger-update", methods=["POST"])
@@ -184,23 +181,13 @@ def ddns_trigger_update():
 
 @app.route("/resolution")
 def resolution_center():
-    suggestions = get_fuzzy_matches()
-    unconfirmed_guesses = get_unconfirmed_guesses()
-    unmatched_films = [f for f in get_media_catalog() if not f.get("tmdb_id") and not f.get("tvdb_id")]
-    return render_template("resolution.html", suggestions=suggestions, unconfirmed_guesses=unconfirmed_guesses, unmatched_films=unmatched_films)
+    return render_template("resolution.html", suggestions=get_fuzzy_matches(), unconfirmed_guesses=get_unconfirmed_guesses(), unmatched_films=[f for f in get_media_catalog() if not f.get("tmdb_id") and not f.get("tvdb_id")])
 
 @app.route("/api/resolution/merge", methods=["POST"])
 def merge_resolution():
     data = request.get_json(silent=True) or {}
-    slug = data.get("slug")
-    action = data.get("action")
-    service = data.get("service")
-    external_id = data.get("external_id")
-    tmdb_id = data.get("tmdb_id")
-    tvdb_id = data.get("tvdb_id")
-
-    if not slug or not action:
-        return jsonify({"ok": False, "message": "Missing slug or action payload"}), 400
+    slug, action = data.get("slug"), data.get("action")
+    if not slug or not action: return jsonify({"ok": False, "message": "Missing slug or action"}), 400
 
     if action == "approve_guess":
         confirm_guessed_id(slug)
@@ -213,12 +200,11 @@ def merge_resolution():
         reconcile_master_catalog()
         return jsonify({"ok": True, "message": f"Rejected guessed ID for {slug}."})
 
-    ok = link_service_item_to_request(slug, action, service, external_id, tmdb_id, tvdb_id)
+    ok = link_service_item_to_request(slug, action, data.get("service"), data.get("external_id"), data.get("tmdb_id"), data.get("tvdb_id"))
     if ok:
         from database import reconcile_master_catalog
         reconcile_master_catalog()
         return jsonify({"ok": True, "message": f"Updated match resolution for {slug}."})
-
     return jsonify({"ok": False, "message": "Failed updating match resolution."}), 400
 
 @app.route("/poster/<slug>")
@@ -227,51 +213,30 @@ def get_poster(slug):
     if (POSTER_DIR / poster_filename).exists():
         return send_from_directory(POSTER_DIR, poster_filename, max_age=86400)
 
-    jellyfin_id = None
-    tmdb_id = None
-    media_type = "movie"
-    
-    catalog = get_media_catalog()
-    film = next((f for f in catalog if f["movie_slug"] == slug), None)
+    film = get_catalog_item_by_slug(slug)
     if film:
-        jellyfin_id = film.get("jellyfin_id")
-        tmdb_id = film.get("tmdb_id")
-        media_type = film.get("media_type", "movie")
-
-    fetch_and_cache_poster(slug, jellyfin_id, tmdb_id, media_type)
-    if (POSTER_DIR / poster_filename).exists():
-        return send_from_directory(POSTER_DIR, poster_filename, max_age=86400)
+        fetch_and_cache_poster(slug, film.get("jellyfin_id"), film.get("tmdb_id"), film.get("media_type", "movie"))
+        if (POSTER_DIR / poster_filename).exists():
+            return send_from_directory(POSTER_DIR, poster_filename, max_age=86400)
 
     if os.path.exists(os.path.join(app.static_folder, "placeholder.jpg")):
         return send_from_directory(app.static_folder, "placeholder.jpg")
-
     return ("Poster not found", 404)
 
 @app.route("/tools")
 def tools():
-    settings = get_all_settings()
-    job_status = json.loads(settings.get("job_status", "{}"))
-    task_statuses = get_all_task_statuses()
-    unmatched_films = [f for f in get_media_catalog() if not f.get("tmdb_id") and not f.get("tvdb_id")]
-
     return render_template(
-        "tools.html",
-        settings=settings,
-        job_status=job_status,
-        task_statuses=task_statuses,
-        unmatched_films=unmatched_films,
+        "tools.html", settings=get_all_settings(), job_status=json.loads(get_all_settings().get("job_status", "{}")),
+        task_statuses=get_all_task_statuses(), unmatched_films=[f for f in get_media_catalog() if not f.get("tmdb_id") and not f.get("tvdb_id")],
     )
 
 @app.route("/settings")
 def settings_page():
-    settings = get_all_settings()
-    profiles = get_user_profile_mappings()
-    return render_template("settings.html", settings=settings, profiles=profiles)
+    return render_template("settings.html", settings=get_all_settings(), profiles=get_user_profile_mappings())
 
 @app.route("/payloads")
 def payloads_page():
-    settings = get_all_settings()
-    return render_template("payloads.html", settings=settings)
+    return render_template("payloads.html", settings=get_all_settings())
 
 @app.route("/logs")
 def logs_page():
@@ -285,8 +250,7 @@ def _known_secrets():
     for key in SECRET_FIELDS:
         value = get_setting(key, "") or ""
         for piece in [value] + re.split(r"[,\s]+", value):
-            if len(piece) >= 6:
-                found.add(piece)
+            if len(piece) >= 6: found.add(piece)
     return sorted(found, key=len, reverse=True)
 
 def _redact(line, secret_values):
@@ -296,10 +260,8 @@ def _redact(line, secret_values):
 
 @app.route("/api/logs")
 def api_logs():
-    try:
-        tail = max(1, min(int(request.args.get("tail", 300)), 5000))
-    except ValueError:
-        tail = 300
+    try: tail = max(1, min(int(request.args.get("tail", 300)), 5000))
+    except ValueError: tail = 300
     log_file = os.path.join("logs", "app.log")
     lines = []
     if os.path.exists(log_file):
@@ -323,14 +285,10 @@ def _http_url(value):
 
 @app.route("/api/test-connection/<service>", methods=["POST"])
 def api_test_connection(service):
-    import requests
     fields = (request.get_json(silent=True) or {}).get("fields", {})
 
-    def val(name):
-        return (fields.get(name) or "").strip() or (get_setting(name, "") or "")
-
-    def result(ok, message):
-        return jsonify(ok=ok, message=message)
+    def val(name): return (fields.get(name) or "").strip() or (get_setting(name, "") or "")
+    def result(ok, message): return jsonify(ok=ok, message=message)
 
     try:
         if service == "tmdb":
@@ -339,7 +297,7 @@ def api_test_connection(service):
             headers, params = {}, {}
             if key.startswith("eyJ"): headers["Authorization"] = f"Bearer {key}"
             else: params["api_key"] = key
-            r = requests.get("https://api.themoviedb.org/3/configuration", headers=headers, params=params, timeout=8)
+            r = logged_request("tmdb", "TestConnection", "GET", "https://api.themoviedb.org/3/configuration", headers=headers, params=params, timeout=8)
             return result(r.ok, "TMDB key accepted." if r.ok else f"TMDB rejected key (HTTP {r.status_code}).")
 
         if service in ("jellyfin", "radarr", "sonarr"):
@@ -347,42 +305,58 @@ def api_test_connection(service):
             key = val(f"{service}_api_key")
             if not url: return result(False, "Enter a valid http(s) URL.")
             if not key: return result(False, "No API key set.")
-
-            if service == "jellyfin":
-                r = requests.get(f"{url}/System/Info", headers={"X-Emby-Token": key}, timeout=8)
-            else:
-                r = requests.get(f"{url}/api/v3/system/status", headers={"X-Api-Key": key}, timeout=8)
-
+            if service == "jellyfin": r = logged_request("jellyfin", "TestConnection", "GET", f"{url}/System/Info", headers={"X-Emby-Token": key}, timeout=8)
+            else: r = logged_request(service, "TestConnection", "GET", f"{url}/api/v3/system/status", headers={"X-Api-Key": key}, timeout=8)
             if r.status_code in (401, 403): return result(False, "Server rejected API key.")
             if not r.ok: return result(False, f"Unexpected response (HTTP {r.status_code}).")
             info = r.json()
-            name = info.get("ServerName") or info.get("appName") or service.title()
-            return result(True, f"Connected to {name} {info.get('Version') or info.get('version') or ''}".strip())
+            return result(True, f"Connected to {info.get('ServerName') or info.get('appName') or service.title()} {info.get('Version') or info.get('version') or ''}".strip())
 
         if service == "notifications":
-            urls = [u for u in re.split(r"[,\s]+", val("apprise_urls")) if u]
-            if not urls: return result(False, "No Apprise URLs set.")
+            if not [u for u in re.split(r"[,\s]+", val("apprise_urls")) if u]: return result(False, "No Apprise URLs set.")
             ok = send_notification("SyncHub Test", "Test notification from SyncHub.")
             return result(bool(ok), "Notification sent." if ok else "Sending failed.")
-
         return result(False, "Unknown service."), 404
-    except requests.RequestException as exc:
+    except Exception as exc:
         return result(False, f"Could not connect: {exc.__class__.__name__}")
+
+@app.route("/api/servarr/<service>/quality-profiles", methods=["POST"])
+def api_servarr_quality_profiles(service):
+    data = request.get_json(silent=True) or {}
+    url, key = data.get("url"), data.get("api_key")
+    try:
+        if service == "radarr": return jsonify(radarr_quality(url, key))
+        elif service == "sonarr": return jsonify(sonarr_quality(url, key))
+        return jsonify([]), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route("/api/servarr/<service>/root-folders", methods=["POST"])
+def api_servarr_root_folders(service):
+    data = request.get_json(silent=True) or {}
+    url, key = data.get("url"), data.get("api_key")
+    try:
+        if service == "radarr": return jsonify(radarr_root(url, key))
+        elif service == "sonarr": return jsonify(sonarr_root(url, key))
+        return jsonify([]), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route("/api/jellyfin/users", methods=["GET"])
+def api_jellyfin_users():
+    return jsonify(get_jellyfin_users())
 
 @app.route("/tools/fix-match", methods=["POST"])
 def fix_match():
     slug = (request.form.get("movie_slug") or "").strip()
-    tmdb_id = (request.form.get("tmdb_id") or "").strip()
-    imdb_id = (request.form.get("imdb_id") or "").strip()
-    tvdb_id = (request.form.get("tvdb_id") or "").strip()
+    tmdb_id, imdb_id, tvdb_id = (request.form.get("tmdb_id") or "").strip(), (request.form.get("imdb_id") or "").strip(), (request.form.get("tvdb_id") or "").strip()
     error = None
 
     if not slug: error = "Choose an item first."
     elif not (tmdb_id or imdb_id or tvdb_id): error = "Enter at least one ID."
     elif (tmdb_id and not tmdb_id.isdigit()) or (tvdb_id and not tvdb_id.isdigit()): error = "IDs must be numbers."
 
-    if error:
-        flash(error, "danger")
+    if error: flash(error, "danger")
     else:
         update_film_identifiers(slug, tmdb_id, imdb_id, tvdb_id)
         from database import reconcile_master_catalog
@@ -391,108 +365,49 @@ def fix_match():
     return redirect(url_for("tools"))
 
 @app.route("/tools/trigger-radarr-sync", methods=["POST"])
-def trigger_radarr_sync():
-    start_async_task(run_radarr_task)
-    flash("Radarr movie automation search initiated in background.", "info")
-    return redirect(url_for("tools"))
+def trigger_radarr_sync(): start_async_task(run_radarr_task); flash("Radarr sync initiated in background.", "info"); return redirect(url_for("tools"))
 
 @app.route("/tools/trigger-sonarr-sync", methods=["POST"])
-def trigger_sonarr_sync():
-    start_async_task(run_sonarr_task)
-    flash("Sonarr TV automation search initiated in background.", "info")
-    return redirect(url_for("tools"))
+def trigger_sonarr_sync(): start_async_task(run_sonarr_task); flash("Sonarr sync initiated in background.", "info"); return redirect(url_for("tools"))
 
 @app.route("/tools/trigger-jellyfin-movies", methods=["POST"])
-def trigger_jellyfin_movies():
-    start_async_task(run_jellyfin_movies_task)
-    flash("Jellyfin movie catalog sync initiated in background.", "info")
-    return redirect(url_for("tools"))
+def trigger_jellyfin_movies(): start_async_task(run_jellyfin_movies_task); flash("Jellyfin movie sync initiated.", "info"); return redirect(url_for("tools"))
 
 @app.route("/tools/trigger-jellyfin-tv", methods=["POST"])
-def trigger_jellyfin_tv():
-    start_async_task(run_jellyfin_tv_task)
-    flash("Jellyfin TV show catalog sync initiated in background.", "info")
-    return redirect(url_for("tools"))
+def trigger_jellyfin_tv(): start_async_task(run_jellyfin_tv_task); flash("Jellyfin TV sync initiated.", "info"); return redirect(url_for("tools"))
 
 @app.route("/tools/trigger-id-resolver", methods=["POST"])
-def trigger_id_resolver():
-    start_async_task(run_id_resolver_task)
-    flash("ID Resolver task initiated in background.", "info")
-    return redirect(url_for("tools"))
+def trigger_id_resolver(): start_async_task(run_id_resolver_task); flash("ID Resolver initiated.", "info"); return redirect(url_for("tools"))
 
 @app.route("/tools/trigger-all", methods=["POST"])
-def trigger_all():
-    start_async_task(run_all_sequential_pipeline)
-    flash("Sequential pipeline ('Run All') initiated.", "info")
-    return redirect(url_for("tools"))
+def trigger_all(): start_async_task(run_all_sequential_pipeline); flash("Sequential pipeline initiated.", "info"); return redirect(url_for("tools"))
 
 @app.route("/tools/test-notification", methods=["POST"])
 def test_notification():
     success = send_notification("SyncHub Test", "Test notification from Letterboxd & Serializd SyncHub!")
-    flash("Push notification dispatched successfully!" if success else "Failed to send notification.", "success" if success else "danger")
+    flash("Notification sent!" if success else "Failed to send.", "success" if success else "danger")
     return redirect(url_for("tools"))
 
 SETTING_DEFAULTS = {
-    "letterboxd_interval_hours": "6",
-    "serializd_interval_hours": "6",
-    "scraper_interval_hours": "24",
-    "radarr_interval_hours": "6",
-    "sonarr_interval_hours": "6",
-    "jellyfin_interval_hours": "6",
-    "request_delay_min": str(DEFAULT_REQUEST_DELAY_RANGE[0]),
-    "request_delay_max": str(DEFAULT_REQUEST_DELAY_RANGE[1]),
-    "user_delay_min": str(DEFAULT_USER_DELAY_RANGE[0]),
-    "user_delay_max": str(DEFAULT_USER_DELAY_RANGE[1]),
-    "disable_jellyfin_connection": "0",
-    "jellyfin_url": "",
-    "radarr_enable_library_sync": "1",
-    "radarr_enable_queue_addition": "0",
-    "radarr_url": "",
-    "radarr_min_user_count": "1",
-    "radarr_quality_profile_id": "1",
-    "radarr_root_folder": "/movies",
-    "radarr_dry_run": "0",
-    "sonarr_enable_library_sync": "1",
-    "sonarr_enable_queue_addition": "0",
-    "sonarr_url": "",
-    "sonarr_min_user_count": "1",
-    "sonarr_quality_profile_id": "1",
-    "sonarr_root_folder": "/tv",
-    "sonarr_dry_run": "0",
-    "enable_notifications": "0",
-    "payload_logging_enabled": "0",
-    "payload_retention_limit": "500",
-    "log_service_jellyfin": "0",
-    "log_service_radarr": "0",
-    "log_service_sonarr": "0",
-    "log_service_tmdb": "0",
-    "log_service_dynu": "0",
+    "letterboxd_interval_hours": "6", "serializd_interval_hours": "6", "scraper_interval_hours": "24",
+    "radarr_interval_hours": "6", "sonarr_interval_hours": "6", "jellyfin_interval_hours": "6",
+    "request_delay_min": str(DEFAULT_REQUEST_DELAY_RANGE[0]), "request_delay_max": str(DEFAULT_REQUEST_DELAY_RANGE[1]),
+    "user_delay_min": str(DEFAULT_USER_DELAY_RANGE[0]), "user_delay_max": str(DEFAULT_USER_DELAY_RANGE[1]),
+    "disable_jellyfin_connection": "0", "jellyfin_url": "", "radarr_enable_library_sync": "1",
+    "radarr_enable_queue_addition": "0", "radarr_url": "", "radarr_min_user_count": "1",
+    "radarr_quality_profile_id": "1", "radarr_root_folder": "/movies", "radarr_dry_run": "0",
+    "sonarr_enable_library_sync": "1", "sonarr_enable_queue_addition": "0", "sonarr_url": "",
+    "sonarr_min_user_count": "1", "sonarr_quality_profile_id": "1", "sonarr_root_folder": "/tv",
+    "sonarr_dry_run": "0", "enable_notifications": "0", "payload_logging_enabled": "0",
+    "payload_retention_limit": "500", "log_service_jellyfin": "0", "log_service_radarr": "0",
+    "log_service_sonarr": "0", "log_service_tmdb": "0", "log_service_dynu": "0",
 }
-
-def _clean_username_list(raw):
-    raw = (raw or "").strip()
-    names = None
-    if raw.startswith("["):
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, list): names = [str(n).strip() for n in parsed]
-        except ValueError: pass
-    if names is None: names = [n.strip() for n in re.split(r"[\n,]+", raw)]
-    names = list(dict.fromkeys(n for n in names if n))
-    return json.dumps(names), None
 
 @app.route("/tools/update-settings", methods=["POST"])
 def update_settings():
-    problems = []
-    for key in ("target_usernames", "target_serializd_usernames"):
-        cleaned, error = _clean_username_list(request.form.get(key, "[]"))
-        if error: problems.append(f"{key}: {error}")
-        else: set_setting(key, cleaned)
-
     for key, default in SETTING_DEFAULTS.items():
         val = request.form.get(key)
-        if val is not None:
-            set_setting(key, val.strip())
+        if val is not None: set_setting(key, val.strip())
 
     for key in SECRET_FIELDS:
         value = (request.form.get(key) or "").strip()
@@ -500,20 +415,14 @@ def update_settings():
 
     reconfigure_scheduler()
     flash("Settings updated successfully.", "success")
-    # Redirect back to the page the user submitted the form from (Settings or Payloads)
-    referrer = request.referrer
-    if referrer and "payloads" in referrer:
-        return redirect(url_for("payloads_page"))
+    if request.referrer and "payloads" in request.referrer: return redirect(url_for("payloads_page"))
     return redirect(url_for("settings_page"))
 
 @app.route("/tools/sync-playlist", methods=["POST"])
 def trigger_playlist_sync():
     playlist_name = request.form.get("playlist_name", "Letterboxd Community Watchlist")
-    active_films = get_media_catalog()
-    matching_item_ids = [film["jellyfin_id"] for film in active_films if film.get("in_jellyfin") and film.get("jellyfin_id")]
-    matching_item_ids = list(dict.fromkeys(matching_item_ids))
-
-    success, message = sync_jellyfin_playlist(playlist_name, matching_item_ids)
+    item_ids = list(dict.fromkeys([f["jellyfin_id"] for f in get_media_catalog() if f.get("in_jellyfin") and f.get("jellyfin_id")]))
+    success, message = sync_jellyfin_playlist(playlist_name, item_ids)
     flash(message, "success" if success else "danger")
     return redirect(url_for("tools"))
 
@@ -527,10 +436,7 @@ def export_csv():
     return send_file(mem, mimetype='text/csv', as_attachment=True, download_name='letterboxd_sync_export.csv')
 
 @app.route("/tools/trigger-disk-scan", methods=["POST"])
-def trigger_disk_scan():
-    start_async_task(run_disk_scan_task)
-    flash("Disk scanner task initiated in background.", "info")
-    return redirect(url_for("tools"))
+def trigger_disk_scan(): start_async_task(run_disk_scan_task); flash("Disk scanner initiated.", "info"); return redirect(url_for("tools"))
 
 @app.route("/api/webhook/<service>", methods=["POST"])
 def api_webhook(service):
@@ -543,68 +449,75 @@ def api_webhook(service):
         handle_playback_reporting(payload)
     
     if service in ("radarr", "sonarr") and event_type in ("Grab", "Download"):
-        series = payload.get("series", {})
-        movie = payload.get("movie", {})
-        
         sse_data = {
-            "service": service,
-            "event": event_type,
-            "tvdb_id": series.get("tvdbId"),
-            "tmdb_id": movie.get("tmdbId"),
+            "service": service, "event": event_type,
+            "tvdb_id": payload.get("series", {}).get("tvdbId"),
+            "tmdb_id": payload.get("movie", {}).get("tmdbId"),
             "queue_status": "Downloading" if event_type == "Grab" else "Downloaded"
         }
         announcer.announce(format_sse(json.dumps(sse_data)))
 
-    dur_ms = int((time.time() - start_time) * 1000)
-    log_api_payload("IN", service, event_type, f"/api/webhook/{service}", 200, dur_ms, dict(request.headers), payload, {"status": "received"})
-
+    log_api_payload("IN", service, event_type, f"/api/webhook/{service}", 200, int((time.time() - start_time) * 1000), dict(request.headers), payload, {"status": "received"})
     return jsonify({"status": "received", "service": service}), 200
 
 @app.route("/api/payload-logs")
 def get_api_payload_logs():
-    limit = request.args.get("limit", 100)
-    service = request.args.get("service")
-    errors_only = request.args.get("errors_only") == "1"
-    logs = get_payload_logs(limit=limit, service=service, errors_only=errors_only)
-    return jsonify(logs)
+    return jsonify(get_payload_logs(limit=request.args.get("limit", 100), service=request.args.get("service"), errors_only=request.args.get("errors_only") == "1"))
 
 @app.route("/api/payload-logs/clear", methods=["POST"])
-def clear_api_payload_logs():
-    clear_payload_logs()
-    return jsonify({"ok": True})
+def clear_api_payload_logs(): clear_payload_logs(); return jsonify({"ok": True})
 
 @app.route("/api/request-seasons", methods=["POST"])
 def api_request_seasons():
     data = request.get_json(silent=True) or {}
-    tvdb_id = data.get("tvdb_id")
-    seasons = data.get("seasons", [])
-    
-    if not tvdb_id or not isinstance(seasons, list):
+    if not data.get("tvdb_id") or not isinstance(data.get("seasons", []), list):
         return jsonify({"ok": False, "message": "Missing tvdb_id or seasons array."}), 400
-        
     from automation import request_tv_seasons
-    res = request_tv_seasons(tvdb_id, seasons)
-    
+    res = request_tv_seasons(data["tvdb_id"], data["seasons"])
     if res.get("status") in ("added", "updated"):
         from database import reconcile_master_catalog
         reconcile_master_catalog()
-        return jsonify({"ok": True, "message": f"Monitored seasons {seasons} in Sonarr."})
-    else:
-        return jsonify({"ok": False, "message": res.get("message", "Sonarr request failed.")}), 500
+        return jsonify({"ok": True, "message": f"Monitored seasons {data['seasons']}."})
+    return jsonify({"ok": False, "message": res.get("message", "Request failed.")}), 500
+
+@app.route("/api/show/<tvdb_id>/episodes", methods=["GET"])
+def api_get_show_episodes(tvdb_id):
+    episodes = get_full_tv_show_episodes(tvdb_id)
+    return jsonify({"ok": True, "seasons": episodes})
+
+@app.route("/api/request-episodes", methods=["POST"])
+def api_request_episodes():
+    data = request.get_json(silent=True) or {}
+    tvdb_id = data.get("tvdb_id")
+    episode_ids = data.get("episode_ids")
+    episodes_spec = data.get("episodes")
+    search = data.get("search", True)
+
+    if not tvdb_id or (not episode_ids and not episodes_spec):
+        return jsonify({"ok": False, "message": "Missing tvdb_id or episode selection."}), 400
+
+    from automation import request_tv_episodes
+    res = request_tv_episodes(tvdb_id, episode_ids=episode_ids, episodes_spec=episodes_spec, search=search)
+    if res.get("status") == "updated":
+        from database import reconcile_master_catalog
+        reconcile_master_catalog()
+        return jsonify({"ok": True, "message": res.get("message")})
+    return jsonify({"ok": False, "message": res.get("message", "Request failed.")}), 500
 
 @app.route("/settings/profiles/save", methods=["POST"])
 def save_profile():
     profile_name = request.form.get("profile_name", "").strip()
-    letterboxd = request.form.get("letterboxd_username", "").strip()
-    serializd = request.form.get("serializd_username", "").strip()
-    jellyfin_id = request.form.get("jellyfin_user_id", "").strip()
-    
     if profile_name:
-        save_user_profile_mapping(profile_name, letterboxd, serializd, jellyfin_id)
+        save_user_profile_mapping(profile_name, request.form.get("letterboxd_username", "").strip(), request.form.get("serializd_username", "").strip(), request.form.get("jellyfin_user_id", "").strip(), 1)
         flash(f"Profile mapping for '{profile_name}' saved.", "success")
-    else:
-        flash("Profile name is required.", "danger")
+    else: flash("Profile name is required.", "danger")
     return redirect(url_for("settings_page"))
+
+@app.route("/api/profiles/toggle", methods=["POST"])
+def api_toggle_profile():
+    data = request.get_json()
+    toggle_profile_mapping(data["id"], data["is_active"])
+    return jsonify({"ok": True})
 
 @app.route("/settings/profiles/delete/<int:profile_id>", methods=["POST"])
 def delete_profile(profile_id):
@@ -613,31 +526,21 @@ def delete_profile(profile_id):
     return redirect(url_for("settings_page"))
 
 @app.route("/tools/trigger-letterboxd-scraper", methods=["POST"])
-def trigger_letterboxd_scraper():
-    start_async_task(run_letterboxd_scraper_task)
-    flash("Letterboxd scraper initiated in background.", "info")
-    return redirect(url_for("tools"))
+def trigger_letterboxd_scraper(): start_async_task(run_letterboxd_scraper_task); flash("Letterboxd scraper initiated.", "info"); return redirect(url_for("tools"))
 
 @app.route("/tools/trigger-serializd-scraper", methods=["POST"])
-def trigger_serializd_scraper():
-    start_async_task(run_serializd_scraper_task)
-    flash("Serializd scraper initiated in background.", "info")
-    return redirect(url_for("tools"))
+def trigger_serializd_scraper(): start_async_task(run_serializd_scraper_task); flash("Serializd scraper initiated.", "info"); return redirect(url_for("tools"))
 
 @app.route("/movie/<slug>")
 def movie_details(slug):
     movie = get_movie_details_by_slug(slug)
-    if not movie:
-        flash("Movie not found in catalog.", "warning")
-        return redirect(url_for('index'))
+    if not movie: flash("Movie not found in catalog.", "warning"); return redirect(url_for('index'))
     return render_template("movie_details.html", movie=movie)
 
 @app.route("/show/<tvdb_id>")
 def show_details(tvdb_id):
     show, seasons = get_tv_show_details(tvdb_id)
-    if not show:
-        flash("TV Show not found in catalog.", "warning")
-        return redirect(url_for('index'))
+    if not show: flash("TV Show not found in catalog.", "warning"); return redirect(url_for('index'))
     return render_template("show_details.html", show=show, seasons=seasons)
 
 @app.route("/ddns/update-settings", methods=["POST"])
@@ -645,9 +548,7 @@ def ddns_update_settings():
     domain = (request.form.get("dynu_hostname") or "").strip()
     apikey = (request.form.get("dynu_api_key") or "").strip()
     enabled = "1" if request.form.get("dynu_enabled") == "1" else "0"
-
-    old_domain = get_setting("dynu_domain")
-    old_key = get_setting("dynu_api_key")
+    old_domain, old_key = get_setting("dynu_domain"), get_setting("dynu_api_key")
 
     set_setting("dynu_domain", domain)
     set_setting("dynu_api_key", apikey)
@@ -656,14 +557,12 @@ def ddns_update_settings():
     if domain != old_domain or apikey != old_key:
         set_setting("dynu_dns_id", "")
         set_setting("dynu_record_id", "")
-        if domain and apikey:
-            fetch_and_cache_dynu_metadata(domain, api_key)
+        if domain and apikey: fetch_and_cache_dynu_metadata(domain, apikey)
 
     flash("DDNS configuration saved successfully.", "success")
     return redirect(url_for("ddns_page"))
 
-if csrf:
-    csrf.exempt(api_webhook)
+if csrf: csrf.exempt(api_webhook)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=os.getenv("FLASK_DEBUG") == "1")

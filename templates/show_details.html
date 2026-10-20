@@ -43,10 +43,13 @@
                 </p>
                 
                 <div class="mt-4">
-                    <button type="button" class="btn btn-outline-info" 
-                            onclick='openSeasonModal("{{ show.tvdb_id }}", {{ show.title|tojson }}, {{ show.available_seasons|tojson }})'>
-                        <i class="bi bi-cloud-download"></i> Request Missing Seasons
-                    </button>
+                    <span {% if not show.tvdb_id %}class="d-inline-block" tabindex="0" data-bs-toggle="tooltip" title="A TVDB ID is required to request seasons"{% endif %}>
+                        <button type="button" class="btn btn-outline-info" 
+                                {% if not show.tvdb_id %}disabled{% endif %}
+                                onclick='openSeasonModal("{{ show.tvdb_id }}", {{ show.title|tojson }}, {{ show.available_seasons|tojson }})'>
+                            <i class="bi bi-cloud-download"></i> Request Missing Seasons
+                        </button>
+                    </span>
                     {% if show.jellyfin_link %}
                         <a href="{{ show.jellyfin_link }}" class="btn btn-success ms-2" target="_blank" rel="noopener noreferrer">
                             <i class="bi bi-play-circle"></i> Watch on Jellyfin
@@ -58,37 +61,68 @@
     </div>
 </div>
 
-<h4 class="mb-3 fw-bold"><i class="bi bi-collection-play text-success"></i> Episode Availability (Jellyfin)</h4>
+<h4 class="mb-3 fw-bold"><i class="bi bi-collection-play text-success"></i> Episode Availability & Requests</h4>
 
 {% if seasons %}
-    <div class="accordion shadow-sm" id="seasonsAccordion">
+    <div class="accordion shadow-sm mb-5" id="seasonsAccordion">
         {% for sn, episodes in seasons.items()|sort(attribute='0') %}
         <div class="accordion-item border-0 border-bottom">
             <h2 class="accordion-header" id="heading{{ sn }}">
                 <button class="accordion-button fw-bold {% if not loop.first %}collapsed{% endif %}" type="button" data-bs-toggle="collapse" data-bs-target="#collapse{{ sn }}">
-                    Season {{ sn }} <span class="badge bg-success ms-2">{{ episodes|length }} Episodes</span>
+                    Season {{ sn }} <span class="badge bg-secondary ms-2">{{ episodes|length }} Episodes</span>
                 </button>
             </h2>
             <div id="collapse{{ sn }}" class="accordion-collapse collapse {% if loop.first %}show{% endif %}" data-bs-parent="#seasonsAccordion">
                 <div class="accordion-body p-0">
-                    <table class="table table-hover table-striped mb-0 align-middle">
-                        <thead class="table-light">
-                            <tr>
-                                <th style="width: 80px;" class="text-center">Ep</th>
-                                <th>Title</th>
-                                <th style="width: 150px;">Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for ep in episodes %}
-                            <tr>
-                                <td class="text-center fw-bold text-muted">{{ ep.episode_number }}</td>
-                                <td>{{ ep.title }}</td>
-                                <td><span class="badge bg-success"><i class="bi bi-check-circle-fill"></i> In Library</span></td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                    <div class="table-responsive">
+                        <table class="table table-hover table-striped mb-0 align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width: 40px;" class="text-center">
+                                        <input class="form-check-input season-check" type="checkbox" data-season="{{ sn }}" onchange="toggleSeasonChecks(this, {{ sn }})" aria-label="Select all missing episodes in Season {{ sn }}">
+                                    </th>
+                                    <th style="width: 60px;" class="text-center">Ep</th>
+                                    <th>Title</th>
+                                    <th style="width: 160px;">Status</th>
+                                    <th style="width: 100px;" class="text-end">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for ep in episodes %}
+                                <tr>
+                                    <td class="text-center">
+                                        {% if not ep.in_jellyfin and not ep.monitored and ep.episode_id %}
+                                            <input class="form-check-input ep-checkbox ep-check-s{{ sn }}" type="checkbox" value="{{ ep.episode_id }}" onchange="updateFloatingBar()">
+                                        {% else %}
+                                            <input class="form-check-input" type="checkbox" disabled>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-center fw-bold text-muted">{{ ep.episode_number or '-' }}</td>
+                                    <td>
+                                        <div class="text-truncate" style="max-width: 250px;" title="{{ ep.title or 'Unknown Episode' }}">{{ ep.title or 'Unknown Episode' }}</div>
+                                        {% if ep.air_date %}<small class="text-muted">{{ ep.air_date[:10] }}</small>{% endif %}
+                                    </td>
+                                    <td>
+                                        {% if ep.in_jellyfin %}
+                                            <span class="badge bg-success"><i class="bi bi-check-circle-fill"></i> In Jellyfin</span>
+                                        {% elif ep.has_file %}
+                                            <span class="badge bg-success"><i class="bi bi-hdd-fill"></i> Downloaded</span>
+                                        {% elif ep.monitored %}
+                                            <span class="badge bg-info text-dark"><i class="bi bi-cloud-arrow-down"></i> Queued</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">Missing</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-end">
+                                        {% if not ep.in_jellyfin and not ep.monitored and ep.episode_id %}
+                                            <button class="btn btn-sm btn-outline-primary py-0" onclick="requestEpisodes([{{ ep.episode_id }}])">Request</button>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -96,9 +130,20 @@
     </div>
 {% else %}
     <div class="alert alert-secondary shadow-sm">
-        <i class="bi bi-info-circle"></i> No specific episode data has been synced from Jellyfin yet. Once seasons are downloaded and scanned by Jellyfin, they will appear here.
+        <i class="bi bi-info-circle"></i> Sonarr metadata is currently missing or unavailable. Use the "Request Missing Seasons" button above to initialize the show in Sonarr.
     </div>
 {% endif %}
+
+<!-- Bulk Action Floating Bar -->
+<div id="bulkActionBar" class="fixed-bottom bg-dark text-light p-3 d-none justify-content-between align-items-center shadow-lg" style="z-index: 1050;">
+    <div>
+        <span id="bulkActionCount" class="fw-bold me-2">0</span> episode(s) selected
+    </div>
+    <div>
+        <button class="btn btn-outline-light btn-sm me-2" onclick="clearSelection()">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="bulkRequestBtn" onclick="requestSelectedEpisodes()">Request Selected</button>
+    </div>
+</div>
 
 {{ season_modal() }}
 
@@ -108,11 +153,15 @@
 <script>
     let seasonModalInstance = null;
 
+    document.addEventListener("DOMContentLoaded", function() {
+        const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl);
+        });
+    });
+
     function openSeasonModal(tvdbId, title, availableSeasons) {
-        if (!tvdbId) {
-            alert('Cannot request seasons. This show is missing a TVDB ID. Please link it in the Resolution Center first.');
-            return;
-        }
+        if (!tvdbId) return;
         
         document.getElementById('modalTvdbId').value = tvdbId;
         document.getElementById('modalShowTitle').innerText = title;
@@ -168,6 +217,81 @@
             alert('An error occurred while communicating with the server.');
             submitBtn.disabled = false;
             submitBtn.innerText = 'Send to Sonarr';
+        });
+    }
+
+    /* Episode-Level Request Functions */
+    function toggleSeasonChecks(masterCheckbox, seasonNum) {
+        const checkboxes = document.querySelectorAll(`.ep-check-s${seasonNum}`);
+        checkboxes.forEach(cb => {
+            if (!cb.disabled) {
+                cb.checked = masterCheckbox.checked;
+            }
+        });
+        updateFloatingBar();
+    }
+
+    function updateFloatingBar() {
+        const selected = document.querySelectorAll('.ep-checkbox:checked');
+        const actionBar = document.getElementById('bulkActionBar');
+        const countSpan = document.getElementById('bulkActionCount');
+        
+        if (selected.length > 0) {
+            countSpan.innerText = selected.length;
+            actionBar.classList.remove('d-none');
+            actionBar.classList.add('d-flex');
+        } else {
+            actionBar.classList.add('d-none');
+            actionBar.classList.remove('d-flex');
+        }
+    }
+
+    function clearSelection() {
+        document.querySelectorAll('.ep-checkbox').forEach(cb => cb.checked = false);
+        document.querySelectorAll('.season-check').forEach(cb => cb.checked = false);
+        updateFloatingBar();
+    }
+
+    function requestSelectedEpisodes() {
+        const selected = document.querySelectorAll('.ep-checkbox:checked');
+        const episodeIds = Array.from(selected).map(cb => parseInt(cb.value));
+        
+        if (episodeIds.length > 0) {
+            const btn = document.getElementById('bulkRequestBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Requesting...';
+            requestEpisodes(episodeIds, () => {
+                btn.disabled = false;
+                btn.innerText = 'Request Selected';
+            });
+        }
+    }
+
+    function requestEpisodes(episodeIds, callback) {
+        const tvdbId = "{{ show.tvdb_id }}";
+        if (!tvdbId || episodeIds.length === 0) return;
+
+        fetch('/api/request-episodes', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || ''
+            },
+            body: JSON.stringify({ tvdb_id: tvdbId, episode_ids: episodeIds, search: true })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.ok) {
+                location.reload(); 
+            } else {
+                alert('Error: ' + data.message);
+                if (callback) callback();
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            alert('An error occurred while communicating with the server.');
+            if (callback) callback();
         });
     }
 </script>

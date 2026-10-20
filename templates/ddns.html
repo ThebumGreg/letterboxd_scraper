@@ -1,5 +1,7 @@
 <!-- templates/ddns.html -->
 {% extends "base.html" %}
+{% from "_macros.html" import secret_field with context %}
+
 {% block title %}Dynu DDNS Settings{% endblock %}
 
 {% block content %}
@@ -35,11 +37,11 @@
                 </div>
                 <div class="col-md-6">
                     <small class="text-secondary d-block">Dynu Domain Created On</small>
-                    <span>{{ dynu_created_on or 'N/A' }}</span>
+                    <span data-task-last="utc_created">{{ dynu_created_on or 'N/A' }}</span>
                 </div>
                 <div class="col-md-6">
                     <small class="text-secondary d-block">Dynu Remote Last Updated</small>
-                    <span>{{ dynu_remote_updated_on or 'N/A' }}</span>
+                    <span data-task-last="utc_updated">{{ dynu_remote_updated_on or 'N/A' }}</span>
                 </div>
             </div>
         </div>
@@ -52,19 +54,19 @@
         </div>
         <div class="card-body">
             <form action="{{ url_for('ddns_update_settings') }}" method="POST">
+                {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
                 <div class="mb-3">
                     <label for="dynu_hostname" class="form-label font-weight-bold">Domain Name</label>
                     <input type="text" class="form-control" id="dynu_hostname" name="dynu_hostname" value="{{ dynu_hostname }}" placeholder="e.g. pizza101home.dynu.net" required>
                 </div>
                 <div class="mb-3">
-                    <label for="dynu_api_key" class="form-label font-weight-bold">API Key</label>
-                    <input type="password" class="form-control" id="dynu_api_key" name="dynu_api_key" value="{{ dynu_api_key }}" placeholder="Enter Dynu REST API Key" required>
+                    {{ secret_field('dynu_api_key', 'Dynu REST API Key', dynu_api_key) }}
                 </div>
-                <div class="mb-3 form-check">
-                    <input type="checkbox" class="form-check-input" id="dynu_enabled" name="dynu_enabled" value="1" {% if dynu_enabled %}checked{% endif %}>
-                    <label class="form-check-label" for="dynu_enabled">Enable Automatic DDNS Updates (Every 5 minutes)</label>
+                <div class="mb-3 form-check form-switch">
+                    <input type="checkbox" class="form-check-input" id="dynu_enabled" name="dynu_enabled" role="switch" value="1" {% if dynu_enabled %}checked{% endif %}>
+                    <label class="form-check-label ms-2" for="dynu_enabled">Enable Automatic DDNS Updates (Every 5 minutes)</label>
                 </div>
-                <button type="submit" class="btn btn-primary btn-sm">Save Settings</button>
+                <button type="submit" class="btn btn-success btn-sm">Save Settings</button>
             </form>
         </div>
     </div>
@@ -74,6 +76,7 @@
         <div class="card-header fw-bold d-flex justify-content-between align-items-center">
             <span>Current Status</span>
             <form action="{{ url_for('ddns_trigger_update') }}" method="POST" class="m-0">
+                {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
                 <button type="submit" class="btn btn-success btn-sm">Force Sync Now</button>
             </form>
         </div>
@@ -85,7 +88,7 @@
                 </div>
                 <div class="col-md-4">
                     <small class="text-secondary d-block">Last Run Timestamp</small>
-                    <span>{{ ddns_status.last_run or 'Never' }}</span>
+                    <span data-task-last="ddns_last_run">{{ ddns_status.last_run or 'Never' }}</span>
                 </div>
                 <div class="col-md-4">
                     <small class="text-secondary d-block">Last Result</small>
@@ -124,7 +127,7 @@
                     <tbody>
                         {% for row in ddns_history %}
                         <tr>
-                            <td><small>{{ row.created_at }}</small></td>
+                            <td><small data-task-last="history_{{ loop.index }}">{{ row.created_at }}</small></td>
                             <td><code>{{ row.old_ip }}</code></td>
                             <td><code>{{ row.new_ip }}</code></td>
                             <td>
@@ -147,4 +150,28 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    document.querySelectorAll('[data-task-last]').forEach(el => {
+        let val = el.textContent.trim();
+        
+        if (val && val !== 'Never' && val !== 'N/A') {
+            // Replace space with T and append Z to format UTC string for JS Date object
+            let dateObj = new Date(val.replace(' ', 'T') + "Z");
+            
+            if (!isNaN(dateObj)) {
+                el.textContent = dateObj.toLocaleString(undefined, {
+                    month: 'short', 
+                    day: 'numeric',
+                    hour: 'numeric', 
+                    minute: '2-digit'
+                });
+            }
+        }
+    });
+});
+</script>
 {% endblock %}

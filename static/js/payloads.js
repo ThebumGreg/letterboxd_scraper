@@ -110,6 +110,27 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
+    // Export functionality
+    const exportBtn = document.getElementById("exportLogsBtn");
+    if (exportBtn) {
+        exportBtn.addEventListener("click", () => {
+            if (loadedLogs.length === 0) {
+                alert("No payloads available to export.");
+                return;
+            }
+            
+            // Format the current logs into a downloadable JSON blob
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(loadedLogs, null, 2));
+            const downloadAnchorNode = document.createElement('a');
+            
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", "api_payloads_export.json");
+            document.body.appendChild(downloadAnchorNode); // Required for Firefox support
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+        });
+    }
+
     // Copy to clipboard handlers
     document.querySelectorAll('.copy-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
