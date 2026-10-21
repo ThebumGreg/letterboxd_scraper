@@ -1,5 +1,5 @@
 from synchub import http, settings
-from synchub.clients import check, require
+from synchub.clients import ApiError, check, require
 
 
 class JellyfinClient:
@@ -13,6 +13,12 @@ class JellyfinClient:
             "Accept": "application/json",
             "Authorization": f'MediaBrowser Client="SyncHub", Device="SyncHub", DeviceId="synchub", Version="2.0", Token="{self.key}"',
         }
+
+    def system_info(self):
+        res = http.request("jellyfin", "TestConnection", "GET", f"{self.url}/System/Info", headers=self.headers, timeout=8)
+        if res.status_code in (401, 403):
+            raise ApiError("Server rejected the API key.")
+        return check(res, "Jellyfin", "connection test").json()
 
     def users(self):
         res = check(http.request("jellyfin", "GetUsers", "GET", f"{self.url}/Users", headers=self.headers), "Jellyfin", "user list")

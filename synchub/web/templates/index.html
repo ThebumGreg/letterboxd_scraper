@@ -1,0 +1,143 @@
+<!-- synchub/web/templates/index.html -->
+{% extends "base.html" %}
+{% from "_macros.html" import stat_card, state_badge with context %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-3">
+    {{ stat_card('Movies', stats.movies, 'secondary', 'movie', '', 'text-body') }}
+    {{ stat_card('TV Shows', stats.shows, 'secondary', 'show', '', 'text-body') }}
+    {{ stat_card('In Library', stats.in_library, 'success', '', 'in_library') }}
+    {{ stat_card('Partial', stats.partial, 'warning', '', 'partial') }}
+</div>
+<div class="row g-3 mb-4">
+    {{ stat_card('In Progress', stats.in_flight, 'primary', '', 'in_flight') }}
+    {{ stat_card('Queued', stats.queued, 'info', '', 'queued') }}
+    {{ stat_card('Missing', stats.missing, 'danger', '', 'missing') }}
+    {{ stat_card('Profiles', stats.users, 'secondary', none, none, 'text-body') }}
+</div>
+
+<div class="row g-2 mb-4 p-3 align-items-center panel mx-0" id="controls">
+    <div class="col-12 col-lg-3">
+        <label for="searchInput" class="visually-hidden">Search title</label>
+        <input type="search" id="searchInput" class="form-control" placeholder="Search title (press / to focus)" autocomplete="off">
+    </div>
+    <div class="col-6 col-sm-4 col-lg-2">
+        <label for="mediaTypeFilter" class="visually-hidden">Media type</label>
+        <select id="mediaTypeFilter" class="form-select">
+            <option value="">All Media Types</option>
+            <option value="movie">Movies Only</option>
+            <option value="show">TV Shows Only</option>
+        </select>
+    </div>
+    <div class="col-6 col-sm-4 col-lg-2">
+        <label for="userFilter" class="visually-hidden">Profile</label>
+        <select id="userFilter" class="form-select">
+            <option value="">All Profiles</option>
+            {% for user in all_users %}<option value="{{ user|lower }}">{{ user }}</option>{% endfor %}
+        </select>
+    </div>
+    <div class="col-6 col-sm-4 col-lg-2">
+        <label for="statusFilter" class="visually-hidden">Status</label>
+        <select id="statusFilter" class="form-select">
+            <option value="">All Statuses</option>
+            {% for code, label in status_options %}<option value="{{ code }}">{{ label }}</option>{% endfor %}
+            <option value="in_flight">In progress (all)</option>
+        </select>
+    </div>
+    <div class="col-6 col-sm-12 col-lg-3 d-flex justify-content-end align-items-center gap-2">
+        <label for="sortOrder" class="visually-hidden">Sort order</label>
+        <select id="sortOrder" class="form-select flex-grow-1">
+            <option value="users-desc">Most Requested</option>
+            <option value="title-asc">Title (A-Z)</option>
+            <option value="year-desc">Release Year (Newest)</option>
+        </select>
+        <div class="btn-group flex-shrink-0" role="group" aria-label="View mode">
+            <button type="button" class="btn btn-outline-secondary active" id="btnListView" title="List view" aria-label="List view" aria-pressed="true"><i class="bi bi-list-ul" aria-hidden="true"></i></button>
+            <button type="button" class="btn btn-outline-secondary" id="btnGridView" title="Grid view" aria-label="Grid view" aria-pressed="false"><i class="bi bi-grid-3x3-gap-fill" aria-hidden="true"></i></button>
+        </div>
+    </div>
+</div>
+
+{% if not rows %}
+    <div class="alert alert-info">
+        Nothing here yet. Add your API keys and profiles in <a href="{{ url_for('settings_page') }}" class="alert-link">Settings</a>, then run everything from
+        <a href="{{ url_for('tools') }}" class="alert-link">Tools &amp; Operations</a>.
+    </div>
+{% endif %}
+
+<div class="table-responsive" id="filmList">
+    <table class="table table-hover align-middle">
+        <thead>
+            <tr>
+                <th style="width: 60px;"><span class="visually-hidden">Poster</span></th>
+                <th>Title</th>
+                <th>Type</th>
+                <th class="d-none d-md-table-cell">Wanted By</th>
+                <th>Profiles</th>
+                <th>Status / Action</th>
+            </tr>
+        </thead>
+        <tbody id="listTableBody">
+            {% for r in rows %}
+            <tr class="item-row d-none"
+                data-id="{{ r.id }}" data-url="{{ r.url }}" data-poster="{{ r.poster }}"
+                data-tmdb-id="{{ r.tmdb_id or '' }}" data-tvdb-id="{{ r.tvdb_id or '' }}"
+                data-title="{{ r.title|lower }}" data-display-title="{{ r.title }}" data-year="{{ r.year or '' }}"
+                data-kind="{{ r.kind }}" data-state="{{ r.state }}" data-state-label="{{ r.state_label }}" data-state-color="{{ r.state_color }}"
+                data-progress="{{ r.progress_pct if r.progress_pct is not none else '' }}"
+                data-users="|{% for u in r.wanted_by + r.watched_by %}{{ u|lower }}|{% endfor %}"
+                data-added-by="{{ r.wanted_by|join(', ') }}" data-user-count="{{ r.user_count }}"
+                data-link="{{ r.jellyfin_link if r.state == 'in_library' and r.jellyfin_link else '' }}"
+                data-app-link="{{ r.jellyfin_app_link or '' }}"
+                data-summary="{% if r.kind == 'show' and r.aired %}{{ r.in_library }} of {{ r.aired }} episodes{% endif %}">
+                <td><img src="{{ r.poster }}" alt="" width="45" height="65" class="rounded poster poster-thumb" loading="lazy"></td>
+                <td>
+                    <div class="fw-bold">
+                        <a href="{{ r.url }}" class="text-decoration-none {{ 'text-info' if r.kind == 'show' else 'text-primary' }}">{{ r.title }}</a>
+                        {% if r.year %}<span class="badge bg-secondary ms-1 fw-normal">{{ r.year }}</span>{% endif %}
+                    </div>
+                    {% if r.kind == 'show' and r.aired %}
+                        <small class="text-body-secondary">{{ r.in_library }} of {{ r.aired }} episodes ({{ r.percent }}%)</small>
+                    {% endif %}
+                </td>
+                <td><span class="badge {{ 'badge-tv' if r.kind == 'show' else 'badge-movie' }}">{{ 'TV' if r.kind == 'show' else 'MOVIE' }}</span></td>
+                <td class="d-none d-md-table-cell text-truncate" style="max-width: 200px;" title="{{ r.wanted_by|join(', ') }}">{{ r.wanted_by|join(', ') }}</td>
+                <td><span class="badge bg-primary">{{ r.user_count }}</span></td>
+                <td>
+                    {% if r.state == 'in_library' and r.jellyfin_link %}
+                        <a href="{{ r.jellyfin_link }}" class="btn btn-sm btn-success jellyfin-link" data-app-link="{{ r.jellyfin_app_link or '' }}" target="_blank" rel="noopener noreferrer">Watch on Jellyfin</a>
+                    {% else %}
+                        <span class="sse-badge-container">{{ state_badge(r.state_label, r.state_color, r.state_icon, r.progress_pct if r.state == 'downloading' else none) }}</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="row row-cols-2 row-cols-md-4 row-cols-lg-6 g-3 d-none" id="filmGrid"></div>
+
+<div id="emptyState" class="text-center text-body-secondary py-5 d-none">
+    <p class="mb-2">No items match your filters.</p>
+    <button type="button" id="btnResetFilters" class="btn btn-outline-secondary btn-sm">Reset filters</button>
+</div>
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-4 p-3 panel">
+    <span id="pageInfo" aria-live="polite">Showing items</span>
+    <div class="d-flex gap-2 align-items-center">
+        <label for="itemsPerPage" class="mb-0 me-1">Per page:</label>
+        <select id="itemsPerPage" class="form-select form-select-sm" style="width: auto;">
+            <option value="18" selected>18</option><option value="36">36</option><option value="72">72</option><option value="all">All</option>
+        </select>
+        <button id="btnPrevPage" type="button" class="btn btn-sm btn-secondary" disabled>Previous</button>
+        <button id="btnNextPage" type="button" class="btn btn-sm btn-secondary">Next</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}

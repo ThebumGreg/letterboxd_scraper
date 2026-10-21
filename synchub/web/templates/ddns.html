@@ -1,0 +1,93 @@
+<!-- synchub/web/templates/ddns.html -->
+{% extends "base.html" %}
+{% from "_macros.html" import csrf_field, secret_field with context %}
+
+{% block title %}Dynu DDNS Settings{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <h2 class="mb-4">Dynu Dynamic DNS (DDNS)</h2>
+
+    <div class="panel p-3 p-md-4 mb-4">
+        <h5 class="mb-3 text-success">Dynu account details</h5>
+        <div class="row g-3">
+            <div class="col-md-3"><small class="text-secondary d-block">Domain name</small><strong>{{ creds.domain or 'Not configured' }}</strong></div>
+            <div class="col-md-2"><small class="text-secondary d-block">State</small><span class="badge bg-info text-dark">{{ creds.state }}</span></div>
+            <div class="col-md-2"><small class="text-secondary d-block">TTL</small><span>{{ creds.ttl }}s</span></div>
+            <div class="col-md-2"><small class="text-secondary d-block">DNS ID</small><code>{{ creds.dns_id or 'Unresolved' }}</code></div>
+            <div class="col-md-3"><small class="text-secondary d-block">Record</small><code>{{ creds.record_id or 'Unresolved' }}</code></div>
+            <div class="col-md-6"><small class="text-secondary d-block">Domain created</small><span data-task-last="utc_created">{{ creds.created_on }}</span></div>
+            <div class="col-md-6"><small class="text-secondary d-block">Last updated at Dynu</small><span data-task-last="utc_updated">{{ creds.remote_updated_on }}</span></div>
+        </div>
+    </div>
+
+    <div class="panel p-3 p-md-4 mb-4">
+        <h5 class="mb-3 text-success">Configuration</h5>
+        <form action="{{ url_for('ddns_update_settings') }}" method="POST">
+            {{ csrf_field() }}
+            <div class="mb-3">
+                <label for="dynu_hostname" class="form-label fw-bold">Domain name</label>
+                <input type="text" class="form-control" id="dynu_hostname" name="dynu_hostname" value="{{ creds.domain }}" placeholder="e.g. myhome.dynu.net" required>
+            </div>
+            <div class="mb-3">{{ secret_field('dynu_api_key', 'Dynu REST API key', creds.api_key) }}</div>
+            <div class="mb-3 form-check form-switch">
+                <input type="checkbox" class="form-check-input" id="dynu_enabled" name="dynu_enabled" role="switch" value="1" {% if creds.enabled %}checked{% endif %}>
+                <label class="form-check-label ms-2" for="dynu_enabled">Update automatically (every 5 minutes)</label>
+            </div>
+            <button type="submit" class="btn btn-success btn-sm">Save settings</button>
+        </form>
+    </div>
+
+    <div class="panel p-3 p-md-4 mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="mb-0 text-success">Current status</h5>
+            <form action="{{ url_for('ddns_trigger_update') }}" method="POST" class="m-0">{{ csrf_field() }}<button type="submit" class="btn btn-success btn-sm">Force update now</button></form>
+        </div>
+        <div class="row">
+            <div class="col-md-4"><small class="text-secondary d-block">Cached IP</small><h5><code>{{ ddns_status.last_ip or 'None' }}</code></h5></div>
+            <div class="col-md-4"><small class="text-secondary d-block">Last run</small><span data-task-last="ddns_last_run">{{ ddns_status.last_run or 'Never' }}</span></div>
+            <div class="col-md-4"><small class="text-secondary d-block">Last result</small>
+                {% if ddns_status.last_update_status == 'SUCCESS' %}<span class="badge bg-success">SUCCESS</span>
+                {% elif ddns_status.last_update_status == 'FAILED' %}<span class="badge bg-danger">FAILED</span>
+                {% else %}<span class="badge bg-secondary">{{ ddns_status.last_update_status }}</span>{% endif %}
+            </div>
+        </div>
+        <div class="mt-2 text-secondary small">{{ ddns_status.message }}</div>
+    </div>
+
+    <div class="panel p-0 overflow-hidden">
+        <div class="p-3 p-md-4 border-bottom border-secondary border-opacity-25"><h5 class="mb-0 text-success">Recent IP activity</h5></div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle m-0">
+                <thead class="table-light"><tr><th class="ps-4">Time</th><th>Previous IP</th><th>New IP</th><th>Status</th><th class="pe-4">Details</th></tr></thead>
+                <tbody>
+                    {% for row in ddns_history %}
+                    <tr>
+                        <td class="ps-4"><small data-task-last="history_{{ loop.index }}">{{ row.created_at }}</small></td>
+                        <td><code>{{ row.old_ip }}</code></td><td><code>{{ row.new_ip }}</code></td>
+                        <td>{% if row.status == 'SUCCESS' %}<span class="badge bg-success">SUCCESS</span>{% else %}<span class="badge bg-danger">FAILED</span>{% endif %}</td>
+                        <td class="pe-4"><small class="text-muted">{{ row.message }}</small></td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="5" class="text-center text-muted p-4">No updates recorded yet.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    document.querySelectorAll('[data-task-last]').forEach(el => {
+        const val = el.textContent.trim();
+        if (val && val !== 'Never' && val !== 'N/A') {
+            const d = new Date(val.replace(' ', 'T') + "Z");
+            if (!isNaN(d)) el.textContent = d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+        }
+    });
+});
+</script>
+{% endblock %}

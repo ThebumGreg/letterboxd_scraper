@@ -235,6 +235,8 @@ class Matcher:
             elif existing is None and match is None and not reviews:
                 self.stats["unresolved"] += 1
             self._add_reviews(rec, reviews)
+            # Commit as we go: a record can mean a TMDB call, and the write lock must not be held across slow network calls.
+            self.conn.commit()
         return dict(self.stats)
 
 

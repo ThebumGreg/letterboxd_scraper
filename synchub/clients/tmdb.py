@@ -24,6 +24,9 @@ class TmdbClient:
             raise ApiError(f"TMDB {path} failed: HTTP {res.status_code}")
         return res.json()
 
+    def configuration(self):
+        return self._get("/configuration")
+
     def movie(self, tmdb_id):
         return self._get(f"/movie/{tmdb_id}")
 

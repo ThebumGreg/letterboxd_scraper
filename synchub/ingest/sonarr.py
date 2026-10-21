@@ -8,22 +8,29 @@ logger = logging.getLogger(__name__)
 
 
 def sync_library(conn, client, now=None):
-    """Series and all their episodes. A series whose episode list cannot be fetched keeps its previous episode rows."""
+    """Series and all their episodes. A series whose episode list cannot be fetched keeps its previous episode rows.
+
+    Everything is fetched first and written afterwards, so the database is never locked while waiting on Sonarr.
+    """
     now = now or db.now()
-    series_list = client.series()
-    seen_series, episodes_seen, errors = [], 0, []
-    for s in series_list:
+    fetched, errors = [], []
+    for s in client.series():
+        try:
+            fetched.append((s, client.episodes(s["id"])))
+        except Exception as exc:
+            logger.warning(f"Sonarr episodes for series {s['id']} could not be fetched: {exc}")
+            errors.append(str(s["id"]))
+            fetched.append((s, None))
+
+    seen_series, episodes_seen = [], 0
+    for s, episodes in fetched:
         sid = str(s["id"])
         touch(conn, "src_sonarr_series", ("sonarr_id",), {
             "sonarr_id": sid, "tvdb_id": clean_id(s.get("tvdbId")), "tmdb_id": clean_id(s.get("tmdbId")), "imdb_id": clean_id(s.get("imdbId")),
             "title": s.get("title"), "year": s.get("year") or None, "monitored": 1 if s.get("monitored") else 0,
         }, now)
         seen_series.append(sid)
-        try:
-            episodes = client.episodes(s["id"])
-        except Exception as exc:
-            logger.warning(f"Sonarr episodes for series {sid} could not be fetched: {exc}")
-            errors.append(sid)
+        if episodes is None:
             continue
         seen_eps = []
         for ep in episodes:

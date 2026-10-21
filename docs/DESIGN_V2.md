@@ -1,6 +1,6 @@
 # SyncHub v2 — Data Model and Logic Redesign
 
-Status: **approved; in progress** (Phases 0-1 implemented in `synchub/`). The current app keeps running unchanged until cutover.
+Status: **Phases 0-4 implemented** in `synchub/` (run with `python -m synchub.web`). The old app is untouched and still runs; it is removed at cutover (Phase 5) once you have tried the new one.
 
 ## 1. Decisions already made
 
@@ -111,7 +111,7 @@ Every link stores a score. Automatic links need a high score; middle scores go t
 
 **Episodes**
 1. Jellyfin episodes attach to their show through **`series_id`** only. Then (season, episode) in TMDB numbering, which matches your Jellyfin. Then episode-level IDs. Then air date plus title similarity.
-2. Sonarr episodes use TVDB numbering. Match via `tvdb_episode_id` (TMDB's episode `external_ids`), else (season, episode) if the show's numbering agrees on sampled air dates, else air date + title. Anything unresolved is reviewed.
+2. Sonarr episodes use TVDB numbering. TMDB cannot give episode-level TVDB IDs cheaply, so they are matched on (season, episode) when the air dates agree (within a day), otherwise on air date + title; the TVDB numbering is stored on the episode so requests to Sonarr use it. Anything unresolved is counted and left unlinked.
 
 ## 6. TV metadata
 
@@ -142,7 +142,7 @@ The old and new apps can run side by side (new one on another port) until you ar
 | 1 | Source ingest (Jellyfin with series links, Radarr, Sonarr with episodes and queue, Letterboxd and Serializd entries) | Re-running a sync changes nothing; removed items get `removed_at`; no row is ever deleted |
 | 2 | TMDB metadata, matching engine, review queue | Test suite built from the messy cases above passes (dashes, same-title films, TVDB-only shows) |
 | 3 | State engine, queue ingest, `processing_event` | State table matches the rules for movies and episodes |
-| 4 | UI switched to the new tables | Show page shows the correct episodes for every show in your export |
+| 4 | UI switched to the new tables | **Done.** Show page lists every episode with the right state; checked in a browser against realistic data |
 | 5 | Side-by-side run, cutover, retire old modules | You approve the cutover |
 | 6 *(later)* | Authenticated API for transfer and encode scripts | A script can open and close a Transferring or Encoding event |
 

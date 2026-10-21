@@ -74,4 +74,5 @@ def resolve(conn, fetch=default_fetch, limit=MAX_PER_RUN, pause=lambda: None, no
                       id_source = CASE WHEN ? THEN 'letterboxd' ELSE id_source END, id_checked_at = ? WHERE slug = ?""",
             (ids["tmdb_id"] if usable else None, ids["imdb_id"], 1 if usable else 0, now, slug))
         stats["found" if usable else "no_id"] += 1
+        conn.commit()      # release the write lock before the next (slow, paced) page fetch
     return stats

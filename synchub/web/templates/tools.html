@@ -1,0 +1,72 @@
+<!-- synchub/web/templates/tools.html -->
+{% extends "base.html" %}
+{% from "_macros.html" import csrf_field, status_badge, task_card with context %}
+
+{% block title %}Tools &amp; Operations{% endblock %}
+
+{% block content %}
+<h2 class="mb-4">Operations &amp; Tools</h2>
+
+{% set all_task = task_statuses.get('all') %}
+<div class="panel border border-warning p-3 p-md-4 mb-4">
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-3 pb-3 border-bottom border-warning border-opacity-25 gap-3">
+        <h5 class="m-0 fw-bold text-warning">Run everything</h5>
+        <form action="{{ url_for('trigger', name='all') }}" method="POST" class="m-0"
+              data-confirm="Run the full sequence (Jellyfin, scrapers, ID resolver, Radarr, Sonarr)? This can take a while.">
+            {{ csrf_field() }}
+            <button type="submit" class="btn btn-warning btn-sm fw-bold w-100" data-task-btn="all">Run all (in order)</button>
+        </form>
+    </div>
+    <p class="text-body-secondary mb-2">Jellyfin &rarr; watchlist scrapers &rarr; ID resolver &rarr; match &amp; update states &rarr; Radarr &rarr; Sonarr &rarr; match &amp; update states.</p>
+    {{ status_badge(all_task, 'all') }}
+    <small class="text-body-secondary ms-2" data-task-msg="all">{{ (all_task.message if all_task else '') or '' }}</small>
+    <small class="text-body-secondary ms-2">Last run: <span data-task-last="all">{{ (all_task.last_run if all_task else '') or 'Never' }}</span></small>
+</div>
+
+<h4 class="mb-3">Individual tasks</h4>
+<div class="row row-cols-1 row-cols-md-2 g-4 mb-4">
+    {{ task_card('jellyfin_movies', 'Jellyfin movies', 'Reads your movie library from Jellyfin.', task_statuses.get('jellyfin_movies'), url_for('trigger', name='jellyfin_movies'), 'Sync movies now') }}
+    {{ task_card('jellyfin_tv', 'Jellyfin TV', 'Reads shows, seasons and episodes from Jellyfin.', task_statuses.get('jellyfin_tv'), url_for('trigger', name='jellyfin_tv'), 'Sync TV now') }}
+    {{ task_card('radarr', 'Radarr', 'Reads the library and download queue. Adds wanted movies when automatic adding is on in Settings.', task_statuses.get('radarr'), url_for('trigger', name='radarr'), 'Sync Radarr now') }}
+    {{ task_card('sonarr', 'Sonarr', 'Reads series, episodes and the download queue. Adds wanted shows when automatic adding is on in Settings.', task_statuses.get('sonarr'), url_for('trigger', name='sonarr'), 'Sync Sonarr now') }}
+    {{ task_card('scraper_letterboxd', 'Letterboxd', 'Reads watchlists and watched films of active profiles. Items removed from a list are kept.', task_statuses.get('scraper_letterboxd'), url_for('trigger', name='letterboxd'), 'Scrape Letterboxd now') }}
+    {{ task_card('scraper_serializd', 'Serializd', 'Reads TV watchlists of active profiles.', task_statuses.get('scraper_serializd'), url_for('trigger', name='serializd'), 'Scrape Serializd now') }}
+    {{ task_card('id_resolver', 'Letterboxd ID resolver', 'Finds the TMDB ID of Letterboxd films from their film pages.', task_statuses.get('id_resolver'), url_for('trigger', name='id_resolver'), 'Resolve IDs now') }}
+    {{ task_card('reconcile', 'Match &amp; update', 'Links everything to its movie or show, fetches TMDB details and episode lists, and recalculates every status.'|safe, task_statuses.get('reconcile'), url_for('trigger', name='reconcile'), 'Match now') }}
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-md-6">
+        <div class="panel p-3 p-md-4 h-100 d-flex flex-column justify-content-between gap-3">
+            <div>
+                <h5 class="m-0 text-success">Export</h5>
+                <p class="text-body-secondary m-0 mt-1">Download the catalog with statuses as CSV.</p>
+            </div>
+            <div><a href="{{ url_for('export_csv') }}" class="btn btn-secondary btn-sm">Export CSV</a></div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="panel p-3 p-md-4 h-100 d-flex flex-column justify-content-between gap-3">
+            <div>
+                <h5 class="m-0 text-success">Notifications</h5>
+                <p class="text-body-secondary m-0 mt-1">Send a test message to the Apprise targets from Settings.</p>
+            </div>
+            <form action="{{ url_for('test_notification') }}" method="POST">{{ csrf_field() }}<button type="submit" class="btn btn-secondary btn-sm">Send test notification</button></form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    document.querySelectorAll('[data-task-last]').forEach(el => {
+        const val = el.textContent.trim();
+        if (val && val !== 'Never') {
+            const d = new Date(val.replace(' ', 'T') + "Z");
+            if (!isNaN(d)) el.textContent = d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+        }
+    });
+});
+</script>
+{% endblock %}

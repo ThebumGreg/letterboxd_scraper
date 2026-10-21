@@ -1,0 +1,98 @@
+<!-- synchub/web/templates/resolution.html -->
+{% extends "base.html" %}
+{% block title %}Resolution Center{% endblock %}
+
+{% block content %}
+<h2 class="mb-2">Resolution Center</h2>
+<p class="text-body-secondary mb-4">Titles from Letterboxd and Serializd that could not be matched with certainty. Nothing here is linked until you decide.</p>
+
+<h4 class="mb-3">Suggested matches <small class="text-muted">({{ reviews|length }})</small></h4>
+{% if reviews %}
+<div class="row row-cols-1 row-cols-md-2 g-4 mb-5">
+    {% for item in reviews %}
+    <div class="col" id="review-{{ loop.index }}">
+        <div class="panel h-100 border border-info d-flex flex-column p-3 p-md-4">
+            <div class="mb-3 pb-3 border-bottom border-info border-opacity-25">
+                <small class="text-body-secondary d-block mb-1">{{ item.source|capitalize }} {{ 'film' if item.kind == 'movie' else 'show' }}</small>
+                <h6 class="mb-0">{{ item.title or item.key }}</h6>
+                <small class="text-muted">{{ item.year or 'Unknown year' }}</small>
+            </div>
+            {% for c in item.candidates %}
+            <div class="d-flex justify-content-between align-items-center gap-2 py-2 {% if not loop.last %}border-bottom border-secondary border-opacity-25{% endif %}">
+                <div class="min-w-0">
+                    <div class="fw-semibold text-truncate">
+                        {{ c.candidate_title or ('TMDB ' ~ c.candidate_tmdb_id) }}{% if c.candidate_year %} <span class="text-muted fw-normal">({{ c.candidate_year }})</span>{% endif %}
+                    </div>
+                    <small class="text-body-secondary d-block">{{ c.reason }} ({{ (c.confidence * 100)|round|int }}% sure)</small>
+                    <a class="small text-decoration-none" target="_blank" rel="noopener noreferrer"
+                       href="https://www.themoviedb.org/{{ 'movie' if item.kind == 'movie' else 'tv' }}/{{ c.candidate_tmdb_id }}">Check on TMDB <i class="bi bi-box-arrow-up-right"></i></a>
+                </div>
+                <div class="d-flex gap-1 flex-shrink-0">
+                    <button class="btn btn-sm btn-outline-danger" data-review-action="dismiss" data-review-id="{{ c.id }}" data-card="review-{{ loop.index0 }}">Dismiss</button>
+                    <button class="btn btn-sm btn-success" data-review-action="approve" data-review-id="{{ c.id }}" data-card="review-{{ loop.index0 }}">Approve</button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="alert alert-secondary shadow-sm mb-5"><i class="bi bi-info-circle"></i> No suggestions waiting.</div>
+{% endif %}
+
+<h4 class="mb-3">Unmatched items <small class="text-muted">({{ unmatched|length }})</small></h4>
+<div class="panel p-0 overflow-hidden mb-5">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr><th class="ps-4">Title</th><th>Year</th><th>Type</th><th>Listed by</th><th class="pe-4">Link by TMDB ID</th></tr>
+            </thead>
+            <tbody>
+                {% for u in unmatched %}
+                <tr>
+                    <td class="fw-bold ps-4">{{ u.title or u.key }}<div class="small text-body-secondary fw-normal">{{ u.source }}: {{ u.key }}</div></td>
+                    <td>{{ u.year or '-' }}</td>
+                    <td><span class="badge {{ 'badge-tv' if u.kind == 'show' else 'badge-movie' }}">{{ 'TV' if u.kind == 'show' else 'MOVIE' }}</span></td>
+                    <td class="small">{{ u.users }}</td>
+                    <td class="pe-4" style="max-width: 320px;">
+                        <form class="d-flex gap-2 link-form" data-source="{{ u.source }}" data-key="{{ u.key }}" data-kind="{{ u.kind }}">
+                            <input type="number" min="1" class="form-control form-control-sm" placeholder="TMDB ID" required aria-label="TMDB ID for {{ u.title or u.key }}">
+                            <button type="submit" class="btn btn-sm btn-outline-info">Link</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="text-center text-muted py-4">Everything is matched.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    async function send(url, body) {
+        try {
+            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(body) });
+            return await res.json();
+        } catch (e) { return { ok: false, message: 'Could not reach the server.' }; }
+    }
+    document.querySelectorAll('[data-review-action]').forEach((btn) => btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        const data = await send(`/api/resolution/${btn.dataset.reviewAction}`, { review_id: parseInt(btn.dataset.reviewId, 10) });
+        if (data.ok) { const row = btn.closest('.d-flex.justify-content-between'); row.remove(); }
+        else { alert(data.message || 'Failed.'); btn.disabled = false; }
+    }));
+    document.querySelectorAll('.link-form').forEach((form) => form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const input = form.querySelector('input');
+        const data = await send('/api/resolution/link', { source: form.dataset.source, key: form.dataset.key, kind: form.dataset.kind, tmdb_id: input.value.trim() });
+        if (data.ok) form.closest('tr').remove(); else alert(data.message || 'Failed.');
+    }));
+})();
+</script>
+{% endblock %}

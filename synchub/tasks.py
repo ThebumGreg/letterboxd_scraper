@@ -233,3 +233,77 @@ def run_all():
             failed = [r["task_name"] for r in conn.execute("SELECT task_name FROM task_status WHERE status = 'failed' AND task_name <> 'all'")]
         return "All steps finished." + (f" Failed: {', '.join(failed)}." if failed else "")
     return run("all", "Running everything", work)
+
+
+# ---------------------------------------------------------------- helpers for the web layer
+TASK_NAMES = ("jellyfin_movies", "jellyfin_tv", "radarr", "sonarr", "scraper_letterboxd", "scraper_serializd", "id_resolver", "reconcile", "all")
+
+
+def all_statuses():
+    """Every known task, idle unless it has run."""
+    statuses = {name: {"task_name": name, "status": "idle", "started_at": None, "last_run": None, "message": "No active logs"} for name in TASK_NAMES}
+    with db.connection() as conn:
+        for row in conn.execute("SELECT * FROM task_status"):
+            statuses[row["task_name"]] = dict(row)
+    return statuses
+
+
+def start_async(fn):
+    thread = threading.Thread(target=fn, daemon=True)
+    thread.start()
+    return thread
+
+
+_REFRESH_LOCK = threading.Lock()
+_REFRESH_RUNNING, _REFRESH_PENDING = set(), set()
+
+
+def refresh_soon(service, job, spawn=start_async):
+    """Runs job in the background, coalescing a burst of webhook events: at most one run at a time per service,
+    plus one more run if events arrived while it was running."""
+    with _REFRESH_LOCK:
+        if service in _REFRESH_RUNNING:
+            _REFRESH_PENDING.add(service)
+            return False
+        _REFRESH_RUNNING.add(service)
+
+    def loop():
+        try:
+            while True:
+                try:
+                    job()
+                except Exception as exc:
+                    logger.error(f"Refresh after {service} event failed: {exc}")
+                with _REFRESH_LOCK:
+                    if service in _REFRESH_PENDING:
+                        _REFRESH_PENDING.discard(service)
+                        continue
+                    _REFRESH_RUNNING.discard(service)
+                    return
+        except BaseException:
+            with _REFRESH_LOCK:
+                _REFRESH_RUNNING.discard(service)
+            raise
+
+    spawn(loop)
+    return True
+
+
+def refresh_media(media_id, tmdb=None):
+    """Re-reads one movie/show from TMDB right now, then relinks its episodes and recomputes states. Returns a short message."""
+    tmdb = tmdb or TmdbClient()
+    with db.connection() as conn:
+        row = conn.execute("SELECT kind FROM media WHERE id = ?", (media_id,)).fetchone()
+        if not row:
+            raise LookupError("Unknown media.")
+        if row["kind"] == "movie":
+            found = metadata.refresh_movie(conn, tmdb, media_id)
+            message = "Movie details refreshed." if found else "TMDB does not know this movie."
+        else:
+            result = metadata.refresh_show(conn, tmdb, media_id)
+            message = f"Refreshed {result['episodes']} episode(s) from TMDB." if result["found"] else "TMDB does not know this show."
+    with db.connection() as conn:
+        episodes.link_jellyfin_episodes(conn)
+        episodes.map_sonarr_episodes(conn)
+        states.compute(conn)
+    return message

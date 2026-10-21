@@ -1,0 +1,216 @@
+<!-- synchub/web/templates/show_details.html -->
+{% extends "base.html" %}
+{% from "_macros.html" import state_badge with context %}
+
+{% block title %}{{ show.title }} - Details{% endblock %}
+
+{% block content %}
+{% set totals = summary.totals %}
+{% set roll = defs.get(totals.state, defs['missing']) %}
+
+<div class="mb-3">
+    <a href="{{ url_for('index') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back to Dashboard</a>
+</div>
+
+<!-- ===================== Show header ===================== -->
+<div class="panel p-3 p-md-4 mb-4">
+    <div class="d-flex flex-column flex-sm-row gap-3 gap-md-4">
+        <div class="sd-poster-col mx-auto mx-sm-0">
+            <img src="/poster/{{ show.id }}" alt="{{ show.title }} poster" class="sd-poster rounded shadow poster">
+        </div>
+
+        <div class="flex-grow-1 min-w-0">
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                <span class="badge badge-tv">TV SHOW</span>
+                {{ state_badge(roll.label, roll.color, roll.icon) }}
+                {% if show.status %}<span class="badge bg-dark border">{{ show.status }}</span>{% endif %}
+            </div>
+
+            <h2 class="fw-bold mb-3">
+                {{ show.title }}
+                {% if show.year %}<span class="text-muted fs-5 fw-normal ms-1">({{ show.year }})</span>{% endif %}
+            </h2>
+
+            {% if show.overview %}<p class="text-body-secondary" style="max-width: 75ch;">{{ show.overview }}</p>{% endif %}
+
+            <dl class="sd-facts mb-3">
+                {% if show.tmdb_id %}<div><dt>TMDB</dt><dd><a class="text-decoration-none" target="_blank" rel="noopener noreferrer" href="https://www.themoviedb.org/tv/{{ show.tmdb_id }}"><span class="badge bg-secondary">{{ show.tmdb_id }}</span></a></dd></div>{% endif %}
+                {% if show.tvdb_id %}<div><dt>TVDB</dt><dd><span class="badge bg-secondary">{{ show.tvdb_id }}</span></dd></div>{% endif %}
+            </dl>
+
+            <div class="mb-3">
+                <div class="small text-muted mb-1">Wanted by</div>
+                <div class="d-flex flex-wrap gap-1">
+                    {% for u in show.wanted_by %}<span class="badge bg-secondary">{{ u }}</span>{% else %}<span class="text-muted">nobody right now</span>{% endfor %}
+                </div>
+            </div>
+
+            {% if totals.aired %}
+            <div class="mb-3" style="max-width: 480px;">
+                <div class="d-flex justify-content-between small mb-1">
+                    <span>{{ totals.in_library }} of {{ totals.aired }} aired episodes in the library</span>
+                    <span class="text-muted">{{ totals.percent }}%</span>
+                </div>
+                <div class="progress" style="height: 6px; background: #2c3440;" role="progressbar" aria-label="Episodes in the library"
+                     aria-valuenow="{{ totals.percent }}" aria-valuemin="0" aria-valuemax="100">
+                    <div class="progress-bar bg-success" style="width: {{ totals.percent }}%"></div>
+                </div>
+                <div class="small text-body-secondary mt-1">Specials and episodes that have not aired are not counted.</div>
+            </div>
+            {% endif %}
+
+            <div class="d-flex flex-wrap align-items-center gap-2 pt-1">
+                {% if totals.counts.get('missing') %}
+                <span {% if not show.tvdb_id %}class="d-inline-block" tabindex="0" data-bs-toggle="tooltip" title="Sonarr needs a TVDB ID for this show. Try 'Refresh details'."{% endif %}>
+                    <button type="button" class="btn btn-outline-info" id="requestAllBtn" {% if not show.tvdb_id %}disabled{% endif %}>
+                        <i class="bi bi-cloud-download"></i> Request all missing
+                    </button>
+                </span>
+                {% endif %}
+                {% if show.jellyfin_link %}
+                    <a href="{{ show.jellyfin_link }}" class="btn btn-success" target="_blank" rel="noopener noreferrer"><i class="bi bi-play-circle"></i> Watch on Jellyfin</a>
+                {% endif %}
+                <button type="button" class="btn btn-outline-secondary" id="refreshBtn"><i class="bi bi-arrow-repeat"></i> Refresh details</button>
+            </div>
+            <div id="actionResult" class="small mt-2" role="status"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== Episodes ===================== -->
+<div class="sd-section-title mb-3">
+    <h4 class="fw-bold mb-0"><i class="bi bi-collection-play text-success"></i> Episodes</h4>
+    {% if summary.seasons %}<span class="text-muted small">{{ summary.seasons|length }} season group{{ '' if summary.seasons|length == 1 else 's' }}</span>{% endif %}
+</div>
+
+{% if summary.seasons %}
+<div class="accordion shadow-sm mb-5" id="seasonsAccordion">
+    {% for s in summary.seasons %}
+    {% set sroll = defs.get(s.state, defs['missing']) %}
+    <div class="accordion-item">
+        <h2 class="accordion-header position-relative" id="heading{{ s.season_number }}">
+            <button class="accordion-button fw-bold collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse{{ s.season_number }}"
+                    aria-expanded="false" aria-controls="collapse{{ s.season_number }}" data-season="{{ s.season_number }}" data-special="{{ 1 if s.is_special else 0 }}">
+                <span>{{ s.label }}</span>
+                <span class="sd-season-meta ms-auto {% if not s.is_special and s.counts.get('missing') %}has-request{% endif %}">
+                    {% if s.aired %}
+                    <span class="progress sd-season-progress" role="progressbar" aria-label="{{ s.label }} in the library" aria-valuenow="{{ s.percent }}" aria-valuemin="0" aria-valuemax="100">
+                        <span class="progress-bar bg-success" style="width: {{ s.percent }}%"></span>
+                    </span>
+                    {% endif %}
+                    <span class="d-flex flex-wrap gap-1">
+                        {% for code, n in s.counts.items() %}
+                            {% set info = defs.get(code, defs['missing']) %}
+                            <span class="badge bg-{{ info.color }}{% if info.color in ['info', 'warning'] %} text-dark{% endif %} rounded-pill px-2">{{ n }} {{ info.label|lower }}</span>
+                        {% endfor %}
+                    </span>
+                </span>
+            </button>
+            {% if not s.is_special and s.counts.get('missing') %}
+            <button class="btn btn-sm btn-outline-info sd-season-request" data-request-season="{{ s.season_number }}"
+                    {% if not show.tvdb_id %}disabled title="Sonarr needs a TVDB ID for this show"{% else %}title="Request the missing episodes of {{ s.label }}"{% endif %}>
+                Request season
+            </button>
+            {% endif %}
+        </h2>
+        <div id="collapse{{ s.season_number }}" class="accordion-collapse collapse" {% if not s.is_special %}data-bs-parent="#seasonsAccordion"{% endif %}>
+            <div class="accordion-body p-0" id="seasonContainer{{ s.season_number }}" data-loaded="false">
+                <div class="p-4 text-center text-muted"><div class="spinner-border spinner-border-sm text-secondary me-2" role="status"></div> Loading...</div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="alert alert-secondary shadow-sm">
+    <i class="bi bi-info-circle"></i> No episode list yet. Use <strong>Refresh details</strong> to fetch it from TMDB (needs a TMDB API key in Settings).
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const mediaId = {{ show.id }};
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const out = document.getElementById('actionResult');
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+    async function post(url, body, button, reload) {
+        if (button) button.disabled = true;
+        if (out) { out.className = 'small mt-2 text-body-secondary'; out.textContent = 'Working...'; }
+        try {
+            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(body || {}) });
+            const data = await res.json().catch(() => ({}));
+            if (out) { out.className = 'small mt-2 ' + (data.ok ? 'text-success' : 'text-danger'); out.textContent = data.message || (data.ok ? 'Done.' : 'Failed.'); }
+            if (data.ok && reload) setTimeout(() => location.reload(), 1200);
+            else if (button) button.disabled = false;
+            return data;
+        } catch (e) {
+            if (out) { out.className = 'small mt-2 text-danger'; out.textContent = 'Could not reach the server.'; }
+            if (button) button.disabled = false;
+            return { ok: false };
+        }
+    }
+
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((el) => window.bootstrap && new bootstrap.Tooltip(el));
+    document.getElementById('refreshBtn').addEventListener('click', (e) => post(`/api/show/${mediaId}/refresh`, {}, e.currentTarget, true));
+    const all = document.getElementById('requestAllBtn');
+    if (all) all.addEventListener('click', () => post(`/api/request/show/${mediaId}/all`, {}, all, true));
+    document.querySelectorAll('[data-request-season]').forEach((btn) => {
+        btn.addEventListener('click', (e) => { e.stopPropagation(); post(`/api/request/show/${mediaId}/seasons`, { seasons: [parseInt(btn.dataset.requestSeason, 10)] }, btn, true); });
+    });
+
+    function render(container, data) {
+        if (!data.episodes.length) { container.innerHTML = '<div class="p-3 text-muted">No episodes.</div>'; return; }
+        const rows = data.episodes.map((ep) => {
+            const dark = ['info', 'warning'].includes(ep.state_color) ? ' text-dark' : '';
+            const pct = ep.state === 'downloading' && ep.progress_pct !== null ? ` ${ep.progress_pct}%` : '';
+            const badge = `<span class="badge bg-${esc(ep.state_color)}${dark}"><i class="bi ${esc(ep.state_icon || '')}"></i> ${esc(ep.state_label)}${pct}</span>`;
+            const rowClass = ep.state === 'in_library' ? 'sd-ep-ok' : (ep.state === 'missing' ? 'sd-ep-missing' : 'sd-ep-queued');
+            const note = ep.numbering_status === 'mapped' ? `<div class="small text-warning">Sonarr numbers this S${esc(ep.tvdb_season_number)}E${esc(ep.tvdb_episode_number)}</div>` : '';
+            return `<tr class="${rowClass}">
+                <td class="text-center fw-bold text-muted">${esc(ep.episode_number)}</td>
+                <td class="sd-ep-title-cell">
+                    <div class="fw-semibold text-truncate" title="${esc(ep.title)}">${esc(ep.title || 'Episode ' + ep.episode_number)}</div>
+                    ${ep.air_date ? `<div class="small text-muted">${esc(ep.air_date)}</div>` : ''}${note}
+                    ${ep.overview ? `<div class="small text-secondary sd-ep-overview mt-1" title="${esc(ep.overview)}">${esc(ep.overview)}</div>` : ''}
+                </td>
+                <td>${badge}</td>
+                <td class="text-end">${ep.can_request ? `<button class="btn btn-sm btn-outline-primary py-0 px-3" data-request-episode="${esc(ep.id)}" {% if not show.tvdb_id %}disabled{% endif %}>Request</button>` : ''}</td>
+            </tr>`;
+        }).join('');
+        container.innerHTML = `<div class="table-responsive"><table class="table table-hover mb-0 align-middle sd-table">
+            <thead><tr><th style="width: 64px;" class="text-center">Ep</th><th>Title</th><th style="width: 160px;">Status</th><th style="width: 110px;" class="text-end">Action</th></tr></thead>
+            <tbody>${rows}</tbody></table></div>`;
+        container.querySelectorAll('[data-request-episode]').forEach((b) => b.addEventListener('click', () =>
+            post(`/api/request/show/${mediaId}/episodes`, { episode_ids: [parseInt(b.dataset.requestEpisode, 10)] }, b, true)));
+    }
+
+    async function load(season) {
+        const container = document.getElementById(`seasonContainer${season}`);
+        if (!container || container.dataset.loaded === 'true' || container.dataset.loading === 'true') return;
+        container.dataset.loading = 'true';
+        try {
+            const res = await fetch(`/api/show/${mediaId}/season/${season}`);
+            const data = await res.json();
+            if (!data.ok) throw new Error('bad response');
+            render(container, data);
+            container.dataset.loaded = 'true';
+        } catch (e) {
+            container.innerHTML = `<div class="p-3 text-danger">Could not load this season. <a href="#" data-retry>Try again</a></div>`;
+            container.querySelector('[data-retry]').addEventListener('click', (ev) => { ev.preventDefault(); load(season); });
+        } finally {
+            container.dataset.loading = 'false';
+        }
+    }
+
+    document.querySelectorAll('#seasonsAccordion .accordion-collapse').forEach((el) => {
+        el.addEventListener('show.bs.collapse', () => load(el.id.replace('collapse', '')));
+    });
+    // Open the first regular season (Specials stay closed, they can be very long).
+    const first = document.querySelector('#seasonsAccordion .accordion-button[data-special="0"]');
+    if (first) first.click();
+})();
+</script>
+{% endblock %}

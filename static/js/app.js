@@ -23,6 +23,18 @@
         });
     });
 
+    /* ---------- missing posters fall back to a placeholder on every page ---------- */
+    const NO_POSTER = "data:image/svg+xml;utf8," + encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 130"><rect width="90" height="130" fill="#2c3440"/>' +
+        '<text x="45" y="68" font-size="11" fill="#8899aa" text-anchor="middle" font-family="sans-serif">No poster</text></svg>');
+    document.addEventListener("error", (e) => {
+        const t = e.target;
+        if (t && t.tagName === "IMG" && t.classList.contains("poster") && !t.dataset.fallback) {
+            t.dataset.fallback = "1";
+            t.src = NO_POSTER;
+        }
+    }, true);
+
     /* ---------- live task status (Tools page) ---------- */
     if (document.querySelector("[data-task-badge]")) {
         const BADGE = { in_progress: "bg-primary", pending: "bg-warning text-dark", completed: "bg-success", failed: "bg-danger" };
