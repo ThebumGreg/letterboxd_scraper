@@ -6,8 +6,8 @@
 
 {% block content %}
 <div class="row g-3 mb-3">
-    {{ stat_card('Total Active', stats.total_films, 'info', '', '') }}
-    {{ stat_card('Profiles', stats.total_users, 'warning') }}
+    {{ stat_card('Movies & TV Episodes', stats.jf_combined_count|default(0), 'info', '', '') }}
+    {{ stat_card('TV Episodes', stats.jf_episodes_count|default(0), 'warning') }}
     {{ stat_card('In Jellyfin', stats.jellyfin_count, 'success', '', 'jellyfin') }}
     {{ stat_card('Missing / Wanted', stats.missing_count, 'danger', '', 'missing') }}
 </div>
@@ -19,12 +19,12 @@
     {{ stat_card('In Sonarr', stats.sonarr_count|default(0), 'info') }}
 </div>
 
-<div class="row g-2 mb-4 p-3 align-items-center panel mx-0" id="controls">
-    <div class="col-md-3">
+<div class="row g-2 mb-4 p-3 align-items-center panel mx-0" id="controls" style="position: relative; z-index: 1020; overflow: visible;">
+    <div class="col-12 col-lg-3">
         <label for="searchInput" class="visually-hidden">Search title</label>
         <input type="search" id="searchInput" class="form-control" placeholder="Search title (press / to focus)" autocomplete="off">
     </div>
-    <div class="col-6 col-md-2">
+    <div class="col-6 col-sm-4 col-lg-2">
         <label for="mediaTypeFilter" class="visually-hidden">Media type</label>
         <select id="mediaTypeFilter" class="form-select">
             <option value="">All Media Types</option>
@@ -32,7 +32,7 @@
             <option value="tv">TV Shows Only</option>
         </select>
     </div>
-    <div class="col-6 col-md-2">
+    <div class="col-6 col-sm-4 col-lg-2">
         <label for="userFilter" class="visually-hidden">Profile</label>
         <select id="userFilter" class="form-select">
             <option value="">All Profiles</option>
@@ -41,7 +41,7 @@
             {% endfor %}
         </select>
     </div>
-    <div class="col-6 col-md-2">
+    <div class="col-6 col-sm-4 col-lg-2">
         <label for="statusFilter" class="visually-hidden">Status</label>
         <select id="statusFilter" class="form-select">
             <option value="">All Statuses</option>
@@ -50,16 +50,17 @@
             <option value="queued">Queued in Radarr/Sonarr</option>
             <option value="missing">Missing (incl. queued)</option>
             <option value="missing_not_queued">Missing (not queued)</option>
+            <option value="jf_missing">JF Missing</option>
         </select>
     </div>
-    <div class="col-6 col-md-3 d-flex justify-content-end align-items-center gap-2">
+    <div class="col-6 col-sm-12 col-lg-3 d-flex justify-content-end align-items-center gap-2">
         <label for="sortOrder" class="visually-hidden">Sort order</label>
-        <select id="sortOrder" class="form-select" style="min-width: 150px;">
+        <select id="sortOrder" class="form-select flex-grow-1">
             <option value="users-desc">Most Requested</option>
             <option value="title-asc">Title (A-Z)</option>
             <option value="year-desc">Release Year (Newest)</option>
         </select>
-        <div class="btn-group" role="group" aria-label="View mode">
+        <div class="btn-group flex-shrink-0" role="group" aria-label="View mode">
             <button type="button" class="btn btn-outline-secondary active" id="btnListView" title="List view" aria-label="List view" aria-pressed="true">
                 <i class="bi bi-list-ul" aria-hidden="true"></i>
             </button>
@@ -91,7 +92,7 @@
         <tbody id="listTableBody">
             {% for film in films %}
             {% set mtype = film.media_type or 'movie' %}
-            {% set status = 'partially_available' if film.status == 'partially_available' else ('jellyfin' if film.in_jellyfin else ('queued' if (film.in_radarr or film.in_sonarr) else 'missing')) %}
+            {% set status = 'jf_missing' if film.status == 'jf_missing' else ('partially_available' if film.status == 'partially_available' else ('jellyfin' if film.in_jellyfin else ('queued' if (film.in_radarr or film.in_sonarr) else 'missing'))) %}
             <tr class="item-row d-none"
                 data-tmdb-id="{{ film.tmdb_id or '' }}"
                 data-tvdb-id="{{ film.tvdb_id or '' }}"
@@ -147,6 +148,8 @@
                         </button>
                     {% elif status == 'jellyfin' %}
                         <a href="{{ film.jellyfin_link }}" class="btn btn-sm btn-success jellyfin-link" data-app-link="{{ film.jellyfin_app_link }}" target="_blank" rel="noopener noreferrer">Watch on Jellyfin</a>
+                    {% elif status == 'jf_missing' %}
+                        <span class="badge bg-danger">JF Missing</span>
                     {% elif not film.tmdb_id and not film.tvdb_id %}
                         <a href="{{ url_for('resolution_center') }}" class="badge bg-warning text-dark text-decoration-none"><i class="bi bi-exclamation-triangle"></i> Needs ID</a>
                     {% elif status == 'queued' %}

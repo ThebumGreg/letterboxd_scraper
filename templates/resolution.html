@@ -47,10 +47,12 @@
     <div class="row row-cols-1 row-cols-md-2 g-4 mb-5">
         {% for match in suggestions %}
         <div class="col" id="suggestion-{{ loop.index }}">
-            <div class="card shadow-sm h-100">
-                <div class="card-header bg-secondary bg-opacity-25 d-flex justify-content-between align-items-center">
+            <div class="card shadow-sm h-100 border-info">
+                <div class="card-header bg-info bg-opacity-10 d-flex justify-content-between align-items-center">
                     <span class="fw-bold">Potential Link Found</span>
-                    <span class="badge {{ 'badge-movie' if match.service == 'radarr' else 'badge-tv' if match.service == 'sonarr' else 'bg-primary' }}">{{ match.service|upper }}</span>
+                    <span class="badge {% if match.service == 'radarr' %}bg-warning text-dark{% elif match.service == 'sonarr' %}bg-info text-dark{% elif match.service == 'jellyfin' %}bg-primary{% else %}bg-secondary{% endif %}">
+                        {{ match.service|upper }}
+                    </span>
                 </div>
                 <div class="card-body">
                     <div class="row">
@@ -63,10 +65,21 @@
                             <small class="text-body-secondary d-block mb-1">Unlinked Cache Item</small>
                             <h6 class="mb-0 text-info">{{ match.service_title }}</h6>
                             <small class="text-muted">{{ match.service_year or 'Unknown Year' }}</small>
+                            <div class="mt-2">
+                                {% if match.tmdb_id %}
+                                <span class="badge bg-light text-dark border">TMDB: {{ match.tmdb_id }}</span>
+                                {% endif %}
+                                {% if match.tvdb_id %}
+                                <span class="badge bg-light text-dark border">TVDB: {{ match.tvdb_id }}</span>
+                                {% endif %}
+                                {% if not match.tmdb_id and not match.tvdb_id %}
+                                <span class="badge bg-light text-danger border">No Master ID</span>
+                                {% endif %}
+                            </div>
                         </div>
                     </div>
                 </div>
-                <div class="card-footer d-flex justify-content-end gap-2 bg-transparent">
+                <div class="card-footer d-flex justify-content-end gap-2 bg-transparent border-top-0">
                     <button class="btn btn-sm btn-outline-danger" onclick="resolveMatch('{{ match.request_slug }}', 'dismiss', null, null, 'suggestion-{{ loop.index }}', '{{ match.service }}', '{{ match.service_external_id }}')">Dismiss Suggestion</button>
                     <button class="btn btn-sm btn-success" onclick="resolveMatch('{{ match.request_slug }}', 'approve', null, null, 'suggestion-{{ loop.index }}', '{{ match.service }}', '{{ match.service_external_id }}')">Approve Merge</button>
                 </div>

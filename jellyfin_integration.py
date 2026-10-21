@@ -1,7 +1,6 @@
 # jellyfin_integration.py
 import logging
 import os
-import time
 import requests
 from datetime import datetime, timezone
 from urllib.parse import quote, urlencode
@@ -16,6 +15,23 @@ def _get_auth_headers(jf_key):
         "Accept": "application/json",
         "Authorization": f'MediaBrowser Client="PythonApp", Device="Script", DeviceId="python-script-01", Version="1.0.0", Token="{jf_key}"',
     }
+
+def _get_admin_user_id(jf_url, headers):
+    """Fetches an Administrator UserId to bypass post-query permission filtering on /Items endpoints."""
+    try:
+        res = logged_request("jellyfin", "GetAdminUser", "GET", f"{jf_url}/Users", headers=headers, timeout=10)
+        if res.status_code == 200:
+            users = res.json()
+            # Try to find a user explicitly marked as an Administrator
+            for u in users:
+                if u.get("Policy", {}).get("IsAdministrator"):
+                    return u.get("Id")
+            # Fallback to the first user if no explicit admin policy is found
+            if users:
+                return users[0].get("Id")
+    except Exception as e:
+        logger.warning(f"Failed to fetch Admin UserId: {e}")
+    return None
 
 def get_jellyfin_item_link(item_id):
     jf_url = get_setting("jellyfin_url", "").rstrip("/")
@@ -53,13 +69,7 @@ def fetch_and_cache_poster(slug, jellyfin_id=None, tmdb_id=None, media_type="mov
     if target_path.exists() and target_path.stat().st_size > 3000:
         return True
     if neg_cache_path.exists():
-        if (time.time() - neg_cache_path.stat().st_mtime) < 604800:
-            return False
-        else:
-            try:
-                neg_cache_path.unlink()
-            except Exception:
-                pass
+        return False
 
     jf_url, jf_key = get_setting("jellyfin_url", "").rstrip("/"), get_setting("jellyfin_api_key", "")
     if not (get_setting("disable_jellyfin_connection", "0") == "1") and jellyfin_id and jf_url and jf_key:
@@ -74,11 +84,6 @@ def fetch_and_cache_poster(slug, jellyfin_id=None, tmdb_id=None, media_type="mov
             if res.status_code == 200 and len(res.content) > 3000:
                 with open(target_path, "wb") as f:
                     f.write(res.content)
-                if neg_cache_path.exists():
-                    try:
-                        neg_cache_path.unlink()
-                    except Exception:
-                        pass
                 return True
         except Exception:
             pass
@@ -107,11 +112,6 @@ def fetch_and_cache_poster(slug, jellyfin_id=None, tmdb_id=None, media_type="mov
                 if dl_res.status_code == 200 and len(dl_res.content) > 3000:
                     with open(target_path, "wb") as f:
                         f.write(dl_res.content)
-                    if neg_cache_path.exists():
-                        try:
-                            neg_cache_path.unlink()
-                        except Exception:
-                            pass
                     return True
         except Exception:
             pass
@@ -133,16 +133,21 @@ def sync_jellyfin_library(media_type="all"):
     started = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     headers = _get_auth_headers(jf_key)
 
+    # Fetch Admin User ID to prevent Jellyfin from post-query truncating items
+    admin_id = _get_admin_user_id(jf_url, headers)
+    user_query = f"&UserId={admin_id}" if admin_id else ""
+
     include_types = "Movie" if media_type == "movie" else ("Series,Episode" if media_type == "tv" else "Movie,Series,Episode")
 
     try:
         series_tvdb_map = {}
 
+        # Pre-fetch parent series TVDB IDs if syncing TV shows/episodes to avoid pagination race conditions
         if media_type in ("tv", "all"):
             try:
                 series_res = logged_request(
                     "jellyfin", "FetchSeriesMap", "GET",
-                    f"{jf_url}/Items?IncludeItemTypes=Series&Recursive=true&Fields=ProviderIds",
+                    f"{jf_url}/Items?IncludeItemTypes=Series&Recursive=true&Fields=ProviderIds{user_query}",
                     headers=headers, timeout=20
                 )
                 if series_res.status_code == 200:
@@ -159,8 +164,10 @@ def sync_jellyfin_library(media_type="all"):
         matched_count = 0
 
         while True:
-            endpoint = f"{jf_url}/Items?IncludeItemTypes={include_types}&Recursive=true&Fields=ProviderIds,ProductionYear,ParentIndexNumber,IndexNumber,SeriesName&StartIndex={start_index}&Limit={limit}"
+            # Added UserQuery to the core fetch endpoint to bypass API limits
+            endpoint = f"{jf_url}/Items?IncludeItemTypes={include_types}&Recursive=true&Fields=ProviderIds,ProductionYear,ParentIndexNumber,IndexNumber,SeriesName&StartIndex={start_index}&Limit={limit}{user_query}"
             response = logged_request("jellyfin", "SyncLibrary", "GET", endpoint, headers=headers, timeout=30)
+            
             if response.status_code != 200:
                 logger.error(f"Jellyfin API error: HTTP {response.status_code}")
                 return False
@@ -226,20 +233,22 @@ def sync_jellyfin_playlist(playlist_name, item_ids):
         return False, "Jellyfin unconfigured or no items to sync."
 
     headers = _get_auth_headers(jf_key)
+    admin_id = _get_admin_user_id(jf_url, headers)
+    user_query = f"&UserId={admin_id}" if admin_id else ""
     encoded_name = quote(playlist_name)
     chunk_size = 50
     
     try:
-        res = logged_request("jellyfin", "SearchPlaylist", "GET", f"{jf_url}/Items?IncludeItemTypes=Playlist&SearchTerm={encoded_name}&Recursive=true", headers=headers, timeout=HTTP_TIMEOUT)
+        res = logged_request("jellyfin", "SearchPlaylist", "GET", f"{jf_url}/Items?IncludeItemTypes=Playlist&SearchTerm={encoded_name}&Recursive=true{user_query}", headers=headers, timeout=HTTP_TIMEOUT)
         playlists = res.json().get("Items", []) if res.status_code == 200 else []
 
         if playlists:
             playlist_id = playlists[0]["Id"]
             for i in range(0, len(item_ids), chunk_size):
-                logged_request("jellyfin", "AddPlaylistItems", "POST", f"{jf_url}/Playlists/{playlist_id}/Items?Ids={','.join(item_ids[i:i + chunk_size])}", headers=headers, timeout=HTTP_TIMEOUT)
+                logged_request("jellyfin", "AddPlaylistItems", "POST", f"{jf_url}/Playlists/{playlist_id}/Items?Ids={','.join(item_ids[i:i + chunk_size])}{user_query}", headers=headers, timeout=HTTP_TIMEOUT)
             return True, f"Updated playlist '{playlist_name}' with {len(item_ids)} items."
         else:
-            res_create = logged_request("jellyfin", "CreatePlaylist", "POST", f"{jf_url}/Playlists?Name={encoded_name}&Ids={','.join(item_ids[:chunk_size])}", headers=headers, timeout=HTTP_TIMEOUT)
+            res_create = logged_request("jellyfin", "CreatePlaylist", "POST", f"{jf_url}/Playlists?Name={encoded_name}&Ids={','.join(item_ids[:chunk_size])}{user_query}", headers=headers, timeout=HTTP_TIMEOUT)
             if res_create.status_code in (200, 201):
                 playlist_id = res_create.json().get("Id")
                 for i in range(chunk_size, len(item_ids), chunk_size):

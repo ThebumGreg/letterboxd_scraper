@@ -56,6 +56,28 @@
 .poster-thumb { width: 45px; height: 65px; object-fit: cover; }
 .poster-grid  { height: 260px; object-fit: cover; }
 
+/* Dropdown UI Overlap & Z-Index Fixes */
+#controls.panel {
+    overflow: visible !important;
+    position: relative;
+    z-index: 1020;
+}
+
+.form-select {
+    position: relative;
+    z-index: 1;
+}
+
+.form-select:focus {
+    z-index: 3;
+}
+
+.table-responsive {
+    /* Prevents clipping of active inline dropdowns without breaking horizontal scroll */
+    overflow-x: auto;
+    overflow-y: visible;
+}
+
 /* Logs */
 .log-console {
     height: calc(100vh - 360px);

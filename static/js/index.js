@@ -119,6 +119,8 @@
             foot.appendChild(a);
         } else if (d.status === "queued") {
             foot.appendChild(el("span", "badge bg-info text-dark w-100 py-1 sse-badge", "Queued"));
+        } else if (d.status === "jf_missing") {
+            foot.appendChild(el("span", "badge bg-danger w-100 py-1 sse-badge", "JF Missing"));
         } else if (!d.tmdbId && !d.tvdbId) {
             const a = el("a", "badge bg-warning text-dark text-decoration-none w-100 py-1", "Needs ID");
             a.href = "/resolution";
@@ -149,7 +151,7 @@
                 && (!type || d.mediaType === type)
                 && (!user || d.users.includes("|" + user + "|"))
                 && (!status ||
-                    (status === "missing" && (d.status === "missing" || d.status === "queued")) ||
+                    (status === "missing" && (d.status === "missing" || d.status === "queued" || d.status === "jf_missing")) ||
                     (status === "missing_not_queued" && d.status === "missing") ||
                     (d.status === status)
                 );

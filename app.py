@@ -51,7 +51,8 @@ from database import (
     log_api_payload,
     logged_request,
     get_payload_logs,
-    clear_payload_logs
+    clear_payload_logs,
+    get_connection
 )
 from jellyfin_integration import fetch_and_cache_poster, sync_jellyfin_playlist, get_jellyfin_users
 from radarr_client import get_quality_profiles as radarr_quality, get_root_folders as radarr_root
@@ -131,6 +132,11 @@ def stream_events():
 @app.route("/")
 def index():
     films = get_media_catalog()
+    
+    with get_connection() as conn:
+        jf_tv_eps_count = conn.execute("SELECT COUNT(*) FROM service_cache WHERE service = 'jellyfin' AND media_type = 'episode' AND in_library = 1 AND status != 'jf_missing'").fetchone()[0]
+        jf_movies_count = conn.execute("SELECT COUNT(*) FROM service_cache WHERE service = 'jellyfin' AND media_type = 'movie' AND in_library = 1 AND status != 'jf_missing'").fetchone()[0]
+
     movie_count = sum(1 for f in films if f["media_type"] == "movie")
     tv_count = sum(1 for f in films if f["media_type"] in ("tv", "episode"))
     matched_in_jellyfin_count = sum(1 for f in films if f["in_jellyfin"])
@@ -153,6 +159,8 @@ def index():
         "tv_count": tv_count,
         "radarr_count": radarr_count,
         "sonarr_count": sonarr_count,
+        "jf_episodes_count": jf_tv_eps_count,
+        "jf_combined_count": jf_tv_eps_count + jf_movies_count
     }
     return render_template("index.html", films=films, all_users=sorted(list(all_users)), stats=stats)
 
@@ -537,6 +545,12 @@ def movie_details(slug):
     movie = get_movie_details_by_slug(slug)
     if not movie: flash("Movie not found in catalog.", "warning"); return redirect(url_for('index'))
     return render_template("movie_details.html", movie=movie)
+
+@app.route("/api/show/<identifier>/season/<int:season_num>", methods=["GET"])
+def api_get_season_episodes(identifier, season_num):
+    from database import get_season_episodes_lazy
+    episodes = get_season_episodes_lazy(identifier, season_num)
+    return jsonify({"ok": True, "season": season_num, "episodes": episodes})
 
 @app.route("/show/<identifier>")
 def show_details(identifier):

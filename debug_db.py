@@ -2,7 +2,7 @@ import sqlite3
 import json
 
 DB_PATH = "data/letterboxd.db"
-TARGET_SLUG = "jf-ffd137c787208e67b0b610f3f906724f" # Replace if needed
+TARGET_SLUG = "tangled-2010" # Replace if needed
 
 def run_diagnostics():
     conn = sqlite3.connect(DB_PATH)
