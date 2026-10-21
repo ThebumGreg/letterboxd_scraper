@@ -2,11 +2,14 @@
 import logging
 import threading
 
-from synchub import db, settings
+from synchub import db, episodes, matching, metadata, settings, states
+from synchub.clients import ConfigError
 from synchub.clients.arr import RadarrClient, SonarrClient
 from synchub.clients.jellyfin import JellyfinClient
+from synchub.clients.tmdb import TmdbClient
 from synchub.ingest import jellyfin as jf_ingest
 from synchub.ingest import letterboxd as lb_ingest
+from synchub.ingest import letterboxd_ids
 from synchub.ingest import radarr as radarr_ingest
 from synchub.ingest import serializd as sz_ingest
 from synchub.ingest import sonarr as sonarr_ingest
@@ -112,3 +115,60 @@ def scrape_serializd():
         note = f" Failed: {', '.join(failed)}." if failed else ""
         return f"Serializd: {sum(r.get('seen', 0) for r in summary.values())} shows scraped.{note}"
     return run("scraper_serializd", "Scraping Serializd", work)
+
+
+def resolve_letterboxd_ids():
+    def work():
+        import random
+        import time
+        low, high = float(settings.get("request_delay_min") or 2.5), float(settings.get("request_delay_max") or 4.5)
+        with db.connection() as conn:
+            stats = letterboxd_ids.resolve(conn, pause=lambda: time.sleep(random.uniform(min(low, high), max(low, high))))
+        note = " Letterboxd blocked further requests." if stats["blocked"] else ""
+        return f"Checked {stats['checked']} film(s): {stats['found']} IDs found, {stats['no_id']} without an ID, {stats['errors']} errors.{note}"
+    return run("id_resolver", "Resolving Letterboxd IDs", work)
+
+
+def reconcile_now(tmdb=None):
+    """Links sources to media, refreshes TMDB metadata, links episodes, then recomputes states. Returns per-stage stats.
+
+    Each stage commits on its own, so slow network stages never hold the database write lock for long.
+    """
+    result = {}
+    with db.connection() as conn:
+        result["matching"] = matching.Matcher(conn, tmdb).resolve_all()
+    if tmdb is not None:
+        with db.connection() as conn:
+            result["metadata"] = metadata.refresh_pending(conn, tmdb)
+    with db.connection() as conn:
+        result["jellyfin_episodes"] = episodes.link_jellyfin_episodes(conn)
+        result["sonarr_episodes"] = episodes.map_sonarr_episodes(conn)
+        result["queue_events"] = states.sync_queue_events(conn)
+        result["states"] = states.compute(conn)
+    return result
+
+
+def reconcile():
+    def work():
+        try:
+            tmdb = TmdbClient()
+        except ConfigError:
+            tmdb = None
+        r = reconcile_now(tmdb)
+        note = "" if tmdb else " TMDB is not configured: shows without a TMDB ID and episode lists are waiting for it."
+        m = r["matching"]
+        return (f"Linked {m.get('linked', 0) + m.get('relinked', 0)} source record(s), {m.get('unresolved', 0)} unresolved, "
+                f"{m.get('review_added', 0)} new review item(s).{note}")
+    return run("reconcile", "Reconciling", work)
+
+
+def run_all():
+    """The full sequence, one step after another. A failing step is recorded and the rest still run."""
+    def work():
+        steps = (sync_jellyfin_movies, sync_jellyfin_tv, sync_radarr, sync_sonarr, scrape_letterboxd, scrape_serializd, resolve_letterboxd_ids, reconcile)
+        for step in steps:
+            step()
+        with db.connection() as conn:
+            failed = [r["task_name"] for r in conn.execute("SELECT task_name FROM task_status WHERE status = 'failed' AND task_name <> 'all'")]
+        return "All steps finished." + (f" Failed: {', '.join(failed)}." if failed else "")
+    return run("all", "Running everything", work)

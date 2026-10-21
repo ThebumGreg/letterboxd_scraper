@@ -100,6 +100,7 @@ def test_anonymize_users_and_forced_show(messy_db, tmp_path):
     shows = json.loads((out / "tv_shows.json").read_text())["shows"]
     assert [s["catalog"]["title"] for s in shows] == ["Good Show"]
     assert shows[0]["catalog"]["requested_by_users"] == "user1"
+    assert "Sonarr" in (out / "samples" / "media_catalog.csv").read_text()      # system pseudo-users stay readable
 
 
 def test_zip_option(messy_db, tmp_path):

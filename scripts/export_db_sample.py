@@ -37,6 +37,7 @@ MASKED_SETTINGS = {"dynu_domain", "dynu_hostname", "ddns_last_ip", "dynu_dns_id"
 COUNTS_ONLY_TABLES = {"api_payload_logs", "ddns_history", "ddns_cache"}   # headers and IP addresses
 USER_COLUMNS = {"username", "profile_name", "letterboxd_username", "serializd_username", "jellyfin_user_id"}
 USER_LIST_COLUMNS = {"requested_by_users"}
+SYSTEM_NAMES = {"Jellyfin", "Radarr", "Sonarr"}   # pseudo-users the catalog uses for items nobody requested
 EPISODE_TITLE_RE = re.compile(r"^(.*) - S\d+E\d+ \(")
 _ARTICLE_RE = re.compile(r"^(the|a|an) ")
 
@@ -58,7 +59,7 @@ class Anonymizer:
         self.names = {}
 
     def name(self, value):
-        if not self.enabled or blank(value):
+        if not self.enabled or blank(value) or value in SYSTEM_NAMES:
             return value
         return self.names.setdefault(value, f"user{len(self.names) + 1}")
 
