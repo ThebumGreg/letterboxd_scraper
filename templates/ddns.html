@@ -5,148 +5,136 @@
 {% block title %}Dynu DDNS Settings{% endblock %}
 
 {% block content %}
-<div class="container my-4">
+<div class="mb-4">
     <h2 class="mb-4">Dynu Dynamic DNS (DDNS) Automation</h2>
 
     <!-- Dynu Metadata Summary Card -->
-    <div class="card mb-4 shadow-sm">
-        <div class="card-header bg-dark text-white fw-bold">
-            Dynu Account Metadata
-        </div>
-        <div class="card-body">
-            <div class="row g-3">
-                <div class="col-md-3">
-                    <small class="text-secondary d-block">Domain Name</small>
-                    <strong>{{ dynu_hostname or 'Not Configured' }}</strong>
-                </div>
-                <div class="col-md-2">
-                    <small class="text-secondary d-block">State</small>
-                    <span class="badge bg-info text-dark">{{ dynu_domain_state }}</span>
-                </div>
-                <div class="col-md-2">
-                    <small class="text-secondary d-block">TTL</small>
-                    <span>{{ dynu_ttl }}s</span>
-                </div>
-                <div class="col-md-2">
-                    <small class="text-secondary d-block">DNS ID</small>
-                    <code>{{ dynu_dns_id or 'Unresolved' }}</code>
-                </div>
-                <div class="col-md-3">
-                    <small class="text-secondary d-block">Record ID (A)</small>
-                    <code>{{ dynu_record_id or 'Unresolved' }}</code>
-                </div>
-                <div class="col-md-6">
-                    <small class="text-secondary d-block">Dynu Domain Created On</small>
-                    <span data-task-last="utc_created">{{ dynu_created_on or 'N/A' }}</span>
-                </div>
-                <div class="col-md-6">
-                    <small class="text-secondary d-block">Dynu Remote Last Updated</small>
-                    <span data-task-last="utc_updated">{{ dynu_remote_updated_on or 'N/A' }}</span>
-                </div>
+    <div class="panel p-3 p-md-4 mb-4">
+        <h5 class="mb-3 text-success">Dynu Account Metadata</h5>
+        <div class="row g-3">
+            <div class="col-md-3">
+                <small class="text-secondary d-block">Domain Name</small>
+                <strong>{{ dynu_hostname or 'Not Configured' }}</strong>
+            </div>
+            <div class="col-md-2">
+                <small class="text-secondary d-block">State</small>
+                <span class="badge bg-info text-dark">{{ dynu_domain_state }}</span>
+            </div>
+            <div class="col-md-2">
+                <small class="text-secondary d-block">TTL</small>
+                <span>{{ dynu_ttl }}s</span>
+            </div>
+            <div class="col-md-2">
+                <small class="text-secondary d-block">DNS ID</small>
+                <code>{{ dynu_dns_id or 'Unresolved' }}</code>
+            </div>
+            <div class="col-md-3">
+                <small class="text-secondary d-block">Record ID (A)</small>
+                <code>{{ dynu_record_id or 'Unresolved' }}</code>
+            </div>
+            <div class="col-md-6">
+                <small class="text-secondary d-block">Dynu Domain Created On</small>
+                <span data-task-last="utc_created">{{ dynu_created_on or 'N/A' }}</span>
+            </div>
+            <div class="col-md-6">
+                <small class="text-secondary d-block">Dynu Remote Last Updated</small>
+                <span data-task-last="utc_updated">{{ dynu_remote_updated_on or 'N/A' }}</span>
             </div>
         </div>
     </div>
 
     <!-- Main Configuration Form -->
-    <div class="card mb-4 shadow-sm">
-        <div class="card-header fw-bold">
-            Configuration
-        </div>
-        <div class="card-body">
-            <form action="{{ url_for('ddns_update_settings') }}" method="POST">
-                {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
-                <div class="mb-3">
-                    <label for="dynu_hostname" class="form-label font-weight-bold">Domain Name</label>
-                    <input type="text" class="form-control" id="dynu_hostname" name="dynu_hostname" value="{{ dynu_hostname }}" placeholder="e.g. pizza101home.dynu.net" required>
-                </div>
-                <div class="mb-3">
-                    {{ secret_field('dynu_api_key', 'Dynu REST API Key', dynu_api_key) }}
-                </div>
-                <div class="mb-3 form-check form-switch">
-                    <input type="checkbox" class="form-check-input" id="dynu_enabled" name="dynu_enabled" role="switch" value="1" {% if dynu_enabled %}checked{% endif %}>
-                    <label class="form-check-label ms-2" for="dynu_enabled">Enable Automatic DDNS Updates (Every 5 minutes)</label>
-                </div>
-                <button type="submit" class="btn btn-success btn-sm">Save Settings</button>
-            </form>
-        </div>
+    <div class="panel p-3 p-md-4 mb-4">
+        <h5 class="mb-3 text-success">Configuration</h5>
+        <form action="{{ url_for('ddns_update_settings') }}" method="POST">
+            {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+            <div class="mb-3">
+                <label for="dynu_hostname" class="form-label fw-bold">Domain Name</label>
+                <input type="text" class="form-control" id="dynu_hostname" name="dynu_hostname" value="{{ dynu_hostname }}" placeholder="e.g. pizza101home.dynu.net" required>
+            </div>
+            <div class="mb-3">
+                {{ secret_field('dynu_api_key', 'Dynu REST API Key', dynu_api_key) }}
+            </div>
+            <div class="mb-3 form-check form-switch">
+                <input type="checkbox" class="form-check-input" id="dynu_enabled" name="dynu_enabled" role="switch" value="1" {% if dynu_enabled %}checked{% endif %}>
+                <label class="form-check-label ms-2" for="dynu_enabled">Enable Automatic DDNS Updates (Every 5 minutes)</label>
+            </div>
+            <button type="submit" class="btn btn-success btn-sm">Save Settings</button>
+        </form>
     </div>
 
     <!-- Manual Control & Status Card -->
-    <div class="card mb-4 shadow-sm">
-        <div class="card-header fw-bold d-flex justify-content-between align-items-center">
-            <span>Current Status</span>
+    <div class="panel p-3 p-md-4 mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="mb-0 text-success">Current Status</h5>
             <form action="{{ url_for('ddns_trigger_update') }}" method="POST" class="m-0">
                 {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
                 <button type="submit" class="btn btn-success btn-sm">Force Sync Now</button>
             </form>
         </div>
-        <div class="card-body">
-            <div class="row">
-                <div class="col-md-4">
-                    <small class="text-secondary d-block">Current Cached IP</small>
-                    <h5><code>{{ ddns_status.last_ip or 'None' }}</code></h5>
-                </div>
-                <div class="col-md-4">
-                    <small class="text-secondary d-block">Last Run Timestamp</small>
-                    <span data-task-last="ddns_last_run">{{ ddns_status.last_run or 'Never' }}</span>
-                </div>
-                <div class="col-md-4">
-                    <small class="text-secondary d-block">Last Result</small>
-                    {% if ddns_status.last_update_status == "SUCCESS" %}
-                        <span class="badge bg-success">SUCCESS</span>
-                    {% elif ddns_status.last_update_status == "FAILED" %}
-                        <span class="badge bg-danger">FAILED</span>
-                    {% else %}
-                        <span class="badge bg-secondary">{{ ddns_status.last_update_status }}</span>
-                    {% endif %}
-                </div>
+        <div class="row">
+            <div class="col-md-4">
+                <small class="text-secondary d-block">Current Cached IP</small>
+                <h5><code>{{ ddns_status.last_ip or 'None' }}</code></h5>
             </div>
-            <div class="mt-2 text-secondary small">
-                {{ ddns_status.message }}
+            <div class="col-md-4">
+                <small class="text-secondary d-block">Last Run Timestamp</small>
+                <span data-task-last="ddns_last_run">{{ ddns_status.last_run or 'Never' }}</span>
             </div>
+            <div class="col-md-4">
+                <small class="text-secondary d-block">Last Result</small>
+                {% if ddns_status.last_update_status == "SUCCESS" %}
+                    <span class="badge bg-success">SUCCESS</span>
+                {% elif ddns_status.last_update_status == "FAILED" %}
+                    <span class="badge bg-danger">FAILED</span>
+                {% else %}
+                    <span class="badge bg-secondary">{{ ddns_status.last_update_status }}</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="mt-2 text-secondary small">
+            {{ ddns_status.message }}
         </div>
     </div>
 
     <!-- Historical Audit Log Table -->
-    <div class="card shadow-sm">
-        <div class="card-header fw-bold">
-            Recent IP Activity Log
+    <div class="panel p-0 overflow-hidden">
+        <div class="p-3 p-md-4 border-bottom border-secondary border-opacity-25">
+            <h5 class="mb-0 text-success">Recent IP Activity Log</h5>
         </div>
-        <div class="card-body p-0">
-            <div class="table-responsive">
-                <table class="table table-striped table-hover m-0">
-                    <thead class="table-light">
-                        <tr>
-                            <th>Timestamp</th>
-                            <th>Previous IP</th>
-                            <th>New IP</th>
-                            <th>Status</th>
-                            <th>Details</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for row in ddns_history %}
-                        <tr>
-                            <td><small data-task-last="history_{{ loop.index }}">{{ row.created_at }}</small></td>
-                            <td><code>{{ row.old_ip }}</code></td>
-                            <td><code>{{ row.new_ip }}</code></td>
-                            <td>
-                                {% if row.status == "SUCCESS" %}
-                                    <span class="badge bg-success">SUCCESS</span>
-                                {% else %}
-                                    <span class="badge bg-danger">FAILED</span>
-                                {% endif %}
-                            </td>
-                            <td><small class="text-muted">{{ row.message }}</small></td>
-                        </tr>
-                        {% else %}
-                        <tr>
-                            <td colspan="5" class="text-center text-muted p-3">No historical updates recorded yet.</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle m-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-4">Timestamp</th>
+                        <th>Previous IP</th>
+                        <th>New IP</th>
+                        <th>Status</th>
+                        <th class="pe-4">Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in ddns_history %}
+                    <tr>
+                        <td class="ps-4"><small data-task-last="history_{{ loop.index }}">{{ row.created_at }}</small></td>
+                        <td><code>{{ row.old_ip }}</code></td>
+                        <td><code>{{ row.new_ip }}</code></td>
+                        <td>
+                            {% if row.status == "SUCCESS" %}
+                                <span class="badge bg-success">SUCCESS</span>
+                            {% else %}
+                                <span class="badge bg-danger">FAILED</span>
+                            {% endif %}
+                        </td>
+                        <td class="pe-4"><small class="text-muted">{{ row.message }}</small></td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="text-center text-muted p-4">No historical updates recorded yet.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
     </div>
 </div>

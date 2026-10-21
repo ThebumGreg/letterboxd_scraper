@@ -1,6 +1,6 @@
 <!-- templates/settings.html -->
 {% extends "base.html" %}
-{% from "_macros.html" import csrf_field, secret_field, switch with context %}
+{% from "_macros.html" import csrf_field, secret_field, switch, profile_modal, jellyfin_import_modal with context %}
 
 {% block title %}Settings{% endblock %}
 
@@ -8,66 +8,64 @@
 <h2 class="mb-4">System Settings &amp; Configuration</h2>
 
 <div class="col-12 mb-4">
-    <div class="card shadow-sm">
-        <div class="card-body">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <div>
-                    <h5 class="card-title text-success mb-1"><i class="bi bi-people-fill"></i> Unified Profile Identity Mapping</h5>
-                    <p class="card-text text-body-secondary mb-0">Map external usernames to a single profile for precise watch-states, scrapers, and filtering.</p>
-                </div>
-                <div class="d-flex gap-2">
-                    <button type="button" class="btn btn-outline-info btn-sm" onclick="fetchJellyfinUsers()">
-                        <i class="bi bi-cloud-arrow-down"></i> Import Jellyfin Users
-                    </button>
-                    <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#profileModal" onclick="resetProfileForm()">
-                        <i class="bi bi-person-plus"></i> Add Profile
-                    </button>
-                </div>
+    <div class="panel p-3 p-md-4 mb-0">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <h5 class="text-success mb-1"><i class="bi bi-people-fill"></i> Unified Profile Identity Mapping</h5>
+                <p class="text-body-secondary mb-0">Map external usernames to a single profile for precise watch-states, scrapers, and filtering.</p>
             </div>
-            
-            <div class="table-responsive">
-                <table class="table table-hover align-middle mb-0 border">
-                    <thead class="table-light">
-                        <tr>
-                            <th style="width: 60px;">Active</th>
-                            <th>SyncHub Profile</th>
-                            <th>Letterboxd Username</th>
-                            <th>Serializd Username</th>
-                            <th>Jellyfin User ID</th>
-                            <th style="width: 140px;" class="text-end">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for prof in profiles %}
-                        <tr>
-                            <td>
-                                <div class="form-check form-switch mb-0">
-                                    <input class="form-check-input profile-toggle" type="checkbox" role="switch" data-id="{{ prof.id }}" {% if prof.is_active %}checked{% endif %} title="Toggle scraper activity">
-                                </div>
-                            </td>
-                            <td><strong>{{ prof.profile_name }}</strong></td>
-                            <td>{{ prof.letterboxd_username or '—' }}</td>
-                            <td>{{ prof.serializd_username or '—' }}</td>
-                            <td><code class="small">{{ prof.jellyfin_user_id or '—' }}</code></td>
-                            <td class="text-end">
-                                <button type="button" class="btn btn-sm btn-outline-secondary" 
-                                    onclick="editProfile({{ prof.id }}, '{{ prof.profile_name }}', '{{ prof.letterboxd_username }}', '{{ prof.serializd_username }}', '{{ prof.jellyfin_user_id }}')">
-                                    Edit
-                                </button>
-                                <form action="{{ url_for('delete_profile', profile_id=prof.id) }}" method="POST" class="d-inline">
-                                    {{ csrf_field() }}
-                                    <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete this profile mapping? Requests tied to it will become orphaned.');">Delete</button>
-                                </form>
-                            </td>
-                        </tr>
-                        {% else %}
-                        <tr>
-                            <td colspan="6" class="text-center text-muted py-4">No unified profile mappings configured. Add one or import from Jellyfin to enable scrapers.</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+            <div class="d-flex gap-2">
+                <button type="button" class="btn btn-outline-info btn-sm" onclick="fetchJellyfinUsers()">
+                    <i class="bi bi-cloud-arrow-down"></i> Import Jellyfin Users
+                </button>
+                <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#profileModal" onclick="resetProfileForm()">
+                    <i class="bi bi-person-plus"></i> Add Profile
+                </button>
             </div>
+        </div>
+        
+        <div class="table-responsive border rounded">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 60px;">Active</th>
+                        <th>SyncHub Profile</th>
+                        <th>Letterboxd Username</th>
+                        <th>Serializd Username</th>
+                        <th>Jellyfin User ID</th>
+                        <th style="width: 140px;" class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for prof in profiles %}
+                    <tr>
+                        <td>
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input profile-toggle" type="checkbox" role="switch" data-id="{{ prof.id }}" {% if prof.is_active %}checked{% endif %} title="Toggle scraper activity">
+                            </div>
+                        </td>
+                        <td><strong>{{ prof.profile_name }}</strong></td>
+                        <td>{{ prof.letterboxd_username or '—' }}</td>
+                        <td>{{ prof.serializd_username or '—' }}</td>
+                        <td><code class="small">{{ prof.jellyfin_user_id or '—' }}</code></td>
+                        <td class="text-end">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" 
+                                onclick="editProfile({{ prof.id }}, '{{ prof.profile_name }}', '{{ prof.letterboxd_username }}', '{{ prof.serializd_username }}', '{{ prof.jellyfin_user_id }}')">
+                                Edit
+                            </button>
+                            <form action="{{ url_for('delete_profile', profile_id=prof.id) }}" method="POST" class="d-inline">
+                                {{ csrf_field() }}
+                                <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete this profile mapping? Requests tied to it will become orphaned.');">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" class="text-center text-muted py-4">No unified profile mappings configured. Add one or import from Jellyfin to enable scrapers.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
     </div>
 </div>
@@ -77,189 +75,177 @@
     <div class="row g-4">
         <!-- Scheduler + metadata -->
         <div class="col-md-6">
-            <div class="card mb-4 shadow-sm">
-                <div class="card-body">
-                    <h5 class="card-title text-success">Scheduler Engine</h5>
-                    <p class="card-text text-body-secondary">Background job timing.</p>
-                    <p class="small text-body-secondary mb-2">How often each background job runs (hours). Set to 0 to disable scheduling for that job.</p>
-                    <div class="row">
-                        {% for key, label, default in [('scraper_interval_hours', 'Scraper', 24), ('radarr_interval_hours', 'Radarr', 6), ('sonarr_interval_hours', 'Sonarr', 6), ('jellyfin_interval_hours', 'Jellyfin', 6)] %}
-                        <div class="col-6 col-lg-3 mb-3">
-                            <label for="{{ key }}" class="form-label">{{ label }}</label>
-                            <input type="number" class="form-control" id="{{ key }}" name="{{ key }}"
-                                   value="{{ settings.get(key) or default }}" min="0" step="1" required>
-                        </div>
-                        {% endfor %}
+            <div class="panel p-3 p-md-4 mb-4">
+                <h5 class="text-success mb-1">Scheduler Engine</h5>
+                <p class="text-body-secondary">Background job timing.</p>
+                <p class="small text-body-secondary mb-2">How often each background job runs (hours). Set to 0 to disable scheduling for that job.</p>
+                <div class="row">
+                    {% for key, label, default in [('scraper_interval_hours', 'Scraper', 24), ('radarr_interval_hours', 'Radarr', 6), ('sonarr_interval_hours', 'Sonarr', 6), ('jellyfin_interval_hours', 'Jellyfin', 6)] %}
+                    <div class="col-6 col-lg-3 mb-3">
+                        <label for="{{ key }}" class="form-label">{{ label }}</label>
+                        <input type="number" class="form-control" id="{{ key }}" name="{{ key }}"
+                               value="{{ settings.get(key) or default }}" min="0" step="1" required>
                     </div>
-                    <div class="row">
-                        <div class="col-6 mb-1">
-                            <label for="request_delay_min" class="form-label">Min request delay (s)</label>
-                            <input type="number" step="0.1" min="0" class="form-control" id="request_delay_min" name="request_delay_min" value="{{ settings.get('request_delay_min') or 2.5 }}">
-                        </div>
-                        <div class="col-6 mb-1">
-                            <label for="request_delay_max" class="form-label">Max request delay (s)</label>
-                            <input type="number" step="0.1" min="0" class="form-control" id="request_delay_max" name="request_delay_max" value="{{ settings.get('request_delay_max') or 4.5 }}">
-                        </div>
-                    </div>
-                    <div class="form-text mb-3">A random pause in this range is used between page requests for one user.</div>
-                    <div class="row">
-                        <div class="col-6 mb-1">
-                            <label for="user_delay_min" class="form-label">Min delay between users (s)</label>
-                            <input type="number" step="0.5" min="0" class="form-control" id="user_delay_min" name="user_delay_min" value="{{ settings.get('user_delay_min') or 10 }}">
-                        </div>
-                        <div class="col-6 mb-1">
-                            <label for="user_delay_max" class="form-label">Max delay between users (s)</label>
-                            <input type="number" step="0.5" min="0" class="form-control" id="user_delay_max" name="user_delay_max" value="{{ settings.get('user_delay_max') or 20 }}">
-                        </div>
-                    </div>
-                    <div class="form-text">A random pause in this range is used before the scraper moves on to the next user.</div>
+                    {% endfor %}
                 </div>
+                <div class="row">
+                    <div class="col-6 mb-1">
+                        <label for="request_delay_min" class="form-label">Min request delay (s)</label>
+                        <input type="number" step="0.1" min="0" class="form-control" id="request_delay_min" name="request_delay_min" value="{{ settings.get('request_delay_min') or 2.5 }}">
+                    </div>
+                    <div class="col-6 mb-1">
+                        <label for="request_delay_max" class="form-label">Max request delay (s)</label>
+                        <input type="number" step="0.1" min="0" class="form-control" id="request_delay_max" name="request_delay_max" value="{{ settings.get('request_delay_max') or 4.5 }}">
+                    </div>
+                </div>
+                <div class="form-text mb-3">A random pause in this range is used between page requests for one user.</div>
+                <div class="row">
+                    <div class="col-6 mb-1">
+                        <label for="user_delay_min" class="form-label">Min delay between users (s)</label>
+                        <input type="number" step="0.5" min="0" class="form-control" id="user_delay_min" name="user_delay_min" value="{{ settings.get('user_delay_min') or 10 }}">
+                    </div>
+                    <div class="col-6 mb-1">
+                        <label for="user_delay_max" class="form-label">Max delay between users (s)</label>
+                        <input type="number" step="0.5" min="0" class="form-control" id="user_delay_max" name="user_delay_max" value="{{ settings.get('user_delay_max') or 20 }}">
+                    </div>
+                </div>
+                <div class="form-text">A random pause in this range is used before the scraper moves on to the next user.</div>
             </div>
 
-            <div class="card shadow-sm">
-                <div class="card-body">
-                    <h5 class="card-title text-success">Metadata (TMDB)</h5>
-                    <div class="mb-3">
-                        {{ secret_field('tmdb_api_key', 'TMDB API key', settings.tmdb_api_key) }}
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label for="tv_metadata_provider" class="form-label fw-bold">TV Show Episode Metadata Source</label>
-                        <select class="form-select" id="tv_metadata_provider" name="tv_metadata_provider">
-                            <option value="tmdb" {% if settings.get('tv_metadata_provider', 'tmdb') == 'tmdb' %}selected{% endif %}>TMDB (Primary) + Sonarr (Fallback)</option>
-                            <option value="sonarr" {% if settings.get('tv_metadata_provider', 'tmdb') == 'sonarr' %}selected{% endif %}>Sonarr (Primary) + TMDB (Fallback)</option>
-                        </select>
-                        <div class="form-text">If TVDB IDs are missing, TMDB will automatically fetch the episode list and attempt to auto-resolve the ID behind the scenes.</div>
-                    </div>
-
-                    <button type="button" class="btn btn-outline-info btn-sm" data-test-service="tmdb" data-test-fields="tmdb_api_key">Test connection</button>
-                    <span class="small ms-2" data-test-result="tmdb" role="status"></span>
+            <div class="panel p-3 p-md-4 mb-4">
+                <h5 class="text-success mb-3">Metadata (TMDB)</h5>
+                <div class="mb-3">
+                    {{ secret_field('tmdb_api_key', 'TMDB API key', settings.tmdb_api_key) }}
                 </div>
+                
+                <div class="mb-3">
+                    <label for="tv_metadata_provider" class="form-label fw-bold">TV Show Episode Metadata Source</label>
+                    <select class="form-select" id="tv_metadata_provider" name="tv_metadata_provider">
+                        <option value="tmdb" {% if settings.get('tv_metadata_provider', 'tmdb') == 'tmdb' %}selected{% endif %}>TMDB (Primary) + Sonarr (Fallback)</option>
+                        <option value="sonarr" {% if settings.get('tv_metadata_provider', 'tmdb') == 'sonarr' %}selected{% endif %}>Sonarr (Primary) + TMDB (Fallback)</option>
+                    </select>
+                    <div class="form-text">If TVDB IDs are missing, TMDB will automatically fetch the episode list and attempt to auto-resolve the ID behind the scenes.</div>
+                </div>
+
+                <button type="button" class="btn btn-outline-info btn-sm" data-test-service="tmdb" data-test-fields="tmdb_api_key">Test connection</button>
+                <span class="small ms-2" data-test-result="tmdb" role="status"></span>
             </div>
         </div>
 
         <div class="col-md-6">
             <!-- Jellyfin -->
-            <div class="card mb-4 shadow-sm">
-                <div class="card-body">
-                    <h5 class="card-title text-success">Jellyfin Integration</h5>
-                    {{ switch('disable_jellyfin_connection', 'Disable Jellyfin integration and playlist sync', settings.disable_jellyfin_connection, dims='#jellyfinFields', dims_when='checked', label_class='text-warning') }}
-                    <div id="jellyfinFields">
-                        <div class="mb-3">
-                            <label for="jellyfin_url" class="form-label">Jellyfin server URL</label>
-                            <input type="url" class="form-control" id="jellyfin_url" name="jellyfin_url" value="{{ settings.jellyfin_url }}" placeholder="http://192.168.1.10:8096">
-                        </div>
-                        <div class="mb-3">
-                            {{ secret_field('jellyfin_api_key', 'Jellyfin API key', settings.jellyfin_api_key) }}
-                        </div>
-                        <button type="button" class="btn btn-outline-info btn-sm" data-test-service="jellyfin" data-test-fields="jellyfin_url,jellyfin_api_key">Test connection</button>
-                        <span class="small ms-2" data-test-result="jellyfin" role="status"></span>
+            <div class="panel p-3 p-md-4 mb-4">
+                <h5 class="text-success mb-3">Jellyfin Integration</h5>
+                {{ switch('disable_jellyfin_connection', 'Disable Jellyfin integration and playlist sync', settings.disable_jellyfin_connection, dims='#jellyfinFields', dims_when='checked', label_class='text-warning') }}
+                <div id="jellyfinFields">
+                    <div class="mb-3">
+                        <label for="jellyfin_url" class="form-label">Jellyfin server URL</label>
+                        <input type="url" class="form-control" id="jellyfin_url" name="jellyfin_url" value="{{ settings.jellyfin_url }}" placeholder="http://192.168.1.10:8096">
                     </div>
+                    <div class="mb-3">
+                        {{ secret_field('jellyfin_api_key', 'Jellyfin API key', settings.jellyfin_api_key) }}
+                    </div>
+                    <button type="button" class="btn btn-outline-info btn-sm" data-test-service="jellyfin" data-test-fields="jellyfin_url,jellyfin_api_key">Test connection</button>
+                    <span class="small ms-2" data-test-result="jellyfin" role="status"></span>
                 </div>
             </div>
             
             <!-- Notifications -->
-            <div class="card shadow-sm">
-                <div class="card-body">
-                    <h5 class="card-title text-success">Push Notifications (Apprise / Pushover)</h5>
-                    {{ switch('enable_notifications', 'Enable push alerts', settings.enable_notifications, dims='#notifyFields', dims_when='unchecked') }}
-                    <div id="notifyFields">
-                        <div class="mb-3">
-                            {{ secret_field('apprise_urls', 'Apprise / Pushover target URLs', settings.apprise_urls, help='These URLs contain access tokens, so the saved value is hidden. Format: pover://USER_KEY@API_TOKEN') }}
-                        </div>
-                        <button type="button" class="btn btn-outline-info btn-sm" data-test-service="notifications" data-test-fields="apprise_urls">Send test notification</button>
-                        <span class="small ms-2" data-test-result="notifications" role="status"></span>
+            <div class="panel p-3 p-md-4 mb-4">
+                <h5 class="text-success mb-3">Push Notifications (Apprise / Pushover)</h5>
+                {{ switch('enable_notifications', 'Enable push alerts', settings.enable_notifications, dims='#notifyFields', dims_when='unchecked') }}
+                <div id="notifyFields">
+                    <div class="mb-3">
+                        {{ secret_field('apprise_urls', 'Apprise / Pushover target URLs', settings.apprise_urls, help='These URLs contain access tokens, so the saved value is hidden. Format: pover://USER_KEY@API_TOKEN') }}
                     </div>
+                    <button type="button" class="btn btn-outline-info btn-sm" data-test-service="notifications" data-test-fields="apprise_urls">Send test notification</button>
+                    <span class="small ms-2" data-test-result="notifications" role="status"></span>
                 </div>
             </div>
         </div>
 
         <!-- Radarr -->
         <div class="col-md-6">
-            <div class="card h-100 shadow-sm">
-                <div class="card-body">
-                    <div class="d-flex justify-content-between">
-                        <h5 class="card-title text-primary"><i class="bi bi-film" aria-hidden="true"></i> Radarr (Movies)</h5>
-                        <button type="button" class="btn btn-sm btn-outline-secondary py-0" onclick="fetchServarr('radarr')"><i class="bi bi-arrow-repeat"></i> Load Configs</button>
-                    </div>
-                    {{ switch('radarr_enable_library_sync', 'Enable automated library sync', settings.radarr_enable_library_sync) }}
-                    {{ switch('radarr_enable_queue_addition', 'Enable automated queue addition', settings.radarr_enable_queue_addition) }}
-                    {{ switch('radarr_dry_run', 'Dry Run (Test searches without downloading)', settings.radarr_dry_run) }}
+            <div class="panel d-flex flex-column h-100 p-3 p-md-4">
+                <div class="d-flex justify-content-between mb-3">
+                    <h5 class="text-primary mb-0"><i class="bi bi-film" aria-hidden="true"></i> Radarr (Movies)</h5>
+                    <button type="button" class="btn btn-sm btn-outline-secondary py-0" onclick="fetchServarr('radarr')"><i class="bi bi-arrow-repeat"></i> Load Configs</button>
+                </div>
+                {{ switch('radarr_enable_library_sync', 'Enable automated library sync', settings.radarr_enable_library_sync) }}
+                {{ switch('radarr_enable_queue_addition', 'Enable automated queue addition', settings.radarr_enable_queue_addition) }}
+                {{ switch('radarr_dry_run', 'Dry Run (Test searches without downloading)', settings.radarr_dry_run) }}
 
-                    <div id="radarrFields" class="mt-3">
-                        <div class="mb-3">
-                            <label for="radarr_url" class="form-label">Radarr URL</label>
-                            <input type="url" class="form-control" id="radarr_url" name="radarr_url" value="{{ settings.radarr_url }}" placeholder="http://192.168.1.10:7878">
-                        </div>
-                        <div class="mb-3">
-                            {{ secret_field('radarr_api_key', 'Radarr API key', settings.radarr_api_key) }}
-                        </div>
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label for="radarr_quality_profile_id" class="form-label">Quality Profile</label>
-                                <select class="form-select" id="radarr_quality_profile_id" name="radarr_quality_profile_id" data-saved="{{ settings.radarr_quality_profile_id|default('1') }}">
-                                    <option value="{{ settings.radarr_quality_profile_id|default('1') }}">Saved ID: {{ settings.radarr_quality_profile_id|default('1') }}</option>
-                                </select>
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <label for="radarr_min_user_count" class="form-label">Minimum Profiles</label>
-                                <input type="number" class="form-control" id="radarr_min_user_count" name="radarr_min_user_count" value="{{ settings.radarr_min_user_count|default('1') }}" min="1" step="1">
-                            </div>
-                        </div>
-                        <div class="mb-3">
-                            <label for="radarr_root_folder" class="form-label">Root Folder Path</label>
-                            <select class="form-select" id="radarr_root_folder" name="radarr_root_folder" data-saved="{{ settings.radarr_root_folder|default('/movies') }}">
-                                <option value="{{ settings.radarr_root_folder|default('/movies') }}">{{ settings.radarr_root_folder|default('/movies') }}</option>
+                <div id="radarrFields" class="mt-3">
+                    <div class="mb-3">
+                        <label for="radarr_url" class="form-label">Radarr URL</label>
+                        <input type="url" class="form-control" id="radarr_url" name="radarr_url" value="{{ settings.radarr_url }}" placeholder="http://192.168.1.10:7878">
+                    </div>
+                    <div class="mb-3">
+                        {{ secret_field('radarr_api_key', 'Radarr API key', settings.radarr_api_key) }}
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="radarr_quality_profile_id" class="form-label">Quality Profile</label>
+                            <select class="form-select" id="radarr_quality_profile_id" name="radarr_quality_profile_id" data-saved="{{ settings.radarr_quality_profile_id|default('1') }}">
+                                <option value="{{ settings.radarr_quality_profile_id|default('1') }}">Saved ID: {{ settings.radarr_quality_profile_id|default('1') }}</option>
                             </select>
                         </div>
-                        <button type="button" class="btn btn-outline-info btn-sm" data-test-service="radarr" data-test-fields="radarr_url,radarr_api_key">Test connection</button>
-                        <span class="small ms-2" data-test-result="radarr" role="status"></span>
+                        <div class="col-md-6 mb-3">
+                            <label for="radarr_min_user_count" class="form-label">Minimum Profiles</label>
+                            <input type="number" class="form-control" id="radarr_min_user_count" name="radarr_min_user_count" value="{{ settings.radarr_min_user_count|default('1') }}" min="1" step="1">
+                        </div>
                     </div>
+                    <div class="mb-3">
+                        <label for="radarr_root_folder" class="form-label">Root Folder Path</label>
+                        <select class="form-select" id="radarr_root_folder" name="radarr_root_folder" data-saved="{{ settings.radarr_root_folder|default('/movies') }}">
+                            <option value="{{ settings.radarr_root_folder|default('/movies') }}">{{ settings.radarr_root_folder|default('/movies') }}</option>
+                        </select>
+                    </div>
+                    <button type="button" class="btn btn-outline-info btn-sm" data-test-service="radarr" data-test-fields="radarr_url,radarr_api_key">Test connection</button>
+                    <span class="small ms-2" data-test-result="radarr" role="status"></span>
                 </div>
             </div>
         </div>
 
         <!-- Sonarr -->
         <div class="col-md-6">
-            <div class="card h-100 shadow-sm">
-                <div class="card-body">
-                    <div class="d-flex justify-content-between">
-                        <h5 class="card-title text-info"><i class="bi bi-tv" aria-hidden="true"></i> Sonarr (TV Shows)</h5>
-                        <button type="button" class="btn btn-sm btn-outline-secondary py-0" onclick="fetchServarr('sonarr')"><i class="bi bi-arrow-repeat"></i> Load Configs</button>
-                    </div>
-                    {{ switch('sonarr_enable_library_sync', 'Enable automated library sync', settings.sonarr_enable_library_sync) }}
-                    {{ switch('sonarr_enable_queue_addition', 'Enable automated queue addition', settings.sonarr_enable_queue_addition) }}
-                    {{ switch('sonarr_dry_run', 'Dry Run (Test searches without downloading)', settings.sonarr_dry_run) }}
+            <div class="panel d-flex flex-column h-100 p-3 p-md-4">
+                <div class="d-flex justify-content-between mb-3">
+                    <h5 class="text-info mb-0"><i class="bi bi-tv" aria-hidden="true"></i> Sonarr (TV Shows)</h5>
+                    <button type="button" class="btn btn-sm btn-outline-secondary py-0" onclick="fetchServarr('sonarr')"><i class="bi bi-arrow-repeat"></i> Load Configs</button>
+                </div>
+                {{ switch('sonarr_enable_library_sync', 'Enable automated library sync', settings.sonarr_enable_library_sync) }}
+                {{ switch('sonarr_enable_queue_addition', 'Enable automated queue addition', settings.sonarr_enable_queue_addition) }}
+                {{ switch('sonarr_dry_run', 'Dry Run (Test searches without downloading)', settings.sonarr_dry_run) }}
 
-                    <div id="sonarrFields" class="mt-3">
-                        <div class="mb-3">
-                            <label for="sonarr_url" class="form-label">Sonarr URL</label>
-                            <input type="url" class="form-control" id="sonarr_url" name="sonarr_url" value="{{ settings.sonarr_url }}" placeholder="http://192.168.1.10:8989">
-                        </div>
-                        <div class="mb-3">
-                            {{ secret_field('sonarr_api_key', 'Sonarr API key', settings.sonarr_api_key) }}
-                        </div>
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label for="sonarr_quality_profile_id" class="form-label">Quality Profile</label>
-                                <select class="form-select" id="sonarr_quality_profile_id" name="sonarr_quality_profile_id" data-saved="{{ settings.sonarr_quality_profile_id|default('1') }}">
-                                    <option value="{{ settings.sonarr_quality_profile_id|default('1') }}">Saved ID: {{ settings.sonarr_quality_profile_id|default('1') }}</option>
-                                </select>
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <label for="sonarr_min_user_count" class="form-label">Minimum Profiles</label>
-                                <input type="number" class="form-control" id="sonarr_min_user_count" name="sonarr_min_user_count" value="{{ settings.sonarr_min_user_count|default('1') }}" min="1" step="1">
-                            </div>
-                        </div>
-                        <div class="mb-3">
-                            <label for="sonarr_root_folder" class="form-label">Root Folder Path</label>
-                            <select class="form-select" id="sonarr_root_folder" name="sonarr_root_folder" data-saved="{{ settings.sonarr_root_folder|default('/tv') }}">
-                                <option value="{{ settings.sonarr_root_folder|default('/tv') }}">{{ settings.sonarr_root_folder|default('/tv') }}</option>
+                <div id="sonarrFields" class="mt-3">
+                    <div class="mb-3">
+                        <label for="sonarr_url" class="form-label">Sonarr URL</label>
+                        <input type="url" class="form-control" id="sonarr_url" name="sonarr_url" value="{{ settings.sonarr_url }}" placeholder="http://192.168.1.10:8989">
+                    </div>
+                    <div class="mb-3">
+                        {{ secret_field('sonarr_api_key', 'Sonarr API key', settings.sonarr_api_key) }}
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="sonarr_quality_profile_id" class="form-label">Quality Profile</label>
+                            <select class="form-select" id="sonarr_quality_profile_id" name="sonarr_quality_profile_id" data-saved="{{ settings.sonarr_quality_profile_id|default('1') }}">
+                                <option value="{{ settings.sonarr_quality_profile_id|default('1') }}">Saved ID: {{ settings.sonarr_quality_profile_id|default('1') }}</option>
                             </select>
                         </div>
-                        <button type="button" class="btn btn-outline-info btn-sm" data-test-service="sonarr" data-test-fields="sonarr_url,sonarr_api_key">Test connection</button>
-                        <span class="small ms-2" data-test-result="sonarr" role="status"></span>
+                        <div class="col-md-6 mb-3">
+                            <label for="sonarr_min_user_count" class="form-label">Minimum Profiles</label>
+                            <input type="number" class="form-control" id="sonarr_min_user_count" name="sonarr_min_user_count" value="{{ settings.sonarr_min_user_count|default('1') }}" min="1" step="1">
+                        </div>
                     </div>
+                    <div class="mb-3">
+                        <label for="sonarr_root_folder" class="form-label">Root Folder Path</label>
+                        <select class="form-select" id="sonarr_root_folder" name="sonarr_root_folder" data-saved="{{ settings.sonarr_root_folder|default('/tv') }}">
+                            <option value="{{ settings.sonarr_root_folder|default('/tv') }}">{{ settings.sonarr_root_folder|default('/tv') }}</option>
+                        </select>
+                    </div>
+                    <button type="button" class="btn btn-outline-info btn-sm" data-test-service="sonarr" data-test-fields="sonarr_url,sonarr_api_key">Test connection</button>
+                    <span class="small ms-2" data-test-result="sonarr" role="status"></span>
                 </div>
             </div>
         </div>
@@ -271,60 +257,9 @@
     </div>
 </form>
 
-<!-- Add/Edit Profile Modal -->
-<div class="modal fade" id="profileModal" tabindex="-1" aria-labelledby="profileModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
-        <form action="{{ url_for('save_profile') }}" method="POST" class="modal-content">
-            {{ csrf_field() }}
-            <div class="modal-header">
-                <h5 class="modal-title" id="profileModalLabel">Profile Mapping</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-                <div class="mb-3">
-                    <label class="form-label fw-bold">SyncHub Display Name <span class="text-danger">*</span></label>
-                    <input type="text" name="profile_name" id="modal_profile_name" class="form-control" required placeholder="e.g. John Doe">
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Letterboxd Username (Movies)</label>
-                    <input type="text" name="letterboxd_username" id="modal_lb_user" class="form-control" placeholder="Optional">
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Serializd Username (TV Shows)</label>
-                    <input type="text" name="serializd_username" id="modal_sz_user" class="form-control" placeholder="Optional">
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Jellyfin User ID</label>
-                    <input type="text" name="jellyfin_user_id" id="modal_jf_id" class="form-control font-monospace" placeholder="Optional">
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="submit" class="btn btn-success">Save Profile</button>
-            </div>
-        </form>
-    </div>
-</div>
+{{ profile_modal(url_for('save_profile')) }}
+{{ jellyfin_import_modal() }}
 
-<!-- Jellyfin Import Modal -->
-<div class="modal fade" id="jellyfinImportModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header bg-dark text-white">
-                <h5 class="modal-title">Import Jellyfin Users</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body p-0">
-                <div class="list-group list-group-flush" id="jellyfinUserList">
-                    <div class="p-4 text-center">
-                        <div class="spinner-border text-secondary" role="status"></div>
-                        <div class="mt-2 text-muted">Fetching from Jellyfin...</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
 {% endblock %}
 
 {% block scripts %}

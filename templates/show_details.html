@@ -18,85 +18,6 @@
 {% set all_jellyfin = ns.all_jellyfin %}
 {% set total_eps = ns.in_jf + ns.missing %}
 
-<style>
-    /* Page-specific layout only. Colours come from the existing SyncHub theme variables. */
-    .sd-poster {
-        width: 100%;
-        aspect-ratio: 2 / 3;
-        object-fit: cover;
-        background: #14181c;
-        border: 1px solid var(--bs-border-color);
-    }
-    .sd-poster-col { width: 190px; flex: 0 0 auto; }
-
-    .sd-facts { display: flex; flex-wrap: wrap; gap: 0.75rem 2rem; margin: 0; }
-    .sd-facts dt { font-size: 0.8rem; font-weight: 400; color: var(--bs-secondary-color); }
-    .sd-facts dd { margin: 0; font-weight: 600; }
-
-    .sd-section-title { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
-
-    /* Season accordion, tuned to the panel palette */
-    #seasonsAccordion {
-        --bs-accordion-bg: #1f252d;
-        --bs-accordion-border-color: #2c3440;
-        --bs-accordion-btn-bg: #1f252d;
-        --bs-accordion-btn-color: var(--bs-body-color);
-        --bs-accordion-active-bg: #252c36;
-        --bs-accordion-active-color: var(--bs-body-color);
-        --bs-accordion-btn-focus-box-shadow: 0 0 0 0.2rem rgba(0, 224, 84, 0.25);
-        --bs-accordion-border-radius: 0.375rem;
-    }
-    #seasonsAccordion .accordion-button { gap: 1rem; }
-    #seasonsAccordion .accordion-button:not(.collapsed) { box-shadow: inset 0 -1px 0 #2c3440; }
-    .sd-season-progress { width: 110px; height: 6px; background: #2c3440; }
-    .sd-season-meta { display: flex; align-items: center; gap: 0.75rem; }
-
-    .sd-season-request {
-        position: absolute;
-        top: 50%;
-        right: 3.25rem;
-        transform: translateY(-50%);
-        z-index: 4;
-        background: #1f252d;
-    }
-    @media (min-width: 576px) {
-        .sd-season-meta.has-request { margin-right: 9.5rem; }
-    }
-    @media (max-width: 575.98px) {
-        .sd-season-request {
-            position: static;
-            transform: none;
-            margin: 0 1rem 0.75rem;
-        }
-        .sd-season-progress { display: none; }
-    }
-
-    /* Episode table */
-    .sd-table thead th {
-        background: #252c36;
-        color: var(--bs-secondary-color);
-        font-size: 0.8rem;
-        font-weight: 600;
-        border-bottom: 1px solid #2c3440;
-    }
-    .sd-table td:first-child { box-shadow: inset 3px 0 0 transparent; }
-    .sd-table tr.sd-ep-ok      td:first-child { box-shadow: inset 3px 0 0 #00e054; }
-    .sd-table tr.sd-ep-queued  td:first-child { box-shadow: inset 3px 0 0 #40bcf4; }
-    .sd-table tr.sd-ep-missing td:first-child { box-shadow: inset 3px 0 0 var(--bs-danger); }
-    .sd-ep-title-cell { width: 100%; max-width: 0; }
-    .sd-ep-overview {
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-        white-space: normal;
-    }
-    @media (max-width: 575.98px) {
-        .sd-ep-overview { display: none; }
-        .sd-poster-col { width: 120px; }
-    }
-</style>
-
 <div class="mb-3">
     <a href="{{ url_for('index') }}" class="btn btn-sm btn-outline-secondary">
         <i class="bi bi-arrow-left"></i> Back to Dashboard
@@ -104,107 +25,105 @@
 </div>
 
 <!-- ===================== Show header ===================== -->
-<div class="card panel border-0 shadow-sm mb-4">
-    <div class="card-body p-3 p-md-4">
-        <div class="d-flex flex-column flex-sm-row gap-3 gap-md-4">
+<div class="panel p-3 p-md-4 mb-4">
+    <div class="d-flex flex-column flex-sm-row gap-3 gap-md-4">
 
-            <!-- Poster -->
-            <div class="sd-poster-col mx-auto mx-sm-0">
-                <img src="/poster/{{ show.movie_slug }}" alt="{{ show.title }} poster" class="sd-poster rounded shadow">
+        <!-- Poster -->
+        <div class="sd-poster-col mx-auto mx-sm-0">
+            <img src="/poster/{{ show.movie_slug }}" alt="{{ show.title }} poster" class="sd-poster rounded shadow">
+        </div>
+
+        <!-- Details -->
+        <div class="flex-grow-1 min-w-0">
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                <span class="badge badge-tv">TV SHOW</span>
+                {% if show.status == 'jf_missing' %}
+                    <span class="badge bg-danger">JF Missing</span>
+                {% elif show.in_jellyfin or (seasons and not any_missing) %}
+                    <span class="badge bg-success">Fully Available</span>
+                {% elif show.status == 'partially_available' or (seasons and any_missing and not all_jellyfin) %}
+                    <span class="badge bg-warning text-dark">Partially Available</span>
+                {% elif show.status == 'queued' or show.in_sonarr %}
+                    <span class="badge bg-info text-dark">Queued</span>
+                {% else %}
+                    <span class="badge bg-danger">Missing</span>
+                {% endif %}
             </div>
 
-            <!-- Details -->
-            <div class="flex-grow-1 min-w-0">
-                <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
-                    <span class="badge badge-tv">TV SHOW</span>
-                    {% if show.status == 'jf_missing' %}
-                        <span class="badge bg-danger">JF Missing</span>
-                    {% elif show.in_jellyfin or (seasons and not any_missing) %}
-                        <span class="badge bg-success">Fully Available</span>
-                    {% elif show.status == 'partially_available' or (seasons and any_missing and not all_jellyfin) %}
-                        <span class="badge bg-warning text-dark">Partially Available</span>
-                    {% elif show.status == 'queued' or show.in_sonarr %}
-                        <span class="badge bg-info text-dark">Queued</span>
-                    {% else %}
-                        <span class="badge bg-danger">Missing</span>
-                    {% endif %}
-                </div>
+            <h2 class="fw-bold mb-3">
+                {{ show.title }}
+                {% if show.release_year %}<span class="text-muted fs-5 fw-normal ms-1">({{ show.release_year }})</span>{% endif %}
+            </h2>
 
-                <h2 class="fw-bold mb-3">
-                    {{ show.title }}
-                    {% if show.release_year %}<span class="text-muted fs-5 fw-normal ms-1">({{ show.release_year }})</span>{% endif %}
-                </h2>
-
-                <!-- Facts -->
-                <dl class="sd-facts mb-3">
-                    {% if show.release_year %}
-                    <div>
-                        <dt>Year</dt>
-                        <dd>{{ show.release_year }}</dd>
-                    </div>
-                    {% endif %}
-                    {% if show.tvdb_id %}
-                    <div>
-                        <dt>TVDB</dt>
-                        <dd><span class="badge bg-secondary">{{ show.tvdb_id }}</span></dd>
-                    </div>
-                    {% endif %}
-                    {% if show.tmdb_id %}
-                    <div>
-                        <dt>TMDB</dt>
-                        <dd><span class="badge bg-secondary">{{ show.tmdb_id }}</span></dd>
-                    </div>
-                    {% endif %}
-                    <div>
-                        <dt>Users</dt>
-                        <dd>{{ show.user_count }}</dd>
-                    </div>
-                </dl>
-
-                <!-- Requested by -->
-                <div class="mb-3">
-                    <div class="small text-muted mb-1">Requested by</div>
-                    <div class="d-flex flex-wrap gap-1">
-                        {% for u in show.users_list %}
-                            <span class="badge bg-secondary">{{ u }}</span>
-                        {% else %}
-                            <span class="text-muted">No specific user</span>
-                        {% endfor %}
-                    </div>
-                </div>
-
-                <!-- Overall availability -->
-                {% if seasons and total_eps > 0 %}
-                {% set overall_pct = (ns.in_jf * 100 / total_eps)|round|int %}
-                <div class="mb-3" style="max-width: 480px;">
-                    <div class="d-flex justify-content-between small mb-1">
-                        <span>{{ ns.in_jf }} of {{ total_eps }} episodes in Jellyfin</span>
-                        <span class="text-muted">{{ overall_pct }}%</span>
-                    </div>
-                    <div class="progress" style="height: 6px; background: #2c3440;" role="progressbar"
-                         aria-label="Episodes in Jellyfin" aria-valuenow="{{ overall_pct }}" aria-valuemin="0" aria-valuemax="100">
-                        <div class="progress-bar bg-success" style="width: {{ overall_pct }}%"></div>
-                    </div>
+            <!-- Facts -->
+            <dl class="sd-facts mb-3">
+                {% if show.release_year %}
+                <div>
+                    <dt>Year</dt>
+                    <dd>{{ show.release_year }}</dd>
                 </div>
                 {% endif %}
-
-                <!-- Actions -->
-                <div class="d-flex flex-wrap align-items-center gap-2 pt-1">
-                    {% if not seasons or any_missing %}
-                    <span {% if not show.tvdb_id %}class="d-inline-block" tabindex="0" data-bs-toggle="tooltip" title="A TVDB ID is required to request seasons"{% endif %}>
-                        <button type="button" class="btn btn-outline-info"
-                                {% if not show.tvdb_id %}disabled{% endif %}
-                                onclick='requestAllEpisodes(this)'>
-                            <i class="bi bi-cloud-download"></i> Request All Episodes
-                        </button>
-                    </span>
-                    {% endif %}
-                    {% if show.jellyfin_link %}
-                        <a href="{{ show.jellyfin_link }}" class="btn btn-success" target="_blank" rel="noopener noreferrer">
-                            <i class="bi bi-play-circle"></i> Watch on Jellyfin
-                        </a>
-                    {% endif %}
+                {% if show.tvdb_id %}
+                <div>
+                    <dt>TVDB</dt>
+                    <dd><span class="badge bg-secondary">{{ show.tvdb_id }}</span></dd>
                 </div>
+                {% endif %}
+                {% if show.tmdb_id %}
+                <div>
+                    <dt>TMDB</dt>
+                    <dd><span class="badge bg-secondary">{{ show.tmdb_id }}</span></dd>
+                </div>
+                {% endif %}
+                <div>
+                    <dt>Users</dt>
+                    <dd>{{ show.user_count }}</dd>
+                </div>
+            </dl>
+
+            <!-- Requested by -->
+            <div class="mb-3">
+                <div class="small text-muted mb-1">Requested by</div>
+                <div class="d-flex flex-wrap gap-1">
+                    {% for u in show.users_list %}
+                        <span class="badge bg-secondary">{{ u }}</span>
+                    {% else %}
+                        <span class="text-muted">No specific user</span>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Overall availability -->
+            {% if seasons and total_eps > 0 %}
+            {% set overall_pct = (ns.in_jf * 100 / total_eps)|round|int %}
+            <div class="mb-3" style="max-width: 480px;">
+                <div class="d-flex justify-content-between small mb-1">
+                    <span>{{ ns.in_jf }} of {{ total_eps }} episodes in Jellyfin</span>
+                    <span class="text-muted">{{ overall_pct }}%</span>
+                </div>
+                <div class="progress" style="height: 6px; background: #2c3440;" role="progressbar"
+                     aria-label="Episodes in Jellyfin" aria-valuenow="{{ overall_pct }}" aria-valuemin="0" aria-valuemax="100">
+                    <div class="progress-bar bg-success" style="width: {{ overall_pct }}%"></div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Actions -->
+            <div class="d-flex flex-wrap align-items-center gap-2 pt-1">
+                {% if not seasons or any_missing %}
+                <span {% if not show.tvdb_id %}class="d-inline-block" tabindex="0" data-bs-toggle="tooltip" title="A TVDB ID is required to request seasons"{% endif %}>
+                    <button type="button" class="btn btn-outline-info"
+                            {% if not show.tvdb_id %}disabled{% endif %}
+                            onclick='requestAllEpisodes(this)'>
+                        <i class="bi bi-cloud-download"></i> Request All Episodes
+                    </button>
+                </span>
+                {% endif %}
+                {% if show.jellyfin_link %}
+                    <a href="{{ show.jellyfin_link }}" class="btn btn-success" target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-play-circle"></i> Watch on Jellyfin
+                    </a>
+                {% endif %}
             </div>
         </div>
     </div>

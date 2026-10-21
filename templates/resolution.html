@@ -12,26 +12,24 @@
 <div class="row row-cols-1 row-cols-md-2 g-4 mb-5">
     {% for guess in unconfirmed_guesses %}
     <div class="col" id="guess-{{ loop.index }}">
-        <div class="card shadow-sm h-100 border-warning">
-            <div class="card-header bg-warning bg-opacity-25 d-flex justify-content-between align-items-center">
+        <div class="panel h-100 border border-warning d-flex flex-column p-3 p-md-4">
+            <div class="d-flex justify-content-between align-items-center mb-3 pb-3 border-bottom border-warning border-opacity-25">
                 <span class="fw-bold">ID Guessed via Search</span>
                 <span class="badge bg-secondary">Review Needed</span>
             </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-6 border-end">
-                        <small class="text-body-secondary d-block mb-1">Requested Watchlist Item</small>
-                        <h6 class="mb-0">{{ guess.request_title }}</h6>
-                        <small class="text-muted">{{ guess.request_year or 'Unknown Year' }}</small>
-                    </div>
-                    <div class="col-6">
-                        <small class="text-body-secondary d-block mb-1">Guessed TMDB Data</small>
-                        <h6 class="mb-0 text-info">TMDB ID: {{ guess.tmdb_id }}</h6>
-                        <a href="https://www.themoviedb.org/movie/{{ guess.tmdb_id }}" target="_blank" class="small text-decoration-none">Verify on TMDB <i class="bi bi-box-arrow-up-right"></i></a>
-                    </div>
+            <div class="row flex-grow-1">
+                <div class="col-6 border-end border-secondary border-opacity-25">
+                    <small class="text-body-secondary d-block mb-1">Requested Watchlist Item</small>
+                    <h6 class="mb-0">{{ guess.request_title }}</h6>
+                    <small class="text-muted">{{ guess.request_year or 'Unknown Year' }}</small>
+                </div>
+                <div class="col-6">
+                    <small class="text-body-secondary d-block mb-1">Guessed TMDB Data</small>
+                    <h6 class="mb-0 text-info">TMDB ID: {{ guess.tmdb_id }}</h6>
+                    <a href="https://www.themoviedb.org/movie/{{ guess.tmdb_id }}" target="_blank" class="small text-decoration-none">Verify on TMDB <i class="bi bi-box-arrow-up-right"></i></a>
                 </div>
             </div>
-            <div class="card-footer d-flex justify-content-end gap-2 bg-transparent">
+            <div class="mt-auto pt-3 d-flex justify-content-end gap-2">
                 <button class="btn btn-sm btn-outline-danger" onclick="resolveMatch('{{ guess.request_slug }}', 'reject_guess', null, null, 'guess-{{ loop.index }}')">Reject Match</button>
                 <button class="btn btn-sm btn-success" onclick="resolveMatch('{{ guess.request_slug }}', 'approve_guess', '{{ guess.tmdb_id }}', null, 'guess-{{ loop.index }}')">Approve ID</button>
             </div>
@@ -47,39 +45,37 @@
     <div class="row row-cols-1 row-cols-md-2 g-4 mb-5">
         {% for match in suggestions %}
         <div class="col" id="suggestion-{{ loop.index }}">
-            <div class="card shadow-sm h-100 border-info">
-                <div class="card-header bg-info bg-opacity-10 d-flex justify-content-between align-items-center">
+            <div class="panel h-100 border border-info d-flex flex-column p-3 p-md-4">
+                <div class="d-flex justify-content-between align-items-center mb-3 pb-3 border-bottom border-info border-opacity-25">
                     <span class="fw-bold">Potential Link Found</span>
                     <span class="badge {% if match.service == 'radarr' %}bg-warning text-dark{% elif match.service == 'sonarr' %}bg-info text-dark{% elif match.service == 'jellyfin' %}bg-primary{% else %}bg-secondary{% endif %}">
                         {{ match.service|upper }}
                     </span>
                 </div>
-                <div class="card-body">
-                    <div class="row">
-                        <div class="col-6 border-end">
-                            <small class="text-body-secondary d-block mb-1">Requested Watchlist Item</small>
-                            <h6 class="mb-0">{{ match.request_title }}</h6>
-                            <small class="text-muted">{{ match.request_year or 'Unknown Year' }}</small>
-                        </div>
-                        <div class="col-6">
-                            <small class="text-body-secondary d-block mb-1">Unlinked Cache Item</small>
-                            <h6 class="mb-0 text-info">{{ match.service_title }}</h6>
-                            <small class="text-muted">{{ match.service_year or 'Unknown Year' }}</small>
-                            <div class="mt-2">
-                                {% if match.tmdb_id %}
-                                <span class="badge bg-light text-dark border">TMDB: {{ match.tmdb_id }}</span>
-                                {% endif %}
-                                {% if match.tvdb_id %}
-                                <span class="badge bg-light text-dark border">TVDB: {{ match.tvdb_id }}</span>
-                                {% endif %}
-                                {% if not match.tmdb_id and not match.tvdb_id %}
-                                <span class="badge bg-light text-danger border">No Master ID</span>
-                                {% endif %}
-                            </div>
+                <div class="row flex-grow-1">
+                    <div class="col-6 border-end border-secondary border-opacity-25">
+                        <small class="text-body-secondary d-block mb-1">Requested Watchlist Item</small>
+                        <h6 class="mb-0">{{ match.request_title }}</h6>
+                        <small class="text-muted">{{ match.request_year or 'Unknown Year' }}</small>
+                    </div>
+                    <div class="col-6">
+                        <small class="text-body-secondary d-block mb-1">Unlinked Cache Item</small>
+                        <h6 class="mb-0 text-info">{{ match.service_title }}</h6>
+                        <small class="text-muted">{{ match.service_year or 'Unknown Year' }}</small>
+                        <div class="mt-2">
+                            {% if match.tmdb_id %}
+                            <span class="badge bg-secondary border border-secondary">TMDB: {{ match.tmdb_id }}</span>
+                            {% endif %}
+                            {% if match.tvdb_id %}
+                            <span class="badge bg-secondary border border-secondary">TVDB: {{ match.tvdb_id }}</span>
+                            {% endif %}
+                            {% if not match.tmdb_id and not match.tvdb_id %}
+                            <span class="badge bg-dark text-danger border border-danger border-opacity-50">No Master ID</span>
+                            {% endif %}
                         </div>
                     </div>
                 </div>
-                <div class="card-footer d-flex justify-content-end gap-2 bg-transparent border-top-0">
+                <div class="mt-auto pt-3 d-flex justify-content-end gap-2">
                     <button class="btn btn-sm btn-outline-danger" onclick="resolveMatch('{{ match.request_slug }}', 'dismiss', null, null, 'suggestion-{{ loop.index }}', '{{ match.service }}', '{{ match.service_external_id }}')">Dismiss Suggestion</button>
                     <button class="btn btn-sm btn-success" onclick="resolveMatch('{{ match.request_slug }}', 'approve', null, null, 'suggestion-{{ loop.index }}', '{{ match.service }}', '{{ match.service_external_id }}')">Approve Merge</button>
                 </div>
@@ -95,24 +91,24 @@
 
 <!-- Section 3: Unmatched Master Table -->
 <h4 class="mb-3">Unmatched Items <small class="text-muted">({{ unmatched_films|length }})</small></h4>
-<div class="card shadow-sm panel">
-    <div class="card-body p-0 table-responsive">
+<div class="panel p-0 overflow-hidden mb-5">
+    <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
             <thead class="table-light">
                 <tr>
-                    <th>Title</th>
+                    <th class="ps-4">Title</th>
                     <th>Year</th>
                     <th>Type</th>
-                    <th>Manual Link (TMDB/TVDB ID)</th>
+                    <th class="pe-4">Manual Link (TMDB/TVDB ID)</th>
                 </tr>
             </thead>
             <tbody>
                 {% for film in unmatched_films %}
                 <tr id="unmatched-{{ film.movie_slug }}">
-                    <td class="fw-bold">{{ film.title }}</td>
+                    <td class="fw-bold ps-4">{{ film.title }}</td>
                     <td>{{ film.release_year or '-' }}</td>
                     <td><span class="badge {{ 'badge-tv' if film.media_type in ['tv', 'episode'] else 'badge-movie' }}">{{ film.media_type|upper }}</span></td>
-                    <td style="max-width: 300px;">
+                    <td class="pe-4" style="max-width: 300px;">
                         <form onsubmit="submitManualId(event, '{{ film.movie_slug }}', '{{ film.media_type }}', 'unmatched-{{ film.movie_slug }}')" class="d-flex gap-2">
                             <input type="number" class="form-control form-control-sm" placeholder="ID Number..." required>
                             <button type="submit" class="btn btn-sm btn-outline-info">Link</button>
@@ -131,7 +127,7 @@
 {% block scripts %}
 <script>
     function resolveMatch(slug, action, tmdb_id, tvdb_id, elementId, service, external_id) {
-        const btnContainer = document.querySelector(`#${elementId} .card-footer`);
+        const btnContainer = document.querySelector(`#${elementId} .mt-auto`);
         if(btnContainer) btnContainer.innerHTML = '<span class="spinner-border spinner-border-sm text-secondary" role="status"></span>';
 
         fetch('/api/resolution/merge', {

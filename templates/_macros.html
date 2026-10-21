@@ -11,11 +11,11 @@
 {% set clickable = f_type is not none or f_status is not none %}
 {% set tc = text or ('text-' ~ color) %}
 <div class="col-6 col-md-3">
-    <div class="card text-center border-{{ color }} stat-card{% if clickable %} stat-card-link{% endif %}"
+    <div class="panel text-center border-{{ color }} stat-card{% if clickable %} stat-card-link{% endif %}"
          {% if clickable %}role="button" tabindex="0" aria-label="Show: {{ label }}" data-set-type="{{ f_type or '' }}" data-set-status="{{ f_status or '' }}"{% endif %}>
-        <div class="card-body p-2">
-            <h6 class="card-title {{ tc }} mb-1">{{ label }}</h6>
-            <h3 class="fw-bold {{ tc }} mb-0">{{ value }}</h3>
+        <div class="p-2 p-md-3">
+            <h6 class="mb-1 {{ tc }}">{{ label }}</h6>
+            <h3 class="fw-bold mb-0 {{ tc }}">{{ value }}</h3>
         </div>
     </div>
 </div>
@@ -32,20 +32,18 @@
 {% macro task_card(key, title, desc, task, action, btn_label) %}
 {% set sv = ((task.status if task else 'idle') or 'idle')|lower %}
 <div class="col">
-    <div class="card h-100 shadow-sm">
-        <div class="card-body d-flex flex-column">
-            <h5 class="card-title">{{ title }}</h5>
-            <p class="card-text text-body-secondary">{{ desc }}</p>
-            <div class="mb-3">
-                {{ status_badge(task, key) }}
-                <small class="text-body-secondary d-block mt-1" data-task-msg="{{ key }}">{{ (task.message if task else '') or 'No active logs' }}</small>
-                <small class="text-body-secondary d-block mt-1">Last run: <span data-task-last="{{ key }}">{{ (task.last_run if task else '') or 'Never' }}</span></small>
-            </div>
-            <form action="{{ action }}" method="POST" class="mt-auto">
-                {{ csrf_field() }}
-                <button type="submit" class="btn btn-outline-primary btn-sm" data-task-btn="{{ key }}"{% if sv in ['in_progress', 'pending'] %} disabled{% endif %}>{{ btn_label }}</button>
-            </form>
+    <div class="panel d-flex flex-column h-100 p-3 p-md-4">
+        <h5 class="mb-1">{{ title }}</h5>
+        <p class="text-body-secondary mb-3">{{ desc }}</p>
+        <div class="mt-auto mb-3">
+            {{ status_badge(task, key) }}
+            <small class="text-body-secondary d-block mt-1" data-task-msg="{{ key }}">{{ (task.message if task else '') or 'No active logs' }}</small>
+            <small class="text-body-secondary d-block mt-1">Last run: <span data-task-last="{{ key }}">{{ (task.last_run if task else '') or 'Never' }}</span></small>
         </div>
+        <form action="{{ action }}" method="POST">
+            {{ csrf_field() }}
+            <button type="submit" class="btn btn-outline-primary btn-sm w-100" data-task-btn="{{ key }}"{% if sv in ['in_progress', 'pending'] %} disabled{% endif %}>{{ btn_label }}</button>
+        </form>
     </div>
 </div>
 {% endmacro %}
@@ -97,6 +95,65 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" class="btn btn-info" id="submitSeasonBtn" onclick="submitSeasonRequest()">Send to Sonarr</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endmacro %}
+
+{# Settings: Add/Edit Profile Modal #}
+{% macro profile_modal(save_url) %}
+<div class="modal fade" id="profileModal" tabindex="-1" aria-labelledby="profileModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <form action="{{ save_url }}" method="POST" class="modal-content">
+            {{ csrf_field() }}
+            <div class="modal-header">
+                <h5 class="modal-title" id="profileModalLabel">Profile Mapping</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">SyncHub Display Name <span class="text-danger">*</span></label>
+                    <input type="text" name="profile_name" id="modal_profile_name" class="form-control" required placeholder="e.g. John Doe">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Letterboxd Username (Movies)</label>
+                    <input type="text" name="letterboxd_username" id="modal_lb_user" class="form-control" placeholder="Optional">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Serializd Username (TV Shows)</label>
+                    <input type="text" name="serializd_username" id="modal_sz_user" class="form-control" placeholder="Optional">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Jellyfin User ID</label>
+                    <input type="text" name="jellyfin_user_id" id="modal_jf_id" class="form-control font-monospace" placeholder="Optional">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-success">Save Profile</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endmacro %}
+
+{# Settings: Jellyfin Import Modal #}
+{% macro jellyfin_import_modal() %}
+<div class="modal fade" id="jellyfinImportModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-dark text-white">
+                <h5 class="modal-title">Import Jellyfin Users</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0">
+                <div class="list-group list-group-flush" id="jellyfinUserList">
+                    <div class="p-4 text-center">
+                        <div class="spinner-border text-secondary" role="status"></div>
+                        <div class="mt-2 text-muted">Fetching from Jellyfin...</div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
