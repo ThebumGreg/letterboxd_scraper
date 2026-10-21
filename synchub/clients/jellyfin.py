@@ -1,0 +1,48 @@
+from synchub import http, settings
+from synchub.clients import check, require
+
+
+class JellyfinClient:
+    def __init__(self, url=None, api_key=None):
+        self.url, self.key = require(url or settings.get("jellyfin_url"), api_key or settings.get("jellyfin_api_key"), "Jellyfin")
+        self._admin_id = None
+
+    @property
+    def headers(self):
+        return {
+            "Accept": "application/json",
+            "Authorization": f'MediaBrowser Client="SyncHub", Device="SyncHub", DeviceId="synchub", Version="2.0", Token="{self.key}"',
+        }
+
+    def users(self):
+        res = check(http.request("jellyfin", "GetUsers", "GET", f"{self.url}/Users", headers=self.headers), "Jellyfin", "user list")
+        return res.json()
+
+    def admin_user_id(self):
+        """An administrator's ID. Querying as one avoids Jellyfin filtering items by user permissions."""
+        if self._admin_id is None:
+            try:
+                users = self.users()
+            except Exception:
+                return None
+            admin = next((u for u in users if (u.get("Policy") or {}).get("IsAdministrator")), users[0] if users else None)
+            self._admin_id = admin.get("Id") if admin else None
+        return self._admin_id
+
+    def iter_items(self, types, page_size=500):
+        """Yields every item of the given Jellyfin types (Movie, Series, Season, Episode). Raises on any HTTP error."""
+        start = 0
+        user_id = self.admin_user_id()
+        while True:
+            params = {"IncludeItemTypes": ",".join(types), "Recursive": "true", "Fields": "ProviderIds,ParentId",
+                      "StartIndex": start, "Limit": page_size}
+            if user_id:
+                params["UserId"] = user_id
+            res = check(http.request("jellyfin", "SyncLibrary", "GET", f"{self.url}/Items", headers=self.headers, params=params, timeout=60), "Jellyfin", "library sync")
+            body = res.json()
+            items = body.get("Items") or []
+            yield from items
+            start += page_size
+            total = body.get("TotalRecordCount")
+            if not items or len(items) < page_size or (total is not None and start >= total):
+                break

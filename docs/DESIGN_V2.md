@@ -1,19 +1,20 @@
 # SyncHub v2 — Data Model and Logic Redesign
 
-Status: **proposal, awaiting approval**. No application code changes are part of this document.
+Status: **approved; in progress** (Phases 0-1 implemented in `synchub/`). The current app keeps running unchanged until cutover.
 
 ## 1. Decisions already made
 
 | Topic | Decision |
 |---|---|
-| Database | Fresh database file (`data/synchub.db`). The current `data/letterboxd.db` is never modified and stays as a backup. |
+| Database | Fresh database file (`data/synchub.db`). The current `data/letterboxd.db` is never touched and stays as a backup. |
 | Metadata authority | **TMDB is primary**; TVDB is the backup and the bridge to Sonarr. Matching uses several signals, never one ID alone. |
 | TV coverage | Every episode of a series is stored, including ones not in the library and not yet aired. |
 | Specials | Season 0 is stored, shown **last**, labelled **"Specials (Season 0)"**, collapsed by default, and **excluded from progress totals and "request all"**. Individual specials can still be requested. |
 | Unaired episodes | Shown as **"Not aired"**; not counted as Missing. |
 | States | Missing, Queue, Downloading, **Downloaded** (file exists, Jellyfin has not picked it up), In Library. **Transferring** and **Encoding** come later from your own scripts. All states live in a table, so adding one needs no schema change. |
 | Kept data | Items removed from Letterboxd stay in the database. Deleting a profile does not delete its requests. Serializd pruning is unchanged for now. Items marked `jf_missing` are not re-requested automatically. |
-| Profiles | One Letterboxd username, one Serializd username and one Jellyfin user may belong to **only one profile** (enforced by the database). Existing profiles are **not imported**; they are recreated by hand in the new app. |
+| Profiles | One Letterboxd username, one Serializd username and one Jellyfin user may belong to **only one profile** (enforced by the database). |
+| Existing data | **Nothing is migrated.** The new app starts empty: settings and profiles are entered again and everything else is re-synced from the sources. |
 
 ## 2. What the data export showed
 
@@ -56,7 +57,7 @@ Every table has `first_seen`, `last_seen`, `removed_at`. Raw payloads are kept w
 
 | Table | Key columns |
 |---|---|
-| `src_letterboxd_entry` | `profile_id`, `slug`, `list` (watchlist or watched), `title`, `year`, `tmdb_id`, `imdb_id`. UNIQUE(profile, slug, list). |
+| `src_letterboxd_entry` | `username` (not a profile ID, so deleting and recreating a profile re-attaches its entries), `slug`, `list` (watchlist or watched), `title`, `year`, `tmdb_id`, `imdb_id`. UNIQUE(username, slug, list). Entries no longer on a completely scraped list get `removed_at`; they stay visible but no longer count as active demand for auto-add. |
 | `src_serializd_entry` | `profile_id`, `serializd_show_id`, `title`, `tmdb_id`, `tvdb_id`, `imdb_id`, `season`. |
 | `src_jellyfin_item` | `item_id` PK, `type` (movie, series, season, episode), **`series_id`**, **`season_id`**, `name`, `series_name`, `year`, `season_number`, `episode_number`, `premiere_date`, `tmdb_id`, `tvdb_id`, `imdb_id`. |
 | `src_radarr_movie` | `radarr_id`, `tmdb_id`, `imdb_id`, `title`, `year`, `monitored`, `has_file`. |
@@ -68,7 +69,7 @@ Every table has `first_seen`, `last_seen`, `removed_at`. Raw payloads are kept w
 
 - **`media`**: `id`, `kind` (movie or show), `title`, `original_title`, `year`, `tmdb_id`, `tvdb_id`, `imdb_id`, `status`, `first_air_date`, `poster_path`, `metadata_refreshed_at`. UNIQUE(kind, tmdb_id) and UNIQUE(kind, tvdb_id) where not NULL.
 - **`episode`**: `id`, `media_id`, `season_number`, `episode_number` (TMDB numbering), `title`, `overview`, `air_date`, `runtime`, `tmdb_episode_id`, `tvdb_episode_id`, `tvdb_season_number`, `tvdb_episode_number` (Sonarr numbering), `numbering_status` (same, mapped, unmapped). UNIQUE(media_id, season_number, episode_number).
-- **`link`**: `entity_type` (media or episode), `entity_id`, `source`, `source_key`, `method`, `confidence`, `status` (auto, manual, review, rejected), `created_at`. UNIQUE(source, source_key).
+- **`link`**: `entity_type` (media or episode), `entity_id`, `source`, `source_key`, `method`, `confidence`, `status` (auto or manual), `created_at`. UNIQUE(source, source_key). A dismissed suggestion is remembered in `match_review`, not in `link`.
 - **`match_review`**: persisted review items (source record, candidate media, confidence, reason, pending, approved or dismissed). This replaces the computed suggestions in the Resolution Center.
 
 ### 4.4 State layer
@@ -124,15 +125,12 @@ The layout stays. Templates change only where they decide state themselves.
 - **Badges** use `state_def`, so a new state appears with no template edit.
 - **Resolution Center** reads `match_review`.
 
-## 8. Migration (one-time import)
+## 8. Starting fresh (no migration)
 
-1. Create `data/synchub.db` from the schema. Nothing touches the old file.
-2. Copy settings (including keys).
-3. **Profiles are not imported.** You create them in the new app (uniqueness is enforced).
-4. The importer then reads the old `user_requests`, matches rows to profiles by Letterboxd username, and creates `src_letterboxd_entry` rows. Rows with no matching profile are listed in a report and skipped, not deleted.
-5. 42 manual links become `link` rows with status `manual`. Dismissed items become `rejected` links.
-6. Run the syncs: Jellyfin, Radarr, Sonarr, TMDB. Everything else is rebuilt.
-7. The importer ends with a verification report (counts compared, duplicate checks) and has a dry-run mode.
+1. `data/synchub.db` is created from the migrations on first start. The old `data/letterboxd.db` is not read or modified.
+2. Enter settings (API keys, URLs) and create profiles in the new app. Uniqueness is enforced.
+3. Run the syncs: Jellyfin, Radarr, Sonarr, Letterboxd, Serializd, then TMDB metadata. Everything is rebuilt from the sources.
+4. Manual ID links and dismissed suggestions from the old app are not carried over; they are made again through the Resolution Center if still needed.
 
 The old and new apps can run side by side (new one on another port) until you are happy, then you cut over.
 
@@ -145,7 +143,7 @@ The old and new apps can run side by side (new one on another port) until you ar
 | 2 | TMDB metadata, matching engine, review queue | Test suite built from the messy cases above passes (dashes, same-title films, TVDB-only shows) |
 | 3 | State engine, queue ingest, `processing_event` | State table matches the rules for movies and episodes |
 | 4 | UI switched to the new tables | Show page shows the correct episodes for every show in your export |
-| 5 | Importer, side-by-side run, cutover, retire old modules | Verification report is clean and you approve |
+| 5 | Side-by-side run, cutover, retire old modules | You approve the cutover |
 | 6 *(later)* | Authenticated API for transfer and encode scripts | A script can open and close a Transferring or Encoding event |
 
 ## 10. Risks and open items
