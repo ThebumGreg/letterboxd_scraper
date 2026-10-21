@@ -2,7 +2,7 @@
 import logging
 import threading
 
-from synchub import db, episodes, matching, metadata, settings, states
+from synchub import automation, db, episodes, matching, metadata, settings, states
 from synchub.clients import ConfigError
 from synchub.clients.arr import RadarrClient, SonarrClient
 from synchub.clients.jellyfin import JellyfinClient
@@ -74,13 +74,42 @@ def sync_jellyfin_tv():
     return run("jellyfin_tv", "Syncing Jellyfin TV", lambda: _jellyfin("tv", "Jellyfin TV"))
 
 
+def _link_now():
+    """Links newly synced records so the auto-add rules see an up-to-date picture (no network)."""
+    with db.connection() as conn:
+        matching.Matcher(conn, None).resolve_all()
+
+
+def _summarise(result, noun):
+    parts = []
+    if result.get("added"):
+        parts.append(f"added {len(result['added'])} {noun}")
+    if result.get("would_add"):
+        parts.append(f"dry run: would add {len(result['would_add'])}")
+    if result.get("errors"):
+        parts.append(f"{len(result['errors'])} could not be added")
+    if result.get("skipped_no_tvdb"):
+        parts.append(f"{len(result['skipped_no_tvdb'])} skipped (no TVDB ID)")
+    return (" Auto-add: " + ", ".join(parts) + ".") if parts else ""
+
+
 def sync_radarr():
     def work():
         client = RadarrClient()
         with db.connection() as conn:
             lib = radarr_ingest.sync_library(conn, client)
             queue = radarr_ingest.sync_queue(conn, client)
-        return f"Radarr: {lib['seen']} movie(s), {queue['seen']} in queue."
+        note = ""
+        if settings.get("radarr_enable_queue_addition") == "1":
+            _link_now()
+            with db.connection() as conn:
+                result = automation.run_radarr_additions(conn, client, dry_run=settings.get("radarr_dry_run") == "1")
+            if result["added"]:
+                with db.connection() as conn:
+                    radarr_ingest.sync_library(conn, client)
+                    radarr_ingest.sync_queue(conn, client)
+            note = _summarise(result, "movie(s)")
+        return f"Radarr: {lib['seen']} movie(s), {queue['seen']} in queue.{note}"
     return run("radarr", "Syncing Radarr", work)
 
 
@@ -90,9 +119,29 @@ def sync_sonarr():
         with db.connection() as conn:
             lib = sonarr_ingest.sync_library(conn, client)
             queue = sonarr_ingest.sync_queue(conn, client)
-        note = f" ({len(lib['episode_fetch_errors'])} series had episode errors)" if lib["episode_fetch_errors"] else ""
-        return f"Sonarr: {lib['series']} series, {lib['episodes']} episode(s), {queue['seen']} in queue{note}."
+        errors = f" ({len(lib['episode_fetch_errors'])} series had episode errors)" if lib["episode_fetch_errors"] else ""
+        note = ""
+        if settings.get("sonarr_enable_queue_addition") == "1":
+            _link_now()
+            with db.connection() as conn:
+                result = automation.run_sonarr_additions(conn, client, dry_run=settings.get("sonarr_dry_run") == "1")
+            if result["added"]:
+                with db.connection() as conn:
+                    sonarr_ingest.sync_library(conn, client)
+                    sonarr_ingest.sync_queue(conn, client)
+            note = _summarise(result, "show(s)")
+        return f"Sonarr: {lib['series']} series, {lib['episodes']} episode(s), {queue['seen']} in queue{errors}.{note}"
     return run("sonarr", "Syncing Sonarr", work)
+
+
+def resync_sonarr():
+    """Used right after adding a series: pull Sonarr's library and map its episodes (no TMDB needed)."""
+    client = SonarrClient()
+    with db.connection() as conn:
+        sonarr_ingest.sync_library(conn, client)
+    _link_now()
+    with db.connection() as conn:
+        episodes.map_sonarr_episodes(conn)
 
 
 def scrape_letterboxd():
@@ -162,10 +211,22 @@ def reconcile():
     return run("reconcile", "Reconciling", work)
 
 
+def with_reconcile(*steps):
+    """A job that runs the given steps and then reconciles, so the dashboard reflects the new data."""
+    def job():
+        for step in steps:
+            step()
+        reconcile()
+    job.__name__ = "_then_".join(step.__name__ for step in steps) + "_then_reconcile"
+    return job
+
+
 def run_all():
     """The full sequence, one step after another. A failing step is recorded and the rest still run."""
     def work():
-        steps = (sync_jellyfin_movies, sync_jellyfin_tv, sync_radarr, sync_sonarr, scrape_letterboxd, scrape_serializd, resolve_letterboxd_ids, reconcile)
+        # Reconcile before Radarr/Sonarr so their auto-add rules see wanted titles already linked, and again afterwards.
+        steps = (sync_jellyfin_movies, sync_jellyfin_tv, scrape_letterboxd, scrape_serializd, resolve_letterboxd_ids, reconcile,
+                 sync_radarr, sync_sonarr, reconcile)
         for step in steps:
             step()
         with db.connection() as conn:
