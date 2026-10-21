@@ -909,7 +909,7 @@ def get_full_tv_show_episodes(identifier):
     return seasons
 
 def get_tv_show_details(identifier):
-    """Fast, lightweight lookup for top-level show details and season list."""
+    """Fast, lightweight lookup for top-level show details and season list w/ accurate counts."""
     with get_connection() as conn:
         show_row = conn.execute(
             "SELECT * FROM media_catalog WHERE tvdb_id = ? OR movie_slug = ? LIMIT 1",
@@ -923,7 +923,7 @@ def get_tv_show_details(identifier):
         show["users_list"] = [u.strip() for u in (show["requested_by_users"] or "").split(",") if u.strip()]
 
     # Determine total season numbers (from Jellyfin cache, Sonarr, or TMDB)
-    season_numbers = set(show["available_seasons"])
+    season_numbers = set([int(s) for s in show["available_seasons"] if s is not None])
     
     # Query cached tv_episodes table for known seasons
     with get_connection() as conn:
@@ -946,24 +946,46 @@ def get_tv_show_details(identifier):
                 r = requests.get(f"https://api.themoviedb.org/3/tv/{show['tmdb_id']}", headers=headers, params=params, timeout=5)
                 if r.status_code == 200:
                     for s in r.json().get("seasons", []):
-                        if s.get("season_number") is not None:
+                        if s.get("season_number") is not None and s.get("season_number") > 0:
                             season_numbers.add(s["season_number"])
             except Exception as e:
                 logger.warning(f"Failed fetching season summary from TMDB: {e}")
 
-    # NEW: Fallback to Sonarr if TMDB yields 0 results or is unconfigured
+    # Fallback to Sonarr if TMDB yields 0 results or is unconfigured
     if not season_numbers and show.get("tvdb_id"):
         try:
             import sonarr_client
             series_info = sonarr_client.get_series_by_tvdb(show["tvdb_id"])
             if series_info and "seasons" in series_info:
                 for s in series_info["seasons"]:
-                    if s.get("seasonNumber") is not None:
+                    if s.get("seasonNumber") is not None and s.get("seasonNumber") > 0:
                         season_numbers.add(s["seasonNumber"])
         except Exception as e:
             logger.warning(f"Failed fetching season summary from Sonarr: {e}")
 
-    return show, sorted(list(season_numbers))
+    # Compute accurate stats per season
+    seasons_data = []
+    with get_connection() as conn:
+        for sn in sorted(list(season_numbers)):
+            # Active in Jellyfin (Fully Synced)
+            jf_count = conn.execute("SELECT COUNT(*) FROM service_cache WHERE service='jellyfin' AND media_type='episode' AND season_number=? AND status != 'jf_missing' AND (tvdb_id=? OR tmdb_id=? OR movie_slug LIKE ?)", (sn, str(show.get("tvdb_id") or "NONE"), str(show.get("tmdb_id") or "NONE"), f"{show.get('movie_slug')}%")).fetchone()[0]
+            # Total strictly known locally
+            tot_count = conn.execute("SELECT COUNT(*) FROM tv_episodes WHERE season_number=? AND (tvdb_id=? OR tmdb_id=?)", (sn, str(show.get("tvdb_id") or "NONE"), str(show.get("tmdb_id") or "NONE"))).fetchone()[0]
+            # Formally marked missing during a previous scan
+            jf_missing = conn.execute("SELECT COUNT(*) FROM service_cache WHERE service='jellyfin' AND media_type='episode' AND season_number=? AND status = 'jf_missing' AND (tvdb_id=? OR tmdb_id=? OR movie_slug LIKE ?)", (sn, str(show.get("tvdb_id") or "NONE"), str(show.get("tmdb_id") or "NONE"), f"{show.get('movie_slug')}%")).fetchone()[0]
+            
+            # Combine logic. Always respect max known episodes (even if tv_episodes cache hasn't loaded yet)
+            actual_total = max(tot_count, jf_count + jf_missing)
+            missing_count = max(0, actual_total - jf_count)
+            
+            seasons_data.append({
+                "season_number": sn,
+                "in_jellyfin": jf_count,
+                "missing": missing_count,
+                "total": actual_total
+            })
+
+    return show, seasons_data
 
 def get_season_episodes_lazy(identifier, season_number):
     """Lazy-loads and caches episodes for a single season on demand."""
