@@ -107,24 +107,39 @@ def run_radarr_automation_worker() -> None:
 def request_tv_seasons(tvdb_id, requested_seasons):
     if not tvdb_id or not requested_seasons:
         return {"status": "error", "message": "Invalid TVDB ID or season selection."}
-        
+
+    try:
+        requested = sorted({int(s) for s in requested_seasons})
+    except (TypeError, ValueError):
+        return {"status": "error", "message": "Season numbers must be whole numbers."}
+
     try:
         series_info = sonarr_client.get_series_by_tvdb(tvdb_id)
         if not series_info:
-            return sonarr_client.add_series(tvdb_id=tvdb_id, season_number=None, monitored_seasons=requested_seasons)
-            
+            return sonarr_client.add_series(tvdb_id=tvdb_id, season_number=None, monitored_seasons=requested)
+
         sonarr_id = series_info["id"]
-        seasons_payload = []
+        # Only switch the requested seasons on. Seasons the user already monitors must stay monitored.
         for s in series_info.get("seasons", []):
-            s_num = s.get("seasonNumber")
-            s["monitored"] = (s_num in requested_seasons)
-            seasons_payload.append(s)
-            
-        series_info["seasons"] = seasons_payload
+            if s.get("seasonNumber") in requested:
+                s["monitored"] = True
+
         series_info["monitored"] = True
-        
         sonarr_client.update_series(sonarr_id, series_info)
-        return {"status": "updated", "sonarr_id": sonarr_id, "seasons": requested_seasons}
+
+        # Monitoring alone does not make Sonarr look for the episodes, so start a search for each requested season.
+        search_errors = []
+        for season_number in requested:
+            try:
+                res = sonarr_client.search_season(sonarr_id, season_number)
+                if res.get("status") == "error":
+                    search_errors.append(f"S{season_number}: {res.get('message')}")
+            except Exception as e:
+                search_errors.append(f"S{season_number}: {e}")
+        if search_errors:
+            logger.warning(f"Season search failed for TVDB {tvdb_id}: {'; '.join(search_errors)}")
+
+        return {"status": "updated", "sonarr_id": sonarr_id, "seasons": requested, "search_errors": search_errors}
     except Exception as e:
         logger.error(f"Failed granular season request for TVDB {tvdb_id}: {e}")
         return {"status": "error", "message": str(e)}

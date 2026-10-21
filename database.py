@@ -212,11 +212,14 @@ def init_db():
         _ensure_column(conn, "user_profile_mappings", "is_active INTEGER DEFAULT 1")
         _ensure_column(conn, "tv_episodes", "show_title TEXT")
 
-        conn.execute("""
-            INSERT INTO user_profile_mappings (profile_name, letterboxd_username, serializd_username)
-            SELECT DISTINCT username, username, username FROM user_requests 
-            WHERE username NOT IN (SELECT profile_name FROM user_profile_mappings)
-        """)
+        # One-time seed of profiles from legacy requests. Re-running it on every start would resurrect deleted profiles.
+        if not conn.execute("SELECT 1 FROM app_settings WHERE key = 'profile_seed_done'").fetchone():
+            if conn.execute("SELECT COUNT(*) FROM user_profile_mappings").fetchone()[0] == 0:
+                conn.execute("""
+                    INSERT INTO user_profile_mappings (profile_name, letterboxd_username, serializd_username)
+                    SELECT DISTINCT username, username, username FROM user_requests
+                """)
+            conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('profile_seed_done', '1')")
         conn.execute("""
             UPDATE user_requests 
             SET profile_id = (SELECT id FROM user_profile_mappings WHERE profile_name = user_requests.username) 
@@ -390,12 +393,12 @@ def update_film_identifiers(movie_slug, tmdb_id=None, imdb_id=None, tvdb_id=None
     with get_connection() as conn:
         conn.execute("""
             UPDATE user_requests 
-            SET tmdb_id = COALESCE(?, tmdb_id), imdb_id = COALESCE(?, imdb_id), tvdb_id = COALESCE(?, tvdb_id), ignore_match = ?, id_source = CASE WHEN ? THEN 'manual' ELSE id_source END 
+            SET tmdb_id = COALESCE(?, tmdb_id), imdb_id = COALESCE(?, imdb_id), tvdb_id = COALESCE(?, tvdb_id), ignore_match = CASE WHEN ? THEN 1 ELSE ignore_match END, id_source = CASE WHEN ? THEN 'manual' ELSE id_source END 
             WHERE movie_slug = ?
         """, (tmdb_id, imdb_id, tvdb_id, ignore_flag, any_given, movie_slug))
         conn.execute("""
             UPDATE service_cache 
-            SET tmdb_id = COALESCE(?, tmdb_id), imdb_id = COALESCE(?, imdb_id), tvdb_id = COALESCE(?, tvdb_id), ignore_match = ?
+            SET tmdb_id = COALESCE(?, tmdb_id), imdb_id = COALESCE(?, imdb_id), tvdb_id = COALESCE(?, tvdb_id), ignore_match = CASE WHEN ? THEN 1 ELSE ignore_match END
             WHERE movie_slug = ?
         """, (tmdb_id, imdb_id, tvdb_id, ignore_flag, movie_slug))
 
@@ -739,17 +742,22 @@ def get_user_profile_mappings():
     with get_connection() as conn:
         return [dict(r) for r in conn.execute("SELECT * FROM user_profile_mappings ORDER BY profile_name ASC").fetchall()]
     
-def save_user_profile_mapping(profile_name, letterboxd_username="", serializd_username="", jellyfin_user_id="", is_active=1):
+def save_user_profile_mapping(profile_name, letterboxd_username=None, serializd_username=None, jellyfin_user_id=None, is_active=None):
+    """Creates a profile, or updates an existing one. Arguments left as None keep their stored value."""
+    profile_name = profile_name.strip()
+    values = {"letterboxd_username": letterboxd_username, "serializd_username": serializd_username, "jellyfin_user_id": jellyfin_user_id, "is_active": is_active}
+    changes = {k: (v.strip() if isinstance(v, str) else v) for k, v in values.items() if v is not None}
     with get_connection() as conn:
-        conn.execute("""
-            INSERT INTO user_profile_mappings (profile_name, letterboxd_username, serializd_username, jellyfin_user_id, is_active)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(profile_name) DO UPDATE SET
-                letterboxd_username = excluded.letterboxd_username,
-                serializd_username = excluded.serializd_username,
-                jellyfin_user_id = excluded.jellyfin_user_id,
-                is_active = excluded.is_active
-        """, (profile_name.strip(), letterboxd_username.strip(), serializd_username.strip(), jellyfin_user_id.strip(), is_active))
+        row = conn.execute("SELECT id FROM user_profile_mappings WHERE profile_name = ?", (profile_name,)).fetchone()
+        if row:
+            if changes:
+                assignments = ", ".join(f"{k} = ?" for k in changes)
+                conn.execute(f"UPDATE user_profile_mappings SET {assignments} WHERE id = ?", (*changes.values(), row["id"]))
+        else:
+            conn.execute(
+                "INSERT INTO user_profile_mappings (profile_name, letterboxd_username, serializd_username, jellyfin_user_id, is_active) VALUES (?, ?, ?, ?, ?)",
+                (profile_name, changes.get("letterboxd_username", ""), changes.get("serializd_username", ""), changes.get("jellyfin_user_id", ""), changes.get("is_active", 1)),
+            )
 
 def toggle_profile_mapping(profile_id, is_active):
     with get_connection() as conn:
@@ -802,6 +810,24 @@ def _fetch_tmdb_episodes(tmdb_id):
         logger.warning(f"Failed fetching TMDB episodes for TMDB {tmdb_id}: {e}")
         return None, None
 
+def _tv_id_clause(tvdb_id, tmdb_id, column_prefix=""):
+    """SQL predicate matching a show by whichever IDs it actually has.
+
+    Missing IDs must not be compared at all: tv_episodes stores the literal 'NONE' for a missing
+    ID (to keep its UNIQUE constraint working), so comparing against it would match every other
+    show that also lacks that ID.
+    """
+    clauses, params = [], []
+    if tvdb_id:
+        clauses.append(f"{column_prefix}tvdb_id = ?")
+        params.append(str(tvdb_id))
+    if tmdb_id:
+        clauses.append(f"{column_prefix}tmdb_id = ?")
+        params.append(str(tmdb_id))
+    if not clauses:
+        return "0", []
+    return "(" + " OR ".join(clauses) + ")", params
+
 def get_full_tv_show_episodes(identifier):
     with get_connection() as conn:
         show_row = conn.execute("SELECT * FROM media_catalog WHERE tvdb_id = ? OR movie_slug = ? LIMIT 1", (identifier, identifier)).fetchone()
@@ -816,9 +842,10 @@ def get_full_tv_show_episodes(identifier):
     jf_episodes = set()
     jf_missing_episodes = set()
     with get_connection() as conn:
+        jf_clause, jf_params = _tv_id_clause(tvdb_id, tmdb_id)
         rows = conn.execute(
-            "SELECT season_number, episode_number, status FROM service_cache WHERE service = 'jellyfin' AND media_type = 'episode' AND (tvdb_id = ? OR tmdb_id = ? OR movie_slug LIKE ?)", 
-            (str(tvdb_id) if tvdb_id else "NONE", str(tmdb_id) if tmdb_id else "NONE", f"{slug}%")
+            f"SELECT season_number, episode_number, status FROM service_cache WHERE service = 'jellyfin' AND media_type = 'episode' AND ({jf_clause} OR movie_slug LIKE ?)",
+            jf_params + [f"{slug}%"]
         ).fetchall()
         for r in rows:
             if r["season_number"] is not None and r["episode_number"] is not None:
@@ -927,9 +954,9 @@ def get_tv_show_details(identifier):
     
     # Query cached tv_episodes table for known seasons
     with get_connection() as conn:
+        id_clause, id_params = _tv_id_clause(show.get("tvdb_id"), show.get("tmdb_id"))
         s_rows = conn.execute(
-            "SELECT DISTINCT season_number FROM tv_episodes WHERE tvdb_id = ? OR tmdb_id = ?",
-            (str(show.get("tvdb_id") or "NONE"), str(show.get("tmdb_id") or "NONE"))
+            f"SELECT DISTINCT season_number FROM tv_episodes WHERE {id_clause}", id_params
         ).fetchall()
         for r in s_rows:
             if r["season_number"] is not None:
@@ -965,14 +992,17 @@ def get_tv_show_details(identifier):
 
     # Compute accurate stats per season
     seasons_data = []
+    jf_clause, jf_params = _tv_id_clause(show.get("tvdb_id"), show.get("tmdb_id"))
+    jf_clause = f"({jf_clause} OR movie_slug LIKE ?)"
+    jf_params = jf_params + [f"{show.get('movie_slug')}%"]
     with get_connection() as conn:
         for sn in sorted(list(season_numbers)):
             # Active in Jellyfin (Fully Synced)
-            jf_count = conn.execute("SELECT COUNT(*) FROM service_cache WHERE service='jellyfin' AND media_type='episode' AND season_number=? AND status != 'jf_missing' AND (tvdb_id=? OR tmdb_id=? OR movie_slug LIKE ?)", (sn, str(show.get("tvdb_id") or "NONE"), str(show.get("tmdb_id") or "NONE"), f"{show.get('movie_slug')}%")).fetchone()[0]
+            jf_count = conn.execute(f"SELECT COUNT(*) FROM service_cache WHERE service='jellyfin' AND media_type='episode' AND season_number=? AND status != 'jf_missing' AND {jf_clause}", [sn] + jf_params).fetchone()[0]
             # Total strictly known locally
-            tot_count = conn.execute("SELECT COUNT(*) FROM tv_episodes WHERE season_number=? AND (tvdb_id=? OR tmdb_id=?)", (sn, str(show.get("tvdb_id") or "NONE"), str(show.get("tmdb_id") or "NONE"))).fetchone()[0]
+            tot_count = conn.execute(f"SELECT COUNT(*) FROM (SELECT DISTINCT episode_number FROM tv_episodes WHERE season_number=? AND {id_clause})", [sn] + id_params).fetchone()[0]
             # Formally marked missing during a previous scan
-            jf_missing = conn.execute("SELECT COUNT(*) FROM service_cache WHERE service='jellyfin' AND media_type='episode' AND season_number=? AND status = 'jf_missing' AND (tvdb_id=? OR tmdb_id=? OR movie_slug LIKE ?)", (sn, str(show.get("tvdb_id") or "NONE"), str(show.get("tmdb_id") or "NONE"), f"{show.get('movie_slug')}%")).fetchone()[0]
+            jf_missing = conn.execute(f"SELECT COUNT(*) FROM service_cache WHERE service='jellyfin' AND media_type='episode' AND season_number=? AND status = 'jf_missing' AND {jf_clause}", [sn] + jf_params).fetchone()[0]
             
             # Combine logic. Always respect max known episodes (even if tv_episodes cache hasn't loaded yet)
             actual_total = max(tot_count, jf_count + jf_missing)
@@ -1004,20 +1034,23 @@ def get_season_episodes_lazy(identifier, season_number):
     season_num = int(season_number)
 
     # 1. Check local persistent SQLite cache for this specific season
-    cached_eps = []
+    cached_by_episode = {}
+    id_clause, id_params = _tv_id_clause(tvdb_id, tmdb_id)
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT season_number, episode_number, title, overview, air_date FROM tv_episodes WHERE (tvdb_id = ? OR tmdb_id = ?) AND season_number = ? ORDER BY episode_number",
-            (str(tvdb_id) if tvdb_id else "NONE", str(tmdb_id) if tmdb_id else "NONE", season_num)
+            f"SELECT season_number, episode_number, title, overview, air_date FROM tv_episodes WHERE {id_clause} AND season_number = ? ORDER BY last_updated, id",
+            id_params + [season_num]
         ).fetchall()
+        # A show whose TVDB/TMDB ID was resolved later can have the same episode cached under two ID pairs; the newest row wins.
         for r in rows:
-            cached_eps.append({
+            cached_by_episode[r["episode_number"]] = {
                 "seasonNumber": r["season_number"],
                 "episodeNumber": r["episode_number"],
                 "title": r["title"],
                 "overview": r["overview"],
                 "airDate": r["air_date"]
-            })
+            }
+    cached_eps = [cached_by_episode[en] for en in sorted(cached_by_episode, key=lambda n: (n is None, n))]
 
     # 2. On Cache Miss: Fetch metadata for this single season from TMDB or Sonarr
     if not cached_eps:
@@ -1076,9 +1109,10 @@ def get_season_episodes_lazy(identifier, season_number):
     jf_episodes = set()
     jf_missing_episodes = set()
     with get_connection() as conn:
+        jf_clause, jf_params = _tv_id_clause(tvdb_id, tmdb_id)
         rows = conn.execute(
-            "SELECT episode_number, status FROM service_cache WHERE service = 'jellyfin' AND media_type = 'episode' AND season_number = ? AND (tvdb_id = ? OR tmdb_id = ? OR movie_slug LIKE ?)",
-            (season_num, str(tvdb_id) if tvdb_id else "NONE", str(tmdb_id) if tmdb_id else "NONE", f"{slug}%")
+            f"SELECT episode_number, status FROM service_cache WHERE service = 'jellyfin' AND media_type = 'episode' AND season_number = ? AND ({jf_clause} OR movie_slug LIKE ?)",
+            [season_num] + jf_params + [f"{slug}%"]
         ).fetchall()
         for r in rows:
             if r["episode_number"] is not None:

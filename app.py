@@ -23,7 +23,7 @@ from flask import (
     url_for,
 )
 
-from config import DEFAULT_REQUEST_DELAY_RANGE, DEFAULT_USER_DELAY_RANGE, POSTER_DIR
+from config import DEFAULT_REQUEST_DELAY_RANGE, DEFAULT_USER_DELAY_RANGE, LOG_FILE_PATH, POSTER_DIR
 from database import (
     get_media_catalog,
     get_catalog_item_by_slug,
@@ -64,6 +64,7 @@ from radarr_client import get_quality_profiles as radarr_quality, get_root_folde
 from sonarr_client import get_quality_profiles as sonarr_quality, get_root_folders as sonarr_root
 from ddns_updater import run_ddns_update, get_dynu_credentials, fetch_and_cache_dynu_metadata
 from notifications import send_notification
+from settings_validation import validate_setting
 
 from scheduler import (
     init_scheduler,
@@ -275,7 +276,7 @@ def _redact(line, secret_values):
 def api_logs():
     try: tail = max(1, min(int(request.args.get("tail", 300)), 5000))
     except ValueError: tail = 300
-    log_file = os.path.join("logs", "app.log")
+    log_file = str(LOG_FILE_PATH)
     lines = []
     if os.path.exists(log_file):
         try:
@@ -421,16 +422,23 @@ SETTING_DEFAULTS = {
 
 @app.route("/tools/update-settings", methods=["POST"])
 def update_settings():
+    errors = []
     for key, default in SETTING_DEFAULTS.items():
         val = request.form.get(key)
-        if val is not None: set_setting(key, val.strip())
+        if val is None: continue
+        ok, result = validate_setting(key, val)
+        if ok: set_setting(key, result)
+        else: errors.append(result)
 
     for key in SECRET_FIELDS:
         value = (request.form.get(key) or "").strip()
         if value: set_setting(key, value)
 
     reconfigure_scheduler()
-    flash("Settings updated successfully.", "success")
+    if errors:
+        flash("Some values were not saved: " + " ".join(errors), "danger")
+    else:
+        flash("Settings updated successfully.", "success")
     if request.referrer and "payloads" in request.referrer: return redirect(url_for("payloads_page"))
     return redirect(url_for("settings_page"))
 
@@ -524,7 +532,11 @@ def api_request_episodes():
 def save_profile():
     profile_name = request.form.get("profile_name", "").strip()
     if profile_name:
-        save_user_profile_mapping(profile_name, request.form.get("letterboxd_username", "").strip(), request.form.get("serializd_username", "").strip(), request.form.get("jellyfin_user_id", "").strip(), 1)
+        # Fields missing from the form (e.g. the Jellyfin import posts only name + ID) are left untouched.
+        def field(name):
+            value = request.form.get(name)
+            return None if value is None else value.strip()
+        save_user_profile_mapping(profile_name, field("letterboxd_username"), field("serializd_username"), field("jellyfin_user_id"))
         flash(f"Profile mapping for '{profile_name}' saved.", "success")
     else: flash("Profile name is required.", "danger")
     return redirect(url_for("settings_page"))
@@ -568,9 +580,9 @@ def show_details(identifier):
 @app.route("/ddns/update-settings", methods=["POST"])
 def ddns_update_settings():
     domain = (request.form.get("dynu_hostname") or "").strip()
-    apikey = (request.form.get("dynu_api_key") or "").strip()
-    enabled = "1" if request.form.get("dynu_enabled") == "1" else "0"
     old_domain, old_key = get_setting("dynu_domain"), get_setting("dynu_api_key")
+    apikey = (request.form.get("dynu_api_key") or "").strip() or old_key  # the key is never echoed into the form; blank keeps it
+    enabled = "1" if request.form.get("dynu_enabled") == "1" else "0"
 
     set_setting("dynu_domain", domain)
     set_setting("dynu_api_key", apikey)

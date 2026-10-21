@@ -75,6 +75,14 @@ def search_episodes(episode_ids: list) -> dict:
         return {"status": "success", "command_id": r.json().get("id")}
     return {"status": "error", "message": f"Sonarr HTTP {r.status_code}: {r.text[:200]}"}
 
+def search_season(sonarr_id, season_number: int) -> dict:
+    url, headers = _conn()
+    payload = {"name": "SeasonSearch", "seriesId": int(sonarr_id), "seasonNumber": int(season_number)}
+    r = logged_request("sonarr", "SearchSeason", "POST", f"{url}/api/v3/command", json=payload, headers=headers, timeout=TIMEOUT)
+    if r.status_code in (200, 201):
+        return {"status": "success", "command_id": r.json().get("id")}
+    return {"status": "error", "message": f"Sonarr HTTP {r.status_code}: {r.text[:200]}"}
+
 def update_series(sonarr_id: str, series_payload: dict) -> dict:
     url, headers = _conn()
     res = logged_request("sonarr", "UpdateSeries", "PUT", f"{url}/api/v3/series/{sonarr_id}", json=series_payload, headers=headers, timeout=TIMEOUT)

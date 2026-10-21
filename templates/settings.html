@@ -339,11 +339,19 @@
             body: JSON.stringify(payload)
         };
 
+        const qpSel = document.getElementById(`${service}_quality_profile_id`);
+        const rfSel = document.getElementById(`${service}_root_folder`);
+        const qpSaved = qpSel.dataset.saved;
+        const rfSaved = rfSel.dataset.saved;
+        // Put the saved values back so a failed load can never leave a "Loading..." option to be submitted.
+        const restoreSaved = () => {
+            qpSel.innerHTML = `<option value="${qpSaved}">Saved ID: ${qpSaved}</option>`;
+            rfSel.innerHTML = `<option value="${rfSaved}">${rfSaved}</option>`;
+        };
+
         try {
             // Fetch Quality Profiles
-            const qpSel = document.getElementById(`${service}_quality_profile_id`);
-            const qpSaved = qpSel.dataset.saved;
-            qpSel.innerHTML = '<option>Loading...</option>';
+            qpSel.innerHTML = '<option value="' + qpSaved + '">Loading...</option>';
             
             const qpRes = await fetch(`/api/servarr/${service}/quality-profiles`, reqOpts);
             if (qpRes.ok) {
@@ -356,9 +364,7 @@
             }
 
             // Fetch Root Folders
-            const rfSel = document.getElementById(`${service}_root_folder`);
-            const rfSaved = rfSel.dataset.saved;
-            rfSel.innerHTML = '<option>Loading...</option>';
+            rfSel.innerHTML = '<option value="' + rfSaved + '">Loading...</option>';
             
             const rfRes = await fetch(`/api/servarr/${service}/root-folders`, reqOpts);
             if (rfRes.ok) {
@@ -371,6 +377,7 @@
             }
         } catch (err) {
             console.error(`Failed to load ${service} configs`, err);
+            restoreSaved();
             alert(`Failed to connect to ${service}. Verify URL and API Key.`);
         }
     }

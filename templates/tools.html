@@ -63,6 +63,8 @@
         </div>
     </div>
     
+    {{ task_card('id_resolver', 'ID Resolver', 'Finds TMDB IDs for scraped Letterboxd films. Guessed IDs need approval in the Resolution Center.', task_statuses.get('id_resolver'), url_for('trigger_id_resolver'), 'Resolve IDs now') }}
+
     {{ task_card('radarr', 'Radarr Sync', 'Syncs missing movie items with your Radarr instance.', task_statuses.get('radarr'), url_for('trigger_radarr_sync'), 'Sync Radarr now') }}
     
     {{ task_card('sonarr', 'Sonarr Sync', 'Syncs missing TV shows with your Sonarr instance.', task_statuses.get('sonarr'), url_for('trigger_sonarr_sync'), 'Sync Sonarr now') }}
