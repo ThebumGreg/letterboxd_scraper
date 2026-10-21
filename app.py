@@ -54,7 +54,12 @@ from database import (
     clear_payload_logs,
     get_connection
 )
-from jellyfin_integration import fetch_and_cache_poster, sync_jellyfin_playlist, get_jellyfin_users
+from jellyfin_integration import (
+    _get_auth_headers,
+    fetch_and_cache_poster,
+    sync_jellyfin_playlist,
+    get_jellyfin_users
+)
 from radarr_client import get_quality_profiles as radarr_quality, get_root_folders as radarr_root
 from sonarr_client import get_quality_profiles as sonarr_quality, get_root_folders as sonarr_root
 from ddns_updater import run_ddns_update, get_dynu_credentials, fetch_and_cache_dynu_metadata
@@ -313,8 +318,10 @@ def api_test_connection(service):
             key = val(f"{service}_api_key")
             if not url: return result(False, "Enter a valid http(s) URL.")
             if not key: return result(False, "No API key set.")
-            if service == "jellyfin": r = logged_request("jellyfin", "TestConnection", "GET", f"{url}/System/Info", headers={"X-Emby-Token": key}, timeout=8)
-            else: r = logged_request(service, "TestConnection", "GET", f"{url}/api/v3/system/status", headers={"X-Api-Key": key}, timeout=8)
+            if service == "jellyfin":
+                r = logged_request("jellyfin", "TestConnection", "GET", f"{url}/System/Info", headers=_get_auth_headers(key), timeout=8)
+            else:
+                r = logged_request(service, "TestConnection", "GET", f"{url}/api/v3/system/status", headers={"X-Api-Key": key}, timeout=8)
             if r.status_code in (401, 403): return result(False, "Server rejected API key.")
             if not r.ok: return result(False, f"Unexpected response (HTTP {r.status_code}).")
             info = r.json()

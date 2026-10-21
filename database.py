@@ -637,14 +637,15 @@ def reconcile_master_catalog():
 
         rows_to_insert = []
         for key, item in catalog.items():
-            avail_seasons = set()
+            avail_seasons = []
             if item["media_type"] == "tv":
+                temp_seasons = set()
                 if item["tvdb_id"] and str(item["tvdb_id"]) in jf_seasons_tvdb:
-                    avail_seasons.update(jf_seasons_tvdb[str(item["tvdb_id"])])
+                    temp_seasons.update(jf_seasons_tvdb[str(item["tvdb_id"])])
                 if item["tmdb_id"] and str(item["tmdb_id"]) in jf_seasons_tmdb:
-                    avail_seasons.update(jf_seasons_tmdb[str(item["tmdb_id"])])
+                    temp_seasons.update(jf_seasons_tmdb[str(item["tmdb_id"])])
                 
-                avail_seasons = sorted(list(avail_seasons))
+                avail_seasons = sorted(list(temp_seasons))
                 if avail_seasons and item["status"] not in ("in_library", "jf_missing"):
                     item["status"] = "partially_available"
                     
