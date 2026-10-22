@@ -35,6 +35,11 @@
                         </li>
                     {% endfor %}
                 </ul>
+                {% if has_profiles %}
+                <a class="nav-link text-body-secondary ms-lg-auto" id="whoAmI" href="{{ url_for('who', next=request.path) }}" title="Switch profile">
+                    <i class="bi bi-person-circle" aria-hidden="true"></i> {{ current_profile.name if current_profile else 'Guest' }} <small>(switch)</small>
+                </a>
+                {% endif %}
             </div>
         </div>
     </nav>
@@ -56,7 +61,7 @@
     </main>
 
     {% if jellyfin_app is defined and jellyfin_app.server_id and jellyfin_app.users %}
-    <footer class="container pb-4 small text-body-secondary">
+    <footer class="container pb-4 small text-body-secondary{% if request.endpoint == 'who' %} d-none{% endif %}">
         <a href="#" id="jellyfinUserChange" class="d-none text-decoration-none text-body-secondary"><i class="bi bi-person-badge"></i> Change who opens the Jellyfin app on this device</a>
     </footer>
     <div class="modal fade" id="jellyfinUserModal" tabindex="-1" aria-labelledby="jellyfinUserTitle" aria-hidden="true">

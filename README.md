@@ -28,6 +28,10 @@ Missing, Queued (monitored in Radarr/Sonarr, nothing yet), Downloading (in the R
 
 New states need no code or schema change: add a row to `state_def` and have a script write `processing_event` rows.
 
+## Who is watching
+
+The first visit from a browser shows **Who is watching?**: pick your profile, or "Just looking" to continue as a guest. There is no password. The choice is remembered on that device for a year (a plain cookie holding the profile ID), the top bar shows who you are with a **switch** link, and the profile's Jellyfin user is the one the Jellyfin app links open as. It only says who is using the app; anyone on the network can pick anyone, so it is not security. Scripts, webhooks, images and the live stream are never asked. With no profiles nothing is asked.
+
 ## Live updates: webhooks and download progress
 
 Without these, Radarr and Sonarr are read every 6 hours. With them, a grab or import shows up within seconds and a download's percentage moves while you watch.
@@ -41,7 +45,7 @@ Without these, Radarr and Sonarr are read every 6 hours. With them, a grab or im
 "Watch on Jellyfin" opens the Jellyfin web page everywhere. On an iPhone or iPad it opens the item in the Jellyfin (Swiftfin) app instead, using `swiftfin://<server id>/<user id>/item/<item id>`, and falls back to the web page after about two seconds if the app does not take over.
 
 - The **server ID** is read from Jellyfin during a Jellyfin sync, so run **Tools, Sync movies/TV** once after upgrading.
-- The **user** must be a Jellyfin user that is signed in to the app on that device. Give each profile its Jellyfin user in Settings. With more than one, the first tap asks "Who is watching?" and remembers the answer on that device; the link at the bottom of every page changes it.
+- The **user** must be a Jellyfin user that is signed in to the app on that device. Give each profile its Jellyfin user in Settings; the profile chosen on the Who-is-watching page then decides. A guest, or a profile without a Jellyfin user, is asked once which Jellyfin user to use (remembered on that device; the link at the bottom of every page changes it).
 - If tapping does nothing useful, check that the user chosen is the one signed in to the app, and that the app is installed.
 
 ## Troubleshooting

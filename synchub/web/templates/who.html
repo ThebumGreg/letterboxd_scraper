@@ -1,0 +1,29 @@
+<!-- synchub/web/templates/who.html -->
+{% extends "base.html" %}
+{% from "_macros.html" import csrf_field with context %}
+{% block title %}Who is watching?{% endblock %}
+
+{% block content %}
+<div class="text-center my-4 my-md-5">
+    <h2 class="mb-2">Who is watching?</h2>
+    <p class="text-body-secondary mb-4">Pick your profile. There is no password: this only tells SyncHub who you are, and it is remembered on this device.</p>
+
+    <form method="POST" action="{{ url_for('who') }}" class="d-flex flex-wrap justify-content-center gap-3">
+        {{ csrf_field() }}
+        <input type="hidden" name="next" value="{{ destination }}">
+        {% for p in profiles %}
+        <button type="submit" name="profile_id" value="{{ p.id }}" class="btn btn-outline-success who-card d-flex flex-column align-items-center gap-2 p-3{% if not p.is_active %} opacity-75{% endif %}"
+                aria-label="Continue as {{ p.name }}">
+            <span class="rounded-circle bg-success text-white d-inline-flex align-items-center justify-content-center fs-2 fw-bold" style="width: 72px; height: 72px;" aria-hidden="true">{{ p.name[:1]|upper }}</span>
+            <span class="fw-semibold">{{ p.name }}</span>
+        </button>
+        {% endfor %}
+    </form>
+
+    <form method="POST" action="{{ url_for('who') }}" class="mt-4">
+        {{ csrf_field() }}
+        <input type="hidden" name="next" value="{{ destination }}">
+        <button type="submit" name="profile_id" value="0" class="btn btn-link text-body-secondary">Just looking (continue as a guest)</button>
+    </form>
+</div>
+{% endblock %}

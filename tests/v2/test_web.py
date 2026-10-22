@@ -58,7 +58,7 @@ def test_pages_carry_what_the_browser_needs_to_open_the_jellyfin_app(client, v2)
         conn.execute("INSERT INTO profile (name, jellyfin_user_id) VALUES ('alice', 'aaa111')")
         conn.execute("INSERT INTO profile (name, letterboxd_username) VALUES ('No Jellyfin', 'nj')")
     page = text(client.get("/"))
-    assert _app_config(page) == {"server_id": "", "users": [{"id": "aaa111", "name": "alice"}, {"id": "bbb222", "name": "Bob"}]}
+    assert _app_config(page) == {"server_id": "", "users": [{"id": "aaa111", "name": "alice"}, {"id": "bbb222", "name": "Bob"}], "current_user": ""}
     assert 'id="jellyfinUserModal"' not in page                                # no server ID yet (no Jellyfin sync): no chooser
     settings.set_value("jellyfin_server_id", "srv123")
     page = text(client.get("/"))

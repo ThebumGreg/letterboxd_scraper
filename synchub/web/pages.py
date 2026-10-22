@@ -52,6 +52,25 @@ def register(app):
             return send_file(placeholder)
         abort(404)
 
+    @app.route("/who", methods=["GET", "POST"])
+    def who():
+        """'Who is watching?': pick a profile (no password) or carry on as a guest. Remembered on this device."""
+        from synchub.web import PROFILE_COOKIE, PROFILE_COOKIE_DAYS, safe_next
+        with db.connection() as conn:
+            profile_list = profiles.list_all(conn)
+        destination = safe_next(request.values.get("next"))
+        if request.method == "GET":
+            if not profile_list:
+                return redirect(destination)
+            return render_template("who.html", profiles=profile_list, destination=destination)
+        choice = (request.form.get("profile_id") or "").strip()
+        if choice != "0" and not any(str(p["id"]) == choice for p in profile_list):
+            flash("That profile no longer exists. Pick again.", "warning")
+            return redirect(url_for("who", next=destination))
+        response = redirect(destination)
+        response.set_cookie(PROFILE_COOKIE, choice, max_age=PROFILE_COOKIE_DAYS * 86400, samesite="Lax", httponly=True)
+        return response
+
     @app.route("/resolution")
     def resolution_center():
         with db.connection() as conn:

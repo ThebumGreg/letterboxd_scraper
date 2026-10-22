@@ -41,4 +41,7 @@ def app(v2):
 
 @pytest.fixture
 def client(app):
-    return app.test_client()
+    """A browser that has already chosen 'just looking' on the Who-is-watching page (see test_who.py for the page itself)."""
+    browser = app.test_client()
+    browser.set_cookie("synchub_profile", "0")
+    return browser

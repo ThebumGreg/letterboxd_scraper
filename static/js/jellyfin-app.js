@@ -14,7 +14,8 @@
     const saved = () => { try { return localStorage.getItem(KEY); } catch (e) { return null; } };
     const remember = (id) => { try { localStorage.setItem(KEY, id); } catch (e) { /* private mode: asked again next time */ } };
     const known = (id) => cfg.users.find((u) => u.id === id) || null;
-    const currentUser = () => known(saved()) || (cfg.users.length === 1 ? cfg.users[0] : null);
+    // The profile chosen on the "Who is watching?" page wins; a guest falls back to what was picked on this device, or the only user there is.
+    const currentUser = () => known(cfg.current_user) || known(saved()) || (cfg.users.length === 1 ? cfg.users[0] : null);
 
     function openInApp(link, user) {
         const url = `swiftfin://${encodeURIComponent(cfg.server_id)}/${encodeURIComponent(user.id)}/item/${encodeURIComponent(link.dataset.jellyfinItem)}`;
@@ -61,7 +62,7 @@
     });
 
     const change = document.getElementById("jellyfinUserChange");
-    if (change && cfg.users.length > 1) {
+    if (change && cfg.users.length > 1 && !known(cfg.current_user)) {
         change.classList.remove("d-none");
         change.addEventListener("click", (e) => {
             e.preventDefault();
