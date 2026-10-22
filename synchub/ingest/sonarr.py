@@ -7,14 +7,17 @@ from synchub.text import clean_id
 logger = logging.getLogger(__name__)
 
 
-def sync_library(conn, client, now=None):
+def sync_library(conn, client, now=None, progress=None):
     """Series and all their episodes. A series whose episode list cannot be fetched keeps its previous episode rows.
 
     Everything is fetched first and written afterwards, so the database is never locked while waiting on Sonarr.
     """
     now = now or db.now()
+    progress = progress or (lambda message, force=False: None)
     fetched, errors = [], []
-    for s in client.series():
+    all_series = client.series()
+    for number, s in enumerate(all_series, 1):
+        progress(f"Sonarr: reading episodes of '{s.get('title')}' ({number} of {len(all_series)})")
         try:
             fetched.append((s, client.episodes(s["id"])))
         except Exception as exc:

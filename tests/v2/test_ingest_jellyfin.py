@@ -7,6 +7,8 @@ class FakeJellyfin:
         self.requested = None
 
     def iter_items(self, types):
+        from synchub import db
+        db.assert_not_in_write_transaction("fake Jellyfin items")
         self.requested = tuple(types)
         return iter([i for i in self.items if i["Type"] in types])
 

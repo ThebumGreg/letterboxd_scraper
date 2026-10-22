@@ -1,6 +1,8 @@
-"""Runnable jobs. Each records progress in task_status and reports failures instead of hiding them."""
+"""Runnable jobs. Each records progress in task_status, logs what it is doing and reports failures instead of hiding them."""
+import inspect
 import logging
 import threading
+import time
 
 from synchub import automation, db, episodes, matching, metadata, settings, states
 from synchub.clients import ConfigError
@@ -16,6 +18,7 @@ from synchub.ingest import sonarr as sonarr_ingest
 
 logger = logging.getLogger(__name__)
 _LOCKS = {}
+_STARTED = {}
 
 
 def set_status(task_name, status, message=""):
@@ -38,40 +41,75 @@ def reset_stale():
         conn.execute("UPDATE task_status SET status = 'failed', message = 'Interrupted by a restart.' WHERE status IN ('in_progress', 'pending')")
 
 
+def update_message(task_name, message):
+    """Changes only the message shown for a running task (does not touch its start time or status)."""
+    with db.connection() as conn:
+        conn.execute("UPDATE task_status SET message = ? WHERE task_name = ?", (message, task_name))
+
+
+class Reporter:
+    """Progress for one task: every report goes to the log, and (at most every `interval` seconds) to the Tools page."""
+
+    def __init__(self, task_name, interval=2.0):
+        self.task_name, self.interval, self._last = task_name, interval, 0.0
+
+    def __call__(self, message, force=False):
+        logger.info(f"[{self.task_name}] {message}")
+        if force or time.monotonic() - self._last >= self.interval:
+            self._last = time.monotonic()
+            try:
+                update_message(self.task_name, message)
+            except Exception as exc:      # progress is a nicety; never fail the task over it
+                logger.debug(f"Could not store progress for {self.task_name}: {exc}")
+
+
 def run(task_name, label, fn):
-    """Runs fn() as a tracked job; fn returns a short summary string. Only one run of a task at a time."""
+    """Runs fn() (or fn(report), if it takes one argument) as a tracked job and returns its summary string.
+
+    Logs the start, the duration and, on failure, the full traceback. Only one run of a task at a time.
+    """
     lock = _LOCKS.setdefault(task_name, threading.Lock())
     if not lock.acquire(blocking=False):
-        logger.info(f"{task_name} is already running; skipped.")
+        running_for = time.monotonic() - _STARTED.get(task_name, time.monotonic())
+        logger.info(f"[{task_name}] is already running (for {running_for:.0f}s); this request was skipped.")
         return None
-    set_status(task_name, "in_progress", f"{label}...")
+    _STARTED[task_name] = started = time.monotonic()
+    report = Reporter(task_name)
+    logger.info(f"[{task_name}] {label}: started")
     try:
-        summary = fn()
+        set_status(task_name, "in_progress", f"{label}...")
+        summary = fn(report) if len(inspect.signature(fn).parameters) else fn()
+        logger.info(f"[{task_name}] finished in {time.monotonic() - started:.1f}s: {summary or label}")
         set_status(task_name, "completed", summary or f"{label} finished.")
         return summary
     except Exception as exc:
-        logger.error(f"{task_name} failed: {exc}")
-        set_status(task_name, "failed", str(exc))
+        logger.error(f"[{task_name}] failed after {time.monotonic() - started:.1f}s: {exc}", exc_info=True)
+        try:
+            set_status(task_name, "failed", str(exc))
+        except Exception as status_exc:
+            logger.error(f"[{task_name}] could not record the failure: {status_exc}")
         return None
     finally:
+        _STARTED.pop(task_name, None)
         lock.release()
 
 
-def _jellyfin(scope, label):
+def _jellyfin(scope, label, report):
     if settings.get("disable_jellyfin_connection") == "1":
         return "Jellyfin integration is disabled in Settings."
     client = JellyfinClient()
+    report("Reading items from Jellyfin...", force=True)
     with db.connection() as conn:
-        result = jf_ingest.sync(conn, client, scope)
+        result = jf_ingest.sync(conn, client, scope, progress=report)
     return f"{label}: {result['seen']} item(s) synced, {result['removed']} no longer reported."
 
 
 def sync_jellyfin_movies():
-    return run("jellyfin_movies", "Syncing Jellyfin movies", lambda: _jellyfin("movies", "Jellyfin movies"))
+    return run("jellyfin_movies", "Syncing Jellyfin movies", lambda report: _jellyfin("movies", "Jellyfin movies", report))
 
 
 def sync_jellyfin_tv():
-    return run("jellyfin_tv", "Syncing Jellyfin TV", lambda: _jellyfin("tv", "Jellyfin TV"))
+    return run("jellyfin_tv", "Syncing Jellyfin TV", lambda report: _jellyfin("tv", "Jellyfin TV", report))
 
 
 def _link_now():
@@ -93,42 +131,57 @@ def _summarise(result, noun):
     return (" Auto-add: " + ", ".join(parts) + ".") if parts else ""
 
 
+def _radarr_pull(client, report):
+    """Library and queue, each in its own short transaction (never a network call with writes pending)."""
+    report("Reading the Radarr library...", force=True)
+    with db.connection() as conn:
+        lib = radarr_ingest.sync_library(conn, client)
+    report(f"Radarr library: {lib['seen']} movie(s). Reading the queue...", force=True)
+    with db.connection() as conn:
+        queue = radarr_ingest.sync_queue(conn, client)
+    return lib, queue
+
+
+def _sonarr_pull(client, report):
+    report("Reading the Sonarr library and episodes...", force=True)
+    with db.connection() as conn:
+        lib = sonarr_ingest.sync_library(conn, client, progress=report)
+    report(f"Sonarr library: {lib['series']} series, {lib['episodes']} episode(s). Reading the queue...", force=True)
+    with db.connection() as conn:
+        queue = sonarr_ingest.sync_queue(conn, client)
+    return lib, queue
+
+
 def sync_radarr():
-    def work():
+    def work(report):
         client = RadarrClient()
-        with db.connection() as conn:
-            lib = radarr_ingest.sync_library(conn, client)
-            queue = radarr_ingest.sync_queue(conn, client)
+        lib, queue = _radarr_pull(client, report)
         note = ""
         if settings.get("radarr_enable_queue_addition") == "1":
+            report("Checking which wanted movies should be added...", force=True)
             _link_now()
             with db.connection() as conn:
                 result = automation.run_radarr_additions(conn, client, dry_run=settings.get("radarr_dry_run") == "1")
             if result["added"]:
-                with db.connection() as conn:
-                    radarr_ingest.sync_library(conn, client)
-                    radarr_ingest.sync_queue(conn, client)
+                _radarr_pull(client, report)
             note = _summarise(result, "movie(s)")
         return f"Radarr: {lib['seen']} movie(s), {queue['seen']} in queue.{note}"
     return run("radarr", "Syncing Radarr", work)
 
 
 def sync_sonarr():
-    def work():
+    def work(report):
         client = SonarrClient()
-        with db.connection() as conn:
-            lib = sonarr_ingest.sync_library(conn, client)
-            queue = sonarr_ingest.sync_queue(conn, client)
+        lib, queue = _sonarr_pull(client, report)
         errors = f" ({len(lib['episode_fetch_errors'])} series had episode errors)" if lib["episode_fetch_errors"] else ""
         note = ""
         if settings.get("sonarr_enable_queue_addition") == "1":
+            report("Checking which wanted shows should be added...", force=True)
             _link_now()
             with db.connection() as conn:
                 result = automation.run_sonarr_additions(conn, client, dry_run=settings.get("sonarr_dry_run") == "1")
             if result["added"]:
-                with db.connection() as conn:
-                    sonarr_ingest.sync_library(conn, client)
-                    sonarr_ingest.sync_queue(conn, client)
+                _sonarr_pull(client, report)
             note = _summarise(result, "show(s)")
         return f"Sonarr: {lib['series']} series, {lib['episodes']} episode(s), {queue['seen']} in queue{errors}.{note}"
     return run("sonarr", "Syncing Sonarr", work)
@@ -145,8 +198,8 @@ def resync_sonarr():
 
 
 def scrape_letterboxd():
-    def work():
-        summary = lb_ingest.sync_all()
+    def work(report):
+        summary = lb_ingest.sync_all(progress=report)
         if not summary:
             return "No active profile has a Letterboxd username."
         incomplete = [f"{u}/{l}" for u, lists in summary.items() for l, r in lists.items() if not r["complete"]]
@@ -156,8 +209,8 @@ def scrape_letterboxd():
 
 
 def scrape_serializd():
-    def work():
-        summary = sz_ingest.sync_all()
+    def work(report):
+        summary = sz_ingest.sync_all(progress=report)
         if not summary:
             return "No active profile has a Serializd username."
         failed = [u for u, r in summary.items() if "error" in r]
@@ -167,43 +220,64 @@ def scrape_serializd():
 
 
 def resolve_letterboxd_ids():
-    def work():
+    def work(report):
         import random
-        import time
         low, high = float(settings.get("request_delay_min") or 2.5), float(settings.get("request_delay_max") or 4.5)
         with db.connection() as conn:
-            stats = letterboxd_ids.resolve(conn, pause=lambda: time.sleep(random.uniform(min(low, high), max(low, high))))
+            stats = letterboxd_ids.resolve(conn, pause=lambda: time.sleep(random.uniform(min(low, high), max(low, high))), progress=report)
         note = " Letterboxd blocked further requests." if stats["blocked"] else ""
         return f"Checked {stats['checked']} film(s): {stats['found']} IDs found, {stats['no_id']} without an ID, {stats['errors']} errors.{note}"
     return run("id_resolver", "Resolving Letterboxd IDs", work)
 
 
-def reconcile_now(tmdb=None):
+def _stage(name, report, fn):
+    started = time.monotonic()
+    report(f"{name}...", force=True)
+    result = fn()
+    logger.info(f"[reconcile] {name} done in {time.monotonic() - started:.1f}s: {result}")
+    return result
+
+
+def reconcile_now(tmdb=None, report=lambda message, force=False: None):
     """Links sources to media, refreshes TMDB metadata, links episodes, then recomputes states. Returns per-stage stats.
 
-    Each stage commits on its own, so slow network stages never hold the database write lock for long.
+    Each stage commits on its own (and the matcher/metadata stages commit as they go), so slow network calls
+    never happen while the database write lock is held.
     """
     result = {}
-    with db.connection() as conn:
-        result["matching"] = matching.Matcher(conn, tmdb).resolve_all()
-    if tmdb is not None:
+
+    def matching_stage():
         with db.connection() as conn:
-            result["metadata"] = metadata.refresh_pending(conn, tmdb)
-    with db.connection() as conn:
-        result["jellyfin_episodes"] = episodes.link_jellyfin_episodes(conn)
-        result["sonarr_episodes"] = episodes.map_sonarr_episodes(conn)
-        result["queue_events"] = states.sync_queue_events(conn)
-        result["states"] = states.compute(conn)
+            return matching.Matcher(conn, tmdb).resolve_all(progress=report)
+
+    def metadata_stage():
+        with db.connection() as conn:
+            return metadata.refresh_pending(conn, tmdb, progress=report)
+
+    def link_stage():
+        with db.connection() as conn:
+            return {"jellyfin_episodes": episodes.link_jellyfin_episodes(conn), "sonarr_episodes": episodes.map_sonarr_episodes(conn)}
+
+    def state_stage():
+        with db.connection() as conn:
+            return {"queue_events": states.sync_queue_events(conn), "states": states.compute(conn)}
+
+    result["matching"] = _stage("Matching titles to movies and shows", report, matching_stage)
+    if tmdb is not None:
+        result["metadata"] = _stage("Fetching TMDB details and episode lists", report, metadata_stage)
+    linked = _stage("Linking episodes", report, link_stage)
+    result.update(linked)
+    result.update(_stage("Working out statuses", report, state_stage))
     return result
 
 
 def reconcile():
-    def work():
+    def work(report):
         try:
             tmdb = TmdbClient()
         except ConfigError:
             tmdb = None
-        r = reconcile_now(tmdb)
+        r = reconcile_now(tmdb, report)
         note = "" if tmdb else " TMDB is not configured: shows without a TMDB ID and episode lists are waiting for it."
         m = r["matching"]
         return (f"Linked {m.get('linked', 0) + m.get('relinked', 0)} source record(s), {m.get('unresolved', 0)} unresolved, "
@@ -223,11 +297,12 @@ def with_reconcile(*steps):
 
 def run_all():
     """The full sequence, one step after another. A failing step is recorded and the rest still run."""
-    def work():
+    def work(report):
         # Reconcile before Radarr/Sonarr so their auto-add rules see wanted titles already linked, and again afterwards.
         steps = (sync_jellyfin_movies, sync_jellyfin_tv, scrape_letterboxd, scrape_serializd, resolve_letterboxd_ids, reconcile,
                  sync_radarr, sync_sonarr, reconcile)
-        for step in steps:
+        for number, step in enumerate(steps, 1):
+            report(f"Step {number} of {len(steps)}: {step.__name__.replace('_', ' ')}", force=True)
             step()
         with db.connection() as conn:
             failed = [r["task_name"] for r in conn.execute("SELECT task_name FROM task_status WHERE status = 'failed' AND task_name <> 'all'")]

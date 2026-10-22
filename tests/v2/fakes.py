@@ -8,6 +8,8 @@ class FakeTmdb:
         self.calls = []
 
     def _check(self, name, *args):
+        from synchub import db
+        db.assert_not_in_write_transaction(f"fake TMDB {name}")
         self.calls.append((name, *args))
         if self.fail:
             raise RuntimeError("TMDB down")

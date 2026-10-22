@@ -3,22 +3,28 @@ import pytest
 from synchub.ingest import radarr, sonarr
 
 
+def network(what):
+    from synchub import db
+    db.assert_not_in_write_transaction(what)
+
+
 class FakeRadarr:
     def __init__(self, movies, queue=()):
         self._movies, self._queue = movies, list(queue)
 
-    def movies(self): return self._movies
-    def queue(self): return self._queue
+    def movies(self): network("fake Radarr movies"); return self._movies
+    def queue(self): network("fake Radarr queue"); return self._queue
 
 
 class FakeSonarr:
     def __init__(self, series, episodes, queue=(), fail=()):
         self._series, self._episodes, self._queue, self.fail = series, episodes, list(queue), set(fail)
 
-    def series(self): return self._series
-    def queue(self): return self._queue
+    def series(self): network("fake Sonarr series"); return self._series
+    def queue(self): network("fake Sonarr queue"); return self._queue
 
     def episodes(self, series_id):
+        network("fake Sonarr episodes")
         if series_id in self.fail:
             raise RuntimeError("HTTP 500")
         return self._episodes.get(series_id, [])

@@ -87,13 +87,15 @@ def refresh_show(conn, tmdb, media_id, now=None):
     """Show details plus every season (including Season 0 Specials) and episode. Never deletes episodes."""
     now = now or db.now()
     row = conn.execute("SELECT tmdb_id FROM media WHERE id = ? AND kind = 'show'", (media_id,)).fetchone()
+    # All TMDB calls first, then all writes: the database is never locked while waiting on the network.
     details = tmdb.show(row["tmdb_id"]) if row else None
     if not details:
         return {"found": False, "episodes": 0}
-    apply_show_details(conn, media_id, details, now)
     numbers = [s["season_number"] for s in details.get("seasons") or [] if s.get("season_number") is not None]
+    fetched = tmdb.seasons(row["tmdb_id"], numbers)
+    apply_show_details(conn, media_id, details, now)
     episodes = 0
-    for number, season in tmdb.seasons(row["tmdb_id"], numbers).items():
+    for number, season in fetched.items():
         episodes += upsert_episodes(conn, media_id, number, season.get("episodes") or [], now)
     return {"found": True, "episodes": episodes, "seasons": len(numbers)}
 
@@ -113,16 +115,16 @@ def needs_refresh(row, now=None):
     return now - refreshed >= timedelta(hours=hours)
 
 
-def refresh_pending(conn, tmdb, limit=200, now=None):
+def refresh_pending(conn, tmdb, limit=200, now=None, progress=None):
     """Refreshes media that has never been refreshed or is stale, oldest first. Errors on one item do not stop the run."""
     now = now or db.now()
+    progress = progress or (lambda message, force=False: None)
     rows = conn.execute("SELECT * FROM media WHERE tmdb_id IS NOT NULL ORDER BY COALESCE(metadata_refreshed_at, '') ASC, id ASC").fetchall()
+    due = [r for r in rows if needs_refresh(r, now)][:limit]
+    progress(f"{len(due)} title(s) to refresh from TMDB", force=True)
     stats = {"movies": 0, "shows": 0, "episodes": 0, "errors": 0}
-    for row in rows:
-        if stats["movies"] + stats["shows"] >= limit:
-            break
-        if not needs_refresh(row, now):
-            continue
+    for number, row in enumerate(due, 1):
+        progress(f"TMDB: {row['title']} ({number} of {len(due)})")
         try:
             if row["kind"] == "movie":
                 stats["movies"] += int(refresh_movie(conn, tmdb, row["id"], now))
@@ -132,6 +134,7 @@ def refresh_pending(conn, tmdb, limit=200, now=None):
                 stats["episodes"] += result["episodes"]
             conn.commit()
         except Exception as exc:
+            conn.rollback()      # never leave a half-finished transaction open
             logger.warning(f"Metadata refresh failed for media {row['id']}: {exc}")
             stats["errors"] += 1
     return stats

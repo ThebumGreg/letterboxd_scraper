@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 def default_fetch(username):
     """Returns (status_code, parsed_json_or_None)."""
+    db.assert_not_in_write_transaction(f"Serializd request for {username}")
     response = requests.get(f"https://www.serializd.com/api/user/{username}/watchlist", headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT)
     try:
         return response.status_code, (response.json() if response.status_code == 200 else None)
@@ -39,12 +40,14 @@ def store(conn, username, shows, now=None):
     return {"seen": len(seen), "removed": removed}
 
 
-def sync_all(fetch=default_fetch):
+def sync_all(fetch=default_fetch, progress=None):
+    progress = progress or (lambda message, force=False: None)
     with db.connection() as conn:
         users = [r["serializd_username"] for r in conn.execute(
             "SELECT serializd_username FROM profile WHERE is_active = 1 AND serializd_username IS NOT NULL ORDER BY id")]
     summary = {}
-    for username in users:
+    for number, username in enumerate(users, 1):
+        progress(f"Serializd: reading {username}'s watchlist ({number} of {len(users)})", force=True)
         try:
             status, body = fetch(username)
         except Exception as exc:

@@ -16,15 +16,8 @@ NOW = "2026-01-01 00:00:00"
 
 @pytest.fixture
 def quick_lock_timeout(monkeypatch, v2):
-    """Fail fast (0.2 s) instead of waiting 30 s when another connection holds the write lock."""
-    real = sqlite3.connect
-
-    def connect():
-        conn = real(v2.DB_FILE, timeout=0.2)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
-    monkeypatch.setattr(db, "connect", connect)
+    """Fail fast (0.3 s) instead of waiting 30 s when another connection holds the write lock."""
+    monkeypatch.setattr(db, "DEFAULT_TIMEOUT", 0.3)
 
 
 def write_from_another_connection():

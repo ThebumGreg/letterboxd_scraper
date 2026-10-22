@@ -6,7 +6,7 @@ from pathlib import Path
 import requests
 
 from config import HTTP_TIMEOUT, POSTER_DIR
-from synchub import settings
+from synchub import db, settings
 
 logger = logging.getLogger(__name__)
 TMDB_IMAGE = "https://image.tmdb.org/t/p/w342"
@@ -39,6 +39,7 @@ def ensure_poster(conn, media_id):
     if media is None:
         return None
     _dir().mkdir(parents=True, exist_ok=True)
+    db.assert_not_in_write_transaction(f"poster download for media {media_id}")
 
     def save(content):
         if len(content) >= MIN_BYTES:

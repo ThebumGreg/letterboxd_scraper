@@ -65,6 +65,11 @@ def register(app):
     def api_tasks():
         return jsonify(tasks=tasks.all_statuses())
 
+    @app.route("/api/diagnostics")
+    def api_diagnostics():
+        from synchub import diagnostics
+        return jsonify(diagnostics.snapshot())
+
     @app.route("/api/stream/events")
     def stream_events():
         def stream():

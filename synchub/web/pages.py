@@ -78,6 +78,10 @@ def register(app):
     def logs_page():
         return render_template("logs.html")
 
+    @app.route("/diagnostics")
+    def diagnostics_page():
+        return render_template("diagnostics.html")
+
     @app.route("/ddns")
     def ddns_page():
         creds = ddns.credentials()

@@ -22,6 +22,7 @@ BLOCKED = (403, 429)
 
 def default_fetch(url):
     """Returns (status_code, html). Letterboxd needs a browser-like TLS fingerprint."""
+    db.assert_not_in_write_transaction(f"Letterboxd request to {url}")
     from curl_cffi import requests as cffi_requests
     response = cffi_requests.get(url, impersonate="chrome120", timeout=HTTP_TIMEOUT)
     return response.status_code, response.text
@@ -46,11 +47,13 @@ def parse_page(html):
     return entries, soup.select_one("a.next, .paginate-next a") is not None
 
 
-def scrape_list(username, path, fetch=default_fetch, pause=lambda: None):
+def scrape_list(username, path, fetch=default_fetch, pause=lambda: None, progress=None):
     """Walks every page of one list. Returns (entries, complete); complete is False when the scrape was cut short."""
+    progress = progress or (lambda message, force=False: None)
     entries, seen, page = [], set(), 1
     while True:
         url = f"https://letterboxd.com/{username}/{path}/" + ("" if page == 1 else f"page/{page}/")
+        progress(f"Letterboxd {username}/{path}: page {page} ({len(entries)} film(s) so far)")
         status, html = fetch(url)
         if status in BLOCKED:
             logger.warning(f"Letterboxd returned HTTP {status} for {url}; stopping.")
@@ -93,8 +96,9 @@ def _delay(min_key, max_key, default):
     return (min(low, high), max(low, high)) if low >= 0 and high >= 0 else default
 
 
-def sync_all(fetch=default_fetch, sleep=time.sleep):
+def sync_all(fetch=default_fetch, sleep=time.sleep, progress=None):
     """Scrapes every active profile that has a Letterboxd username. Returns a per-user summary."""
+    progress = progress or (lambda message, force=False: None)
     with db.connection() as conn:
         users = [r["letterboxd_username"] for r in conn.execute(
             "SELECT letterboxd_username FROM profile WHERE is_active = 1 AND letterboxd_username IS NOT NULL ORDER BY id")]
@@ -103,13 +107,15 @@ def sync_all(fetch=default_fetch, sleep=time.sleep):
     summary = {}
     for index, username in enumerate(users):
         if index:
-            sleep(random.uniform(*user_delay))
+            wait = random.uniform(*user_delay)
+            progress(f"Waiting {wait:.0f}s before the next user ({index + 1} of {len(users)}: {username})", force=True)
+            sleep(wait)
         summary[username] = {}
         for list_name, path in LISTS:
-            entries, complete = scrape_list(username, path, fetch, pause=lambda: sleep(random.uniform(*request_delay)))
+            entries, complete = scrape_list(username, path, fetch, pause=lambda: sleep(random.uniform(*request_delay)), progress=progress)
             with db.connection() as conn:
                 result = store(conn, username, list_name, entries, complete)
             summary[username][list_name] = {**result, "complete": complete}
+            progress(f"Letterboxd {username}/{list_name}: {result['seen']} film(s), {result['removed']} no longer listed" + ("" if complete else " (incomplete)"), force=True)
             sleep(random.uniform(*request_delay))
-        logger.info(f"Letterboxd {username}: {summary[username]}")
     return summary

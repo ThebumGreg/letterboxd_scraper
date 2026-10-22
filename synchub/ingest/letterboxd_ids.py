@@ -44,13 +44,18 @@ def slugs_needing_ids(conn, limit, retry_days=RETRY_DAYS, now=None):
     return [r["slug"] for r in rows]
 
 
-def resolve(conn, fetch=default_fetch, limit=MAX_PER_RUN, pause=lambda: None, now=None):
+def resolve(conn, fetch=default_fetch, limit=MAX_PER_RUN, pause=lambda: None, now=None, progress=None):
     now = now or db.now()
+    progress = progress or (lambda message, force=False: None)
     stats = {"checked": 0, "found": 0, "no_id": 0, "errors": 0, "blocked": False}
     consecutive_errors = 0
-    for n, slug in enumerate(slugs_needing_ids(conn, limit, now=now)):
+    slugs = slugs_needing_ids(conn, limit, now=now)
+    progress(f"{len(slugs)} film(s) need an ID", force=True)
+    for n, slug in enumerate(slugs):
         if n:
             pause()
+        if n % 10 == 0 and n:
+            progress(f"Checked {n} of {len(slugs)}: {stats['found']} IDs found, {stats['errors']} errors")
         try:
             status, html = fetch(f"https://letterboxd.com/film/{quote(slug, safe='-')}/")
         except Exception as exc:

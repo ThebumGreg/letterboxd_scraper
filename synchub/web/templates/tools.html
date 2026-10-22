@@ -23,7 +23,10 @@
     <small class="text-body-secondary ms-2">Last run: <span data-task-last="all">{{ (all_task.last_run if all_task else '') or 'Never' }}</span></small>
 </div>
 
-<h4 class="mb-3">Individual tasks</h4>
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <h4 class="mb-0">Individual tasks</h4>
+    <span class="small"><a href="{{ url_for('diagnostics_page') }}" class="text-decoration-none">A task looks stuck or failed? See what the app is doing</a> &middot; <a href="{{ url_for('logs_page') }}" class="text-decoration-none">Logs</a></span>
+</div>
 <div class="row row-cols-1 row-cols-md-2 g-4 mb-4">
     {{ task_card('jellyfin_movies', 'Jellyfin movies', 'Reads your movie library from Jellyfin.', task_statuses.get('jellyfin_movies'), url_for('trigger', name='jellyfin_movies'), 'Sync movies now') }}
     {{ task_card('jellyfin_tv', 'Jellyfin TV', 'Reads shows, seasons and episodes from Jellyfin.', task_statuses.get('jellyfin_tv'), url_for('trigger', name='jellyfin_tv'), 'Sync TV now') }}

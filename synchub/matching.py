@@ -222,8 +222,12 @@ class Matcher:
                 (rec["source"], rec["key"], rec.get("title"), rec.get("year"), rec["kind"], r["candidate_media_id"], r["candidate_tmdb_id"], r["confidence"], r["reason"]))
             self.stats["review_added"] += cur.rowcount
 
-    def resolve_all(self):
-        for rec in self.records():
+    def resolve_all(self, progress=None):
+        progress = progress or (lambda message, force=False: None)
+        records = list(self.records())
+        for number, rec in enumerate(records, 1):
+            if number % 25 == 0:
+                progress(f"Matching {number} of {len(records)} source records")
             existing = self.conn.execute("SELECT * FROM link WHERE source = ? AND source_key = ? AND entity_type = 'media'", (rec["source"], rec["key"])).fetchone()
             if existing and (existing["status"] == "manual" or existing["confidence"] >= SKIP_THRESHOLD):
                 continue

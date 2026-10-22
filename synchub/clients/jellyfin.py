@@ -1,5 +1,10 @@
+import logging
+
 from synchub import http, settings
 from synchub.clients import ApiError, check, require
+
+
+logger = logging.getLogger(__name__)
 
 
 class JellyfinClient:
@@ -47,6 +52,7 @@ class JellyfinClient:
             res = check(http.request("jellyfin", "SyncLibrary", "GET", f"{self.url}/Items", headers=self.headers, params=params, timeout=60), "Jellyfin", "library sync")
             body = res.json()
             items = body.get("Items") or []
+            logger.info(f"Jellyfin: fetched {min(start + len(items), body.get('TotalRecordCount') or start + len(items))} of {body.get('TotalRecordCount', '?')} {'/'.join(types)} item(s)")
             yield from items
             start += page_size
             total = body.get("TotalRecordCount")

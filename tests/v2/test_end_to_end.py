@@ -32,6 +32,7 @@ def load_sources(conn):
         episode("e10", "ser1", "sea3", 3, 10, tvdb="5648401"),
     ])
     jf_ingest.sync(conn, jf, "all", "2026-06-01 00:00:00")
+    conn.commit()
     # Sonarr knows the show only by TVDB ID and has S3E9 + S3E10 downloaded, S3E11 monitored.
     sonarr = FakeSonarr(
         [{"id": 10, "tvdbId": 269533, "title": "The Last Ship", "year": 2014, "monitored": True}],
@@ -40,6 +41,7 @@ def load_sources(conn):
               {"id": 3, "seasonNumber": 3, "episodeNumber": 11, "title": "S3E11", "airDate": "2016-08-11", "monitored": True, "hasFile": False}]},
         queue=[{"id": 77, "episodeId": 3, "size": 100, "sizeleft": 25, "trackedDownloadState": "downloading", "title": "S3E11"}])
     sonarr_ingest.sync_library(conn, sonarr, "2026-06-01 00:00:00")
+    conn.commit()        # separate transactions, as the real tasks use: never a network call with writes pending
     sonarr_ingest.sync_queue(conn, sonarr, "2026-06-01 00:00:00")
 
 
@@ -102,6 +104,7 @@ def test_movies_end_to_end(v2):
         from synchub.ingest import letterboxd as lb
         from .test_ingest_jellyfin import FakeJellyfin
         jf_ingest.sync(conn, FakeJellyfin([{"Id": "m1", "Type": "Movie", "Name": "Toy Story 4", "ProductionYear": 2019, "ProviderIds": {"Tmdb": "301528"}}]), "movies")
+        conn.commit()
         radarr_ingest.sync_library(conn, FakeRadarr([{"id": 5, "tmdbId": 301528, "title": "Toy Story 4", "year": 2019, "monitored": True, "hasFile": True},
                                                       {"id": 6, "tmdbId": 11, "title": "Wanted", "year": 2000, "monitored": True, "hasFile": False}]))
         lb.store(conn, "alice", "watchlist", [{"slug": "toy-story-4", "title": "Toy Story 4", "year": 2019}, {"slug": "unknown-film", "title": "Unknown Film", "year": 1999}], True)
