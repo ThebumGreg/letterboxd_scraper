@@ -8,7 +8,8 @@ from synchub import settings, states
 def demand(conn):
     """{media_id: {'wanted_by': [...], 'watched_by': [...]}} from the entries of active profiles.
 
-    Someone *wants* a title when it is on their watchlist (and not removed from it) and they have not watched it.
+    Someone *wants* a title when it is on their watchlist (and not removed from it) and they have not watched it, or when
+    they asked for it from the search page (that stands even if they have watched it: they asked).
     Entries are never deleted, so a title dropped from a list keeps its row but stops counting as wanted.
     """
     rows = conn.execute("""
@@ -21,15 +22,17 @@ def demand(conn):
         FROM src_serializd_entry e
         JOIN link l ON l.source = 'serializd' AND l.source_key = e.serializd_show_id AND l.entity_type = 'media'
         JOIN profile p ON p.serializd_username = e.username AND p.is_active = 1""").fetchall()
-    watchlist, watched = defaultdict(set), defaultdict(set)
+    watchlist, watched, asked = defaultdict(set), defaultdict(set), defaultdict(set)
+    for r in conn.execute("SELECT m.media_id, p.name FROM manual_request m JOIN profile p ON p.id = m.profile_id AND p.is_active = 1"):
+        asked[r["media_id"]].add(r["name"])
     for r in rows:
         if r["list"] == "watched":
             watched[r["media_id"]].add(r["name"])
         elif r["removed_at"] is None:
             watchlist[r["media_id"]].add(r["name"])
     result = {}
-    for media_id in set(watchlist) | set(watched):
-        result[media_id] = {"wanted_by": sorted(watchlist[media_id] - watched[media_id], key=str.lower),
+    for media_id in set(watchlist) | set(watched) | set(asked):
+        result[media_id] = {"wanted_by": sorted((watchlist[media_id] - watched[media_id]) | asked[media_id], key=str.lower),
                             "watched_by": sorted(watched[media_id], key=str.lower)}
     return result
 

@@ -17,6 +17,15 @@ PROFILE_COOKIE_DAYS = 365
 UNGATED_PREFIXES = ("/api/", "/static/", "/poster/")
 
 
+def current_profile(conn):
+    """The profile named by the cookie, or None (a guest, nobody chosen, or a profile that no longer exists)."""
+    raw = request.cookies.get(PROFILE_COOKIE, "")
+    if not raw.isdigit() or raw == "0":
+        return None
+    row = conn.execute("SELECT id, name FROM profile WHERE id = ?", (int(raw),)).fetchone()
+    return dict(row) if row else None
+
+
 def safe_next(target):
     """Where to go after choosing: a path on this site only (never another site)."""
     target = (target or "").strip()

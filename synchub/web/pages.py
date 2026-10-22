@@ -1,8 +1,14 @@
 """HTML pages."""
+import logging
+
 from flask import abort, flash, redirect, render_template, request, send_file, send_from_directory, url_for
 
 from config import BASE_DIR
-from synchub import catalog, db, ddns, posters, profiles, settings, states, tasks, webhooks
+from synchub import catalog, db, ddns, posters, profiles, search, settings, states, tasks, webhooks
+from synchub.clients import ApiError, ConfigError
+from synchub.clients.tmdb import TmdbClient
+
+logger = logging.getLogger(__name__)
 
 STATUS_ORDER = ("missing", "queued", "downloading", "downloaded", "transferring", "encoding", "in_library", "partial")
 
@@ -51,6 +57,26 @@ def register(app):
         if placeholder.exists():
             return send_file(placeholder)
         abort(404)
+
+    @app.route("/search")
+    def search_page():
+        """Search TMDB for a movie or show and add it to Radarr/Sonarr. Results are not saved until something is added."""
+        query = (request.args.get("q") or "").strip()
+        kind = request.args.get("type") if request.args.get("type") in search.KINDS else "all"
+        results, error = [], None
+        if query:
+            try:
+                results = search.find(TmdbClient(), query, kind)
+                with db.connection() as conn:
+                    search.annotate(conn, results)
+            except ConfigError:
+                error = "TMDB is not set up yet. Add your TMDB API key in Settings to search."
+            except ApiError as exc:
+                error = f"TMDB would not search right now: {exc}"
+            except Exception as exc:
+                logger.warning(f"TMDB search for {query!r} failed: {exc}")
+                error = "Could not reach TMDB."
+        return render_template("search.html", query=query, kind=kind, results=results, error=error)
 
     @app.route("/who", methods=["GET", "POST"])
     def who():

@@ -52,8 +52,8 @@ class FakeTmdb:
 
     def search_movie(self, title, year=None):
         self._check("search_movie", title, year)
-        return self.search_data.get(("movie", title), [])
+        return self.search_data.get(("movie", title, year), self.search_data.get(("movie", title), []))
 
     def search_tv(self, title, year=None):
         self._check("search_tv", title, year)
-        return self.search_data.get(("tv", title), [])
+        return self.search_data.get(("tv", title, year), self.search_data.get(("tv", title), []))

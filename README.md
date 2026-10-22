@@ -28,6 +28,15 @@ Missing, Queued (monitored in Radarr/Sonarr, nothing yet), Downloading (in the R
 
 New states need no code or schema change: add a row to `state_def` and have a script write `processing_event` rows.
 
+## Search and add
+
+**Search** (top bar) looks a title up on TMDB and can send it straight to Radarr or Sonarr. Type a title, optionally with a year (`Heat 1995`); if a title simply ends in a number-like year (`Blade Runner 2049`) the whole text is searched when the year finds nothing. Results show movies, then shows, with where each already stands (In Library, Queued, Downloading ...). Nothing is saved until you add something.
+
+- **Movies**: **Add to Radarr**. A movie already in Radarr is shown as such instead of offering the button.
+- **Shows**: **Add to Sonarr...** opens a season picker (every regular season ticked, Specials last and unticked). SyncHub reads every episode from TMDB first, then sends the ticked seasons to Sonarr. A show can be asked for more seasons later with **Request seasons...**. Sonarr needs a TVDB ID; if TMDB has none the picker says so.
+- **Who asked**: the profile chosen on the Who-is-watching page is credited ("Wanted by") and counts as demand, even if they have watched the title. A guest can add too, but nobody is credited. Requests stay when a profile is deleted (they just stop counting).
+- A failed add (for example a Radarr root folder that does not exist) says why and leaves nothing behind in the catalog.
+
 ## Who is watching
 
 The first visit from a browser shows **Who is watching?**: pick your profile, or "Just looking" to continue as a guest. There is no password. The choice is remembered on that device for a year (a plain cookie holding the profile ID), the top bar shows who you are with a **switch** link, and the profile's Jellyfin user is the one the Jellyfin app links open as. It only says who is using the app; anyone on the network can pick anyone, so it is not security. Scripts, webhooks, images and the live stream are never asked. With no profiles nothing is asked.

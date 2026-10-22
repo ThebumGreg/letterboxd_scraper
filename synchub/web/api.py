@@ -7,10 +7,11 @@ from datetime import date
 
 from flask import Response, jsonify, request
 
-from synchub import automation, catalog, db, matching, settings, states, tasks, webhooks
+from synchub import automation, catalog, db, matching, search, settings, states, tasks, webhooks
 from synchub.automation import RequestError
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.arr import RadarrClient, SonarrClient
+from synchub.clients.tmdb import TmdbClient
 
 
 class MessageAnnouncer:
@@ -243,6 +244,52 @@ def register(app):
                 if isinstance(exc, (ConfigError, ApiError)):
                     raise
                 raise ApiError(str(exc))
+        return _guard(go)
+
+    # ---------------------------------------------------------------- search and add
+    def _tmdb_id(value):
+        text = str(value or "").strip()
+        if not text.isdigit():
+            raise RequestError("That is not a TMDB ID.")
+        return text
+
+    def _who():
+        from synchub.web import current_profile
+        with db.connection() as conn:
+            return current_profile(conn)
+
+    def _credit(profile):
+        return f" Credited to {profile['name']}." if profile else " Not credited to anyone: choose a profile at the top to credit your requests."
+
+    @app.route("/api/search/show/<int:tmdb_id>/seasons")
+    def api_search_seasons(tmdb_id):
+        return _guard(lambda: search.season_choices(TmdbClient(), tmdb_id))
+
+    @app.route("/api/search/add/movie", methods=["POST"])
+    def api_search_add_movie():
+        data = request.get_json(silent=True) or {}
+
+        def go():
+            profile = _who()
+            got = search.add_movie(TmdbClient(), RadarrClient(), _tmdb_id(data.get("tmdb_id")), profile["id"] if profile else None)
+            after_change("radarr")
+            return {"message": f"Sent '{got['title']}' to Radarr." + _credit(profile), "media_id": got["media_id"], "url": f"/movie/{got['media_id']}"}
+        return _guard(go)
+
+    @app.route("/api/search/add/show", methods=["POST"])
+    def api_search_add_show():
+        data = request.get_json(silent=True) or {}
+        seasons = data.get("seasons")
+        if not isinstance(seasons, list) or not all(isinstance(s, int) and not isinstance(s, bool) for s in seasons):
+            return fail("Send the list of seasons to add.")
+
+        def go():
+            profile = _who()
+            got = search.add_show(TmdbClient(), SonarrClient(), _tmdb_id(data.get("tmdb_id")), seasons, profile["id"] if profile else None)
+            after_change("sonarr")
+            verb = "Sent" if got["status"] == "added" else "Updated"
+            return {"message": f"{verb} '{got['title']}' in Sonarr (seasons {', '.join(str(s) for s in got['seasons'])})." + _credit(profile),
+                    "media_id": got["media_id"], "url": f"/show/{got['media_id']}"}
         return _guard(go)
 
     # ---------------------------------------------------------------- resolution center

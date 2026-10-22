@@ -1,0 +1,175 @@
+<!-- synchub/web/templates/search.html -->
+{% extends "base.html" %}
+{% from "_macros.html" import state_badge with context %}
+{% block title %}Search{% endblock %}
+
+{% block content %}
+<h2 class="mb-2">Search TMDB</h2>
+<p class="text-body-secondary mb-3">Find a movie or show and add it to Radarr or Sonarr. Add a year to narrow it down, like <em>Heat 1995</em>.</p>
+
+<form method="GET" action="{{ url_for('search_page') }}" class="row g-2 mb-4" role="search">
+    <div class="col-12 col-md">
+        <label for="q" class="visually-hidden">Title</label>
+        <input type="search" class="form-control form-control-lg" id="q" name="q" value="{{ query }}" placeholder="Title" autocomplete="off" {% if not query %}autofocus{% endif %}>
+    </div>
+    <div class="col-6 col-md-auto">
+        <label for="type" class="visually-hidden">Kind</label>
+        <select class="form-select form-select-lg" id="type" name="type">
+            {% for value, label in [('all', 'Movies and TV'), ('movie', 'Movies'), ('show', 'TV shows')] %}
+            <option value="{{ value }}" {% if kind == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-6 col-md-auto d-grid">
+        <button type="submit" class="btn btn-success btn-lg"><i class="bi bi-search" aria-hidden="true"></i> Search</button>
+    </div>
+</form>
+
+{% if error %}
+<div class="alert alert-warning" role="alert">{{ error }}{% if 'Settings' in error %} <a href="{{ url_for('settings_page') }}" class="alert-link">Open Settings</a>{% endif %}</div>
+{% elif query and not results %}
+<div class="alert alert-secondary" role="status">Nothing found for <strong>{{ query }}</strong>. Check the spelling, or try fewer words.</div>
+{% endif %}
+
+{% if results %}
+<div class="row row-cols-1 row-cols-lg-2 g-3 mb-4" id="results">
+    {% for r in results %}
+    <div class="col">
+        <div class="panel h-100 p-3 d-flex gap-3 search-result" data-kind="{{ r.kind }}" data-tmdb-id="{{ r.tmdb_id }}" data-title="{{ r.title }}">
+            {% if r.poster %}
+            <img src="{{ r.poster }}" alt="" width="92" height="138" class="rounded flex-shrink-0 poster" loading="lazy" referrerpolicy="no-referrer">
+            {% else %}
+            <div class="rounded flex-shrink-0 bg-secondary bg-opacity-25 d-flex align-items-center justify-content-center text-body-secondary" style="width: 92px; height: 138px;" aria-hidden="true"><i class="bi bi-image fs-3"></i></div>
+            {% endif %}
+            <div class="min-w-0 d-flex flex-column flex-grow-1">
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                    <span class="badge {{ 'badge-tv' if r.kind == 'show' else 'badge-movie' }}">{{ 'TV' if r.kind == 'show' else 'MOVIE' }}</span>
+                    {% if r.rating %}<span class="badge bg-secondary" title="TMDB rating"><i class="bi bi-star-fill" aria-hidden="true"></i> {{ r.rating }}</span>{% endif %}
+                </div>
+                <h5 class="mb-1">
+                    <a class="text-decoration-none text-reset" target="_blank" rel="noopener noreferrer" href="https://www.themoviedb.org/{{ 'movie' if r.kind == 'movie' else 'tv' }}/{{ r.tmdb_id }}">{{ r.title }}</a>
+                    {% if r.year %}<span class="text-muted fw-normal fs-6">({{ r.year }})</span>{% endif %}
+                </h5>
+                {% if r.overview %}<p class="small text-body-secondary mb-2 search-overview">{{ r.overview }}</p>{% endif %}
+
+                <div class="mt-auto d-flex flex-wrap align-items-center gap-2" data-actions>
+                    {% if r.state %}{{ state_badge(r.state_label, r.state_color, r.state_icon, r.progress_pct if r.state == 'downloading' else none) }}{% endif %}
+                    {% if r.kind == 'movie' and r.in_radarr and r.state == 'missing' %}<span class="small text-body-secondary">Already in Radarr</span>{% endif %}
+                    {% if r.url %}<a href="{{ r.url }}" class="btn btn-sm btn-outline-secondary">Open</a>{% endif %}
+                    {% if r.addable and r.kind == 'movie' %}
+                    <button type="button" class="btn btn-sm btn-outline-info" data-add-movie><i class="bi bi-cloud-download" aria-hidden="true"></i> Add to Radarr</button>
+                    {% elif r.kind == 'show' and (r.addable or r.state != 'in_library') %}
+                    <button type="button" class="btn btn-sm btn-outline-info" data-add-show><i class="bi bi-cloud-download" aria-hidden="true"></i> {{ 'Add to Sonarr...' if r.addable and not r.in_sonarr else 'Request seasons...' }}</button>
+                    {% endif %}
+                </div>
+                <div class="small mt-2" data-result role="status"></div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="modal fade" id="seasonModal" tabindex="-1" aria-labelledby="seasonTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="seasonTitle">Which seasons?</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="small text-body-secondary" id="seasonHint"></p>
+                <div id="seasonList" class="d-grid gap-2"></div>
+                <div class="small mt-3" id="seasonMessage" role="status"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-success" id="seasonAdd" disabled><i class="bi bi-cloud-download" aria-hidden="true"></i> Send to Sonarr</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const headers = { 'Content-Type': 'application/json', 'X-CSRFToken': token };
+    const call = async (url, options) => {
+        try {
+            const res = await fetch(url, options);
+            return await res.json();
+        } catch (e) { return { ok: false, message: 'Could not reach the server.' }; }
+    };
+    const say = (el, text, ok) => { el.className = 'small mt-2 ' + (ok === undefined ? 'text-body-secondary' : ok ? 'text-success' : 'text-danger'); el.textContent = text; };
+
+    // After an add: the buttons give way to the outcome and a link to the title's page.
+    function done(card, data) {
+        const actions = card.querySelector('[data-actions]');
+        actions.querySelectorAll('button').forEach((b) => b.remove());
+        const open = document.createElement('a');
+        open.href = data.url;
+        open.className = 'btn btn-sm btn-outline-secondary';
+        open.textContent = 'Open';
+        actions.appendChild(open);
+        say(card.querySelector('[data-result]'), data.message, true);
+    }
+
+    document.querySelectorAll('[data-add-movie]').forEach((button) => button.addEventListener('click', async () => {
+        const card = button.closest('.search-result');
+        const out = card.querySelector('[data-result]');
+        button.disabled = true;
+        say(out, 'Sending to Radarr...');
+        const data = await call('/api/search/add/movie', { method: 'POST', headers, body: JSON.stringify({ tmdb_id: card.dataset.tmdbId }) });
+        if (data.ok) done(card, data); else { say(out, data.message || 'Failed.', false); button.disabled = false; }
+    }));
+
+    // Shows: ask TMDB for the seasons, let the person choose, then send.
+    const modalEl = document.getElementById('seasonModal');
+    const modal = window.bootstrap ? bootstrap.Modal.getOrCreateInstance(modalEl) : null;
+    const list = document.getElementById('seasonList'), hint = document.getElementById('seasonHint');
+    const message = document.getElementById('seasonMessage'), sendButton = document.getElementById('seasonAdd');
+    let current = null;
+
+    document.querySelectorAll('[data-add-show]').forEach((button) => button.addEventListener('click', async () => {
+        const card = button.closest('.search-result');
+        current = card;
+        list.textContent = '';
+        sendButton.disabled = true;
+        hint.textContent = 'Reading the seasons from TMDB...';
+        say(message, '');
+        document.getElementById('seasonTitle').textContent = card.dataset.title;
+        modal.show();
+        const data = await call(`/api/search/show/${encodeURIComponent(card.dataset.tmdbId)}/seasons`);
+        if (!data.ok) { hint.textContent = ''; say(message, data.message || 'Could not read the seasons.', false); return; }
+        hint.textContent = 'Specials are left out unless you tick them.';
+        data.seasons.forEach((season) => {
+            const label = document.createElement('label');
+            label.className = 'form-check d-flex align-items-center gap-2 border rounded px-3 py-2';
+            const box = document.createElement('input');
+            box.type = 'checkbox';
+            box.className = 'form-check-input m-0';
+            box.value = season.number;
+            box.checked = season.number > 0 && season.episodes > 0;
+            box.addEventListener('change', () => { sendButton.disabled = !list.querySelector('input:checked'); });
+            const text = document.createElement('span');
+            text.textContent = `${season.name} · ${season.episodes} episode${season.episodes === 1 ? '' : 's'}${season.air_date ? ' · ' + season.air_date : ''}`;
+            label.append(box, text);
+            list.appendChild(label);
+        });
+        if (!data.has_tvdb) say(message, 'Sonarr needs a TVDB ID and TMDB has none for this show, so it cannot be added from here.', false);
+        else sendButton.disabled = !list.querySelector('input:checked');
+    }));
+
+    sendButton.addEventListener('click', async () => {
+        const seasons = [...list.querySelectorAll('input:checked')].map((box) => parseInt(box.value, 10));
+        if (!current || !seasons.length) return;
+        sendButton.disabled = true;
+        say(message, 'Reading every episode and sending to Sonarr...');
+        const data = await call('/api/search/add/show', { method: 'POST', headers, body: JSON.stringify({ tmdb_id: current.dataset.tmdbId, seasons }) });
+        if (data.ok) { modal.hide(); done(current, data); } else { say(message, data.message || 'Failed.', false); sendButton.disabled = false; }
+    });
+})();
+</script>
+{% endblock %}
