@@ -1,0 +1,3 @@
+# Scripts and Dockerfiles run on Linux: never convert their line endings to Windows style.
+*.sh text eol=lf
+Dockerfile text eol=lf

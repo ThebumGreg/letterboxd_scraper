@@ -30,25 +30,40 @@ Checked on a real Docker engine with the real Dockerfiles: both images build; th
 
 ## 1. Build the app image
 
-The app is built from the repository, so the repository has to be somewhere Docker can read. Either way you end up with an image called `synchub:latest` on Unraid.
+SyncHub is not published to a registry, so the image has to be **built once on the Unraid box**; until it exists, Unraid answers `Unable to find image 'synchub:latest' locally ... pull access denied for synchub`. The repository is private and Unraid does not ship `git`, so the simplest way is to send the code from your PC. You end up with an image called `synchub:latest` on Unraid.
 
-**A. Build on Unraid** (Unraid terminal, or SSH):
+**A. Send the code from your PC and build on Unraid** (needs only `git` and `ssh` on your PC; nothing extra on Unraid, no GitHub token):
+
+```bash
+# on your PC, in the repository folder
+git fetch origin
+git archive --format=tar.gz --prefix=synchub-src/ -o /tmp/synchub-src.tar.gz origin/claude/epic-babbage-qhfxnj
+scp /tmp/synchub-src.tar.gz root@UNRAID_IP:/mnt/user/appdata/
+
+# then on Unraid (SSH or its terminal)
+cd /mnt/user/appdata && rm -rf synchub-src && tar xzf synchub-src.tar.gz
+cd synchub-src && docker build -t synchub:latest .
+docker images | grep synchub        # must list  synchub  latest
+```
+
+`git archive` sends exactly the committed code (no database, no virtual environment). The build takes a minute or two and needs Unraid to reach the internet (it downloads the Python base image and the packages). To update later, repeat these commands.
+
+**B. Build on Unraid straight from GitHub** (a private repository needs a token: GitHub → Settings → Developer settings → Fine-grained tokens, read-only access to **Contents** for this repository):
 
 ```bash
 mkdir -p /mnt/user/appdata/synchub-src && cd /mnt/user/appdata/synchub-src
-git clone --branch claude/epic-babbage-qhfxnj https://github.com/ThebumGreg/letterboxd_scraper.git .
-# a private repository asks for a GitHub username and a personal access token (read access to the repository) as the password
+curl -L -H "Authorization: Bearer YOUR_TOKEN" https://api.github.com/repos/ThebumGreg/letterboxd_scraper/tarball/claude/epic-babbage-qhfxnj | tar xz --strip-components=1
 docker build -t synchub:latest .
 ```
 
-**B. Build on your PC and send it** (no GitHub access needed on Unraid):
+**C. Build on your PC and send the image** (needs Docker on the PC):
 
 ```bash
 docker build -t synchub:latest .
 docker save synchub:latest | gzip | ssh root@UNRAID_IP 'gunzip | docker load'
 ```
 
-The source folder is not the data folder: keep them apart (`synchub-src` for the code, `synchub` for the data).
+The source folder is not the data folder: keep them apart (`synchub-src` for the code, `synchub` for the data). Once the image exists, the `docker run` command or the Unraid template in the next sections starts it; the Unraid UI cannot check this local image for updates, which is normal.
 
 ## 2. Move your existing database
 
@@ -199,6 +214,7 @@ The database that was there is kept beside it as `synchub.db.before-restore-<tim
 
 | You see | Likely cause and fix |
 |---|---|
+| `Unable to find image 'synchub:latest' locally` / `pull access denied` | The image has not been built on this Unraid box yet (section 1). It is not on any registry, so Docker cannot download it. |
 | Container `unhealthy`, or restarting | `docker logs synchub`. `cannot write to /data`: start it as root with `PUID`/`PGID` (the command above), or make the folder writable for the user you chose. `database is locked` or a WAL warning: the data folder is on a network or FUSE path; use `/mnt/cache/...`. |
 | Banner "These addresses will not work from inside Docker" | A service address says `localhost`/`127.0.0.1`: use the real IP (Settings). |
 | Radarr/Sonarr/Jellyfin webhook says it cannot reach SyncHub | The *SyncHub address* is wrong for where that service runs: use `http://UNRAID_IP:5001`, not `localhost`. |

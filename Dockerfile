@@ -21,6 +21,8 @@ COPY config.py logger.py settings_validation.py ./
 COPY synchub ./synchub
 COPY static ./static
 COPY docker/entrypoint.sh /entrypoint.sh
+# Whatever the code travelled through (Windows line endings, a copy that lost the executable bit), the script must run.
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod 0755 /entrypoint.sh
 
 VOLUME /data
 EXPOSE 5001
