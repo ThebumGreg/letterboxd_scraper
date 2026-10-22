@@ -196,7 +196,7 @@
                             <option value="{{ settings.radarr_root_folder|default('/movies') }}">{{ settings.radarr_root_folder|default('/movies') }}</option>
                         </select>
                     </div>
-                    <button type="button" class="btn btn-outline-info btn-sm" data-test-service="radarr" data-test-fields="radarr_url,radarr_api_key">Test connection</button>
+                    <button type="button" class="btn btn-outline-info btn-sm" data-test-service="radarr" data-test-fields="radarr_url,radarr_api_key,radarr_quality_profile_id,radarr_root_folder">Test connection</button>
                     <span class="small ms-2" data-test-result="radarr" role="status"></span>
                 </div>
             </div>
@@ -238,7 +238,7 @@
                             <option value="{{ settings.sonarr_root_folder|default('/tv') }}">{{ settings.sonarr_root_folder|default('/tv') }}</option>
                         </select>
                     </div>
-                    <button type="button" class="btn btn-outline-info btn-sm" data-test-service="sonarr" data-test-fields="sonarr_url,sonarr_api_key">Test connection</button>
+                    <button type="button" class="btn btn-outline-info btn-sm" data-test-service="sonarr" data-test-fields="sonarr_url,sonarr_api_key,sonarr_quality_profile_id,sonarr_root_folder">Test connection</button>
                     <span class="small ms-2" data-test-result="sonarr" role="status"></span>
                 </div>
             </div>
@@ -322,7 +322,7 @@
     }
 
     // Dynamic Servarr Dropdowns
-    async function fetchServarr(service) {
+    async function fetchServarr(service, quiet = false) {
         const urlField = document.getElementById(`${service}_url`);
         const keyField = document.getElementById(`${service}_api_key`);
         
@@ -337,6 +337,8 @@
         const rfSel = document.getElementById(`${service}_root_folder`);
         const qpSaved = qpSel.dataset.saved;
         const rfSaved = rfSel.dataset.saved;
+        const label = service === 'radarr' ? 'Radarr' : 'Sonarr';
+        const samePath = (a, b) => String(a).replace(/[\\/]+$/, '') === String(b).replace(/[\\/]+$/, '');
         // Put the saved values back so a failed load can never leave a "Loading..." option to be submitted.
         const restoreSaved = () => {
             qpSel.innerHTML = `<option value="${qpSaved}">Saved ID: ${qpSaved}</option>`;
@@ -350,7 +352,9 @@
             const qpRes = await fetch(`/api/servarr/${service}/quality-profiles`, reqOpts);
             if (qpRes.ok) {
                 const profiles = await qpRes.json();
-                qpSel.innerHTML = profiles.map(p => 
+                // A saved value the service does not have is shown as such and must be replaced, never silently swapped.
+                const qpMissing = profiles.some(p => p.id.toString() === qpSaved) ? '' : `<option value="" selected>Choose a profile (saved ID ${String(qpSaved).replace(/[&<>"']/g, '')} is not in ${label})</option>`;
+                qpSel.innerHTML = qpMissing + profiles.map(p => 
                     `<option value="${p.id}" ${p.id.toString() === qpSaved ? 'selected' : ''}>${String(p.name).replace(/[&<>"']/g, '')}</option>`
                 ).join('');
             } else {
@@ -363,8 +367,9 @@
             const rfRes = await fetch(`/api/servarr/${service}/root-folders`, reqOpts);
             if (rfRes.ok) {
                 const folders = await rfRes.json();
-                rfSel.innerHTML = folders.map(f => 
-                    `<option value="${f.path.replace(/"/g, '&quot;')}" ${f.path === rfSaved ? 'selected' : ''}>${String(f.path).replace(/[&<>]/g, '')} (${(f.freeSpace / 1073741824).toFixed(1)} GB free)</option>`
+                const rfMissing = folders.some(f => samePath(f.path, rfSaved)) ? '' : `<option value="" selected>Choose a folder (saved '${String(rfSaved).replace(/[&<>"']/g, '')}' is not a ${label} root folder)</option>`;
+                rfSel.innerHTML = rfMissing + folders.map(f => 
+                    `<option value="${f.path.replace(/"/g, '&quot;')}" ${samePath(f.path, rfSaved) ? 'selected' : ''}>${String(f.path).replace(/[&<>]/g, '')} (${(f.freeSpace / 1073741824).toFixed(1)} GB free)</option>`
                 ).join('');
             } else {
                 rfSel.innerHTML = `<option value="${rfSaved}">${rfSaved}</option>`;
@@ -372,8 +377,13 @@
         } catch (err) {
             console.error(`Failed to load ${service} configs`, err);
             restoreSaved();
-            alert(`Failed to connect to ${service}. Verify URL and API Key.`);
+            if (!quiet) alert(`Failed to connect to ${service}. Verify URL and API Key.`);
         }
     }
+
+    // Offer the real choices as soon as the page opens, so a wrong saved value is visible without pressing anything.
+    ['radarr', 'sonarr'].forEach((service) => {
+        if (document.getElementById(`${service}_url`)?.value) fetchServarr(service, true);
+    });
 </script>
 {% endblock %}

@@ -5,6 +5,7 @@ Jellyfin (even if it was deleted from Jellyfin since: those are not re-requested
 Titles whose ID is only a weak guess never get here, because they have no link until a human approves them.
 """
 import logging
+from typing import NamedTuple
 
 from synchub import catalog, settings
 from synchub.clients import ApiError
@@ -31,6 +32,49 @@ def _linked(conn, source, media_id, table, key_col, active_only=True):
 
 def _ever_in_jellyfin(conn, media_id):
     return conn.execute("SELECT 1 FROM link WHERE source = 'jellyfin' AND entity_type = 'media' AND entity_id = ?", (media_id,)).fetchone() is not None
+
+
+# ---------------------------------------------------------------- where new titles go
+class Destination(NamedTuple):
+    quality_profile_id: int
+    root_folder: str
+
+
+def _same_path(a, b):
+    norm = lambda p: str(p or "").strip().rstrip("/\\")
+    a, b = norm(a), norm(b)
+    windows_style = ":" in a + b or "\\" in a + b
+    return a == b or (windows_style and a.lower() == b.lower())
+
+
+def resolve_destination(client, quality_profile_id=None, root_folder=None):
+    """The quality profile and root folder a new title would be added with, checked against the service itself.
+
+    Both default to the saved settings. Nothing is assumed: when either is missing from the service the error says what
+    is wrong and lists what the service offers, so a bad setting is one clear message instead of one failure per title."""
+    label, service = client.label, client.service
+    where = f"in SyncHub under Settings, {label}"
+    profile_id = settings.get(f"{service}_quality_profile_id") if quality_profile_id is None else quality_profile_id
+    wanted_folder = settings.get(f"{service}_root_folder") if root_folder is None else root_folder
+    profiles, folders = client.quality_profiles(), client.root_folders()
+
+    offered = ", ".join(f"{p.get('id')} = {p.get('name')}" for p in profiles) or "none"
+    try:
+        profile_id = int(str(profile_id).strip())
+    except ValueError:
+        raise RequestError(f"No {label} quality profile is chosen. Choose one {where}. {label} has: {offered}.")
+    if profile_id not in {p.get("id") for p in profiles}:
+        raise RequestError(f"{label} has no quality profile with ID {profile_id}. Choose one {where}. {label} has: {offered}.")
+
+    offered = ", ".join(f.get("path", "") for f in folders) or "none"
+    if not folders:
+        raise RequestError(f"{label} has no root folders. Add one in {label} (Settings, Media Management, Root Folders), then choose it {where}.")
+    folder = next((f for f in folders if _same_path(f.get("path"), wanted_folder)), None)
+    if folder is None:
+        raise RequestError(f"{label} does not have the root folder '{wanted_folder}'. Choose one {where}. {label}'s root folders are: {offered}.")
+    if folder.get("accessible") is False:
+        raise RequestError(f"{label} reports its root folder '{folder['path']}' as not accessible. Check that the path exists and {label} may write to it.")
+    return Destination(profile_id, folder["path"])        # the path as the service spells it
 
 
 # ---------------------------------------------------------------- what is wanted
@@ -64,25 +108,40 @@ def pending_shows(conn, min_users):
 
 
 # ---------------------------------------------------------------- movies
-def _add_movie(client, tmdb_id):
+def _add_movie(client, tmdb_id, destination=None):
+    destination = destination or resolve_destination(client)
     movie = client.lookup(tmdb_id)
     if movie is None:
         raise RequestError(f"TMDB {tmdb_id} was not found by Radarr.")
-    client.add_movie(movie, settings.get("radarr_quality_profile_id"), settings.get("radarr_root_folder"))
+    client.add_movie(movie, destination.quality_profile_id, destination.root_folder)
     return movie["title"]
+
+
+def _blocked(result, label, waiting, exc):
+    """A setup problem stops the whole run once, with one message, instead of failing every title the same way."""
+    logger.warning(f"{label} auto-add blocked ({waiting} title(s) waiting): {exc}")
+    result["blocked"], result["waiting"] = str(exc), waiting
+    return result
 
 
 def run_radarr_additions(conn, client, dry_run=False, min_users=None):
     min_users = min_users or _int_setting("radarr_min_user_count", 1)
-    result = {"added": [], "would_add": [], "errors": []}
-    for item in pending_movies(conn, min_users):
+    result = {"added": [], "would_add": [], "errors": [], "blocked": None}
+    items = pending_movies(conn, min_users)
+    if not items:
+        return result
+    try:
+        destination = resolve_destination(client)
+    except (RequestError, ApiError) as exc:
+        return _blocked(result, "Radarr", len(items), exc)
+    for item in items:
         try:
             if dry_run:
                 if client.lookup(item["tmdb_id"]) is None:
                     raise RequestError(f"TMDB {item['tmdb_id']} was not found by Radarr.")
                 result["would_add"].append(item["title"])
             else:
-                result["added"].append(_add_movie(client, item["tmdb_id"]))
+                result["added"].append(_add_movie(client, item["tmdb_id"], destination))
         except (RequestError, ApiError) as exc:
             logger.warning(f"Radarr add failed for {item['title']}: {exc}")
             result["errors"].append(f"{item['title']}: {exc}")
@@ -114,7 +173,13 @@ def tvdb_seasons(conn, media_id, tmdb_seasons):
 def run_sonarr_additions(conn, client, dry_run=False, min_users=None):
     min_users = min_users or _int_setting("sonarr_min_user_count", 1)
     shows, skipped = pending_shows(conn, min_users)
-    result = {"added": [], "would_add": [], "errors": [], "skipped_no_tvdb": skipped}
+    result = {"added": [], "would_add": [], "errors": [], "skipped_no_tvdb": skipped, "blocked": None}
+    if not shows:
+        return result
+    try:
+        destination = resolve_destination(client)
+    except (RequestError, ApiError) as exc:
+        return _blocked(result, "Sonarr", len(shows), exc)
     for item in shows:
         try:
             show = client.lookup(item["tvdb_id"])
@@ -123,7 +188,7 @@ def run_sonarr_additions(conn, client, dry_run=False, min_users=None):
             if dry_run:
                 result["would_add"].append(item["title"])
                 continue
-            client.add_series(show, settings.get("sonarr_quality_profile_id"), settings.get("sonarr_root_folder"), monitored_seasons=item["seasons"])
+            client.add_series(show, destination.quality_profile_id, destination.root_folder, monitored_seasons=item["seasons"])
             result["added"].append(item["title"])
         except (RequestError, ApiError) as exc:
             logger.warning(f"Sonarr add failed for {item['title']}: {exc}")
@@ -141,10 +206,11 @@ def _show_with_tvdb(conn, media_id):
 
 
 def _add_to_sonarr(conn, client, m, seasons, search):
+    destination = resolve_destination(client)
     show = client.lookup(m["tvdb_id"])
     if show is None:
         raise RequestError(f"TVDB {m['tvdb_id']} was not found by Sonarr.")
-    client.add_series(show, settings.get("sonarr_quality_profile_id"), settings.get("sonarr_root_folder"), monitored_seasons=seasons, search=search)
+    client.add_series(show, destination.quality_profile_id, destination.root_folder, monitored_seasons=seasons, search=search)
 
 
 def request_seasons(conn, client, media_id, seasons):

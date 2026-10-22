@@ -4,10 +4,12 @@ from synchub import automation, settings
 from synchub.clients import ApiError
 from synchub.automation import RequestError
 
+from .fakes import ServarrSetup, SonarrSetup
+
 NOW = "2026-01-01 00:00:00"
 
 
-class FakeRadarr:
+class FakeRadarr(ServarrSetup):
     def __init__(self, known=("949", "11"), fail_on=()):
         self.known, self.fail_on, self.added, self.lookups = set(known), set(fail_on), [], []
 
@@ -21,7 +23,7 @@ class FakeRadarr:
         self.added.append((movie["title"], quality_profile_id, root_folder))
 
 
-class FakeSonarr:
+class FakeSonarr(SonarrSetup):
     def __init__(self, series=None, known=("111",), fail_search=False):
         self.series, self.known, self.fail_search = series, set(known), fail_search
         self.added, self.updated, self.searched_seasons, self.monitored, self.searched_eps = [], None, [], [], []
@@ -98,7 +100,7 @@ def test_radarr_additions_add_dry_run_and_report_errors(conn):
     conn.commit()
     radarr = FakeRadarr(fail_on=("11",))
     result = automation.run_radarr_additions(conn, radarr)
-    assert result["added"] == ["Movie 949"] and radarr.added == [("Movie 949", "4", "/films")]
+    assert result["added"] == ["Movie 949"] and radarr.added == [("Movie 949", 4, "/films")]
     assert len(result["errors"]) == 2 and any("Nope" in e and "not found" in e for e in result["errors"]) and any("Dup" in e for e in result["errors"])
     dry = FakeRadarr()
     dry_result = automation.run_radarr_additions(conn, dry, dry_run=True)
@@ -112,6 +114,87 @@ def test_request_movie(conn):
     conn.execute("INSERT INTO src_radarr_movie (radarr_id, first_seen, last_seen) VALUES ('r', ?, ?)", (NOW, NOW)); link(conn, "radarr", "r", mid)
     with pytest.raises(RequestError, match="already in Radarr"):
         automation.request_movie(conn, radarr, mid)
+
+
+# ---------------------------------------------------------------- where new titles go
+def test_destination_is_checked_against_what_the_service_has(conn):
+    radarr = FakeRadarr()
+    settings.set_value("radarr_quality_profile_id", "4", conn=conn); settings.set_value("radarr_root_folder", "/films/", conn=conn)
+    conn.commit()
+    got = automation.resolve_destination(radarr)
+    assert got == (4, "/films") and got.root_folder == "/films"                     # the service's own spelling, not the trailing slash typed
+
+    for profile_id, folder, message in [
+        ("4", "/nope", "does not have the root folder '/nope'.*root folders are: /movies, /films"),
+        ("9", "/films", "no quality profile with ID 9.*1 = Any, 4 = HD-1080p"),
+        ("Loading...", "/films", "No Radarr quality profile is chosen"),
+        ("", "/films", "No Radarr quality profile is chosen"),
+        ("4", "", "does not have the root folder ''"),
+    ]:
+        with pytest.raises(RequestError, match=message):
+            automation.resolve_destination(radarr, profile_id, folder)
+
+
+def test_destination_reports_unusable_root_folders(conn):
+    radarr = FakeRadarr()
+    radarr.folders = [{"path": "/films", "accessible": False}]
+    with pytest.raises(RequestError, match="not accessible"):
+        automation.resolve_destination(radarr, 1, "/films")
+    radarr.folders = []
+    with pytest.raises(RequestError, match="has no root folders"):
+        automation.resolve_destination(radarr, 1, "/films")
+    radarr.folders = [{"path": "D:\\Movies", "accessible": True}]                    # Windows paths ignore case and trailing slashes
+    assert automation.resolve_destination(radarr, 1, "d:\\movies\\").root_folder == "D:\\Movies"
+
+
+def test_a_bad_destination_blocks_the_whole_auto_add_once_and_touches_nothing(conn):
+    profile(conn, "A", "alice")
+    for i in range(3):
+        lb(conn, "alice", f"s{i}", movie(conn, "949", f"Film {i}") if i == 0 else movie(conn, str(900 + i), f"Film {i}"))
+    conn.commit()                                                                     # default settings: '/movies' exists, so break the folder
+    settings.set_value("radarr_root_folder", "/missing", conn=conn)
+    conn.commit()
+    radarr = FakeRadarr(known=("949", "901", "902"))
+    for dry_run in (False, True):
+        result = automation.run_radarr_additions(conn, radarr, dry_run=dry_run)
+        assert result["blocked"] and "does not have the root folder '/missing'" in result["blocked"] and result["waiting"] == 3
+        assert result["added"] == result["would_add"] == result["errors"] == []      # one message, not one failure per title
+    assert radarr.lookups == [] and radarr.added == []
+
+
+def test_a_good_destination_does_not_block(conn):
+    profile(conn, "A", "alice")
+    lb(conn, "alice", "s", movie(conn, "949", "Heat"))
+    conn.commit()
+    result = automation.run_radarr_additions(conn, FakeRadarr())
+    assert result["blocked"] is None and result["added"] == ["Movie 949"]
+    assert automation.run_radarr_additions(conn, FakeRadarr(), min_users=5)["blocked"] is None       # nothing waiting: nothing to check
+
+
+def test_request_movie_with_a_bad_destination_says_why_and_adds_nothing(conn):
+    mid = movie(conn, "949")
+    settings.set_value("radarr_quality_profile_id", "77", conn=conn)
+    conn.commit()
+    radarr = FakeRadarr()
+    with pytest.raises(RequestError, match="no quality profile with ID 77"):
+        automation.request_movie(conn, radarr, mid)
+    assert radarr.lookups == [] and radarr.added == []
+
+
+def test_sonarr_bad_destination_blocks_auto_add_and_manual_requests(conn):
+    profile(conn, "A", sz="alice_sz")
+    mid = show(conn, "1", "111", "Show")
+    conn.execute("INSERT INTO src_serializd_entry (username, serializd_show_id, first_seen, last_seen) VALUES ('alice_sz', 's1', ?, ?)", (NOW, NOW)); link(conn, "serializd", "s1", mid)
+    settings.set_value("sonarr_root_folder", "/movies", conn=conn)                     # a Radarr folder is not a Sonarr folder
+    conn.commit()
+    sonarr = FakeSonarr()
+    result = automation.run_sonarr_additions(conn, sonarr)
+    assert "does not have the root folder '/movies'" in result["blocked"] and "/tv, /shows" in result["blocked"] and result["added"] == []
+    with pytest.raises(RequestError, match="root folder '/movies'"):
+        automation.request_seasons(conn, sonarr, mid, [1])
+    with pytest.raises(RequestError, match="root folder '/movies'"):
+        automation.request_episodes(conn, sonarr, mid, [1])
+    assert sonarr.added == []
 
 
 # ---------------------------------------------------------------- shows

@@ -1,6 +1,25 @@
-"""A scriptable stand-in for TmdbClient."""
+"""Scriptable stand-ins for the services SyncHub talks to."""
 
 
+class ServarrSetup:
+    """What a real Radarr/Sonarr answers about its own setup. The defaults satisfy SyncHub's default settings."""
+    service, label = "radarr", "Radarr"
+    profiles = [{"id": 1, "name": "Any"}, {"id": 4, "name": "HD-1080p"}]
+    folders = [{"path": "/movies", "accessible": True, "freeSpace": 10 ** 11}, {"path": "/films", "accessible": True, "freeSpace": 10 ** 11}]
+
+    def quality_profiles(self):
+        return self.profiles
+
+    def root_folders(self):
+        return self.folders
+
+
+class SonarrSetup(ServarrSetup):
+    service, label = "sonarr", "Sonarr"
+    folders = [{"path": "/tv", "accessible": True, "freeSpace": 10 ** 11}, {"path": "/shows", "accessible": True, "freeSpace": 10 ** 11}]
+
+
+# ---------------------------------------------------------------- TMDB
 class FakeTmdb:
     def __init__(self, movies=None, shows=None, seasons=None, find=None, search=None, fail=False):
         self.movies, self.shows, self.season_data = movies or {}, shows or {}, seasons or {}

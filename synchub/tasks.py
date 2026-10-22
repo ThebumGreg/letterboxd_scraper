@@ -124,6 +124,8 @@ def _summarise(result, noun):
         parts.append(f"added {len(result['added'])} {noun}")
     if result.get("would_add"):
         parts.append(f"dry run: would add {len(result['would_add'])}")
+    if result.get("blocked"):
+        parts.append(f"BLOCKED, {result['waiting']} waiting: {result['blocked']}")
     if result.get("errors"):
         parts.append(f"{len(result['errors'])} could not be added")
     if result.get("skipped_no_tvdb"):

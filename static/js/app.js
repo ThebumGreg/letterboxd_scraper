@@ -188,7 +188,7 @@
                         headers: { "Content-Type": "application/json", Accept: "application/json", ...csrfHeaders() },
                         body: JSON.stringify({ fields }),
                     });
-                    if (res.status === 404) throw new Error("The server has no test endpoint yet (see BACKEND_NOTES.md).");
+                    if (res.status === 404) throw new Error("The server has no test endpoint for this service.");
                     const data = await res.json().catch(() => ({}));
                     const ok = res.ok && data.ok !== false;
                     show(data.message || (ok ? "Connection OK" : `Failed (HTTP ${res.status})`), ok ? "text-success" : "text-danger");

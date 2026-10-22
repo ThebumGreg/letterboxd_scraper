@@ -8,6 +8,7 @@ from synchub import catalog, settings, tasks
 from synchub.clients import ApiError
 
 from . import test_end_to_end as e2e
+from .fakes import ServarrSetup, SonarrSetup
 
 
 @pytest.fixture
@@ -154,7 +155,7 @@ def test_jellyfin_import_only_sets_name_and_jellyfin_id(client, v2):
 
 
 # ---------------------------------------------------------------- requests
-class FakeSonarrWeb:
+class FakeSonarrWeb(SonarrSetup):
     def __init__(self):
         self.calls = []
 
@@ -196,7 +197,7 @@ def test_request_movie_upstream_error_is_reported_to_the_user(client, v2, monkey
     with v2.connection() as conn:
         mid = conn.execute("INSERT INTO media (kind, title, tmdb_id) VALUES ('movie', 'M', '5')").lastrowid
 
-    class Radarr:
+    class Radarr(ServarrSetup):
         def lookup(self, tmdb): raise ApiError("Radarr LookupMovie failed: HTTP 500")
     monkeypatch.setattr(api, "RadarrClient", lambda: Radarr())
     r = client.post(f"/api/request/movie/{mid}")
@@ -329,14 +330,32 @@ def test_connection_test_never_sends_the_saved_key_to_a_different_url(client, v2
     settings.set_value("radarr_api_key", "SAVEDKEY")
     import synchub.web.api as api
     made = []
-    monkeypatch.setattr(api, "RadarrClient", lambda url, key: made.append((url, key)) or type("C", (), {"status": lambda self: {"appName": "Radarr", "version": "5"}})())
+    monkeypatch.setattr(api, "RadarrClient", lambda url, key: made.append((url, key)) or type("C", (ServarrSetup,), {"status": lambda self: {"appName": "Radarr", "version": "5"}})())
     r = client.post("/api/test-connection/radarr", json={"fields": {"radarr_url": "http://evil.example", "radarr_api_key": ""}})
     assert "different URL" in r.get_json()["message"] and made == []
     ok = client.post("/api/test-connection/radarr", json={"fields": {"radarr_url": "", "radarr_api_key": ""}}).get_json()
-    assert ok == {"ok": True, "message": "Connected to Radarr 5"} and made == [("http://radarr:7878", "SAVEDKEY")]
+    assert ok == {"ok": True, "message": "Connected to Radarr 5. The quality profile and root folder are valid."} and made == [("http://radarr:7878", "SAVEDKEY")]
     typed = client.post("/api/test-connection/radarr", json={"fields": {"radarr_url": "http://other:7878", "radarr_api_key": "NEWKEY"}}).get_json()
     assert typed["ok"] and made[-1] == ("http://other:7878", "NEWKEY")
     assert client.post("/api/test-connection/bogus", json={}).status_code == 404
+
+
+def test_connection_test_also_checks_the_chosen_profile_and_root_folder(client, v2, monkeypatch):
+    settings.set_value("radarr_url", "http://radarr:7878")
+    settings.set_value("radarr_api_key", "SAVEDKEY")
+    import synchub.web.api as api
+    monkeypatch.setattr(api, "RadarrClient", lambda url, key: type("C", (ServarrSetup,), {"status": lambda self: {"appName": "Radarr", "version": "5"}})())
+
+    def test(**fields):
+        return client.post("/api/test-connection/radarr", json={"fields": {"radarr_url": "", "radarr_api_key": "", **fields}}).get_json()
+
+    bad_folder = test(radarr_quality_profile_id="4", radarr_root_folder="/movies/nope")
+    assert bad_folder["ok"] is False and bad_folder["message"].startswith("Connected to Radarr 5, but adding titles would fail:")
+    assert "root folder '/movies/nope'" in bad_folder["message"] and "/movies, /films" in bad_folder["message"]
+    bad_profile = test(radarr_quality_profile_id="9", radarr_root_folder="/films")
+    assert bad_profile["ok"] is False and "no quality profile with ID 9" in bad_profile["message"]
+    assert test(radarr_quality_profile_id="4", radarr_root_folder="/films")["ok"] is True       # what is typed in the form is what is checked
+    assert test()["ok"] is True                                                                   # nothing typed: the saved defaults (1 and /movies) exist
 
 
 def test_servarr_lists_refuse_saved_key_for_a_different_url(client, v2):

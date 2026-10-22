@@ -115,6 +115,12 @@ def test_radarr_task_auto_adds_when_enabled_and_resyncs(v2, monkeypatch):
     tasks.sync_radarr()
     assert client.added == [] and "dry run" in _status(v2, "radarr")
 
+    settings.set_value("radarr_dry_run", "0")
+    settings.set_value("radarr_root_folder", "/gone")
+    tasks.sync_radarr()
+    status = _status(v2, "radarr")
+    assert client.added == [] and "BLOCKED, 1 waiting" in status and "root folder '/gone'" in status
+
 
 def _status(v2, name):
     with v2.connection() as c:

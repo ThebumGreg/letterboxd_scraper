@@ -262,8 +262,15 @@ def register(app):
                     from synchub.clients.jellyfin import JellyfinClient
                     info = JellyfinClient(url, key).system_info()
                     return jsonify(ok=True, message=f"Connected to {info.get('ServerName') or 'Jellyfin'} {info.get('Version') or ''}".strip())
-                info = (RadarrClient if service == "radarr" else SonarrClient)(url, key).status()
-                return jsonify(ok=True, message=f"Connected to {info.get('appName') or service.title()} {info.get('version') or ''}".strip())
+                client = (RadarrClient if service == "radarr" else SonarrClient)(url, key)
+                info = client.status()
+                hello = f"Connected to {info.get('appName') or service.title()} {info.get('version') or ''}".strip()
+                # Connecting is not enough: new titles need a quality profile and root folder this service actually has.
+                try:
+                    automation.resolve_destination(client, typed(f"{service}_quality_profile_id") or None, typed(f"{service}_root_folder") or None)
+                except RequestError as exc:
+                    return jsonify(ok=False, message=f"{hello}, but adding titles would fail: {exc}")
+                return jsonify(ok=True, message=f"{hello}. The quality profile and root folder are valid.")
             if service == "notifications":
                 from synchub import notify
                 if not notify.urls():
