@@ -111,7 +111,8 @@ def roots_ready(worker, job):
     reported = worker["status"].get("roots") if isinstance(worker.get("status"), dict) else None
     if not isinstance(reported, dict):
         return True
-    for root in (job["source_root"], job["dest_root"]):
+    plan_roots = job["plan"].get("roots") if isinstance(job.get("plan"), dict) and isinstance(job["plan"].get("roots"), list) else []
+    for root in (job["source_root"], job["dest_root"], *plan_roots):
         if root is not None and not (isinstance(reported.get(root), dict) and reported[root].get("ok") is True):
             return False
     return True
@@ -255,6 +256,11 @@ def stored_log(conn, job_id):
 
 
 # ---------------------------------------------------------------- what a worker reports
+def owned(conn, job_id, worker_id):
+    """The job, if it is running and is this worker's; otherwise JobConflict (the worker must stop)."""
+    return _owned(conn, job_id, worker_id)
+
+
 def _owned(conn, job_id, worker_id):
     job = get(conn, job_id)
     if job is None:
@@ -287,6 +293,12 @@ def progress(conn, job_id, worker_id, stage=None, progress=None, fps=None, speed
                  (stage, number(progress, 0.0, 1.0), number(fps), number(speed), None if eta_seconds is None else int(number(eta_seconds, 0, 10 ** 9)),
                   None if message is None else str(message)[:300], _later(now, LEASE_SECONDS), now, job_id))
     return {"cancel": bool(job["cancel_requested"]), "lease_seconds": LEASE_SECONDS}
+
+
+def heartbeat(conn, job_id, now=None):
+    """Keeps a running job's lease alive (any call a worker makes about a job it is working on counts)."""
+    now = now or db.now()
+    conn.execute("UPDATE job SET lease_until = ?, updated_at = ? WHERE id = ? AND status = 'running'", (_later(now, LEASE_SECONDS), now, job_id))
 
 
 def _close_attempt(conn, job_id, outcome, error_class=None, error=None, command=None, log_tail=None, now=None):

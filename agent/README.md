@@ -1,8 +1,8 @@
 # SyncHub worker agent
 
-The agent runs on a worker PC. It asks SyncHub for jobs over HTTP, does them, and reports back. SyncHub never connects to the PC, so nothing needs to be opened or forwarded on it. One Python file (`synchub_agent.py`), standard library only.
+The agent runs on a worker PC. It asks SyncHub for jobs over HTTP, does them, and reports back. SyncHub never connects to the PC, so nothing needs to be opened or forwarded on it. Two Python files, standard library only: `synchub_agent.py` (the agent) and `media_analysis.py` (what it knows about media files; without it the agent still copies, it just cannot scan).
 
-What it does today: **verified copies** between your shares (SyncHub's *Test copy* button, and later the library and download jobs). Encoding jobs arrive in a later phase; the agent already detects ffmpeg and the encoders that work.
+What it does today: **verified copies** between your shares (SyncHub's *Test copy* button), **library scans** (it lists the video files on a share, looks at the ones SyncHub does not know yet or that changed with ffprobe and ffmpeg, and reports what it found) and **duplicate searches** (it reads files of the same size to see whether they are the same). Encoding jobs arrive in a later phase; the agent already detects ffmpeg and the encoders that work.
 
 ## What it promises
 
@@ -30,7 +30,7 @@ What it does today: **verified copies** between your shares (SyncHub's *Test cop
    synchub-worker/
        docker-compose.yml     from SyncHub's dialog
        .env                   from SyncHub's dialog; fill in SMB_USER and SMB_PASSWORD, then:  chmod 600 .env
-       agent/                 the "agent" folder of the SyncHub repository (Dockerfile + synchub_agent.py)
+       agent/                 the "agent" folder of the SyncHub repository (Dockerfile, synchub_agent.py, media_analysis.py)
    ```
 
 4. Start it, then mark the shares once:
@@ -61,6 +61,8 @@ A file in INI style (`--config`, or `./synchub-agent.ini`, or `/etc/synchub-agen
 | `[synchub] use_proxy` | `SYNCHUB_USE_PROXY` | `no` | Use the system HTTP proxy to reach SyncHub (normally wrong on a LAN) |
 | `[worker] work_dir` | `SYNCHUB_WORK` | `./work` (`/work` in Docker) | Job folders, logs; use a big local disk |
 | `[worker] slots` | `SYNCHUB_SLOTS` | `1` | Jobs at once (SyncHub's own limit for the worker also applies) |
+| `[worker] scan_threads` | `SYNCHUB_SCAN_THREADS` | `2` | Files a scan analyses at the same time (each is a short ffprobe and ffmpeg run; most of the time is the share) |
+| `[worker] scan_batch` | `SYNCHUB_SCAN_BATCH` | `25` | How many analysed files are reported to SyncHub at a time, so an interrupted scan loses at most this many |
 | `[worker] max_copy_mb_s` | `SYNCHUB_MAX_COPY_MB_S` | `0` (no limit) | Cap copy speed so a big copy cannot take the whole network |
 | `[worker] verify` | `SYNCHUB_VERIFY` | `hash` | `hash` reads every copy back and compares SHA-256; `size` only compares sizes |
 | `[worker] copy_chunk_mb` / `checkpoint_mb` | `SYNCHUB_COPY_CHUNK_MB` / `SYNCHUB_CHECKPOINT_MB` | `8` / `256` | Block size; how often a resumable checkpoint is saved |

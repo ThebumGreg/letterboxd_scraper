@@ -1,13 +1,13 @@
 # The SyncHub worker agent. Build it from the folder that holds this file:  docker compose up -d --build
 FROM python:3.12-slim
 
-# ffmpeg is what the encoding jobs (a later phase) use; copy jobs do not need it.
+# ffmpeg and ffprobe: library scans use them to read and check files, and the encoding jobs (a later phase) use ffmpeg. Copy jobs need neither.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY synchub_agent.py /app/synchub_agent.py
+COPY synchub_agent.py media_analysis.py /app/
 
 # /work holds the job folders, the original files kept for the retention period and the logs: mount a big local disk there.
 ENV PYTHONUNBUFFERED=1 \

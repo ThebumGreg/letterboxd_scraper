@@ -36,10 +36,15 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-__version__ = "0.2.0"
+try:
+    import media_analysis                  # next to this file; without it the agent still copies, it just cannot scan
+except ImportError:                        # pragma: no cover - exercised by tests that remove the module
+    media_analysis = None
+
+__version__ = "0.3.0"
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
-OPS = ["copy"]                     # the operations (plan.op) this agent can do; SyncHub only hands it jobs it can run
+OPS = ["copy"]                     # the operations (plan.op) every agent can do; scan and hash are added when the analysis module is there
 MANIFEST_VERSION = 1
 HASH_BUFFER = 8 * 1024 * 1024
 SPACE_MARGIN = 1024 ** 3           # room left over on a disk after a copy
@@ -139,9 +144,9 @@ class ConfigError(Exception):
 
 
 class Config:
-    INTS = {"slots": (1, 16), "log_max_mb": (1, 1024), "log_backups": (0, 50), "copy_chunk_mb": (1, 256), "checkpoint_mb": (16, 8192),
+    INTS = {"slots": (1, 16), "scan_threads": (1, 16), "scan_batch": (1, 200), "log_max_mb": (1, 1024), "log_backups": (0, 50), "copy_chunk_mb": (1, 256), "checkpoint_mb": (16, 8192),
             "failed_retention_days": (0, 3650), "request_timeout": (5, 300)}
-    FLOATS = {"done_retention_hours": (0, 24 * 365), "max_copy_mb_s": (0, 100000)}
+    FLOATS = {"done_retention_hours": (0, 24 * 365), "max_copy_mb_s": (0, 100000), "scan_retry_seconds": (0, 300)}
 
     def __init__(self, path=None, env=None):
         env = os.environ if env is None else env
@@ -173,7 +178,7 @@ class Config:
         self.log_level = (pick("worker", "log_level", "SYNCHUB_LOG_LEVEL", "INFO") or "INFO").upper()
         self.verify = (pick("worker", "verify", "SYNCHUB_VERIFY", "hash") or "hash").lower()
         self.use_proxy = (pick("synchub", "use_proxy", "SYNCHUB_USE_PROXY", "no") or "no").lower() in ("1", "yes", "true", "on")
-        defaults = {"slots": 1, "log_max_mb": 10, "log_backups": 5, "copy_chunk_mb": 8, "checkpoint_mb": 256, "failed_retention_days": 14, "request_timeout": 30}
+        defaults = {"scan_threads": 2, "scan_batch": 25, "slots": 1, "log_max_mb": 10, "log_backups": 5, "copy_chunk_mb": 8, "checkpoint_mb": 256, "failed_retention_days": 14, "request_timeout": 30}
         for key, (low, high) in self.INTS.items():
             raw = pick("worker", key, "SYNCHUB_" + key.upper(), str(defaults[key]))
             try:
@@ -184,7 +189,7 @@ class Config:
                 raise ConfigError(f"{key} must be between {low} and {high}.")
             setattr(self, key, value)
         for key, (low, high) in self.FLOATS.items():
-            raw = pick("worker", key, "SYNCHUB_" + key.upper(), "1" if key == "done_retention_hours" else "0")
+            raw = pick("worker", key, "SYNCHUB_" + key.upper(), {"done_retention_hours": "1", "scan_retry_seconds": "3"}.get(key, "0"))
             try:
                 value = float(raw)
             except ValueError:
@@ -537,7 +542,10 @@ def run_quiet(command, timeout=20):
 
 def detect_capabilities(cfg):
     """What this PC can do: ffmpeg and the encoders that really work (one test frame each), cores, space and the operations the agent knows."""
-    caps = {"ops": list(OPS), "cores": os.cpu_count(), "ffmpeg": None, "ffprobe": None, "encoders": [], "vmaf": False, "python": platform.python_version()}
+    caps = {"ops": list(OPS), "cores": os.cpu_count(), "ffmpeg": None, "ffprobe": None, "encoders": [], "vmaf": False, "python": platform.python_version(),
+            "analysis": media_analysis.LOGIC_VERSION if media_analysis else None}
+    if media_analysis:
+        caps["ops"].append("hash")
     code, out = run_quiet([cfg.ffmpeg, "-hide_banner", "-version"])
     if code == 0:
         caps["ffmpeg"] = out.splitlines()[0] if out else "ffmpeg"
@@ -557,6 +565,8 @@ def detect_capabilities(cfg):
     code, out = run_quiet([cfg.ffprobe, "-version"])
     if code == 0:
         caps["ffprobe"] = out.splitlines()[0] if out else "ffprobe"
+        if media_analysis and caps["ffmpeg"]:
+            caps["ops"].append("scan")                       # a scan needs ffprobe to read files and ffmpeg to check them
     return caps
 
 
@@ -822,9 +832,11 @@ class JobRunner(threading.Thread):
         self.reporter.start()
         try:
             op = (self.job.get("plan") or {}).get("op")
-            if op != "copy":
-                raise JobFailure("unsupported_job", f"This agent ({__version__}) cannot do '{op or self.job.get('kind')}' jobs. Update the agent.", retryable=False)
-            final = ("complete", {"result": self.do_copy()}, "done")
+            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash}.get(op)
+            if work is None or (op in ("scan", "hash") and media_analysis is None):
+                raise JobFailure("unsupported_job", f"This agent ({__version__}) cannot do '{op or self.job.get('kind')}' jobs. Update the agent"
+                                 + (" (media_analysis.py must be next to synchub_agent.py)." if op in ("scan", "hash") else "."), retryable=False)
+            final = ("complete", {"result": work()}, "done")
         except Interrupted:
             self.log.info("Stopping for a restart or shutdown; the job resumes from its last checkpoint", stage=self.stage)
             self.m["state"] = "running"
@@ -859,6 +871,174 @@ class JobRunner(threading.Thread):
         self.m["keep_until"] = iso(utcnow() + timedelta(seconds=keep)) if outcome in ("failed", "cancelled") else None
         self.save()
         self.agent.deliver(self.job["id"], self.folder)
+
+    # ---- reports SyncHub must accept
+    def tell(self, path, body, patience=300.0):
+        """A batch of results for this job. Retried through a short outage (and a busy SyncHub); never silently dropped."""
+        deadline, delay = time.monotonic() + patience, 2.0
+        while True:
+            self.reporter.check()
+            try:
+                return self.api.post(f"/jobs/{self.job['id']}{path}", body)
+            except ApiError as exc:
+                if exc.status == 409 or exc.body.get("stop"):
+                    raise JobLost()
+                if 400 <= exc.status < 500 and exc.status not in (401, 403, 426):
+                    raise JobFailure("bad_job", f"SyncHub refused the report: {exc.message}", retryable=False)
+                problem = f"SyncHub answered {exc.status}"
+            except Unreachable as exc:
+                problem = f"cannot reach SyncHub ({exc})"
+            if time.monotonic() > deadline:
+                raise JobFailure("transient", f"Gave up after {int(patience)} s: {problem}")
+            self.log.warning(f"{problem}; trying again in {int(delay)} s", stage=self.stage)
+            end = time.monotonic() + delay
+            while time.monotonic() < end:
+                self.reporter.check()
+                time.sleep(0.25)
+            delay = min(delay * 2, 30.0)
+
+    def media_settings(self, plan):
+        def note(level, message):
+            self.log.event(getattr(logging, level, logging.INFO), message, stage=self.stage)
+        return media_analysis.Settings(ffprobe=self.cfg.ffprobe, ffmpeg=self.cfg.ffmpeg, integrity_mode=plan.get("integrity") or "tail", tail_seconds=plan.get("tail_seconds") or 30,
+                                       retry_delay=self.cfg.scan_retry_seconds, check=self.reporter.check, log=note)
+
+    def folder_in(self, root, rel=""):
+        self.agent.monitor.require(root)
+        path = self.agent.roots.path(root)
+        if rel:
+            try:
+                path = safe_path(path, rel)
+            except ValueError as exc:
+                raise JobFailure("bad_job", str(exc), retryable=False)
+        return path
+
+    # ---- the scan: list the files, say which need looking at, analyse those, report
+    def do_scan(self):
+        plan, ma = self.job["plan"], media_analysis
+        if plan.get("logic_version") != ma.LOGIC_VERSION:
+            raise JobFailure("unsupported_job", f"This agent's analysis (version {ma.LOGIC_VERSION}) differs from SyncHub's ({plan.get('logic_version')}). Update the agent.", retryable=False)
+        root, prefix = plan["root"], plan.get("prefix") or ""
+        base = self.folder_in(root, prefix)
+        if not os.path.isdir(base):
+            raise JobFailure("bad_job", f"The folder {prefix or '(top)'} does not exist in the share {root}.", retryable=False)
+        settings, rules = self.media_settings(plan), ma.ExcludeRules(plan.get("exclude"), root)
+        where = f"{root}/{prefix}" if prefix else root
+        self.report_progress("scan", 0.0, f"Looking for video files in {where}", force=True)
+        files, unreadable, walk_errors = ma.walk_inventory(
+            settings, self.agent.roots.path(root), prefix, rules, on_skip=lambda d: self.log.info("Skipping a folder that is left out", folder=d),
+            progress=lambda n: self.report_progress("scan", 0.0, f"Looking for video files in {where}: {n} found so far"))
+        self.log.info(f"Found {len(files)} video file(s)", unreadable=len(unreadable), walk_errors=len(walk_errors), folder=where)
+        if walk_errors:
+            self.log.warning("Some folders could not be listed; files in them are not treated as missing", errors=walk_errors[:5])
+        need, step = set(), 1000
+        for start in range(0, max(len(files), 1), step):
+            batch = files[start:start + step]
+            answer = self.tell("/scan/inventory", {"files": batch, "unreadable": unreadable if start == 0 else []})
+            need.update(answer.get("need") or [])
+            self.report_progress("scan", 0.02, f"Compared {min(start + step, len(files))} of {len(files)} files with what SyncHub knows")
+        todo = [f for f in files if f["rel"] in need]
+        self.log.info(f"{len(todo)} of {len(files)} file(s) need analysing", skipped=len(files) - len(todo))
+        analysed = self.analyse_files(settings, root, todo)
+        summary = self.tell("/scan/finish", {"complete": True, "walk_errors": walk_errors, "files_found": len(files)})
+        result = {"op": "scan", "files": len(files), "analysed": analysed, "unchanged": len(files) - len(todo), "unreadable": len(unreadable), "walk_errors": len(walk_errors),
+                  "duplicate_groups": summary.get("groups")}
+        self.log.info("Scan finished", **{k: v for k, v in result.items() if k != "op"})
+        return result
+
+    def analyse_files(self, settings, root, todo):
+        """Analyses the files that need it, a few at a time, and reports them in batches as they finish. Returns how many were analysed."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        root_path = self.agent.roots.path(root)
+
+        def one(item):
+            path = safe_path(root_path, item["rel"])
+            try:
+                stat = os.stat(path)
+            except OSError as exc:
+                self.log.warning("A file vanished before it could be analysed", rel=item["rel"], error=str(exc))
+                return None
+            record = media_analysis.analyze_file(settings, item["rel"], path, stat.st_size, stat.st_mtime)
+            record["rel"] = item["rel"]
+            return record
+
+        batch, done, started, last_flush = [], 0, time.monotonic(), time.monotonic()
+
+        def flush():
+            nonlocal batch, last_flush
+            if batch:
+                answer = self.tell("/scan/records", {"records": batch})
+                if answer.get("failed"):
+                    self.log.warning("SyncHub could not store some records", failed=answer["failed"])
+                batch = []
+            last_flush = time.monotonic()
+
+        pool = ThreadPoolExecutor(max_workers=self.cfg.scan_threads)
+        futures = [pool.submit(one, item) for item in todo]
+        try:
+            for future in as_completed(futures):
+                self.reporter.check()
+                record = future.result()
+                done += 1
+                if record is not None:
+                    batch.append(record)
+                elapsed = max(time.monotonic() - started, 0.001)
+                eta = int((len(todo) - done) * elapsed / done)
+                name = record["file_name"] if record else "(gone)"
+                self.report_progress("scan", 0.05 + 0.9 * done / len(todo), f"Analysing {done} of {len(todo)}: {name}", eta)
+                if len(batch) >= self.cfg.scan_batch or time.monotonic() - last_flush > 20:
+                    flush()
+            flush()
+        except BaseException:
+            for pending in futures:
+                pending.cancel()
+            raise
+        finally:
+            pool.shutdown(wait=True)
+        return done
+
+    # ---- reading files to find exact duplicates
+    def do_hash(self):
+        plan = self.job["plan"]
+        for root in plan.get("roots") or []:
+            self.agent.monitor.require(root)
+        groups = plan.get("groups") or []
+        settings = self.media_settings(plan)
+        total = max(sum(f["size"] for g in groups for f in g["files"]), 1)
+        state = {"bytes": 0, "files": 0, "started": time.monotonic()}
+
+        def progress(n):
+            state["bytes"] += n
+            elapsed = max(time.monotonic() - state["started"], 0.001)
+            rate = state["bytes"] / elapsed
+            self.report_progress("scan", min(state["bytes"] / total, 0.99), f"Reading files to compare them: {human_bytes(state['bytes'])} of {human_bytes(total)} at {human_bytes(rate)}/s",
+                                 int((total - state["bytes"]) / rate) if rate else None)
+
+        def result(item):
+            state["files"] += 1
+            self.tell("/scan/hashes", {"results": [item]})
+
+        self.report_progress("scan", 0.0, f"Reading {sum(len(g['files']) for g in groups)} files to compare them", force=True)
+        for group in groups:
+            present = []
+            for item in group["files"]:
+                try:
+                    path = safe_path(self.agent.roots.path(item["root"]), item["rel"])
+                    stat = os.stat(path)
+                except (ValueError, OSError) as exc:
+                    self.log.warning("A file could not be read for the comparison", rel=item["rel"], error=str(exc))
+                    self.tell("/scan/hashes", {"results": [{"id": item["id"], "size": item["size"], "mtime": item["mtime"], "error": f"Could not read the file: {exc}"}]})
+                    continue
+                present.append({"id": item["id"], "path": path, "size": stat.st_size, "mtime": stat.st_mtime})
+            same = [f for f in present if f["size"] == group["size"]]
+            for changed in (f for f in present if f["size"] != group["size"]):
+                self.tell("/scan/hashes", {"results": [{"id": changed["id"], "size": changed["size"], "mtime": changed["mtime"], "error": "The file changed since the search was planned"}]})
+            if same:
+                media_analysis.hash_group(settings, same, group.get("known") or 0, progress=progress, on_result=result)
+        summary = self.tell("/scan/finish", {})
+        outcome = {"op": "hash", "files": state["files"], "groups": summary.get("groups")}
+        self.log.info("Duplicate search finished", **{k: v for k, v in outcome.items() if k != "op"})
+        return outcome
 
     # ---- the copy job: copy in, copy out, verified, never overwriting
     def do_copy(self):

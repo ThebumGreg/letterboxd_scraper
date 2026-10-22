@@ -270,6 +270,7 @@ def set_approval(conn, record_id, status, by, action=None, note=None, mark_revie
     if status not in (v.APPROVAL_PENDING, v.APPROVAL_APPROVED, v.APPROVAL_REJECTED):
         raise ValueError(f"invalid approval status: {status}")
     now = db.now()
+    begin(conn)                      # take the write lock first: reading and upgrading later fails at once if another writer got in between
     with savepoint(conn, "approval"):
         row = conn.execute("SELECT * FROM library_file WHERE id = ?", (record_id,)).fetchone()
         if row is None:

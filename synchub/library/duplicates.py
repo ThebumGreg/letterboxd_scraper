@@ -5,7 +5,6 @@ ever deleted because of a duplicate: one copy is the "primary candidate" (a pers
 """
 from collections import defaultdict
 
-from synchub import db
 from synchub.library import findings, store
 from synchub.library import vocab as v
 
@@ -49,10 +48,11 @@ def plan_jobs(conn):
     return plans
 
 
-def apply_results(conn, results, now=None):
+def apply_results(conn, results, now=None, tally=None):
     """Stores what a worker read. Each result echoes the file's size and modified time: a file that changed since the job was planned is ignored.
-    Returns how many were stored."""
+    Returns how many were stored; `tally`, if given, gets the counts of hashed, ruled_out and errors."""
     stored = 0
+    tally = tally if tally is not None else {}
     store.begin(conn)
     for res in results or []:
         row = conn.execute("SELECT id, size_bytes, mtime, sha256 FROM library_file WHERE id = ?", (res.get("id"),)).fetchone()
@@ -60,13 +60,17 @@ def apply_results(conn, results, now=None):
             continue
         if res.get("sha256"):
             conn.execute("UPDATE library_file SET sha256 = ?, partial_signature = COALESCE(?, partial_signature) WHERE id = ?", (res["sha256"], res.get("partial"), row["id"]))
+            kind = "hashed"
         elif res.get("ruled_out"):
             conn.execute("UPDATE library_file SET duplicate_status = ?, partial_signature = COALESCE(?, partial_signature) WHERE id = ? AND sha256 IS NULL",
                          (v.DUP_RULED_OUT, res.get("partial"), row["id"]))
+            kind = "ruled_out"
         elif res.get("error"):
             conn.execute("UPDATE library_file SET duplicate_status = ? WHERE id = ? AND sha256 IS NULL", (v.DUP_INCOMPLETE, row["id"]))
+            kind = "errors"
         else:
             continue
+        tally[kind] = tally.get(kind, 0) + 1
         stored += 1
     return stored
 

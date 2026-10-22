@@ -13,11 +13,13 @@ _INT_RANGES = {
     "radarr_min_user_count": (1, 1000), "sonarr_min_user_count": (1, 1000),
     "radarr_quality_profile_id": (1, 1_000_000), "sonarr_quality_profile_id": (1, 1_000_000),
     "payload_retention_limit": (1, 100_000), "metadata_refresh_hours": (1, 8760), "queue_poll_seconds": (0, 3600),
+    "library_tail_seconds": (5, 600),
 }
 _FLOAT_KEYS = {"request_delay_min", "request_delay_max", "user_delay_min", "user_delay_max"}
 _URL_KEYS = {"jellyfin_url", "radarr_url", "sonarr_url", "synchub_url"}
 _PATH_KEYS = {"radarr_root_folder", "sonarr_root_folder"}
-_CHOICES = {"tv_metadata_provider": {"tmdb", "sonarr"}}
+_CHOICES = {"tv_metadata_provider": {"tmdb", "sonarr"}, "library_integrity_mode": {"metadata", "tail", "full"}}
+_FOLDER_NAME_KEYS = {"library_tv_folder", "library_movie_folder"}
 
 # The Servarr dropdowns submit this text if loading their options never finished.
 _PLACEHOLDER = "Loading..."
@@ -61,6 +63,23 @@ def validate_setting(key, value):
         if not value or value == _PLACEHOLDER:
             return False, f"{key} must be a folder path."
         return True, value
+
+    if key in _FOLDER_NAME_KEYS:
+        bad = set('<>:"/\\|?*') & set(value)
+        if not value or bad or value != value.strip() or value.endswith(".") or any(ord(c) < 32 for c in value) or len(value) > 80:
+            return False, f"{key} must be a folder name without / \\ : * ? \" < > | and not ending in a dot."
+        return True, value
+
+    if key == "library_destination_root":
+        import re
+        value = value.lower()
+        return (True, value) if re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", value) else (False, "The destination share is one of the names on the Storage page (lowercase letters, numbers, - and _).")
+
+    if key == "library_exclude_folders":
+        lines = [line.strip() for line in value.replace("\r", "").split("\n") if line.strip()]
+        if any(len(line) > 200 or "\x00" in line for line in lines):
+            return False, "Each excluded folder must be a name, a wildcard or share:folder, at most 200 characters."
+        return True, "\n".join(lines)
 
     if key in _CHOICES:
         return (True, value) if value in _CHOICES[key] else (False, f"{key} must be one of {sorted(_CHOICES[key])}.")

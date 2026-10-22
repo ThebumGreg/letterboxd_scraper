@@ -17,6 +17,10 @@ DEFAULTS = {
     "sonarr_min_user_count": "1", "sonarr_quality_profile_id": "1", "sonarr_root_folder": "/tv",
     "enable_notifications": "0", "payload_logging_enabled": "0", "payload_retention_limit": "500",
     "log_service_jellyfin": "0", "log_service_radarr": "0", "log_service_sonarr": "0", "log_service_tmdb": "0", "log_service_dynu": "0",
+    # the Library: the one share everything is brought into, how it is laid out, and how scans look at files
+    "library_destination_root": "media", "library_tv_folder": "TV Shows", "library_movie_folder": "Movies",
+    "library_integrity_mode": "tail", "library_tail_seconds": "30",
+    "library_exclude_folders": "@eaDir\n#recycle\n.Recycle.Bin\n$RECYCLE.BIN\nSystem Volume Information\nlost+found\n.Trash-*",
 }
 
 

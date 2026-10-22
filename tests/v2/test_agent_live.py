@@ -163,7 +163,7 @@ def test_the_agent_reports_what_it_can_do_and_how_its_shares_are(rig):
     rig.start()
     with rig.db.connection() as conn:
         w = wait(lambda: (x := workers.get(conn, rig.worker_id)) and x["status"].get("roots", {}).get("tfiles") and x, what="the first status")
-    assert w["capabilities"]["ops"] == ["copy"] and w["version"] == agent.__version__ and w["hostname"]
+    assert w["capabilities"]["ops"] == ["copy", "hash", "scan"] and w["version"] == agent.__version__ and w["hostname"]
     assert w["status"]["roots"]["media"]["ok"] and w["status"]["roots"]["media"]["state"] == "ok" and w["status"]["work_free_bytes"] > 0
 
 

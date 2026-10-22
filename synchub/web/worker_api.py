@@ -9,6 +9,7 @@ from functools import wraps
 from flask import g, jsonify, request
 
 from synchub import db, jobs, storage, workers
+from synchub.library import scan
 
 logger = logging.getLogger(__name__)
 
@@ -143,3 +144,43 @@ def register(app):
         with db.connection() as conn:
             jobs.store_log(conn, job_id, g.worker["id"], data.get("text"), truncated=data.get("truncated") is True)
         return jsonify(ok=True)
+
+    # ---- scans and duplicate searches
+    @route("/jobs/<int:job_id>/scan/inventory", "scan_inventory")
+    def scan_inventory(job_id):
+        data = _body()
+        with db.connection() as conn:
+            job = jobs.owned(conn, job_id, g.worker["id"])
+            need = scan.inventory(conn, job, data.get("files") or [], data.get("unreadable") or [])
+            jobs.heartbeat(conn, job_id)
+        return jsonify(ok=True, need=need)
+
+    @route("/jobs/<int:job_id>/scan/records", "scan_records")
+    def scan_records(job_id):
+        data = _body()
+        with db.connection() as conn:
+            job = jobs.owned(conn, job_id, g.worker["id"])
+            tally = scan.ingest_records(conn, job, data.get("records") or [])
+            jobs.heartbeat(conn, job_id)
+        for path, why in tally["failed"][:5]:
+            logger.warning(f"[library] a record from {g.worker['name']} was not stored ({path}): {why}")
+        return jsonify(ok=True, stored=tally["inserted"] + tally["unchanged"] + tally["changed"], failed=len(tally["failed"]), changed=tally["changed"])
+
+    @route("/jobs/<int:job_id>/scan/hashes", "scan_hashes")
+    def scan_hashes(job_id):
+        data = _body()
+        with db.connection() as conn:
+            job = jobs.owned(conn, job_id, g.worker["id"])
+            stored = scan.ingest_hashes(conn, job, data.get("results") or [])
+            jobs.heartbeat(conn, job_id)
+        return jsonify(ok=True, stored=stored)
+
+    @route("/jobs/<int:job_id>/scan/finish", "scan_finish")
+    def scan_finish(job_id):
+        data = _body()
+        with db.connection() as conn:
+            job = jobs.owned(conn, job_id, g.worker["id"])
+            summary = scan.finish(conn, job, data)
+            jobs.heartbeat(conn, job_id)
+        logger.info(f"[library] {g.worker['name']} finished {job['title']}: {summary}")
+        return jsonify(ok=True, **summary)

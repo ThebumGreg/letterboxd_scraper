@@ -1,10 +1,10 @@
 # For a worker PC without Docker. Install:
 #   sudo mkdir -p /opt/synchub-agent /var/lib/synchub-agent
-#   sudo cp synchub_agent.py /opt/synchub-agent/
+#   sudo cp synchub_agent.py media_analysis.py /opt/synchub-agent/
 #   sudo cp synchub-agent.ini /etc/synchub-agent.ini && sudo chmod 600 /etc/synchub-agent.ini    (it holds the token)
 #   sudo cp synchub-agent.service /etc/systemd/system/ && sudo systemctl daemon-reload
 #   sudo systemctl enable --now synchub-agent
-# Needs python3 (3.8 or newer) and, for encoding jobs later, ffmpeg:  sudo apt install python3 ffmpeg
+# Needs python3 (3.8 or newer) and ffmpeg (library scans and, later, encoding):  sudo apt install python3 ffmpeg
 [Unit]
 Description=SyncHub worker agent
 Wants=network-online.target

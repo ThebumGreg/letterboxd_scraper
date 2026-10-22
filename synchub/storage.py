@@ -155,6 +155,18 @@ def for_agent(conn):
     return [{"name": r["name"], "mount_point": r["mount_point"], "marker": MARKER, "marker_text": r["name"]} for r in list_all(conn)]
 
 
+def display_path(root, rel=""):
+    """A path as people know it: //server/share/folder for SMB, server:/export/folder for NFS, the folder itself for one already mounted."""
+    rel = str(rel or "").strip("/")
+    if root["protocol"] == "smb":
+        base = f"//{root['host']}/{root['share']}"
+    elif root["protocol"] == "nfs":
+        base = f"{root['host']}:{root['share']}"
+    else:
+        base = root["share"]
+    return f"{base}/{rel}" if rel else base
+
+
 def roots_hash(conn):
     """A short fingerprint of what for_agent returns, so an agent can tell when the list of shares changed."""
     return hashlib.sha1(json.dumps(for_agent(conn), sort_keys=True).encode("utf-8")).hexdigest()[:12]

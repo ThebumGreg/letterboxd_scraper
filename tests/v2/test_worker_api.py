@@ -39,7 +39,8 @@ def fleet(v2, app):
 # ---------------------------------------------------------------- who may call
 def test_every_call_needs_a_valid_token(fleet):
     for headers in ({}, {"Authorization": "Bearer"}, {"Authorization": "Bearer nope"}, {"Authorization": "Basic " + fleet.raw_token}, {"Authorization": fleet.raw_token}):
-        for path in ("/register", "/roots", "/poll", "/jobs/1/progress", "/jobs/1/complete", "/jobs/1/fail", "/jobs/1/needs_review", "/jobs/1/cleaned"):
+        for path in ("/register", "/roots", "/poll", "/jobs/1/progress", "/jobs/1/complete", "/jobs/1/fail", "/jobs/1/needs_review", "/jobs/1/cleaned", "/jobs/1/scan/inventory",
+                     "/jobs/1/scan/records", "/jobs/1/scan/hashes", "/jobs/1/scan/finish"):
             r = fleet.call(path, headers=headers)
             assert r.status_code == 401 and r.get_json() == {"ok": False, "message": "The worker token was not accepted."}, (path, headers)
 
@@ -348,3 +349,77 @@ def test_folders_for_finished_or_unknown_jobs_are_released_but_failed_ones_are_k
         conn.execute("UPDATE job SET status = 'failed' WHERE id = ?", (failed,))
     assert fleet.poll(free_slots=0, holding=[done, failed, waiting, 999])["release"] == [done, 999]
     assert fleet.poll(free_slots=0)["release"] == []                                       # no list, nothing to release
+
+
+# ---------------------------------------------------------------- scans
+def scan_job_for(fleet, v2, **kw):
+    from synchub.library import scan
+    add_shares(v2, "media", "tfiles")
+    with v2.connection() as conn:
+        run_id = scan.start_scan(conn, kw.pop("root", "tfiles"), **kw)
+        job_id = scan.run_jobs(conn, run_id)[0]["id"]
+    fleet.poll()
+    return run_id, job_id
+
+
+def test_a_worker_reports_a_scan_through_inventory_records_and_finish(fleet, v2):
+    run_id, job_id = scan_job_for(fleet, v2)
+    need = fleet.call(f"/jobs/{job_id}/scan/inventory", {"files": [{"rel": "Movies/Heat.mkv", "size": 1000, "mtime": 1.7e9}]}).get_json()
+    assert need == {"ok": True, "need": ["Movies/Heat.mkv"]}
+    from .library_helpers import analysis
+    import json as _json
+    a = analysis(root="tfiles", rel="Movies/Heat.mkv", name="Heat (1995).mkv")
+    from synchub.library import scan
+    record = {k: a.get(k) for k in scan.AGENT_FIELDS}
+    record.update(rel="Movies/Heat.mkv", file_name="Heat.mkv", size_bytes=1000, mtime=1.7e9, logic_version=1, findings=_json.loads(a["findings_json"]))
+    stored = fleet.call(f"/jobs/{job_id}/scan/records", {"records": [record]}).get_json()
+    assert stored == {"ok": True, "stored": 1, "failed": 0, "changed": 0}
+    done = fleet.call(f"/jobs/{job_id}/scan/finish", {"complete": True, "walk_errors": []}).get_json()
+    assert done["ok"] and "groups" in done
+    with v2.connection() as conn:
+        assert conn.execute("SELECT recommended_name FROM library_file").fetchone()[0] == "Heat (1995).mkv"
+        assert scan.list_runs(conn)[0]["counts"]["analyzed"] == 1
+
+
+def test_scan_calls_extend_the_lease_so_a_busy_scan_is_never_taken_away(fleet, v2):
+    run_id, job_id = scan_job_for(fleet, v2)
+    with v2.connection() as conn:
+        conn.execute("UPDATE job SET lease_until = '2000-01-01 00:00:00' WHERE id = ?", (job_id,))
+    fleet.call(f"/jobs/{job_id}/scan/inventory", {"files": []})
+    with v2.connection() as conn:
+        assert conn.execute("SELECT lease_until FROM job WHERE id = ?", (job_id,)).fetchone()[0] > "2020"
+
+
+def test_scan_calls_are_refused_for_a_job_that_is_not_the_workers_and_for_the_wrong_kind_of_job(fleet, v2):
+    run_id, job_id = scan_job_for(fleet, v2)
+    other = fleet.queue()
+    fleet.poll()
+    for path in ("inventory", "records", "hashes", "finish"):
+        r = fleet.call(f"/jobs/{other}/scan/{path}", {})
+        assert r.status_code == 400 and "not a" in r.get_json()["message"], path
+    with v2.connection() as conn:
+        w2, token2 = workers.create(conn, "encoder-2")
+    r = fleet.call(f"/jobs/{job_id}/scan/inventory", {"files": []}, headers={"Authorization": f"Bearer {token2}"})
+    assert r.status_code == 409 and r.get_json()["stop"] is True
+    r = fleet.call("/jobs/999/scan/inventory", {"files": []})
+    assert r.status_code == 409
+
+
+def test_a_malformed_scan_report_is_a_400_that_names_the_problem(fleet, v2):
+    run_id, job_id = scan_job_for(fleet, v2)
+    r = fleet.call(f"/jobs/{job_id}/scan/inventory", {"files": [{"rel": "../x.mkv", "size": 1, "mtime": 1}]})
+    assert r.status_code == 400 and "inside the share" in r.get_json()["message"]
+    r = fleet.call(f"/jobs/{job_id}/scan/inventory", {"files": [{"size": 1}]})
+    assert r.status_code == 400 and "rel, size and mtime" in r.get_json()["message"]
+    r = fleet.call(f"/jobs/{job_id}/scan/records", {"records": [{"rel": "a.mkv"}]})
+    assert r.status_code == 200 and r.get_json()["failed"] == 1
+
+
+def test_a_job_naming_shares_in_its_plan_waits_for_a_worker_that_has_all_of_them_ready(fleet, v2):
+    add_shares(v2, "media", "tfiles")
+    with v2.connection() as conn:
+        job_id = jobs.create(conn, "scan", title="Duplicate search", plan={"op": "hash", "groups": [], "roots": ["media", "tfiles"]})
+    ready = {"ok": True, "state": "ok"}
+    assert fleet.poll(status={"roots": {"media": ready, "tfiles": {"ok": False, "state": "not_mounted"}}})["jobs"] == []        # it reads files on both
+    assert fleet.poll(status={"roots": {"media": ready}})["jobs"] == []
+    assert [j["id"] for j in fleet.poll(status={"roots": {"media": ready, "tfiles": ready}})["jobs"]] == [job_id]

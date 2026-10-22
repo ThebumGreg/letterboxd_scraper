@@ -1346,7 +1346,7 @@ class ExcludeRules:
         return any(self.folder("/".join(parts[:i + 1])) for i in range(len(parts)))
 
 
-def walk_inventory(settings, root_path, prefix, rules, on_skip=None):
+def walk_inventory(settings, root_path, prefix, rules, on_skip=None, progress=None):
     """Every video file under root/prefix: (files, unreadable, walk_errors). files are {rel, size, mtime}; a file that exists but cannot be
     read is listed as unreadable with the reason; a folder that cannot be listed is reported so the files in it are NOT assumed deleted."""
     base = os.path.join(root_path, *[p for p in clean_relative(prefix).split("/") if p]) if clean_relative(prefix) else root_path
@@ -1374,4 +1374,6 @@ def walk_inventory(settings, root_path, prefix, rules, on_skip=None):
                 unreadable.append({"rel": rel, "file_name": filename, "unreadable_reason": f"stat failed: {exc}"})
                 continue
             files.append({"rel": rel, "size": stat.st_size, "mtime": stat.st_mtime})
+            if progress and len(files) % 100 == 0:
+                progress(len(files))
     return files, unreadable, walk_errors
