@@ -1,8 +1,8 @@
 """HTML pages."""
-from flask import abort, flash, redirect, render_template, send_file, send_from_directory, url_for
+from flask import abort, flash, redirect, render_template, request, send_file, send_from_directory, url_for
 
 from config import BASE_DIR
-from synchub import catalog, db, ddns, posters, profiles, settings, states, tasks
+from synchub import catalog, db, ddns, posters, profiles, settings, states, tasks, webhooks
 
 STATUS_ORDER = ("missing", "queued", "downloading", "downloaded", "transferring", "encoding", "in_library", "partial")
 
@@ -68,7 +68,8 @@ def register(app):
     def settings_page():
         with db.connection() as conn:
             profile_list = profiles.list_all(conn)
-        return render_template("settings.html", settings={**settings.DEFAULTS, **settings.get_all()}, profiles=profile_list)
+        return render_template("settings.html", settings={**settings.DEFAULTS, **settings.get_all()}, profiles=profile_list,
+                               webhook_status=webhooks.status_for_all(), suggested_synchub_url=request.host_url.rstrip("/"))
 
     @app.route("/payloads")
     def payloads_page():

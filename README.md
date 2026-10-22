@@ -28,6 +28,14 @@ Missing, Queued (monitored in Radarr/Sonarr, nothing yet), Downloading (in the R
 
 New states need no code or schema change: add a row to `state_def` and have a script write `processing_event` rows.
 
+## Live updates: webhooks and download progress
+
+Without these, Radarr and Sonarr are read every 6 hours. With them, a grab or import shows up within seconds and a download's percentage moves while you watch.
+
+- **Webhook** (Settings, Live updates): enter SyncHub's address as Radarr/Sonarr reach it (not `localhost`), then press **Set up in Radarr** / **Set up in Sonarr**. SyncHub creates a Webhook connection in that service from the service's own template, switched on for grab, import, upgrade, rename, add and delete. Pressing it again changes nothing. The panel shows when the last event arrived, so you can tell it works. A grab only triggers a look at the download queue; imports, deletes and adds read the library. Health and test events are ignored. If the service says it could not send a test message, it cannot reach SyncHub at that address from where it runs (a Docker network name or the machine's LAN address usually fixes that).
+- **Download progress**: every 30 seconds (Settings, "Download progress check"; 0 turns it off) SyncHub reads just the download queue, but only while something is downloading. Otherwise it looks at most every 5 minutes, which also catches downloads started directly in Radarr/Sonarr when no webhook is set up. A download that leaves the queue triggers a library read, so "Downloaded" appears without waiting for the schedule. Open dashboards update live without a reload.
+- **Jellyfin**: Jellyfin's Webhook plugin can send "Item Added" to `/api/webhook/jellyfin` so a new file shows as In Library right away. Play, pause and login events are ignored.
+
 ## Opening items in the Jellyfin app (iPhone and iPad)
 
 "Watch on Jellyfin" opens the Jellyfin web page everywhere. On an iPhone or iPad it opens the item in the Jellyfin (Swiftfin) app instead, using `swiftfin://<server id>/<user id>/item/<item id>`, and falls back to the web page after about two seconds if the app does not take over.

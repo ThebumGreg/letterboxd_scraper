@@ -46,6 +46,17 @@ class _Arr:
     def status(self):
         return self._get("SystemStatus", "/api/v3/system/status", timeout=8)
 
+    def notifications(self):
+        """The connections (webhooks, notifications) set up in the service."""
+        return self._get("GetNotifications", "/api/v3/notification")
+
+    def notification_schema(self):
+        """The templates for every kind of connection the service offers."""
+        return self._get("GetNotificationSchema", "/api/v3/notification/schema")
+
+    def add_notification(self, body):
+        return self._send("AddNotification", "POST", "/api/v3/notification", body)
+
 
 class RadarrClient(_Arr):
     service, label = "radarr", "Radarr"

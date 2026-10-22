@@ -86,6 +86,7 @@
                 data-tmdb-id="{{ r.tmdb_id or '' }}" data-tvdb-id="{{ r.tvdb_id or '' }}"
                 data-title="{{ r.title|lower }}" data-display-title="{{ r.title }}" data-year="{{ r.year or '' }}"
                 data-kind="{{ r.kind }}" data-state="{{ r.state }}" data-state-label="{{ r.state_label }}" data-state-color="{{ r.state_color }}"
+                data-state-icon="{{ r.state_icon or '' }}"
                 data-progress="{{ r.progress_pct if r.progress_pct is not none else '' }}"
                 data-users="|{% for u in r.wanted_by + r.watched_by %}{{ u|lower }}|{% endfor %}"
                 data-added-by="{{ r.wanted_by|join(', ') }}" data-user-count="{{ r.user_count }}"

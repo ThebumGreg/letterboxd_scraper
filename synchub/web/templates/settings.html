@@ -126,6 +126,40 @@
                 <button type="button" class="btn btn-outline-info btn-sm" data-test-service="tmdb" data-test-fields="tmdb_api_key">Test connection</button>
                 <span class="small ms-2" data-test-result="tmdb" role="status"></span>
             </div>
+
+            <!-- Live updates: webhooks and download-progress polling -->
+            <div class="panel p-3 p-md-4 mb-4" id="liveUpdates">
+                <h5 class="text-success mb-1">Live updates</h5>
+                <p class="small text-body-secondary">Radarr and Sonarr tell SyncHub the moment something is grabbed or imported (a webhook), and SyncHub checks download progress while anything is downloading.</p>
+                <div class="mb-3">
+                    <label for="queue_poll_seconds" class="form-label">Download progress check (seconds)</label>
+                    <input type="number" class="form-control" id="queue_poll_seconds" name="queue_poll_seconds" value="{{ settings.get('queue_poll_seconds') or 30 }}" min="0" step="1" required>
+                    <div class="form-text">Checked this often only while something is downloading (otherwise every 5 minutes at most). 0 turns it off; anything from 1 to 9 is treated as 10.</div>
+                </div>
+                <div class="mb-3">
+                    <label for="synchub_url" class="form-label">SyncHub's address, as Radarr and Sonarr reach it</label>
+                    <input type="url" class="form-control" id="synchub_url" name="synchub_url" value="{{ settings.synchub_url }}" placeholder="{{ suggested_synchub_url }}">
+                    <div class="form-text">Not "localhost", which would mean Radarr's own machine. For example http://192.168.1.50:5001, or http://synchub:5001 on a shared Docker network. Saved with the form below.</div>
+                </div>
+                {% set webhook_base = (settings.synchub_url or suggested_synchub_url)|trim('/') %}
+                {% for service, label in [('radarr', 'Radarr'), ('sonarr', 'Sonarr'), ('jellyfin', 'Jellyfin')] %}
+                {% set last = webhook_status.get(service) %}
+                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 py-2 border-top">
+                    <div class="min-w-0">
+                        <div class="fw-semibold">{{ label }} webhook</div>
+                        <code class="small text-break" data-webhook-url="{{ service }}">{{ webhook_base }}/api/webhook/{{ service }}</code>
+                        <div class="small text-body-secondary" data-webhook-status="{{ service }}">{% if last %}Last event: {{ last.event }}, {{ last.ago }}{% else %}Nothing received yet{% endif %}</div>
+                        {% if service == 'jellyfin' %}<div class="small text-body-secondary">Needs Jellyfin's Webhook plugin, sending "Item Added" to this address.</div>{% endif %}
+                    </div>
+                    {% if service != 'jellyfin' %}
+                    <div class="text-end">
+                        <button type="button" class="btn btn-outline-info btn-sm" data-webhook-setup="{{ service }}" data-webhook-fields="synchub_url,{{ service }}_url,{{ service }}_api_key">Set up in {{ label }}</button>
+                        <span class="small d-block" data-webhook-result="{{ service }}" role="status"></span>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
         </div>
 
         <div class="col-md-6">

@@ -21,9 +21,12 @@ NOT_AIRED = "not_aired"     # a display state only; never stored
 
 
 # ---------------------------------------------------------------- queue -> processing events
-def sync_queue_events(conn, now=None):
-    """Opens, updates and closes processing events so they mirror the current Radarr/Sonarr queues."""
+def sync_queue_events(conn, now=None, touched=None):
+    """Opens, updates and closes processing events so they mirror the current Radarr/Sonarr queues.
+
+    `touched`, when given, is filled with the (target_type, target_id) of every event that was opened, changed or closed."""
     now = now or db.now()
+    touched = touched if touched is not None else set()
     stats = {"opened": 0, "updated": 0, "closed": 0, "unlinked": 0, "ignored": 0}
     wanted = {}    # (provider, queue_id) -> (target_type, target_id, state, progress, detail)
     rows = conn.execute("SELECT * FROM src_arr_queue WHERE removed_at IS NULL").fetchall()
@@ -51,14 +54,17 @@ def sync_queue_events(conn, now=None):
             conn.execute("INSERT INTO processing_event (target_type, target_id, provider, state_code, progress, detail, external_ref, started_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
                          (target_type, target_id, key[0], state, progress, detail, key[1], now, now))
             stats["opened"] += 1
+            touched.add((target_type, target_id))
         elif (event["target_type"], event["target_id"], event["state_code"], event["progress"]) != (target_type, target_id, state, progress):
             conn.execute("UPDATE processing_event SET target_type = ?, target_id = ?, state_code = ?, progress = ?, updated_at = ? WHERE id = ?",
                          (target_type, target_id, state, progress, now, event["id"]))
             stats["updated"] += 1
+            touched.update({(target_type, target_id), (event["target_type"], event["target_id"])})
     for key, event in open_events.items():
         if key not in wanted:
             conn.execute("UPDATE processing_event SET ended_at = ? WHERE id = ?", (now, event["id"]))
             stats["closed"] += 1
+            touched.add((event["target_type"], event["target_id"]))
     return stats
 
 
@@ -72,14 +78,39 @@ def _best_events(conn, ranks):
     return best
 
 
-def compute(conn, now=None):
-    """Recomputes item_state for every movie and episode. Rows are updated in place; updated_at moves only on a change."""
+def media_ids_for(conn, targets):
+    """The media (movie or show) IDs that a set of (target_type, target_id) pairs belong to."""
+    ids = {tid for ttype, tid in targets if ttype == "movie"}
+    episode_ids = [tid for ttype, tid in targets if ttype == "episode"]
+    for start in range(0, len(episode_ids), 500):
+        chunk = episode_ids[start:start + 500]
+        ids.update(r[0] for r in conn.execute(f"SELECT DISTINCT media_id FROM episode WHERE id IN ({','.join('?' * len(chunk))})", chunk))
+    return ids
+
+
+def _only_clause(only, target_type, column):
+    """SQL fragment limiting a query to the targets of one type; 'AND 0' when `only` names none of them. '' when `only` is None."""
+    if only is None:
+        return "", []
+    ids = [tid for ttype, tid in only if ttype == target_type]
+    if not ids:
+        return "AND 0", []
+    return f"AND {column} IN ({','.join('?' * len(ids))})", ids
+
+
+def compute(conn, now=None, only=None, changed=None):
+    """Recomputes item_state for every movie and episode. Rows are updated in place; updated_at moves only on a change.
+
+    `only` limits the work to a set of (target_type, target_id) pairs (used by the frequent queue poll); `changed`, when
+    given, is filled with the targets whose state or progress actually changed."""
     now = now or db.now()
     ranks = {r["code"]: r["rank"] for r in conn.execute("SELECT code, rank FROM state_def")}
     events = _best_events(conn, ranks)
     results = []
+    movie_filter, movie_params = _only_clause(only, "movie", "m.id")
+    episode_filter, episode_params = _only_clause(only, "episode", "e.id")
 
-    movies = conn.execute("""
+    movies = conn.execute(f"""
         SELECT m.id,
           EXISTS (SELECT 1 FROM link l JOIN src_jellyfin_item j ON j.item_id = l.source_key
                   WHERE l.source = 'jellyfin' AND l.entity_type = 'media' AND l.entity_id = m.id AND j.type = 'movie' AND j.removed_at IS NULL) AS in_library,
@@ -87,11 +118,11 @@ def compute(conn, now=None):
                   WHERE l.source = 'radarr' AND l.entity_type = 'media' AND l.entity_id = m.id AND r.removed_at IS NULL) AS has_file,
           (SELECT MAX(r.monitored) FROM link l JOIN src_radarr_movie r ON r.radarr_id = l.source_key
                   WHERE l.source = 'radarr' AND l.entity_type = 'media' AND l.entity_id = m.id AND r.removed_at IS NULL) AS monitored
-        FROM media m WHERE m.kind = 'movie'""").fetchall()
+        FROM media m WHERE m.kind = 'movie' {movie_filter}""", movie_params).fetchall()
     for r in movies:
         results.append(("movie", r["id"], _decide(r, events.get(("movie", r["id"])), ranks)))
 
-    episodes = conn.execute("""
+    episodes = conn.execute(f"""
         SELECT e.id,
           EXISTS (SELECT 1 FROM link l JOIN src_jellyfin_item j ON j.item_id = l.source_key
                   WHERE l.source = 'jellyfin_episode' AND l.entity_type = 'episode' AND l.entity_id = e.id AND j.removed_at IS NULL) AS in_library,
@@ -99,19 +130,22 @@ def compute(conn, now=None):
                   WHERE l.source = 'sonarr_episode' AND l.entity_type = 'episode' AND l.entity_id = e.id AND s.removed_at IS NULL) AS has_file,
           (SELECT MAX(s.monitored) FROM link l JOIN src_sonarr_episode s ON s.sonarr_episode_id = l.source_key
                   WHERE l.source = 'sonarr_episode' AND l.entity_type = 'episode' AND l.entity_id = e.id AND s.removed_at IS NULL) AS monitored
-        FROM episode e""").fetchall()
+        FROM episode e WHERE 1 = 1 {episode_filter}""", episode_params).fetchall()
     for r in episodes:
         results.append(("episode", r["id"], _decide(r, events.get(("episode", r["id"])), ranks)))
 
-    changed = 0
+    changed_count = 0
     for target_type, target_id, (code, progress) in results:
         cur = conn.execute(
             """INSERT INTO item_state (target_type, target_id, state_code, progress, updated_at) VALUES (?, ?, ?, ?, ?)
                ON CONFLICT(target_type, target_id) DO UPDATE SET state_code = excluded.state_code, progress = excluded.progress, updated_at = excluded.updated_at
                WHERE item_state.state_code <> excluded.state_code OR item_state.progress IS NOT excluded.progress""",
             (target_type, target_id, code, progress, now))
-        changed += cur.rowcount
-    return {"movies": len(movies), "episodes": len(episodes), "changed": changed}
+        if cur.rowcount:
+            changed_count += 1
+            if changed is not None:
+                changed.add((target_type, target_id))
+    return {"movies": len(movies), "episodes": len(episodes), "changed": changed_count}
 
 
 def _decide(row, event, ranks):

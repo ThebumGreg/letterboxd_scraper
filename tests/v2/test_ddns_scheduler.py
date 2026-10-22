@@ -87,7 +87,7 @@ def test_scheduler_jobs_follow_settings_and_survive_bad_values(v2):
     settings.set_value("jellyfin_interval_hours", "12")
     scheduler.configure()
     jobs = {j.id: j.trigger.interval.total_seconds() / 3600 for j in scheduler.scheduler.get_jobs() if hasattr(j.trigger, "interval")}
-    assert jobs == {"job_ddns": 5 / 60, "job_scrape": 24, "job_jellyfin": 12, "job_sonarr": 6}      # radarr off, bad values -> defaults
+    assert jobs == {"job_ddns": 5 / 60, "job_scrape": 24, "job_jellyfin": 12, "job_sonarr": 6, "job_queue_poll": 30 / 3600}      # radarr off, bad values -> defaults
 
 
 def test_radarr_task_auto_adds_when_enabled_and_resyncs(v2, monkeypatch):

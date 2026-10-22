@@ -12,19 +12,6 @@ from .fakes import ServarrSetup, SonarrSetup
 
 
 @pytest.fixture
-def app(v2):
-    from synchub.web import create_app
-    flask_app = create_app()
-    flask_app.config["TESTING"] = True
-    return flask_app
-
-
-@pytest.fixture
-def client(app):
-    return app.test_client()
-
-
-@pytest.fixture
 def seeded(v2, app):
     """The Last Ship scenario from the end-to-end test, reconciled, plus a profile that wants it."""
     with v2.connection() as conn:
@@ -402,9 +389,9 @@ def test_webhook_triggers_a_coalesced_refresh_and_announces_downloads(client, v2
     refreshed, heard = [], api.announcer.listen()
     monkeypatch.setattr(tasks, "refresh_soon", lambda service, job: refreshed.append(service))
     r = client.post("/api/webhook/radarr", json={"eventType": "Grab", "movie": {"tmdbId": 949}})
-    assert r.get_json() == {"status": "received", "service": "radarr"} and refreshed == ["radarr"]
+    assert r.get_json() == {"status": "received", "service": "radarr"} and refreshed == ["radarr_queue"]       # a grab only needs a look at the queue
     message = json.loads(heard.get_nowait().split("data: ")[1])
-    assert message == {"service": "radarr", "event": "Grab", "tmdb_id": 949, "tvdb_id": None, "queue_status": "Downloading"}
+    assert message == {"service": "radarr", "event": "Grab", "tmdb_id": 949, "tvdb_id": None, "state": "downloading", "queue_status": "Downloading"}
     for body in (None, [1, 2], {"series": None, "eventType": "Download"}):
         assert client.post("/api/webhook/sonarr", json=body).status_code == 200
     assert client.post("/api/webhook/jellyfin", json={"NotificationType": "ItemAdded"}).status_code == 200

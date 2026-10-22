@@ -14,9 +14,15 @@ def interval_hours(key, default):
     try:
         hours = int(float(settings.get(key, str(default))))
     except (TypeError, ValueError):
-        logger.warning(f"Invalid value for {key}; using {default}h.")
+        logger.warning(f"Invalid value for {key}; using {default}.")
         return default
     return hours if hours >= 0 else default
+
+
+def queue_poll_seconds():
+    """How often download progress is checked (0 = never). Anything between 1 and 9 is raised to 10 so a typo cannot hammer the services."""
+    seconds = interval_hours("queue_poll_seconds", 30)
+    return 0 if seconds == 0 else max(10, seconds)
 
 
 def _scrape_job():
@@ -39,6 +45,9 @@ def configure():
         hours = interval_hours(key, default)
         if hours > 0:
             scheduler.add_job(fn, "interval", hours=hours, id=job_id, max_instances=1, coalesce=True)
+    seconds = queue_poll_seconds()
+    if seconds > 0:
+        scheduler.add_job(tasks.poll_queues, "interval", seconds=seconds, id="job_queue_poll", max_instances=1, coalesce=True)
 
 
 def start():

@@ -12,10 +12,10 @@ _INT_RANGES = {
     "radarr_interval_hours": (0, 8760), "sonarr_interval_hours": (0, 8760), "jellyfin_interval_hours": (0, 8760),
     "radarr_min_user_count": (1, 1000), "sonarr_min_user_count": (1, 1000),
     "radarr_quality_profile_id": (1, 1_000_000), "sonarr_quality_profile_id": (1, 1_000_000),
-    "payload_retention_limit": (1, 100_000), "metadata_refresh_hours": (1, 8760),
+    "payload_retention_limit": (1, 100_000), "metadata_refresh_hours": (1, 8760), "queue_poll_seconds": (0, 3600),
 }
 _FLOAT_KEYS = {"request_delay_min", "request_delay_max", "user_delay_min", "user_delay_max"}
-_URL_KEYS = {"jellyfin_url", "radarr_url", "sonarr_url"}
+_URL_KEYS = {"jellyfin_url", "radarr_url", "sonarr_url", "synchub_url"}
 _PATH_KEYS = {"radarr_root_folder", "sonarr_root_folder"}
 _CHOICES = {"tv_metadata_provider": {"tmdb", "sonarr"}}
 

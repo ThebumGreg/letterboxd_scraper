@@ -29,3 +29,16 @@ def strict_network_guard(monkeypatch):
     """A network call while a write transaction is open is a bug (it blocks every other writer): fail the test."""
     from synchub import db
     monkeypatch.setattr(db, "STRICT_NETWORK_GUARD", True)
+
+
+@pytest.fixture
+def app(v2):
+    from synchub.web import create_app
+    flask_app = create_app()
+    flask_app.config["TESTING"] = True
+    return flask_app
+
+
+@pytest.fixture
+def client(app):
+    return app.test_client()

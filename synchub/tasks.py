@@ -252,6 +252,21 @@ def _stage(name, report, fn):
     return result
 
 
+# ---------------------------------------------------------------- change notifications
+state_listeners = []      # callables taking a set of media IDs whose state or progress just changed (the web layer registers one)
+MAX_ANNOUNCED = 100       # a bigger change (a first sync) is not worth announcing row by row
+
+
+def notify_states_changed(media_ids):
+    if not media_ids or len(media_ids) > MAX_ANNOUNCED:
+        return
+    for listener in list(state_listeners):
+        try:
+            listener(set(media_ids))
+        except Exception as exc:
+            logger.warning(f"A state-change listener failed: {exc}")
+
+
 def reconcile_now(tmdb=None, report=lambda message, force=False: None):
     """Links sources to media, refreshes TMDB metadata, links episodes, then recomputes states. Returns per-stage stats.
 
@@ -273,8 +288,12 @@ def reconcile_now(tmdb=None, report=lambda message, force=False: None):
             return {"jellyfin_episodes": episodes.link_jellyfin_episodes(conn), "sonarr_episodes": episodes.map_sonarr_episodes(conn)}
 
     def state_stage():
+        touched, changed = set(), set()
         with db.connection() as conn:
-            return {"queue_events": states.sync_queue_events(conn), "states": states.compute(conn)}
+            stats = {"queue_events": states.sync_queue_events(conn, touched=touched), "states": states.compute(conn, changed=changed)}
+            media_ids = states.media_ids_for(conn, touched | changed)
+        notify_states_changed(media_ids)
+        return stats
 
     result["matching"] = _stage("Matching titles to movies and shows", report, matching_stage)
     if tmdb is not None:
@@ -283,6 +302,64 @@ def reconcile_now(tmdb=None, report=lambda message, force=False: None):
     result.update(linked)
     result.update(_stage("Working out statuses", report, state_stage))
     return result
+
+
+# ---------------------------------------------------------------- frequent, cheap download-progress poll
+QUEUE_IDLE_SECONDS = 300          # nothing downloading: look only this often (a webhook makes even that rare)
+_LAST_POLL, _POLL_FAILURES, _UNLINKED = {}, {}, {}
+
+
+def _queue_active(service):
+    with db.connection() as conn:
+        return conn.execute("SELECT 1 FROM src_arr_queue WHERE service = ? AND removed_at IS NULL LIMIT 1", (service,)).fetchone() is not None
+
+
+def poll_queue(service, client=None, force=False):
+    """One cheap look at a service's download queue: updates progress and states, tells dashboards, and starts a full
+    sync when something finished or an unknown download appeared. Returns None when skipped.
+
+    While nothing is downloading it only looks every QUEUE_IDLE_SECONDS (force=True looks now)."""
+    lock = _LOCKS.get(service)
+    if lock is not None and lock.locked():
+        return None                                   # a full sync of this service is running and reads the same queue
+    now = time.monotonic()
+    if not force and not _queue_active(service) and now - _LAST_POLL.get(service, -QUEUE_IDLE_SECONDS) < QUEUE_IDLE_SECONDS:
+        return None
+    _LAST_POLL[service] = now
+    ingest, client_class, sync = (radarr_ingest, RadarrClient, sync_radarr) if service == "radarr" else (sonarr_ingest, SonarrClient, sync_sonarr)
+    try:
+        client = client or client_class()
+        touched, changed = set(), set()
+        with db.connection() as conn:
+            queue = ingest.sync_queue(conn, client)
+            events = states.sync_queue_events(conn, touched=touched)
+            states.compute(conn, only=touched, changed=changed)
+            media_ids = states.media_ids_for(conn, touched | changed)
+    except ConfigError:
+        return None
+    except Exception as exc:
+        failures = _POLL_FAILURES[service] = _POLL_FAILURES.get(service, 0) + 1
+        if failures == 1 or failures % 20 == 0:
+            logger.warning(f"[queue] could not read the {service} queue ({failures} failure(s) in a row): {exc}")
+        return None
+    if _POLL_FAILURES.pop(service, 0):
+        logger.info(f"[queue] the {service} queue can be read again")
+    if events["opened"] or events["closed"]:
+        logger.info(f"[queue] {service}: {queue['seen']} in queue, {events['opened']} started, {events['closed']} finished or removed")
+    else:
+        logger.debug(f"[queue] {service}: {queue['seen']} in queue, {len(media_ids)} title(s) changed")
+    notify_states_changed(media_ids)
+    # A download leaving the queue usually means a file arrived (the library must be read to know), and a download for
+    # something we have not linked yet means the library is out of date.
+    if events["closed"] or events["unlinked"] > _UNLINKED.get(service, 0):
+        refresh_soon(service, with_reconcile(sync))
+    _UNLINKED[service] = events["unlinked"]
+    return {"service": service, "in_queue": queue["seen"], "events": events, "media": media_ids}
+
+
+def poll_queues(force=False):
+    """The scheduled job: Radarr then Sonarr. A service that is not configured, or has nothing downloading, costs nothing."""
+    return {service: poll_queue(service, force=force) for service in ("radarr", "sonarr")}
 
 
 def reconcile():

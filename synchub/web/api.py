@@ -7,7 +7,7 @@ from datetime import date
 
 from flask import Response, jsonify, request
 
-from synchub import automation, catalog, db, matching, settings, states, tasks
+from synchub import automation, catalog, db, matching, settings, states, tasks, webhooks
 from synchub.automation import RequestError
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.arr import RadarrClient, SonarrClient
@@ -41,6 +41,23 @@ class MessageAnnouncer:
 announcer = MessageAnnouncer()
 
 
+def announce_rows(media_ids):
+    """Tells every open dashboard the new state of the titles that just changed (a new label, colour and download progress)."""
+    with db.connection() as conn:
+        rows = catalog.list_catalog(conn, only=media_ids)
+    payload = []
+    for r in rows:
+        in_library = r["state"] == "in_library"
+        payload.append({"id": r["id"], "state": r["state"], "label": r["state_label"], "color": r["state_color"], "icon": r["state_icon"],
+                        "progress": r["progress_pct"], "link": r["jellyfin_link"] if in_library else "", "jellyfin_item": r["jellyfin_item_id"],
+                        "summary": f"{r['in_library']} of {r['aired']} episodes" if r["kind"] == "show" and r.get("aired") else ""})
+    announcer.announce(sse(json.dumps({"event": "rows", "rows": payload})))
+
+
+if announce_rows not in tasks.state_listeners:
+    tasks.state_listeners.append(announce_rows)
+
+
 def sse(data, event=None):
     return (f"event: {event}\n" if event else "") + f"data: {data}\n\n"
 
@@ -60,6 +77,16 @@ def _guard(fn):
 
 
 def register(app):
+    # ---------------------------------------------------------------- shared by the settings helpers and webhook setup
+    def _endpoint(fields, service):
+        """(url, api key, problem) for a service from what is typed in the form, falling back to what is saved. The saved key is
+        never sent to a different URL than the saved one."""
+        typed = lambda name: (fields.get(name) or "").strip()
+        url, key = typed(f"{service}_url").rstrip("/") or settings.get(f"{service}_url").rstrip("/"), typed(f"{service}_api_key")
+        if url != settings.get(f"{service}_url").rstrip("/") and not key:
+            return None, None, "Enter the API key too when testing a different URL."
+        return url, key or settings.get(f"{service}_api_key"), None
+
     # ---------------------------------------------------------------- tasks and live events
     @app.route("/api/tasks")
     def api_tasks():
@@ -89,16 +116,56 @@ def register(app):
         payload = request.get_json(silent=True)
         payload = payload if isinstance(payload, dict) else {}
         event = payload.get("eventType") or payload.get("NotificationType") or "WebhookTrigger"
+        if service not in ("radarr", "sonarr", "jellyfin"):
+            return fail("Unknown service.", 404)
+        webhooks.record(service, event)
+        action = webhooks.classify(service, event)
+        if action == "ignore":
+            return jsonify(status="received", service=service)
         if service in ("radarr", "sonarr"):
-            job = tasks.with_reconcile(tasks.sync_radarr if service == "radarr" else tasks.sync_sonarr)
-            tasks.refresh_soon(service, job)
+            if action == "queue":
+                tasks.refresh_soon(f"{service}_queue", lambda: tasks.poll_queue(service, force=True))
+            else:
+                tasks.refresh_soon(service, tasks.with_reconcile(tasks.sync_radarr if service == "radarr" else tasks.sync_sonarr))
             if event in ("Grab", "Download"):
                 movie, series = payload.get("movie") or {}, payload.get("series") or {}
                 announcer.announce(sse(json.dumps({"service": service, "event": event, "tmdb_id": movie.get("tmdbId"), "tvdb_id": series.get("tvdbId"),
+                                                   "state": "downloading" if event == "Grab" else "downloaded",
                                                    "queue_status": "Downloading" if event == "Grab" else "Downloaded"})))
-        elif service == "jellyfin":
+        else:
             tasks.refresh_soon("jellyfin", tasks.with_reconcile(tasks.sync_jellyfin_movies, tasks.sync_jellyfin_tv))
         return jsonify(status="received", service=service)
+
+    @app.route("/api/webhook-setup/<service>", methods=["POST"])
+    def api_webhook_setup(service):
+        """Creates the SyncHub webhook inside Radarr/Sonarr, using the address typed in the form (Radarr/Sonarr must be able to reach it)."""
+        if service not in ("radarr", "sonarr"):
+            return fail("Unknown service.", 404)
+        fields = (request.get_json(silent=True) or {}).get("fields", {})
+        try:
+            base = webhooks.check_base_url(fields.get("synchub_url") or settings.get("synchub_url"))
+            url, key, problem = _endpoint(fields, service)
+            if problem:
+                return fail(problem)
+            if not url or not key:
+                return fail("Enter the URL and API key.")
+            client = (RadarrClient if service == "radarr" else SonarrClient)(url, key)
+            hook = webhooks.webhook_url(base, service)
+            try:
+                result = webhooks.ensure_webhook(client, hook)
+            except ApiError as exc:
+                raise webhooks.WebhookSetupError(f"{client.label} would not save the webhook. If it says it could not send a test message, it cannot reach {hook} from where it runs. {exc}")
+        except webhooks.WebhookSetupError as exc:
+            return fail(str(exc))
+        except ConfigError as exc:
+            return fail(str(exc))
+        except ApiError as exc:
+            return fail(str(exc), 502)
+        settings.set_value("synchub_url", base)
+        label = "Radarr" if service == "radarr" else "Sonarr"
+        message = (f"{label} already has a webhook for {hook}." if result["status"] == "exists"
+                   else f"Created the webhook in {label}. It will post to {hook} on grab, import, upgrade, rename, add and delete.")
+        return jsonify(ok=True, message=message, **result)
 
     # ---------------------------------------------------------------- requests to Radarr / Sonarr
     def after_change(service):
@@ -242,10 +309,7 @@ def register(app):
         typed = lambda name: (fields.get(name) or "").strip()
 
         def pick(url_name, key_name):
-            url, key = typed(url_name).rstrip("/") or settings.get(url_name).rstrip("/"), typed(key_name)
-            if url != settings.get(url_name).rstrip("/") and not key:
-                return None, None, "Enter the API key too when testing a different URL."
-            return url, key or settings.get(key_name), None
+            return _endpoint(fields, url_name.removesuffix("_url"))
 
         try:
             if service == "tmdb":

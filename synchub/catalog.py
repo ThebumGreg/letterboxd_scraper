@@ -71,8 +71,8 @@ def _show_rollups(conn, today):
     return out
 
 
-def list_catalog(conn, today=None):
-    """One row per movie/show for the dashboard, with state, requesters and links."""
+def list_catalog(conn, today=None, only=None):
+    """One row per movie/show for the dashboard, with state, requesters and links. `only` limits the rows to a set of media IDs."""
     today = today or date.today().isoformat()
     defs = states.definitions(conn)
     defs["partial"] = {"code": "partial", "label": "Partial", "color": "warning", "icon": "bi-pie-chart"}
@@ -87,6 +87,8 @@ def list_catalog(conn, today=None):
 
     rows = []
     for m in conn.execute("SELECT * FROM media ORDER BY title COLLATE NOCASE"):
+        if only is not None and m["id"] not in only:
+            continue
         d = wanted.get(m["id"], {"wanted_by": [], "watched_by": []})
         if m["kind"] == "movie":
             state, progress = movie_states.get(m["id"], ("missing", None))

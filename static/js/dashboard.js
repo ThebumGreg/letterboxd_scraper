@@ -234,14 +234,58 @@
         }
     }, true);
     
-    // Server-Sent Events (SSE) Listener
+    // Live updates (Server-Sent Events). "rows" carries the new state of titles that changed on the server (download
+    // progress, a finished import, ...); the older per-event messages give an instant hint before the server has finished reading.
+    function paintStatusCell(row) {
+        const cell = row.querySelector("td:last-child");
+        if (!cell) return;
+        const d = row.dataset;
+        cell.textContent = "";
+        if (d.state === "in_library" && d.link) {
+            const a = el("a", "btn btn-sm btn-success jellyfin-link", "Watch on Jellyfin");
+            a.href = d.link;
+            a.dataset.jellyfinItem = d.jellyfinItem || "";
+            a.target = "_blank";
+            a.rel = "noopener noreferrer";
+            cell.appendChild(a);
+            return;
+        }
+        const holder = el("span", "sse-badge-container");
+        const dark = ["info", "warning"].includes(d.stateColor) ? " text-dark" : "";
+        const badge = el("span", "badge bg-" + d.stateColor + dark + " sse-badge");
+        if (d.stateIcon) badge.appendChild(el("i", "bi " + d.stateIcon));
+        badge.appendChild(document.createTextNode((d.stateIcon ? " " : "") + d.stateLabel + (d.state === "downloading" && d.progress ? " " + d.progress + "%" : "")));
+        holder.appendChild(badge);
+        cell.appendChild(holder);
+    }
+
+    function applyRows(updates) {
+        let changed = false;
+        updates.forEach((u) => {
+            const row = document.querySelector(`.item-row[data-id="${u.id}"]`);
+            if (!row) return;
+            Object.assign(row.dataset, {
+                state: u.state, stateLabel: u.label, stateColor: u.color, stateIcon: u.icon || "",
+                progress: u.progress === null || u.progress === undefined ? "" : String(u.progress),
+                link: u.link || "", jellyfinItem: u.jellyfin_item || "", summary: u.summary || "",
+            });
+            paintStatusCell(row);
+            changed = true;
+        });
+        if (changed && view === "grid") render();
+    }
+
     if (window.EventSource) {
         const evtSource = new EventSource("/api/stream/events");
         evtSource.onmessage = function(event) {
             try {
                 const data = JSON.parse(event.data);
+                if (data.event === "rows") {
+                    applyRows(data.rows || []);
+                    return;
+                }
                 let matchedRows = [];
-                
+
                 if (data.tmdb_id) {
                     matchedRows = document.querySelectorAll(`[data-tmdb-id="${data.tmdb_id}"]`);
                 } else if (data.tvdb_id) {
@@ -249,9 +293,9 @@
                 }
 
                 matchedRows.forEach(row => {
-                    row.dataset.state = "downloading";
+                    row.dataset.state = data.state || "downloading";
                     const badgeCell = row.querySelector("td:last-child");
-                    
+
                     if (badgeCell) {
                         const existingBadge = badgeCell.querySelector('.sse-badge');
                         if (existingBadge) {
