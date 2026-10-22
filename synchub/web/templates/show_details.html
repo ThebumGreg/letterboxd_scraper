@@ -177,11 +177,11 @@
                     ${ep.overview ? `<div class="small text-secondary sd-ep-overview mt-1" title="${esc(ep.overview)}">${esc(ep.overview)}</div>` : ''}
                 </td>
                 <td>${badge}</td>
-                <td class="text-end">${ep.can_request ? `<button class="btn btn-sm btn-outline-primary py-0 px-3" data-request-episode="${esc(ep.id)}" {% if not show.tvdb_id %}disabled{% endif %}>Request</button>` : ''}</td>
+                <td class="text-end text-nowrap">${ep.can_request ? `<button class="btn btn-sm btn-outline-primary py-0 px-3" data-request-episode="${esc(ep.id)}" {% if not show.tvdb_id %}disabled{% endif %}>Request</button>` : ''}${ep.jellyfin_link ? `<a class="btn btn-sm btn-success py-0 px-3" href="${esc(ep.jellyfin_link)}" data-jellyfin-item="${esc(ep.jellyfin_item_id)}" target="_blank" rel="noopener noreferrer" aria-label="Watch ${esc(ep.title || 'episode ' + ep.episode_number)} on Jellyfin"><i class="bi bi-play-fill"></i> Watch</a>` : ''}</td>
             </tr>`;
         }).join('');
         container.innerHTML = `<div class="table-responsive"><table class="table table-hover mb-0 align-middle sd-table">
-            <thead><tr><th style="width: 64px;" class="text-center">Ep</th><th>Title</th><th style="width: 160px;">Status</th><th style="width: 110px;" class="text-end">Action</th></tr></thead>
+            <thead><tr><th style="width: 64px;" class="text-center">Ep</th><th>Title</th><th style="width: 160px;">Status</th><th style="width: 130px;" class="text-end">Action</th></tr></thead>
             <tbody>${rows}</tbody></table></div>`;
         container.querySelectorAll('[data-request-episode]').forEach((b) => b.addEventListener('click', () =>
             post(`/api/request/show/${mediaId}/episodes`, { episode_ids: [parseInt(b.dataset.requestEpisode, 10)] }, b, true)));
@@ -208,9 +208,6 @@
     document.querySelectorAll('#seasonsAccordion .accordion-collapse').forEach((el) => {
         el.addEventListener('show.bs.collapse', () => load(el.id.replace('collapse', '')));
     });
-    // Open the first regular season (Specials stay closed, they can be very long).
-    const first = document.querySelector('#seasonsAccordion .accordion-button[data-special="0"]');
-    if (first) first.click();
 })();
 </script>
 {% endblock %}

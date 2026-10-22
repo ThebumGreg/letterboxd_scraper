@@ -32,7 +32,12 @@
             <div class="mb-3">{{ secret_field('dynu_api_key', 'Dynu REST API key', creds.api_key) }}</div>
             <div class="mb-3 form-check form-switch">
                 <input type="checkbox" class="form-check-input" id="dynu_enabled" name="dynu_enabled" role="switch" value="1" {% if creds.enabled %}checked{% endif %}>
-                <label class="form-check-label ms-2" for="dynu_enabled">Update automatically (every 5 minutes)</label>
+                <label class="form-check-label ms-2" for="dynu_enabled">Update automatically</label>
+            </div>
+            <div class="mb-3" style="max-width: 18rem;">
+                <label for="ddns_interval_minutes" class="form-label fw-bold">Check the public address every (minutes)</label>
+                <input type="number" class="form-control" id="ddns_interval_minutes" name="ddns_interval_minutes" value="{{ ddns_interval }}" min="1" max="60" step="1" required>
+                <div class="form-text">A change is noticed within this long. Dynu is only contacted when the address has changed, so 1 costs one small request a minute.</div>
             </div>
             <button type="submit" class="btn btn-success btn-sm">Save settings</button>
         </form>
@@ -53,6 +58,20 @@
             </div>
         </div>
         <div class="mt-2 text-secondary small">{{ ddns_status.message }}</div>
+    </div>
+
+    <div class="panel p-3 p-md-4 mb-4" id="delayCheck">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+            <h5 class="mb-0 text-success">Where does the delay come from?</h5>
+            <button type="button" class="btn btn-outline-info btn-sm" id="delayCheckBtn">Run the check</button>
+        </div>
+        <p class="small text-body-secondary mb-3">After the address changes, three things take time: SyncHub noticing and telling Dynu (every update says how long each step took, below), Dynu's name servers serving the new address, and resolvers that still hold the old answer until its life (TTL) runs out. This check times the first, then asks Dynu's own name servers and the big public resolvers what they say now, so the wait can be put on the right one. It changes nothing.</p>
+        <div id="delayCheckResult" role="status" aria-live="polite"></div>
+        <div id="delayTimeline" class="mt-3"{% if not timeline %} hidden{% endif %}>
+            <h6 class="mb-1">The last address change, as it spread</h6>
+            <div class="small text-body-secondary mb-2" id="delayTimelineHead">{% if timeline %}{{ timeline.domain }} changed to <code>{{ timeline.ip }}</code>. Seconds until each server answered it (watched for {{ timeline.watched_seconds }} s):{% endif %}</div>
+            <ul class="small mb-0" id="delayTimelineList">{% if timeline %}{% for s in timeline.servers %}<li><strong>{{ s.label }}</strong>: {% if s.seconds is not none %}{{ s.seconds }} s{% elif s.error %}could not be asked ({{ s.error }}){% else %}not within {{ timeline.watched_seconds }} s{% endif %}</li>{% endfor %}{% endif %}</ul>
+        </div>
     </div>
 
     <div class="panel p-0 overflow-hidden">
@@ -89,5 +108,50 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     });
 });
+</script>
+<script>
+(() => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const out = document.getElementById('delayCheckResult');
+    const button = document.getElementById('delayCheckBtn');
+    const el = (tag, text, cls) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (cls) n.className = cls; return n; };
+    const secs = (v) => (v === undefined || v === null) ? '-' : `${v.toFixed(2)} s`;
+    const level = { ok: 'text-success', note: 'text-info', problem: 'text-warning' };
+
+    function table(head, rows) {
+        const wrap = el('div', undefined, 'table-responsive mb-3'); const t = el('table', undefined, 'table table-sm align-middle mb-0');
+        const hr = el('tr'); head.forEach((h) => hr.appendChild(el('th', h))); const th = el('thead'); th.appendChild(hr); t.appendChild(th);
+        const body = el('tbody'); rows.forEach((r) => { const tr = el('tr'); r.forEach((c) => tr.appendChild(el('td', c))); body.appendChild(tr); }); t.appendChild(body);
+        wrap.appendChild(t); return wrap;
+    }
+
+    function render(data) {
+        out.textContent = '';
+        const list = el('ul', undefined, 'mb-3');
+        (data.findings.length ? data.findings : [{ level: 'note', text: 'Nothing stood out.' }]).forEach((f) => list.appendChild(el('li', f.text, level[f.level] || '')));
+        out.appendChild(el('h6', 'What it means')); out.appendChild(list);
+        out.appendChild(el('h6', 'From this machine to the services'));
+        out.appendChild(table(['Service', 'Name lookup', 'Connect', 'Secure handshake', 'First answer', 'Result'], data.timings.map((t) =>
+            [t.name, secs(t.dns), secs(t.connect), secs(t.tls), secs(t.first_byte), t.error || `HTTP ${t.status ?? '?'}`])));
+        if (data.rows.length) {
+            out.appendChild(el('h6', `What the servers say about ${data.domain} (this connection's address: ${data.ip || 'unknown'})`));
+            out.appendChild(table(['Asked', 'Answer', 'Time left in its cache (TTL)', 'Reply time', 'Shows the current address'], data.rows.map((r) =>
+                [r.group === 'authoritative' ? `${r.label} (Dynu)` : r.label, r.error ? r.error : (r.ips || []).join(', '), r.ttl ?? '-', r.ms === null || r.ms === undefined ? '-' : `${r.ms} ms`, r.error ? '-' : (r.current === null ? '-' : (r.current ? 'yes' : 'no'))])));
+        }
+        if (data.dynu) out.appendChild(el('div', `Dynu's record: ${data.dynu.ipv4Address || '?'}, TTL ${data.dynu.ttl ?? '?'} s, ${data.dynu.state || 'state unknown'}${data.dynu.updatedOn ? ', changed ' + data.dynu.updatedOn : ''}.`, 'small text-body-secondary'));
+        out.appendChild(el('div', `The check took ${data.took} s.`, 'small text-body-secondary mt-1'));
+    }
+
+    button.addEventListener('click', async () => {
+        button.disabled = true; out.textContent = 'Checking... this can take up to a minute when something is slow.';
+        try {
+            const res = await fetch('/api/ddns/check', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: '{}' });
+            const data = await res.json();
+            if (!res.ok || !data.ok) throw new Error(data.message || `HTTP ${res.status}`);
+            render(data);
+        } catch (e) { out.textContent = `The check could not run: ${e.message}`; }
+        finally { button.disabled = false; }
+    });
+})();
 </script>
 {% endblock %}

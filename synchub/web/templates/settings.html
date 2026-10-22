@@ -7,6 +7,7 @@
 {% block content %}
 <h2 class="mb-4">System Settings &amp; Configuration</h2>
 
+{% if can('access') %}
 <div class="col-12 mb-4">
     <div class="panel p-3 p-md-4 mb-0">
         <div class="d-flex justify-content-between align-items-center mb-3">
@@ -44,7 +45,7 @@
                                 <input class="form-check-input profile-toggle" type="checkbox" role="switch" data-id="{{ prof.id }}" {% if prof.is_active %}checked{% endif %} title="Include this profile in scraping and requests">
                             </div>
                         </td>
-                        <td><strong>{{ prof.name }}</strong></td>
+                        <td><strong>{{ prof.name }}</strong>{% if prof.has_pin %} <i class="bi bi-lock-fill small text-success" title="Has a PIN" aria-label="Has a PIN"></i>{% endif %}<div class="small"><a class="text-decoration-none" href="{{ url_for('access_page') }}">PIN and pages</a></div></td>
                         <td>{{ prof.letterboxd_username or '—' }}</td>
                         <td>{{ prof.serializd_username or '—' }}</td>
                         <td><code class="small">{{ prof.jellyfin_user_id or '—' }}</code></td>
@@ -68,6 +69,7 @@
         </div>
     </div>
 </div>
+{% endif %}
 
 <form action="{{ url_for('update_settings') }}" method="POST" id="settingsForm">
     {{ csrf_field() }}
@@ -141,6 +143,11 @@
                     <input type="url" class="form-control" id="synchub_url" name="synchub_url" value="{{ settings.synchub_url }}" placeholder="{{ suggested_synchub_url }}">
                     <div class="form-text">Not "localhost", which would mean Radarr's own machine. For example http://192.168.1.50:5001, or http://synchub:5001 on a shared Docker network. Saved with the form below.</div>
                 </div>
+                <div class="mb-3">
+                    <label for="jellyfin_events_keep_days" class="form-label">Keep Jellyfin events for (days)</label>
+                    <input type="number" class="form-control" id="jellyfin_events_keep_days" name="jellyfin_events_keep_days" value="{{ settings.get('jellyfin_events_keep_days') or 365 }}" min="0" step="1" required>
+                    <div class="form-text">Everything Jellyfin's Webhook plugin sends is stored so it can be used later. Older events are deleted once a day. 0 keeps them for ever (playback progress is stored at most every 30 seconds per player, so growth is slow).</div>
+                </div>
                 {% set webhook_base = (settings.synchub_url or suggested_synchub_url)|trim('/') %}
                 {% for service, label in [('radarr', 'Radarr'), ('sonarr', 'Sonarr'), ('jellyfin', 'Jellyfin')] %}
                 {% set last = webhook_status.get(service) %}
@@ -149,14 +156,12 @@
                         <div class="fw-semibold">{{ label }} webhook</div>
                         <code class="small text-break" data-webhook-url="{{ service }}">{{ webhook_base }}/api/webhook/{{ service }}</code>
                         <div class="small text-body-secondary" data-webhook-status="{{ service }}">{% if last %}Last event: {{ last.event }}, {{ last.ago }}{% else %}Nothing received yet{% endif %}</div>
-                        {% if service == 'jellyfin' %}<div class="small text-body-secondary">Needs Jellyfin's Webhook plugin, sending "Item Added" to this address.</div>{% endif %}
+                        {% if service == 'jellyfin' %}<div class="small text-body-secondary">Needs Jellyfin's Webhook plugin. The button adds a destination that sends every notification type (library changes, playback, sessions, sign-ins, tasks, plugins, users) for every kind of item. SyncHub keeps all of it (<a href="{{ url_for('jellyfin_events_page') }}">Jellyfin events</a>) and reads the library again only when something is added or removed.</div>{% endif %}
                     </div>
-                    {% if service != 'jellyfin' %}
                     <div class="text-end">
                         <button type="button" class="btn btn-outline-info btn-sm" data-webhook-setup="{{ service }}" data-webhook-fields="synchub_url,{{ service }}_url,{{ service }}_api_key">Set up in {{ label }}</button>
                         <span class="small d-block" data-webhook-result="{{ service }}" role="status"></span>
                     </div>
-                    {% endif %}
                 </div>
                 {% endfor %}
             </div>
@@ -285,13 +290,16 @@
     </div>
 </form>
 
+{% if can('access') %}
 {{ profile_modal(url_for('save_profile')) }}
 {{ jellyfin_import_modal() }}
+{% endif %}
 
 {% endblock %}
 
 {% block scripts %}
 <script>
+{% if can('access') %}
     // Profile Management
     function fillProfileForm(p) {
         document.getElementById('modal_profile_id').value = p.id || '';
@@ -354,6 +362,7 @@
                 document.getElementById('jellyfinUserList').innerHTML = '<div class="p-4 text-center text-danger">Network error fetching users.</div>';
             });
     }
+{% endif %}
 
     // Dynamic Servarr Dropdowns
     async function fetchServarr(service, quiet = false) {

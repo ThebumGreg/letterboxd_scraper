@@ -56,9 +56,24 @@ The worker side is a small API (`/api/worker/v1/...`, token per worker, document
 - **Who asked**: the profile chosen on the Who-is-watching page is credited ("Wanted by") and counts as demand, even if they have watched the title. A guest can add too, but nobody is credited. Requests stay when a profile is deleted (they just stop counting).
 - A failed add (for example a Radarr root folder that does not exist) says why and leaves nothing behind in the catalog.
 
-## Who is watching
+## The menu
 
-The first visit from a browser shows **Who is watching?**: pick your profile, or "Just looking" to continue as a guest. There is no password. The choice is remembered on that device for a year (a plain cookie holding the profile ID), the top bar shows who you are with a **switch** link, and the profile's Jellyfin user is the one the Jellyfin app links open as. It only says who is using the app; anyone on the network can pick anyone, so it is not security. Scripts, webhooks, images and the live stream are never asked. With no profiles nothing is asked.
+**Dashboard, Search, Resolution Center, Dynamic DNS** and **Settings** are in the top bar. **Media** is a dropdown with Library, Workers and Storage; **System** is a dropdown with Tools & Operations, Logs, Payloads, Jellyfin events and Access. A person only sees the entries their profile may open (see Access below), and a dropdown with nothing in it is hidden.
+
+## Who is watching, PINs and permissions
+
+The first visit from a browser shows **Who is watching?**: pick your profile, or "Just looking" to continue as a guest. The choice is remembered on that device for a year, the top bar shows who you are with a **switch** link, and the profile's Jellyfin user is the one the Jellyfin app links open as. With no profiles nothing is asked.
+
+**Access** (System menu) gives each profile an optional **PIN** (4 to 8 digits) and a list of the pages it may open: Dashboard, Search, Requests (the buttons that request or add titles), Resolution Center, Dynamic DNS, Library, Workers, Storage, Tools & Operations, Logs, Payloads, Settings and Access itself. Guests have their own list. Quick picks (Everything, Viewer, Nothing) fill in the boxes.
+
+- **Nothing changes until you use it.** Every profile and every guest can open everything, as before.
+- **A profile with a PIN** asks for it when chosen, then remembers that device for 30 days (changeable on the Access page). Five wrong PINs in a row lock that profile for 30 seconds, doubling each time up to 15 minutes; **Unlock** on the Access page clears it. Changing a PIN, or **Sign out everywhere**, makes every device ask again.
+- **A profile without a PIN** can still be chosen by anyone on your network, so its permissions only mean something once the profiles that can do more than a guest have PINs. The Access page lists every profile for which that is not true.
+- A page you may not open shows a short explanation (a script gets a 403 answer). Webhooks, workers, images and the sign-in page are never behind a permission; each worker and webhook has its own way in.
+- Somebody must always keep the Access permission: removing it from the last person (or deleting that profile) is refused.
+- **Lost every PIN?** On the machine that runs SyncHub: `python -m synchub.access reset-pin "Alice"` takes one profile's PIN off and gives it every permission back; `python -m synchub.access reset-all` does that for everyone, guests included; `python -m synchub.access list` shows where things stand. In Docker: `docker exec <container> python -m synchub.access reset-all`.
+
+This is a household lock, not a login system: the PIN is stored hashed, the sign-in is a signed cookie over plain HTTP on your own network, and the app is not meant to face the internet.
 
 ## Live updates: webhooks and download progress
 
@@ -66,7 +81,11 @@ Without these, Radarr and Sonarr are read every 6 hours. With them, a grab or im
 
 - **Webhook** (Settings, Live updates): enter SyncHub's address as Radarr/Sonarr reach it (not `localhost`), then press **Set up in Radarr** / **Set up in Sonarr**. SyncHub creates a Webhook connection in that service from the service's own template, switched on for grab, import, upgrade, rename, add and delete. Pressing it again changes nothing. The panel shows when the last event arrived, so you can tell it works. A grab only triggers a look at the download queue; imports, deletes and adds read the library. Health and test events are ignored. If the service says it could not send a test message, it cannot reach SyncHub at that address from where it runs (a Docker network name or the machine's LAN address usually fixes that).
 - **Download progress**: every 30 seconds (Settings, "Download progress check"; 0 turns it off) SyncHub reads just the download queue, but only while something is downloading. Otherwise it looks at most every 5 minutes, which also catches downloads started directly in Radarr/Sonarr when no webhook is set up. A download that leaves the queue triggers a library read, so "Downloaded" appears without waiting for the schedule. Open dashboards update live without a reload.
-- **Jellyfin**: Jellyfin's Webhook plugin can send "Item Added" to `/api/webhook/jellyfin` so a new file shows as In Library right away. Play, pause and login events are ignored.
+- **Jellyfin**: press **Set up in Jellyfin** (same panel; needs Jellyfin's Webhook plugin installed). SyncHub adds a Generic destination to the plugin that sends **every one of its 24 notification types** (item added and deleted, playback start, progress and stop, sessions, sign-ins, tasks, plugin and user changes and more), for every kind of item and every user, with all properties as JSON. It leaves the plugin's other destinations alone; pressing it again changes nothing. Only *Item added*, *Item deleted* and *Task completed* make SyncHub read the library again. Everything else is kept (below).
+
+## Jellyfin events (what Jellyfin told us, kept)
+
+Every event Jellyfin's Webhook plugin sends is stored (**System, Jellyfin events**) with its type, who, what (title, series, season and episode), device, client, playback position and the whole body as it arrived, so it can be used later. The page shows counts by type, filters by type, user and text, opens any event in full, and exports everything as JSON lines (oldest first). Playback progress arrives every few seconds per player and is stored at most every 30 seconds per player and title. Events are kept for 365 days by default (Settings, Live updates, "Keep Jellyfin events for"; 0 keeps them for ever) and older ones are deleted once a day. The plugin sends plain text unless told otherwise; SyncHub reads the body as JSON either way.
 
 ## Opening items in the Jellyfin app (iPhone and iPad)
 
@@ -75,8 +94,11 @@ Without these, Radarr and Sonarr are read every 6 hours. With them, a grab or im
 - The **server ID** is read from Jellyfin during a Jellyfin sync, so run **Tools, Sync movies/TV** once after upgrading.
 - The **user** must be a Jellyfin user that is signed in to the app on that device. Give each profile its Jellyfin user in Settings; the profile chosen on the Who-is-watching page then decides. A guest, or a profile without a Jellyfin user, is asked once which Jellyfin user to use (remembered on that device; the link at the bottom of every page changes it).
 - If tapping does nothing useful, check that the user chosen is the one signed in to the app, and that the app is installed.
+- On a show's page every episode that is in the library has its own **Watch** button, which opens that episode in Jellyfin the same way (that page is one tap from Play; no documented Jellyfin link starts playback by itself, so this is as direct as it gets). Seasons are all closed when the page opens; open the ones you want.
 
 ## Troubleshooting
+
+**Dynamic DNS takes 30 to 45 seconds to show the new address:** most of that is usually not SyncHub. **Dynamic DNS, Run the check** times the path to the services, then asks Dynu's own name servers and the big public resolvers what they say about the name, with the time each still has the old answer in its cache, and says in words where the wait sits. Every update reports how long each step took (public address, Dynu), and after a real address change SyncHub watches how long each server took to show it (shown on the same page). Background and findings: [docs/DDNS_DELAY.md](docs/DDNS_DELAY.md).
 
 **Posters missing:** **Tools, Refresh posters** forgets earlier failures, asks TMDB for the poster of every title that has none, and saves every poster that is not cached yet. The log names the first titles that have no poster anywhere.
 
@@ -103,4 +125,4 @@ Tests use a temporary database and never touch the network (a guard fails any te
 
 ## Layout
 
-The code is in `synchub/`: `db.py` + `migrations/` (schema), `clients/` (Jellyfin, Radarr, Sonarr, TMDB), `ingest/` (one module per source, writing the `src_*` tables), `matching.py` and `episodes.py` (linking), `library/` (the Library's decision logic, scans and duplicate search), `storage.py` and `jobs.py` (shares and worker jobs), `states.py` (statuses), `catalog.py` (what the pages read), `automation.py` (requests and auto-add), `tasks.py` and `scheduler.py` (jobs), `web/` (pages, templates and API). `config.py`, `logger.py` and `settings_validation.py` at the top level are shared helpers; `static/` holds the CSS, JavaScript and cached posters.
+The code is in `synchub/`: `db.py` + `migrations/` (schema), `clients/` (Jellyfin, Radarr, Sonarr, TMDB), `ingest/` (one module per source, writing the `src_*` tables), `matching.py` and `episodes.py` (linking), `library/` (the Library's decision logic, scans and duplicate search), `storage.py` and `jobs.py` (shares and worker jobs), `access.py` (PINs and permissions), `jellyfin_events.py` (kept Jellyfin events), `ddns.py` and `ddns_check.py` (dynamic DNS and its delay check), `states.py` (statuses), `catalog.py` (what the pages read), `automation.py` (requests and auto-add), `tasks.py` and `scheduler.py` (jobs), `web/` (pages, templates and API). `config.py`, `logger.py` and `settings_validation.py` at the top level are shared helpers; `static/` holds the CSS, JavaScript and cached posters.

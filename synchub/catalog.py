@@ -48,6 +48,11 @@ def _jellyfin_link(base_url, item_id):
     return f"{base_url}/web/index.html#/details?id={item_id}" if base_url and item_id else None
 
 
+def jellyfin_item_link(item_id):
+    """The Jellyfin web page of an item (the details page, one click from Play), or None when Jellyfin's address is not set."""
+    return _jellyfin_link(settings.get("jellyfin_url").rstrip("/"), item_id)
+
+
 def jellyfin_app_config(conn):
     """What a browser needs to open an item in the Jellyfin iOS app: the server's ID and the Jellyfin users to choose from."""
     users = [{"id": r["jellyfin_user_id"], "name": r["name"]} for r in conn.execute(

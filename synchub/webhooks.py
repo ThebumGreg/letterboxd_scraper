@@ -10,8 +10,16 @@ from synchub import db, settings
 IGNORED_EVENTS = {"Test", "Health", "HealthIssue", "HealthRestored", "ApplicationUpdate"}
 # A grab only adds a queue entry, so a look at the queue is enough (the queue poll links it, or asks for a full sync when it cannot).
 QUEUE_ONLY_EVENTS = {"Grab"}
-# Jellyfin's webhook plugin also reports every play, pause and login; none of that changes what is in the library.
-JELLYFIN_IGNORED_PREFIXES = ("Playback", "Session", "Authentication", "UserData", "User", "Subtitle")
+# Every notification type Jellyfin's Webhook plugin can send (its NotificationType enum). All of them are kept (jellyfin_events.py);
+# only these change what is in the library, so only these make SyncHub read it again. A sender that names no type is treated as one of them.
+JELLYFIN_NOTIFICATION_TYPES = (
+    "ItemAdded", "ItemDeleted", "Generic", "PlaybackStart", "PlaybackProgress", "PlaybackStop", "SubtitleDownloadFailure", "AuthenticationFailure",
+    "AuthenticationSuccess", "SessionStart", "PendingRestart", "TaskCompleted", "PluginInstallationCancelled", "PluginInstallationFailed", "PluginInstalled",
+    "PluginInstalling", "PluginUninstalled", "PluginUpdated", "UserCreated", "UserDeleted", "UserLockedOut", "UserPasswordChanged", "UserUpdated", "UserDataSaved",
+)
+JELLYFIN_LIBRARY_EVENTS = {"ItemAdded", "ItemDeleted", "TaskCompleted"}
+JELLYFIN_PLUGIN_ID = "71552a5a-5c5c-4350-a2ae-ebe451a30173"
+JELLYFIN_ITEM_FLAGS = ("EnableMovies", "EnableEpisodes", "EnableSeries", "EnableSeasons", "EnableAlbums", "EnableSongs", "EnableVideos")
 
 # The notification settings SyncHub switches on when it creates the webhook (only those the service supports).
 EVENT_FLAGS = {
@@ -27,7 +35,7 @@ class WebhookSetupError(Exception):
 def classify(service, event):
     """'ignore', 'queue' (look at the download queue) or 'sync' (read the library)."""
     if service == "jellyfin":
-        return "ignore" if str(event).startswith(JELLYFIN_IGNORED_PREFIXES) else "sync"
+        return "sync" if event in JELLYFIN_LIBRARY_EVENTS or event not in JELLYFIN_NOTIFICATION_TYPES else "ignore"
     if event in IGNORED_EVENTS:
         return "ignore"
     return "queue" if event in QUEUE_ONLY_EVENTS else "sync"
@@ -114,3 +122,41 @@ def ensure_webhook(client, url):
             enabled.append(flag)
     created = client.add_notification(body)
     return {"status": "created", "id": created.get("id"), "events": enabled}
+
+
+# ---------------------------------------------------------------- creating the webhook in Jellyfin's Webhook plugin
+def jellyfin_option(url, existing=None):
+    """The plugin destination SyncHub wants: every notification type, every item type, every property in the body (as JSON), for every user.
+    Anything else already on an existing destination (a name, other headers) is kept."""
+    option = dict(existing or {})
+    headers = [h for h in option.get("Headers") or [] if str(h.get("Key") or "").lower() != "content-type"]
+    option.update(WebhookName=option.get("WebhookName") or "SyncHub", WebhookUri=option.get("WebhookUri") or url, NotificationTypes=list(JELLYFIN_NOTIFICATION_TYPES), SendAllProperties=True,
+                  EnableWebhook=True, SkipEmptyMessageBody=False, UserFilter=[], Fields=option.get("Fields") or [],
+                  Headers=[*headers, {"Key": "Content-Type", "Value": "application/json"}])
+    option.update({flag: True for flag in JELLYFIN_ITEM_FLAGS})
+    return option
+
+
+def ensure_jellyfin_webhook(client, url):
+    """Makes sure Jellyfin's Webhook plugin has a Generic destination posting everything to `url`.
+
+    Returns {'status': 'exists'|'created'|'updated', 'types': n}. Other destinations (Discord, Slack...) and the plugin's other settings are left alone."""
+    plugin = next((p for p in client.plugins() if str(p.get("Name") or "").lower() == "webhook" or str(p.get("Id") or "").lower().replace("-", "") == JELLYFIN_PLUGIN_ID.replace("-", "")), None)
+    if plugin is None:
+        raise WebhookSetupError("Jellyfin does not have the Webhook plugin. Install it in Jellyfin (Dashboard, Plugins, Catalog, Webhook), restart Jellyfin, then try again.")
+    if str(plugin.get("Status") or "Active") != "Active":
+        raise WebhookSetupError(f"Jellyfin's Webhook plugin is {plugin.get('Status')}, not active. Restart Jellyfin if it was just installed, or enable it, then try again.")
+    plugin_id = plugin.get("Id") or JELLYFIN_PLUGIN_ID
+    configuration = client.plugin_configuration(plugin_id) or {}
+    options = list(configuration.get("GenericOptions") or [])
+    index = next((i for i, o in enumerate(options) if str(o.get("WebhookUri") or "").rstrip("/") == url.rstrip("/")), None)
+    wanted = jellyfin_option(url, options[index] if index is not None else None)
+    if index is not None and options[index] == wanted:
+        return {"status": "exists", "types": len(JELLYFIN_NOTIFICATION_TYPES)}
+    if index is None:
+        options.append(wanted)
+    else:
+        options[index] = wanted
+    configuration["GenericOptions"] = options
+    client.set_plugin_configuration(plugin_id, configuration)
+    return {"status": "updated" if index is not None else "created", "types": len(JELLYFIN_NOTIFICATION_TYPES)}

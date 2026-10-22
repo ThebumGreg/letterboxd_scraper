@@ -1,0 +1,15 @@
+<!-- synchub/web/templates/forbidden.html -->
+{% extends "base.html" %}
+{% block title %}No access{% endblock %}
+
+{% block content %}
+<div class="text-center my-5">
+    <i class="bi bi-lock fs-1 text-body-secondary" aria-hidden="true"></i>
+    <h2 class="mt-2 mb-2">This is not open to {{ current_profile.name if current_profile else 'guests' }}</h2>
+    <p class="text-body-secondary mb-4">{{ message or ('You do not have access to ' ~ label ~ '.') }} Someone with the Access permission can change this.</p>
+    <div class="d-flex flex-wrap justify-content-center gap-2">
+        {% if has_profiles %}<a class="btn btn-outline-success" href="{{ url_for('who', next=request.path) }}">Choose another profile</a>{% endif %}
+        {% if can('dashboard') %}<a class="btn btn-outline-secondary" href="{{ url_for('index') }}">Back to the dashboard</a>{% endif %}
+    </div>
+</div>
+{% endblock %}

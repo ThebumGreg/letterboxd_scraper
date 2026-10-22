@@ -14,7 +14,9 @@ def _blank_to_none(value):
 
 
 def list_all(conn):
-    return [dict(r) for r in conn.execute("SELECT * FROM profile ORDER BY name COLLATE NOCASE")]
+    """Every profile. The PIN itself is never included, only whether there is one."""
+    return [dict(r) for r in conn.execute("""SELECT id, name, letterboxd_username, serializd_username, jellyfin_user_id, is_active, created_at,
+                                                    pin_hash IS NOT NULL AS has_pin FROM profile ORDER BY name COLLATE NOCASE""")]
 
 
 def _owner_of(conn, column, value, exclude_id):
@@ -52,6 +54,11 @@ def save(conn, profile_id, name, letterboxd_username=None, serializd_username=No
 
 def delete(conn, profile_id):
     """Removes the profile only. Letterboxd/Serializd entries are kept and re-attach if the profile is recreated."""
+    from synchub import access
+    try:
+        access.ensure_profile_can_go(conn, profile_id)
+    except access.AccessError as exc:
+        raise ProfileError(str(exc))
     return conn.execute("DELETE FROM profile WHERE id = ?", (profile_id,)).rowcount == 1
 
 

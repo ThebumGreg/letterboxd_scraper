@@ -59,7 +59,7 @@ def test_failures_are_logged(v2, monkeypatch):
     ok, message = ddns.run_update()
     assert not ok and "HTTP 500" in message and ddns.history()[0]["status"] == "FAILED"
     route(monkeypatch, {"GetPublicIP": Resp(status=500)})
-    assert ddns.run_update()[1] == "DDNS update failed: public IP check failed."
+    assert ddns.run_update()[1].startswith("DDNS update failed: public IP check failed. Took ")
 
 
 def test_dns_id_is_looked_up_and_cached(v2, monkeypatch):
@@ -87,7 +87,7 @@ def test_scheduler_jobs_follow_settings_and_survive_bad_values(v2):
     settings.set_value("jellyfin_interval_hours", "12")
     scheduler.configure()
     jobs = {j.id: j.trigger.interval.total_seconds() / 3600 for j in scheduler.scheduler.get_jobs() if hasattr(j.trigger, "interval")}
-    assert jobs == {"job_ddns": 5 / 60, "job_scrape": 24, "job_jellyfin": 12, "job_sonarr": 6, "job_queue_poll": 30 / 3600, "job_reaper": 30 / 3600}      # radarr off, bad values -> defaults
+    assert jobs == {"job_ddns": 1 / 60, "job_scrape": 24, "job_jellyfin": 12, "job_sonarr": 6, "job_queue_poll": 30 / 3600, "job_reaper": 30 / 3600, "job_prune_jellyfin_events": 24}      # radarr off, bad values -> defaults
 
 
 def test_radarr_task_auto_adds_when_enabled_and_resyncs(v2, monkeypatch):

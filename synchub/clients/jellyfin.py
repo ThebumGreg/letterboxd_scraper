@@ -29,6 +29,17 @@ class JellyfinClient:
         res = check(http.request("jellyfin", "GetUsers", "GET", f"{self.url}/Users", headers=self.headers), "Jellyfin", "user list")
         return res.json()
 
+    def plugins(self):
+        return check(http.request("jellyfin", "GetPlugins", "GET", f"{self.url}/Plugins", headers=self.headers), "Jellyfin", "plugin list").json()
+
+    def plugin_configuration(self, plugin_id):
+        res = http.request("jellyfin", "GetPluginConfiguration", "GET", f"{self.url}/Plugins/{plugin_id}/Configuration", headers=self.headers)
+        return check(res, "Jellyfin", "plugin settings").json()
+
+    def set_plugin_configuration(self, plugin_id, configuration):
+        res = http.request("jellyfin", "SetPluginConfiguration", "POST", f"{self.url}/Plugins/{plugin_id}/Configuration", headers=self.headers, json=configuration)
+        check(res, "Jellyfin", "saving the plugin settings")
+
     def admin_user_id(self):
         """An administrator's ID. Querying as one avoids Jellyfin filtering items by user permissions."""
         if self._admin_id is None:

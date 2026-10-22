@@ -3,15 +3,19 @@ import json
 import queue
 import threading
 import time
+import logging
 from datetime import date
 
 from flask import Response, jsonify, request
 
-from synchub import automation, catalog, db, matching, search, settings, states, tasks, webhooks
+from synchub import automation, catalog, db, jellyfin_events, matching, search, settings, states, tasks, webhooks
 from synchub.automation import RequestError
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.arr import RadarrClient, SonarrClient
+from synchub.clients.jellyfin import JellyfinClient
 from synchub.clients.tmdb import TmdbClient
+
+logger = logging.getLogger(__name__)
 
 
 class MessageAnnouncer:
@@ -114,11 +118,19 @@ def register(app):
 
     @app.route("/api/webhook/<service>", methods=["POST"])
     def api_webhook(service):
-        payload = request.get_json(silent=True)
-        payload = payload if isinstance(payload, dict) else {}
-        event = payload.get("eventType") or payload.get("NotificationType") or "WebhookTrigger"
         if service not in ("radarr", "sonarr", "jellyfin"):
             return fail("Unknown service.", 404)
+        if service == "jellyfin":
+            # Kept whatever it is (the plugin sends text/plain unless told otherwise, so the body is read as JSON regardless of its type).
+            try:
+                event, payload = jellyfin_events.store(request.get_data(), request.remote_addr)
+            except Exception as exc:
+                logger.error(f"Could not keep a Jellyfin event: {exc}")
+                event, payload = jellyfin_events.event_type({}), {}
+        else:
+            payload = request.get_json(silent=True)
+            payload = payload if isinstance(payload, dict) else {}
+            event = payload.get("eventType") or payload.get("NotificationType") or "WebhookTrigger"
         webhooks.record(service, event)
         action = webhooks.classify(service, event)
         if action == "ignore":
@@ -139,8 +151,8 @@ def register(app):
 
     @app.route("/api/webhook-setup/<service>", methods=["POST"])
     def api_webhook_setup(service):
-        """Creates the SyncHub webhook inside Radarr/Sonarr, using the address typed in the form (Radarr/Sonarr must be able to reach it)."""
-        if service not in ("radarr", "sonarr"):
+        """Creates the SyncHub webhook inside Radarr/Sonarr or Jellyfin's Webhook plugin, using the address typed in the form (the service must be able to reach it)."""
+        if service not in ("radarr", "sonarr", "jellyfin"):
             return fail("Unknown service.", 404)
         fields = (request.get_json(silent=True) or {}).get("fields", {})
         try:
@@ -150,12 +162,18 @@ def register(app):
                 return fail(problem)
             if not url or not key:
                 return fail("Enter the URL and API key.")
-            client = (RadarrClient if service == "radarr" else SonarrClient)(url, key)
             hook = webhooks.webhook_url(base, service)
-            try:
-                result = webhooks.ensure_webhook(client, hook)
-            except ApiError as exc:
-                raise webhooks.WebhookSetupError(f"{client.label} would not save the webhook. If it says it could not send a test message, it cannot reach {hook} from where it runs. {exc}")
+            if service == "jellyfin":
+                try:
+                    result = webhooks.ensure_jellyfin_webhook(JellyfinClient(url, key), hook)
+                except ApiError as exc:
+                    raise webhooks.WebhookSetupError(f"Jellyfin would not take the webhook settings. {exc}")
+            else:
+                client = (RadarrClient if service == "radarr" else SonarrClient)(url, key)
+                try:
+                    result = webhooks.ensure_webhook(client, hook)
+                except ApiError as exc:
+                    raise webhooks.WebhookSetupError(f"{client.label} would not save the webhook. If it says it could not send a test message, it cannot reach {hook} from where it runs. {exc}")
         except webhooks.WebhookSetupError as exc:
             return fail(str(exc))
         except ConfigError as exc:
@@ -163,9 +181,14 @@ def register(app):
         except ApiError as exc:
             return fail(str(exc), 502)
         settings.set_value("synchub_url", base)
-        label = "Radarr" if service == "radarr" else "Sonarr"
-        message = (f"{label} already has a webhook for {hook}." if result["status"] == "exists"
-                   else f"Created the webhook in {label}. It will post to {hook} on grab, import, upgrade, rename, add and delete.")
+        label = {"radarr": "Radarr", "sonarr": "Sonarr", "jellyfin": "Jellyfin"}[service]
+        if service == "jellyfin":
+            message = {"exists": f"Jellyfin's Webhook plugin already sends everything to {hook}.",
+                       "created": f"Added a destination to Jellyfin's Webhook plugin. It sends all {result['types']} notification types, for every kind of item and every user, to {hook}.",
+                       "updated": f"Updated Jellyfin's Webhook destination for {hook}: all {result['types']} notification types, every kind of item, every user."}[result["status"]]
+        else:
+            message = (f"{label} already has a webhook for {hook}." if result["status"] == "exists"
+                       else f"Created the webhook in {label}. It will post to {hook} on grab, import, upgrade, rename, add and delete.")
         return jsonify(ok=True, message=message, **result)
 
     # ---------------------------------------------------------------- requests to Radarr / Sonarr
@@ -229,7 +252,8 @@ def register(app):
             info = defs.get(e["state"], defs["missing"])
             e.update(state_label=info["label"], state_color=info["color"], state_icon=info.get("icon"),
                      progress_pct=round(e["progress"] * 100) if e["progress"] is not None else None,
-                     can_request=e["state"] == "missing")
+                     can_request=e["state"] == "missing",
+                     jellyfin_link=catalog.jellyfin_item_link(e["jellyfin_item_id"]))
         return jsonify(ok=True, season=season_number, label="Specials (Season 0)" if season_number == 0 else f"Season {season_number}", episodes=eps)
 
     @app.route("/api/show/<int:media_id>/refresh", methods=["POST"])

@@ -80,21 +80,49 @@ def register(app):
 
     @app.route("/who", methods=["GET", "POST"])
     def who():
-        """'Who is watching?': pick a profile (no password) or carry on as a guest. Remembered on this device."""
-        from synchub.web import PROFILE_COOKIE, PROFILE_COOKIE_DAYS, safe_next
+        """'Who is watching?': pick a profile, or carry on as a guest. A profile with a PIN asks for it; either choice is remembered on this device."""
+        from flask import current_app
+        from synchub import access
+        from synchub.web import PIN_COOKIE, PROFILE_COOKIE, PROFILE_COOKIE_DAYS, safe_next
         with db.connection() as conn:
             profile_list = profiles.list_all(conn)
+        by_id = {str(p["id"]): p for p in profile_list}
         destination = safe_next(request.values.get("next"))
+
+        def chooser(ask_pin=None, error=None, status=200):
+            return render_template("who.html", profiles=profile_list, destination=destination, ask_pin=ask_pin, error=error), status
+
         if request.method == "GET":
             if not profile_list:
                 return redirect(destination)
-            return render_template("who.html", profiles=profile_list, destination=destination)
+            wanted = by_id.get(request.args.get("profile", ""))
+            return chooser(ask_pin=wanted if wanted and wanted["has_pin"] else None)
         choice = (request.form.get("profile_id") or "").strip()
-        if choice != "0" and not any(str(p["id"]) == choice for p in profile_list):
+        if choice != "0" and choice not in by_id:
             flash("That profile no longer exists. Pick again.", "warning")
             return redirect(url_for("who", next=destination))
         response = redirect(destination)
+        proof = None
+        if choice != "0" and by_id[choice]["has_pin"]:
+            if "pin" not in request.form:
+                return chooser(ask_pin=by_id[choice])                       # picked a profile with a PIN: ask for it
+            with db.connection() as conn:
+                outcome, detail = access.check_pin(conn, int(choice), request.form.get("pin"))
+            if outcome == "locked":
+                minutes = f"{detail // 60 + 1} minutes" if detail >= 120 else f"{detail} seconds"
+                return chooser(ask_pin=by_id[choice], error=f"Too many wrong tries. Try again in {minutes}.", status=429)
+            if outcome == "wrong":
+                return chooser(ask_pin=by_id[choice], error=f"That PIN is not right. {detail} more {'try' if detail == 1 else 'tries'} before it locks for a while.", status=401)
+            if outcome != "ok":
+                return redirect(url_for("who", next=destination))          # the PIN was removed while the page was open: choose again
+            with db.connection() as conn:
+                days = access.session_days(conn)
+            proof = access.issue_proof(current_app.secret_key, detail["id"], detail["pin_version"])
         response.set_cookie(PROFILE_COOKIE, choice, max_age=PROFILE_COOKIE_DAYS * 86400, samesite="Lax", httponly=True)
+        if proof:
+            response.set_cookie(PIN_COOKIE, proof, max_age=days * 86400, samesite="Lax", httponly=True)
+        else:
+            response.delete_cookie(PIN_COOKIE)
         return response
 
     @app.route("/resolution")
@@ -131,4 +159,4 @@ def register(app):
     @app.route("/ddns")
     def ddns_page():
         creds = ddns.credentials()
-        return render_template("ddns.html", creds=creds, ddns_status=ddns.status(), ddns_history=ddns.history(10))
+        return render_template("ddns.html", creds=creds, ddns_status=ddns.status(), ddns_history=ddns.history(10), ddns_interval=ddns.interval_minutes(), timeline=ddns.last_timeline())

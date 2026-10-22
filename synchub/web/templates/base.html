@@ -27,12 +27,25 @@
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav me-auto">
-                    {% for endpoint, label in [('index', 'Dashboard'), ('search_page', 'Search'), ('library_page', 'Library'), ('resolution_center', 'Resolution Center'), ('ddns_page', 'Dynamic DNS'), ('tools', 'Tools & Operations'), ('workers_page', 'Workers'), ('storage_page', 'Storage'), ('settings_page', 'Settings'), ('payloads_page', 'Payloads'), ('logs_page', 'Logs')] %}
-                        {% set href = url_for(endpoint) %}
-                        {% set active = (path == '/') if href == '/' else path.startswith(href) %}
-                        <li class="nav-item">
-                            <a class="nav-link{% if active %} active{% endif %}" href="{{ href }}"{% if active %} aria-current="page"{% endif %}>{{ label }}</a>
-                        </li>
+                    {% for item in menu %}
+                        {% if item.children %}
+                            {% set ns = namespace(active=false) %}
+                            {% for child in item.children %}{% if path.startswith(child.href) %}{% set ns.active = true %}{% endif %}{% endfor %}
+                            <li class="nav-item dropdown">
+                                <a class="nav-link dropdown-toggle{% if ns.active %} active{% endif %}" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">{{ item.label }}</a>
+                                <ul class="dropdown-menu">
+                                    {% for child in item.children %}
+                                        {% set active = path.startswith(child.href) %}
+                                        <li><a class="dropdown-item{% if active %} active{% endif %}" href="{{ child.href }}"{% if active %} aria-current="page"{% endif %}>{{ child.label }}</a></li>
+                                    {% endfor %}
+                                </ul>
+                            </li>
+                        {% else %}
+                            {% set active = (path == '/') if item.href == '/' else path.startswith(item.href) %}
+                            <li class="nav-item">
+                                <a class="nav-link{% if active %} active{% endif %}" href="{{ item.href }}"{% if active %} aria-current="page"{% endif %}>{{ item.label }}</a>
+                            </li>
+                        {% endif %}
                     {% endfor %}
                 </ul>
                 {% if has_profiles %}

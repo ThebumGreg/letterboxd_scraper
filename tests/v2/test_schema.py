@@ -6,11 +6,12 @@ from synchub import db, settings
 
 
 def test_migrate_creates_schema_and_is_idempotent(v2):
-    assert v2.migrate() == 6
-    assert v2.migrate() == 6
+    latest = max(version for version, _ in db._migration_files())            # every numbered file applied, none twice
+    assert v2.migrate() == latest
+    assert v2.migrate() == latest
     with v2.connection() as c:
         tables = {r["name"] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert c.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0] == 6
+        assert c.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0] == latest
     for table in ("profile", "media", "episode", "link", "match_review", "state_def", "processing_event", "item_state",
                   "src_jellyfin_item", "src_radarr_movie", "src_sonarr_series", "src_sonarr_episode", "src_arr_queue",
                   "src_letterboxd_entry", "src_serializd_entry", "link_attempt", "manual_request", "worker", "job", "job_attempt", "app_setting", "task_status", "api_payload_log", "ddns_history"):

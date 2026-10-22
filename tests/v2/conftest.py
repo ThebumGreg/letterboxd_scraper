@@ -31,6 +31,13 @@ def strict_network_guard(monkeypatch):
     monkeypatch.setattr(db, "STRICT_NETWORK_GUARD", True)
 
 
+@pytest.fixture(autouse=True)
+def no_ddns_watcher(monkeypatch):
+    """A real IP change starts a background watcher that asks DNS servers; no test wants that unless it says so."""
+    from synchub import ddns
+    monkeypatch.setattr(ddns, "WATCH_AFTER_UPDATE", False)
+
+
 @pytest.fixture
 def app(v2):
     from synchub.web import create_app

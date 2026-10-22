@@ -246,7 +246,7 @@ def test_snapshot_shows_a_running_task_its_age_and_what_its_thread_is_doing(v2):
     assert task["message"] == "Checked 40 of 150" and task["running_for_seconds"] is not None
     thread = next(t for t in snap["threads"] if t["thread"] == "resolver-thread")
     assert any("slow" in line for line in thread["stack"]) and "wait" in thread["waiting_in"].lower()
-    assert snap["database"]["journal_mode"].lower() == "wal" and snap["database"]["schema_version"] == 6
+    assert snap["database"]["journal_mode"].lower() == "wal" and snap["database"]["schema_version"] == max(v for v, _ in db._migration_files())
     assert isinstance(snap["database_connections"], list)
 
 

@@ -2,12 +2,15 @@
 import csv
 import io
 import re
+import time
 from collections import deque
 
-from flask import flash, jsonify, redirect, render_template, request, send_file, url_for
+from datetime import datetime
+
+from flask import Response, flash, jsonify, redirect, render_template, request, send_file, url_for
 
 from config import LOG_FILE_PATH
-from synchub import catalog, db, ddns, notify, profiles, settings, tasks
+from synchub import catalog, db, ddns, ddns_check, jellyfin_events, notify, profiles, settings, tasks, webhooks
 from synchub.profiles import ProfileError
 
 # name -> (job, message shown after starting it)
@@ -34,6 +37,14 @@ def _known_secrets():
             if len(piece) >= 6:
                 found.add(piece)
     return sorted(found, key=len, reverse=True)
+
+
+def _ticks_to_time(ticks):
+    """Jellyfin counts time in 100-nanosecond ticks; shown as h:mm:ss."""
+    if ticks is None:
+        return ""
+    seconds = int(ticks // 10_000_000)
+    return f"{seconds // 3600}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
 
 
 def _redact(line, secrets_):
@@ -92,9 +103,12 @@ def register(app):
 
     @app.route("/settings/profiles/delete/<int:profile_id>", methods=["POST"])
     def delete_profile(profile_id):
-        with db.connection() as conn:
-            profiles.delete(conn, profile_id)
-        flash("Profile removed. Its Letterboxd/Serializd entries are kept.", "info")
+        try:
+            with db.connection() as conn:
+                profiles.delete(conn, profile_id)
+            flash("Profile removed. Its Letterboxd/Serializd entries are kept.", "info")
+        except ProfileError as exc:
+            flash(str(exc), "danger")
         return redirect(url_for("settings_page"))
 
     @app.route("/api/profiles/toggle", methods=["POST"])
@@ -111,9 +125,33 @@ def register(app):
     # ---------------------------------------------------------------- DDNS
     @app.route("/ddns/update-settings", methods=["POST"])
     def ddns_update_settings():
-        ddns.save_settings(request.form.get("dynu_hostname"), request.form.get("dynu_api_key"), request.form.get("dynu_enabled") == "1")
-        flash("DDNS configuration saved successfully.", "success")
+        problem = ddns.save_settings(request.form.get("dynu_hostname"), request.form.get("dynu_api_key"), request.form.get("dynu_enabled") == "1", request.form.get("ddns_interval_minutes"))
+        if problem:
+            flash(problem, "danger")
+        else:
+            from synchub import scheduler
+            scheduler.configure()                      # a new interval takes effect now
+            flash("DDNS configuration saved successfully.", "success")
         return redirect(url_for("ddns_page"))
+
+    @app.route("/api/ddns/check", methods=["POST"])
+    def api_ddns_check():
+        """Times the path to the services and compares what Dynu's name servers and public resolvers say about the name. Changes nothing."""
+        creds = ddns.credentials()
+        started = time.monotonic()
+        ip = ddns.current_ip()
+        urls = [(source, None) for source in ddns.IP_SOURCES[:1]] + [(f"{ddns.API_BASE}/dns", {"API-Key": creds["api_key"], "Accept": "application/json"} if creds["api_key"] else None)]
+        timings = [ddns_check.timed_request(url, headers) for url, headers in urls]
+        record = ddns.read_record(creds["dns_id"], creds["api_key"]) if creds["dns_id"] and creds["api_key"] else None
+        rows = ddns_check.snapshot(creds["domain"], ip) if creds["domain"] else []
+        for t in timings:
+            t["name"] = "Public address service" if t["url"] in ddns.IP_SOURCES else "Dynu API"
+        return jsonify(ok=True, ip=ip, domain=creds["domain"], timings=timings, rows=rows, dynu=record and {k: record.get(k) for k in ("ipv4Address", "ttl", "state", "updatedOn")},
+                       findings=[{"level": level, "text": text} for level, text in ddns_check.findings(timings, rows, record, ip)], took=round(time.monotonic() - started, 1))
+
+    @app.route("/api/ddns/timeline")
+    def api_ddns_timeline():
+        return jsonify(ok=True, timeline=ddns.last_timeline())
 
     @app.route("/ddns/trigger-update", methods=["POST"])
     def ddns_trigger_update():
@@ -158,6 +196,46 @@ def register(app):
             sql += " AND (status_code >= 400 OR status_code = 0)"
         with db.connection() as conn:
             return jsonify([dict(r) for r in conn.execute(sql + " ORDER BY id DESC LIMIT ?", (*params, limit))])
+
+    # ---------------------------------------------------------------- Jellyfin events that were kept
+    def _event_filters():
+        return {"type": (request.args.get("type") or "").strip(), "user": (request.args.get("user") or "").strip(), "q": (request.args.get("q") or "").strip()}
+
+    @app.route("/jellyfin-events")
+    def jellyfin_events_page():
+        f = _event_filters()
+        with db.connection() as conn:
+            summary = jellyfin_events.summary(conn)
+            rows = jellyfin_events.recent(conn, f["type"] or None, f["user"] or None, f["q"] or None, limit=200)
+            keep = jellyfin_events.keep_days(conn)
+        return render_template("jellyfin_events.html", summary=summary, rows=rows, f=f, keep_days=keep, ticks_to_time=_ticks_to_time,
+                               status=webhooks.last_received("jellyfin"))
+
+    @app.route("/jellyfin-events/<int:event_id>/payload")
+    def jellyfin_event_payload(event_id):
+        with db.connection() as conn:
+            raw = jellyfin_events.payload_of(conn, event_id)
+        if raw is None:
+            return jsonify(ok=False, message="That event is gone."), 404
+        parsed = jellyfin_events.parse_body(raw)
+        return jsonify(ok=True, payload=parsed or None, raw=None if parsed else raw)
+
+    @app.route("/jellyfin-events/export.jsonl")
+    def jellyfin_events_export():
+        f = _event_filters()
+
+        def generate():
+            with db.connection() as conn:
+                yield from jellyfin_events.export_lines(conn, f["type"] or None, f["user"] or None, f["q"] or None)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return Response(generate(), mimetype="application/x-ndjson", headers={"Content-Disposition": f'attachment; filename="jellyfin_events_{stamp}.jsonl"'})
+
+    @app.route("/jellyfin-events/clear", methods=["POST"])
+    def jellyfin_events_clear():
+        with db.connection() as conn:
+            removed = jellyfin_events.clear(conn)
+        flash(f"Deleted {removed} kept Jellyfin event{'s' if removed != 1 else ''}.", "info")
+        return redirect(url_for("jellyfin_events_page"))
 
     @app.route("/api/payload-logs/clear", methods=["POST"])
     def api_clear_payload_logs():

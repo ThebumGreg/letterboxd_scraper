@@ -240,7 +240,10 @@ def season_episodes(conn, media_id, season_number, today=None):
     rows = conn.execute(
         """SELECT e.id, e.season_number, e.episode_number, e.title, e.overview, e.air_date, e.runtime,
                   e.tvdb_season_number, e.tvdb_episode_number, e.numbering_status,
-                  COALESCE(s.state_code, 'missing') AS state_code, s.progress
+                  COALESCE(s.state_code, 'missing') AS state_code, s.progress,
+                  (SELECT l.source_key FROM link l JOIN src_jellyfin_item j ON j.item_id = l.source_key
+                    WHERE l.source = 'jellyfin_episode' AND l.entity_type = 'episode' AND l.entity_id = e.id AND j.removed_at IS NULL
+                    ORDER BY l.status = 'manual' DESC, l.confidence DESC LIMIT 1) AS jellyfin_item_id
            FROM episode e LEFT JOIN item_state s ON s.target_type = 'episode' AND s.target_id = e.id
            WHERE e.media_id = ? AND e.season_number = ? ORDER BY e.episode_number""", (media_id, season_number)).fetchall()
     return [{**dict(r), "state": display_state(r["state_code"], r["air_date"], today)} for r in rows]

@@ -7,7 +7,7 @@ SECRET_FIELDS = ("tmdb_api_key", "jellyfin_api_key", "radarr_api_key", "sonarr_a
 
 DEFAULTS = {
     "scraper_interval_hours": "24", "radarr_interval_hours": "6", "sonarr_interval_hours": "6", "jellyfin_interval_hours": "6",
-    "metadata_refresh_hours": "24", "queue_poll_seconds": "30", "synchub_url": "",
+    "metadata_refresh_hours": "24", "queue_poll_seconds": "30", "synchub_url": "", "jellyfin_events_keep_days": "365", "ddns_interval_minutes": "1", "access_guest_permissions": "*", "access_session_days": "30",
     "request_delay_min": str(DEFAULT_REQUEST_DELAY_RANGE[0]), "request_delay_max": str(DEFAULT_REQUEST_DELAY_RANGE[1]),
     "user_delay_min": str(DEFAULT_USER_DELAY_RANGE[0]), "user_delay_max": str(DEFAULT_USER_DELAY_RANGE[1]),
     "disable_jellyfin_connection": "0", "jellyfin_url": "", "jellyfin_server_id": "", "radarr_url": "", "sonarr_url": "",

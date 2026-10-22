@@ -98,6 +98,34 @@ def test_season_api_returns_states_for_every_episode_including_unaired(client, s
     assert specials["label"] == "Specials (Season 0)" and [e["state"] for e in specials["episodes"]] == ["in_library"]
 
 
+def test_no_season_opens_by_itself(client, seeded):
+    html = text(client.get(f"/show/{seeded}"))
+    buttons = re.findall(r'<button class="accordion-button[^>]*>', html)
+    assert len(buttons) == 3 and all("collapsed" in b and 'aria-expanded="false"' in b for b in buttons)
+    assert not re.search(r'accordion-collapse collapse show', html) and ".click()" not in html            # nothing is expanded, and nothing clicks one open
+
+
+def test_episodes_in_the_library_carry_a_watch_link_and_the_others_do_not(client, v2, seeded):
+    settings.set_value("jellyfin_url", "http://jf:8096/")
+    by_ep = {e["episode_number"]: e for e in client.get(f"/api/show/{seeded}/season/3").get_json()["episodes"]}
+    watch = by_ep[10]                                                         # the one episode of season 3 that is in the library
+    assert watch["state"] == "in_library" and watch["jellyfin_item_id"]
+    assert watch["jellyfin_link"] == f"http://jf:8096/web/index.html#/details?id={watch['jellyfin_item_id']}"
+    assert all(by_ep[n]["jellyfin_link"] is None for n in (9, 11, 12))      # downloaded, downloading and not aired: nothing to watch yet
+    settings.set_value("jellyfin_url", "")
+    assert client.get(f"/api/show/{seeded}/season/3").get_json()["episodes"][1]["jellyfin_link"] is None       # no Jellyfin address: no link
+    with v2.connection() as conn:                                              # removed from Jellyfin: no longer offered
+        conn.execute("UPDATE src_jellyfin_item SET removed_at = '2025-01-01 00:00:00' WHERE item_id = ?", (watch["jellyfin_item_id"],))
+    settings.set_value("jellyfin_url", "http://jf:8096")
+    gone = {e["episode_number"]: e for e in client.get(f"/api/show/{seeded}/season/3").get_json()["episodes"]}[10]
+    assert gone["jellyfin_item_id"] is None and gone["jellyfin_link"] is None
+
+
+def test_the_season_page_script_renders_the_watch_button_for_the_app_handler(client, seeded):
+    html = text(client.get(f"/show/{seeded}"))
+    assert 'data-jellyfin-item="${esc(ep.jellyfin_item_id)}"' in html and "Watch</a>" in html and 'rel="noopener noreferrer"' in html
+
+
 def test_movie_page_and_wrong_kind_redirects(client, v2, seeded):
     with v2.connection() as conn:
         mid = conn.execute("INSERT INTO media (kind, title, tmdb_id, year) VALUES ('movie', 'Heat', '949', 1995)").lastrowid

@@ -35,6 +35,13 @@ def _reap_jobs():
         jobs.reap(conn)
 
 
+def _prune_jellyfin_events():
+    from synchub import jellyfin_events
+    removed = jellyfin_events.prune()
+    if removed:
+        logger.info(f"Removed {removed} Jellyfin event(s) older than the retention setting.")
+
+
 def _scrape_job():
     for step in (tasks.scrape_letterboxd, tasks.scrape_serializd, tasks.resolve_letterboxd_ids, tasks.reconcile):
         step()
@@ -50,12 +57,13 @@ JOBS = (
 
 def configure():
     scheduler.remove_all_jobs()
-    scheduler.add_job(ddns.run_update, "interval", minutes=5, id="job_ddns", max_instances=1, coalesce=True)
+    scheduler.add_job(ddns.run_update, "interval", minutes=ddns.interval_minutes(), id="job_ddns", max_instances=1, coalesce=True)
     for job_id, key, default, fn in JOBS:
         hours = interval_hours(key, default)
         if hours > 0:
             scheduler.add_job(fn, "interval", hours=hours, id=job_id, max_instances=1, coalesce=True)
     scheduler.add_job(_reap_jobs, "interval", seconds=REAPER_SECONDS, id="job_reaper", max_instances=1, coalesce=True)
+    scheduler.add_job(_prune_jellyfin_events, "interval", hours=24, id="job_prune_jellyfin_events", max_instances=1, coalesce=True)
     seconds = queue_poll_seconds()
     if seconds > 0:
         scheduler.add_job(tasks.poll_queues, "interval", seconds=seconds, id="job_queue_poll", max_instances=1, coalesce=True)

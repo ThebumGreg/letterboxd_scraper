@@ -1,29 +1,36 @@
 """The v2 web application. Run it with: python -m synchub.web"""
 import logging
 import os
-import secrets
 from pathlib import Path
 
-from flask import Flask, g, redirect, request, url_for
+from flask import Flask, g, jsonify, redirect, render_template, request, url_for
 
 from config import BASE_DIR
-from synchub import db, tasks
+from synchub import access, db, tasks
 
 logger = logging.getLogger(__name__)
 
-PROFILE_COOKIE = "synchub_profile"      # a profile's ID, or "0" for "just looking". This says who is using the app; it is not a login.
+PROFILE_COOKIE = "synchub_profile"      # a profile's ID, or "0" for "just looking": who is using this device
 PROFILE_COOKIE_DAYS = 365
-# Pages are gated behind "Who is watching?"; these are not (scripts, images, the live stream and webhook callers cannot choose).
-UNGATED_PREFIXES = ("/api/", "/static/", "/poster/")
+PIN_COOKIE = "synchub_pin"              # signed proof that this profile's PIN was entered on this device (only for a profile that has one)
+
+# The main menu. A (endpoint, label) is a link; a (label, [links]) is a dropdown. What a person sees is what their permissions allow.
+NAV = (
+    ("index", "Dashboard"), ("search_page", "Search"), ("resolution_center", "Resolution Center"), ("ddns_page", "Dynamic DNS"),
+    ("Media", (("library_page", "Library"), ("workers_page", "Workers"), ("storage_page", "Storage"))),
+    ("System", (("tools", "Tools & Operations"), ("logs_page", "Logs"), ("payloads_page", "Payloads"), ("jellyfin_events_page", "Jellyfin events"), ("access_page", "Access"))),
+    ("settings_page", "Settings"),
+)
 
 
 def current_profile(conn):
-    """The profile named by the cookie, or None (a guest, nobody chosen, or a profile that no longer exists)."""
+    """The profile using this request (None for a guest, nobody chosen, a profile that is gone, or one whose PIN has not been entered here)."""
+    if hasattr(g, "profile"):
+        return g.profile
+    rows = _profile_rows(conn)
     raw = request.cookies.get(PROFILE_COOKIE, "")
-    if not raw.isdigit() or raw == "0":
-        return None
-    row = conn.execute("SELECT id, name FROM profile WHERE id = ?", (int(raw),)).fetchone()
-    return dict(row) if row else None
+    row = next((r for r in rows if raw.isdigit() and r["id"] == int(raw)), None)
+    return _public(row) if row and (not row["has_pin"] or _pin_entered(row, conn)) else None
 
 
 def safe_next(target):
@@ -34,11 +41,32 @@ def safe_next(target):
     return "/"
 
 
+def _profile_rows(conn):
+    return [dict(r) for r in conn.execute("SELECT id, name, jellyfin_user_id, pin_hash IS NOT NULL AS has_pin, pin_version, permissions FROM profile")]
+
+
+def _public(row):
+    return {"id": row["id"], "name": row["name"], "jellyfin_user_id": row["jellyfin_user_id"]}
+
+
+def _pin_entered(row, conn):
+    from flask import current_app
+    return access.proof_valid(current_app.secret_key, request.cookies.get(PIN_COOKIE), row["id"], row["pin_version"], access.session_days(conn))
+
+
+def _wants_json():
+    return request.path.startswith("/api/") or request.is_json or request.accept_mimetypes.best == "application/json"
+
+
+def _deny(label, status=403, message=None):
+    if _wants_json():
+        return jsonify(ok=False, message=message or f"You don't have access to {label}."), status
+    return render_template("forbidden.html", label=label, message=message), status
+
+
 def create_app(start_scheduler=False):
     import logger as app_logging      # noqa: F401  (importing it sets up the rotating log file)
     app = Flask(__name__, template_folder=str(Path(__file__).parent / "templates"), static_folder=str(BASE_DIR / "static"))
-    app.secret_key = os.getenv("SECRET_KEY") or secrets.token_hex(32)
-
     try:
         from flask_wtf import CSRFProtect
         csrf = CSRFProtect(app)
@@ -46,37 +74,79 @@ def create_app(start_scheduler=False):
         csrf = None
 
     db.migrate()
+    app.secret_key = os.getenv("SECRET_KEY") or access.persistent_secret()
     tasks.reset_stale()
 
     @app.before_request
     def identify():
-        """Works out who is using the app from the cookie, and sends a browser that has not chosen yet to the chooser."""
-        g.profile, g.has_profiles = None, False
-        if request.path.startswith(UNGATED_PREFIXES):
+        """Works out who is using the app from the cookies, sends a browser that has not chosen (or has not entered its PIN) to the chooser,
+        and refuses what the person's permissions do not allow."""
+        g.profile, g.has_profiles, g.permissions, g.pin_profile = None, False, None, None
+        endpoint = request.endpoint
+        if endpoint is None or endpoint in ("static", "poster"):
             return None
+        if access.required(endpoint) == access.PUBLIC and endpoint != "who":
+            return None                                               # webhooks and workers (polling every few seconds) have their own way in: nobody to look up
         with db.connection() as conn:
-            rows = [dict(r) for r in conn.execute("SELECT id, name, jellyfin_user_id FROM profile")]
+            rows = _profile_rows(conn)
+            guest = access.guest_permissions(conn)
+            days = access.session_days(conn)
         g.has_profiles = bool(rows)
         raw = request.cookies.get(PROFILE_COOKIE, "")
         chosen = raw == "0"
-        if raw.isdigit() and raw != "0":
-            g.profile = next((r for r in rows if r["id"] == int(raw)), None)
-            chosen = g.profile is not None
-        if rows and not chosen and request.method == "GET" and request.endpoint != "who":
+        row = next((r for r in rows if raw.isdigit() and raw != "0" and r["id"] == int(raw)), None)
+        if row is not None:
+            if row["has_pin"] and not access.proof_valid(app.secret_key, request.cookies.get(PIN_COOKIE), row["id"], row["pin_version"], days):
+                g.pin_profile = row                                   # chosen, but its PIN has not been entered on this device lately
+            else:
+                g.profile, chosen = _public(row), True
+        g.permissions = access.parse(row["permissions"]) if g.profile else guest
+        need = access.required(endpoint)
+        if need == access.PUBLIC:
+            return None
+        api_call = request.path.startswith("/api/")
+        if g.pin_profile is not None:
+            if api_call or request.method != "GET":
+                return jsonify(ok=False, message="Enter this profile's PIN again.", login=url_for("who", profile=g.pin_profile["id"])), 401
+            return redirect(url_for("who", next=request.path, profile=g.pin_profile["id"]))
+        if rows and not chosen and request.method == "GET" and not api_call:
             return redirect(url_for("who", next=request.path))
+        if need is None:
+            logger.warning(f"Refused {request.method} {request.path}: the endpoint '{endpoint}' has no access rule (add it to access.RULES).")
+            return _deny("this page", message="This page has not been given an access rule yet, so it is closed.")
+        if need != access.OPEN and not access.allowed(g.permissions, need):
+            return _deny(access.LABELS.get(need, "this page"))
         return None
 
     @app.context_processor
-    def identity_and_jellyfin_app():
+    def identity_menu_and_jellyfin_app():
         from synchub import catalog
         with db.connection() as conn:
             config = catalog.jellyfin_app_config(conn)
         profile = getattr(g, "profile", None)
         config["current_user"] = (profile or {}).get("jellyfin_user_id") or ""
-        return {"jellyfin_app": config, "current_profile": profile, "has_profiles": getattr(g, "has_profiles", False)}
+        permissions = getattr(g, "permissions", None)
 
-    from synchub.web import admin, api, fleet, library, pages, shares, worker_api
-    for module in (pages, api, admin, fleet, library, shares, worker_api):
+        def can(key):
+            return access.allowed(permissions, key)
+
+        def link(endpoint, label):
+            return {"href": url_for(endpoint), "label": label, "endpoint": endpoint} if can(access.required(endpoint)) else None
+
+        menu = []
+        for first, second in NAV:
+            if isinstance(second, str):
+                item = link(first, second)
+                if item:
+                    menu.append(item)
+            else:
+                children = [c for c in (link(e, l) for e, l in second) if c]
+                if children:
+                    menu.append({"label": first, "children": children})
+        return {"jellyfin_app": config, "current_profile": profile, "has_profiles": getattr(g, "has_profiles", False), "can": can, "menu": menu}
+
+    from synchub.web import admin, api, fleet, library, pages, security, shares, worker_api
+    for module in (pages, api, admin, fleet, library, shares, security, worker_api):
         module.register(app)
     if csrf:
         csrf.exempt(app.view_functions["api_webhook"])
