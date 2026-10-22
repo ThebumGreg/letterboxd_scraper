@@ -269,3 +269,30 @@ def approve_review(conn, review_id):
 def dismiss_review(conn, review_id):
     cur = conn.execute("UPDATE match_review SET status = 'dismissed' WHERE id = ? AND status = 'pending'", (review_id,))
     return cur.rowcount == 1
+
+
+def approve_best(conn, review_ids):
+    """Approves each listed suggestion that is clearly the strongest for its title, one commit per title.
+
+    A title whose best suggestion is tied with (or beaten by) another pending one is left for a person to decide.
+    Returns {"approved": [ids], "skipped": [ids], "stale": [ids], "failed": [ids]}; stale means no longer pending."""
+    result = {"approved": [], "skipped": [], "stale": [], "failed": []}
+    for review_id in review_ids:
+        review = conn.execute("SELECT * FROM match_review WHERE id = ? AND status = 'pending'", (review_id,)).fetchone()
+        if not review:
+            result["stale"].append(review_id)
+            continue
+        rival = conn.execute("""SELECT 1 FROM match_review WHERE source = ? AND source_key = ? AND status = 'pending'
+                                AND id != ? AND confidence >= ?""", (review["source"], review["source_key"], review_id, review["confidence"])).fetchone()
+        if rival:
+            result["skipped"].append(review_id)
+            continue
+        try:
+            approve_review(conn, review_id)
+            conn.commit()
+            result["approved"].append(review_id)
+        except Exception as exc:
+            conn.rollback()
+            logger.warning(f"Could not approve suggestion {review_id} for {review['source']} {review['source_key']}: {exc}")
+            result["failed"].append(review_id)
+    return result

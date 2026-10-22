@@ -243,6 +243,86 @@ def test_dismiss(client, v2):
     assert client.post("/api/resolution/dismiss", json={"review_id": rid}).status_code == 400
 
 
+def _suggest(conn, key, title, tmdb, confidence):
+    conn.execute("INSERT INTO match_review (source, source_key, source_title, source_year, kind, candidate_tmdb_id, confidence, reason) "
+                 "VALUES ('letterboxd', ?, ?, 2000, 'movie', ?, ?, 'search')", (key, title, str(tmdb), confidence))
+
+
+def _suggestion_ids(conn):
+    return {(r["source_key"], r["candidate_tmdb_id"]): r["id"] for r in conn.execute("SELECT * FROM match_review")}
+
+
+def test_approve_all_takes_clear_winners_and_leaves_ties_and_unlisted(client, v2, monkeypatch):
+    started = []
+    monkeypatch.setattr(tasks, "start_async", lambda fn: started.append(fn))
+    with v2.connection() as conn:
+        _suggest(conn, "clear", "Clear", 1, 0.9)
+        _suggest(conn, "clear", "Clear", 2, 0.8)
+        _suggest(conn, "tie", "Tie", 3, 0.85)
+        _suggest(conn, "tie", "Tie", 4, 0.85)
+        _suggest(conn, "solo", "Solo", 5, 0.7)
+        _suggest(conn, "unlisted", "Unlisted", 6, 0.9)
+        ids = _suggestion_ids(conn)
+    sent = [ids[("clear", "1")], ids[("tie", "3")], ids[("solo", "5")], 99999]
+    body = client.post("/api/resolution/approve-all", json={"review_ids": sent}).get_json()
+    assert body["ok"] and body["approved"] == [ids[("clear", "1")], ids[("solo", "5")]]
+    assert body["skipped"] == [ids[("tie", "3")]] and body["stale"] == [99999] and body["failed"] == []
+    assert "Approved 2." in body["message"] and "equally likely" in body["message"]
+    with v2.connection() as conn:
+        linked = {r["source_key"]: r["tmdb_id"] for r in conn.execute("SELECT l.source_key, m.tmdb_id FROM link l JOIN media m ON m.id = l.entity_id")}
+        status = {k: conn.execute("SELECT status FROM match_review WHERE id = ?", (i,)).fetchone()[0] for k, i in ids.items()}
+    assert linked == {"clear": "1", "solo": "5"}                       # the tie and the title that was not listed stay unlinked
+    assert status[("clear", "1")] == "approved" and status[("clear", "2")] == "dismissed"
+    assert status[("tie", "3")] == status[("tie", "4")] == status[("unlisted", "6")] == "pending"
+    assert len(started) == 1                                             # one refresh for the whole batch
+
+
+def test_approve_all_isolates_a_failing_title_and_skips_the_refresh_when_nothing_changed(client, v2, monkeypatch):
+    from synchub import matching
+    started = []
+    monkeypatch.setattr(tasks, "start_async", lambda fn: started.append(fn))
+    with v2.connection() as conn:
+        _suggest(conn, "bad", "Bad", 1, 0.9)
+        _suggest(conn, "good", "Good", 2, 0.9)
+        ids = _suggestion_ids(conn)
+    real = matching.approve_review
+
+    def flaky(conn, review_id):
+        if review_id == ids[("bad", "1")]:
+            conn.execute("INSERT INTO media (kind, title, tmdb_id) VALUES ('movie', 'half done', '999')")     # must be rolled back
+            raise RuntimeError("boom")
+        return real(conn, review_id)
+
+    monkeypatch.setattr(matching, "approve_review", flaky)
+    body = client.post("/api/resolution/approve-all", json={"review_ids": list(ids.values())}).get_json()
+    assert body["approved"] == [ids[("good", "2")]] and body["failed"] == [ids[("bad", "1")]] and "could not be linked" in body["message"]
+    with v2.connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM media WHERE tmdb_id = '999'").fetchone()[0] == 0
+        assert conn.execute("SELECT status FROM match_review WHERE id = ?", (ids[("bad", "1")],)).fetchone()[0] == "pending"
+    started.clear()
+    body = client.post("/api/resolution/approve-all", json={"review_ids": [ids[("good", "2")]]}).get_json()
+    assert body["approved"] == [] and body["stale"] == [ids[("good", "2")]] and started == []
+
+
+def test_approve_all_rejects_a_bad_body(client):
+    for bad in (None, {}, {"review_ids": "1,2"}, {"review_ids": [1, "2"]}):
+        assert client.post("/api/resolution/approve-all", json=bad).status_code == 400
+
+
+def test_resolution_page_shows_approve_all_only_when_there_is_something_to_approve(client, v2):
+    def button(page):
+        return re.search(r'<button[^>]*id="approve-all"[^>]*>', page).group(0)
+
+    assert "d-none" in button(text(client.get("/resolution")))
+    with v2.connection() as conn:
+        _suggest(conn, "a", "A", 1, 0.9)
+        _suggest(conn, "b", "B", 2, 0.9)
+        _suggest(conn, "b", "B", 3, 0.8)
+    page = text(client.get("/resolution"))
+    assert "d-none" not in button(page) and "Approve all (<span data-review-count>2</span>)" in page
+    assert len(re.findall(r'<div class="col" data-review-card>', page)) == 2 and len(re.findall(r"data-candidate>", page)) == 3
+
+
 # ---------------------------------------------------------------- connection tests
 def test_connection_test_never_sends_the_saved_key_to_a_different_url(client, v2, monkeypatch):
     settings.set_value("radarr_url", "http://radarr:7878")

@@ -192,6 +192,24 @@ def register(app):
         reconcile_soon()
         return jsonify(ok=True, message="Linked.")
 
+    @app.route("/api/resolution/approve-all", methods=["POST"])
+    def api_resolution_approve_all():
+        ids = (request.get_json(silent=True) or {}).get("review_ids")
+        if not isinstance(ids, list) or not all(isinstance(i, int) for i in ids):
+            return fail("Send the list of suggestion IDs to approve.")
+        with db.connection() as conn:
+            result = matching.approve_best(conn, ids)
+        if result["approved"]:
+            reconcile_soon()
+        parts = [f"Approved {len(result['approved'])}."]
+        if result["skipped"]:
+            parts.append(f"{len(result['skipped'])} left for you because several suggestions are equally likely.")
+        if result["failed"]:
+            parts.append(f"{len(result['failed'])} could not be linked (see the log).")
+        if result["stale"]:
+            parts.append(f"{len(result['stale'])} had already been decided.")
+        return jsonify(ok=True, message=" ".join(parts), **result)
+
     @app.route("/api/resolution/dismiss", methods=["POST"])
     def api_resolution_dismiss():
         review_id = (request.get_json(silent=True) or {}).get("review_id")
