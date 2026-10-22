@@ -1,0 +1,170 @@
+<!-- synchub/web/templates/storage.html -->
+{% extends "base.html" %}
+{% block title %}Storage{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+        <h2 class="mb-2">Storage</h2>
+        <p class="text-body-secondary mb-0">The Unraid shares the workers read from and write to. Each gets a short name that jobs use, and every worker mounts it at the same folder, so a path means the same thing everywhere.</p>
+    </div>
+    <button type="button" class="btn btn-success" id="addShareBtn"><i class="bi bi-plus-lg" aria-hidden="true"></i> Add share</button>
+</div>
+<div id="shareMessage" class="alert d-none" role="status"></div>
+
+<div class="panel p-0 overflow-hidden mb-4">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0" id="shareTable">
+            <thead class="table-light">
+                <tr><th class="ps-4">Name</th><th>Where it lives</th><th>Workers mount it at</th><th>Workers say</th><th>Seen by the apps as</th><th class="pe-4 text-end">Actions</th></tr>
+            </thead>
+            <tbody>
+                {% for r in roots %}
+                <tr data-share="{{ r.id }}">
+                    <td class="ps-4 fw-bold">{{ r.name }}{% if r.label %}<div class="small text-body-secondary fw-normal">{{ r.label }}</div>{% endif %}</td>
+                    <td class="small"><span class="badge bg-secondary">{{ r.protocol|upper }}</span> {{ r.address }}{% if r.options %}<div class="text-body-secondary">{{ r.options }}</div>{% endif %}</td>
+                    <td class="small"><code>{{ r.mount_point }}</code></td>
+                    <td class="small">
+                        {% for w in r.seen_by %}
+                        <div class="{{ '' if w.online else 'text-body-secondary' }}"><span class="badge bg-{{ w.color }}{% if w.color == 'warning' %} text-dark{% endif %}" title="{{ w.message or '' }}">{{ w.label }}</span> {{ w.worker }}{% if w.free and w.online %} <span class="text-body-secondary">&middot; {{ w.free }} free</span>{% endif %}</div>
+                        {% else %}<span class="text-body-secondary">No workers yet</span>{% endfor %}
+                    </td>
+                    <td class="small">
+                        {% for label, path in [('Jellyfin', r.jellyfin_path), ('Radarr', r.radarr_path), ('Sonarr', r.sonarr_path)] if path %}<div>{{ label }}: <code>{{ path }}</code></div>{% else %}<span class="text-body-secondary">-</span>{% endfor %}
+                    </td>
+                    <td class="pe-4 text-end text-nowrap">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-edit-share="{{ r.id }}"
+                                data-values="{{ {'name': r.name, 'label': r.label or '', 'protocol': r.protocol, 'host': r.host or '', 'share': r.share, 'options': r.options, 'mount_point': r.mount_point, 'jellyfin_path': r.jellyfin_path or '', 'radarr_path': r.radarr_path or '', 'sonarr_path': r.sonarr_path or ''}|tojson|forceescape }}">Edit</button>
+                        <button type="button" class="btn btn-sm btn-outline-danger" data-delete-share="{{ r.id }}" data-name="{{ r.name }}">Remove</button>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="text-center text-muted py-4">No shares yet. Add the Unraid shares your workers need (for example Media and TFiles).</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="panel p-3 p-md-4 mb-5">
+    <h5>How a worker gets these shares</h5>
+    <ol class="small mb-2">
+        <li>Add each share here. <strong>SMB</strong> is the one to start with: Unraid already shares over it. NFS is the alternative; some people see &ldquo;stale file handle&rdquo; errors on Unraid&rsquo;s NFS shares when the mover relocates files, which is why SMB comes first.</li>
+        <li>On the <a href="{{ url_for('workers_page') }}">Workers</a> page choose <em>More &rarr; Setup files</em> for a worker. SyncHub writes its <code>docker-compose.yml</code> (Docker mounts the shares itself, so a share that cannot be mounted stops the worker instead of filling a local folder), an <code>.env</code> file, and <code>/etc/fstab</code> lines if you would rather not use Docker.</li>
+        <li>A user name and password for the shares go only in the <code>.env</code> file on the worker PC. SyncHub never stores them.</li>
+        <li>Create the marker once on each share: <code>docker compose run --rm worker --init-roots</code>. It writes a small <code>{{ marker }}</code> file holding the share&rsquo;s name. A worker refuses to use a folder without its marker, so an unmounted (empty) folder or the wrong share is never written to.</li>
+    </ol>
+    <div class="small text-body-secondary">SyncHub cannot mount anything on a worker PC itself. The &ldquo;Workers say&rdquo; column shows what each worker reports about each share: mounted, the right one, writable, and how much space is free.</div>
+</div>
+
+<div class="modal fade" id="shareModal" tabindex="-1" aria-labelledby="shareModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <form class="modal-content" id="shareForm">
+            <div class="modal-header"><h5 class="modal-title" id="shareModalTitle">Add share</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-4 mb-3"><label for="shareName" class="form-label">Name</label><input class="form-control" id="shareName" required maxlength="32" placeholder="media"><div class="form-text">What jobs call it.</div></div>
+                    <div class="col-md-8 mb-3"><label for="shareLabel" class="form-label">Description</label><input class="form-control" id="shareLabel" maxlength="80" placeholder="Jellyfin library"><div class="form-text">Optional.</div></div>
+                </div>
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <label for="shareProtocol" class="form-label">How workers connect</label>
+                        <select class="form-select" id="shareProtocol">{% for key, label in protocols.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
+                    </div>
+                    <div class="col-md-4 mb-3" data-network><label for="shareHost" class="form-label">Unraid address</label><input class="form-control" id="shareHost" placeholder="192.168.1.10" maxlength="253"></div>
+                    <div class="col-md-4 mb-3"><label for="shareShare" class="form-label" id="shareShareLabel">Share name</label><input class="form-control" id="shareShare" required maxlength="200" placeholder="Media"><div class="form-text" id="shareShareHint"></div></div>
+                </div>
+                <div class="row">
+                    <div class="col-md-5 mb-3"><label for="shareMount" class="form-label">Mount point on the workers</label><input class="form-control" id="shareMount" required maxlength="200" placeholder="/mnt/tower/Media"><div class="form-text">The same folder on every worker.</div></div>
+                    <div class="col-md-7 mb-3" data-network><label for="shareOptions" class="form-label">Mount options</label><input class="form-control" id="shareOptions" maxlength="200"><div class="form-text">Leave as is unless you know you need to change it. No user name or password here.</div></div>
+                </div>
+                <details class="mb-2">
+                    <summary class="small">How Jellyfin, Radarr and Sonarr see this folder (optional)</summary>
+                    <div class="row mt-2">
+                        <div class="col-md-4 mb-2"><label for="shareJellyfin" class="form-label small">Jellyfin</label><input class="form-control form-control-sm" id="shareJellyfin" placeholder="/media"></div>
+                        <div class="col-md-4 mb-2"><label for="shareRadarr" class="form-label small">Radarr</label><input class="form-control form-control-sm" id="shareRadarr" placeholder="/data/media"></div>
+                        <div class="col-md-4 mb-2"><label for="shareSonarr" class="form-label small">Sonarr</label><input class="form-control form-control-sm" id="shareSonarr" placeholder="/data/media"></div>
+                    </div>
+                    <div class="form-text">Used later to tell Jellyfin where a finished file is, when its container sees the share under a different path.</div>
+                </details>
+                <div class="small text-danger" id="shareError" role="alert"></div>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-success">Save</button></div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const defaults = {{ defaults|tojson }};
+    const $ = (id) => document.getElementById(id);
+    const modal = bootstrap.Modal.getOrCreateInstance($('shareModal'));
+    const post = async (url, body) => {
+        try {
+            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf }, body: JSON.stringify(body || {}) });
+            return await res.json();
+        } catch (e) { return { ok: false, message: 'Could not reach the server.' }; }
+    };
+    let editing = null, optionsTouched = false;
+
+    const hints = {
+        smb: ['Share name', 'The name under Shares in Unraid, for example Media.', 'Media'],
+        nfs: ['Export path', 'The path Unraid exports, for example /mnt/user/Media.', '/mnt/user/Media'],
+        local: ['Folder on the worker PC', 'A folder you have already mounted yourself; Docker passes it through.', '/mnt/tower/Media'],
+    };
+    function adjust() {
+        const protocol = $('shareProtocol').value, [label, hint, example] = hints[protocol];
+        $('shareShareLabel').textContent = label;
+        $('shareShareHint').textContent = hint;
+        $('shareShare').placeholder = example;
+        document.querySelectorAll('[data-network]').forEach((el) => el.classList.toggle('d-none', protocol === 'local'));
+        if (!optionsTouched) $('shareOptions').value = defaults[protocol] || '';
+    }
+    $('shareProtocol').addEventListener('change', adjust);
+    $('shareOptions').addEventListener('input', () => { optionsTouched = true; });
+
+    function open(title, v) {
+        $('shareModalTitle').textContent = title;
+        $('shareName').value = v.name || ''; $('shareLabel').value = v.label || '';
+        $('shareProtocol').value = v.protocol || 'smb'; $('shareHost').value = v.host || '';
+        $('shareShare').value = v.share || ''; $('shareMount').value = v.mount_point || '';
+        optionsTouched = v.options !== undefined; $('shareOptions').value = v.options || '';
+        $('shareJellyfin').value = v.jellyfin_path || ''; $('shareRadarr').value = v.radarr_path || ''; $('shareSonarr').value = v.sonarr_path || '';
+        $('shareError').textContent = '';
+        adjust();
+        modal.show();
+    }
+    // Suggest a mount point from the share name until one is typed.
+    $('shareShare').addEventListener('input', () => {
+        if ($('shareMount').dataset.touched) return;
+        const tail = $('shareShare').value.split('/').filter(Boolean).pop() || '';
+        $('shareMount').value = tail ? '/mnt/tower/' + tail : '';
+    });
+    $('shareMount').addEventListener('input', () => { $('shareMount').dataset.touched = '1'; });
+
+    $('addShareBtn').addEventListener('click', () => { editing = null; delete $('shareMount').dataset.touched; open('Add share', {}); });
+    document.addEventListener('click', async (e) => {
+        const edit = e.target.closest('[data-edit-share]');
+        if (edit) { editing = edit.dataset.editShare; $('shareMount').dataset.touched = '1'; open('Edit share', JSON.parse(edit.dataset.values)); return; }
+        const del = e.target.closest('[data-delete-share]');
+        if (del) {
+            if (!confirm(`Remove the share '${del.dataset.name}'? Workers keep their mounts until you change their setup files.`)) return;
+            const data = await post(`/api/storage/${del.dataset.deleteShare}/delete`);
+            if (data.ok) location.reload();
+            else { const box = $('shareMessage'); box.className = 'alert alert-danger'; box.textContent = data.message || 'Failed.'; }
+        }
+    });
+    $('shareForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const body = { name: $('shareName').value, label: $('shareLabel').value, protocol: $('shareProtocol').value, host: $('shareHost').value, share: $('shareShare').value,
+                       mount_point: $('shareMount').value, options: $('shareOptions').value, jellyfin_path: $('shareJellyfin').value, radarr_path: $('shareRadarr').value, sonarr_path: $('shareSonarr').value };
+        const data = await post(editing ? `/api/storage/${editing}/update` : '/api/storage', body);
+        if (!data.ok) { $('shareError').textContent = data.message || 'Failed.'; return; }
+        location.reload();
+    });
+})();
+</script>
+{% endblock %}

@@ -68,7 +68,7 @@ def test_the_api_is_not_behind_the_profile_chooser_and_only_accepts_post(fleet, 
 def test_register_returns_the_settings_an_agent_needs(fleet, v2):
     info = {"protocol": workers.PROTOCOL, "version": "1.0", "os": "Ubuntu 24.04", "hostname": "enc1", "slots": 2, "capabilities": {"encoders": ["libx265"]}}
     r = fleet.call("/register", info).get_json()
-    assert r == {"ok": True, "worker_id": fleet.id, "name": "encoder-1", "protocol": workers.PROTOCOL, "poll_seconds": 5, "lease_seconds": jobs.LEASE_SECONDS}
+    assert r == {"ok": True, "worker_id": fleet.id, "name": "encoder-1", "protocol": workers.PROTOCOL, "poll_seconds": 5, "lease_seconds": jobs.LEASE_SECONDS, "roots": []}
     with v2.connection() as conn:
         assert workers.get(conn, fleet.id)["capabilities"]["encoders"] == ["libx265"] and workers.get(conn, fleet.id)["online"]
 
@@ -210,3 +210,108 @@ def test_the_log_records_what_happened_to_jobs(fleet, caplog):
     fleet.call(f"/jobs/{job_id}/fail", {"error_class": "transient", "message": "share offline"})
     text = caplog.text
     assert f"job {job_id} (library: Heat) went to encoder-1, attempt 1" in text and "failed on encoder-1 (transient): share offline -> queued" in text
+
+
+# ---------------------------------------------------------------- phase 2: shares, resuming and logs
+def add_shares(v2, *names):
+    from synchub import storage
+    folders = {"media": "Media", "tfiles": "TFiles"}
+    with v2.connection() as conn:
+        for name in names:
+            storage.create(conn, {"name": name, "protocol": "smb", "host": "tower", "share": folders[name], "mount_point": f"/mnt/tower/{folders[name]}"})
+
+
+def test_register_tells_the_agent_which_shares_to_find_and_how_to_recognise_them(fleet, v2):
+    add_shares(v2, "media", "tfiles")
+    info = {"protocol": workers.PROTOCOL, "slots": 1}
+    roots = fleet.call("/register", info).get_json()["roots"]
+    assert roots == [{"name": "media", "mount_point": "/mnt/tower/Media", "marker": ".synchub-root", "marker_text": "media"},
+                     {"name": "tfiles", "mount_point": "/mnt/tower/TFiles", "marker": ".synchub-root", "marker_text": "tfiles"}]
+
+
+def test_a_restarted_agent_is_handed_back_the_jobs_it_was_running(fleet):
+    job_id = fleet.queue(plan={"op": "copy"})
+    first = fleet.poll(active=[])
+    assert [j["id"] for j in first["jobs"]] == [job_id] and first["resume"] == []             # new work is new work, not a resume
+    again = fleet.poll(active=[])                                                             # the agent has no thread for it: it restarted
+    assert [j["id"] for j in again["resume"]] == [job_id] and again["resume"][0]["plan"] == {"op": "copy"} and again["resume"][0]["attempt"] == 1
+    assert fleet.poll(active=[job_id])["resume"] == []                                         # it is working on it
+    assert fleet.poll()["resume"] == []                                                       # an agent that does not say gets nothing extra
+
+
+def test_only_this_workers_running_jobs_are_resumed(fleet, v2, app):
+    job_id = fleet.queue()
+    fleet.poll(active=[])
+    with v2.connection() as conn:
+        _, token = workers.create(conn, "encoder-2")
+    r = app.test_client().post(f"{API}/poll", json={"free_slots": 1, "active": []}, headers={"Authorization": f"Bearer {token}"}).get_json()
+    assert r["resume"] == [] and r["jobs"] == []
+    assert fleet.job(job_id)["status"] == "running"
+
+
+def test_a_job_is_only_given_to_a_worker_whose_shares_are_ready(fleet, v2):
+    add_shares(v2, "media", "tfiles")
+    job_id = fleet.queue(source=("media", "a.mkv"), dest=("tfiles", "a.mkv"))
+    ready = {"ok": True, "state": "ok"}
+    assert [j["id"] for j in fleet.poll()["jobs"]] == [job_id]                                 # shares not reported yet: trusted
+    with v2.connection() as conn:
+        conn.execute("UPDATE job SET status = 'queued', worker_id = NULL WHERE id = ?", (job_id,))
+    assert fleet.poll(status={"roots": {"media": ready, "tfiles": {"ok": False, "state": "not_mounted"}}})["jobs"] == []
+    assert fleet.poll(status={"roots": {"media": ready}})["jobs"] == []                          # a share it does not mention is not ready
+    assert [j["id"] for j in fleet.poll(status={"roots": {"media": ready, "tfiles": ready}})["jobs"]] == [job_id]
+
+
+def test_a_job_with_no_shares_ignores_what_the_worker_says_about_them(fleet, v2):
+    job_id = fleet.queue()
+    assert [j["id"] for j in fleet.poll(status={"roots": {"media": {"ok": False, "state": "not_mounted"}}})["jobs"]] == [job_id]
+
+
+def test_the_full_log_is_asked_for_and_uploaded(fleet, v2):
+    job_id = fleet.queue()
+    fleet.poll()
+    with v2.connection() as conn:
+        assert jobs.request_log(conn, job_id) == fleet.id
+    assert fleet.poll()["log_requests"] == [job_id]
+    assert fleet.call(f"/jobs/{job_id}/log", {"text": "line one\nline two\n"}).get_json() == {"ok": True}
+    assert fleet.poll()["log_requests"] == []
+    with v2.connection() as conn:
+        log = jobs.stored_log(conn, job_id)
+    assert log["content"] == "line one\nline two\n" and log["worker_name"] == "encoder-1" and not log["truncated"]
+    fleet.call(f"/jobs/{job_id}/log", {"text": "newer"})
+    with v2.connection() as conn:
+        assert jobs.stored_log(conn, job_id)["content"] == "newer"                              # the latest replaces the last
+
+
+def test_a_log_can_be_fetched_for_a_finished_job_from_the_worker_that_ran_it(fleet, v2):
+    job_id = fleet.queue()
+    fleet.poll()
+    fleet.call(f"/jobs/{job_id}/complete", {"result": {}})
+    with v2.connection() as conn:
+        assert jobs.request_log(conn, job_id) == fleet.id
+    assert fleet.poll()["log_requests"] == [job_id]
+
+
+def test_a_log_is_refused_from_a_worker_that_never_had_the_job_and_for_a_job_nobody_ran(fleet, v2):
+    job_id = fleet.queue()
+    with v2.connection() as conn:
+        with pytest.raises(jobs.JobError, match="No worker has run"):
+            jobs.request_log(conn, job_id)
+        with pytest.raises(jobs.JobError, match="no longer exists"):
+            jobs.request_log(conn, 999)
+        _, token = workers.create(conn, "encoder-2")
+    r = fleet.call(f"/jobs/{job_id}/log", {"text": "x"})
+    assert r.status_code == 400 and "never been this worker's" in r.get_json()["message"]
+    assert fleet.call("/jobs/999/log", {"text": "x"}).status_code == 400
+
+
+def test_a_huge_log_keeps_its_end(fleet, v2):
+    job_id = fleet.queue()
+    fleet.poll()
+    fleet.call(f"/jobs/{job_id}/log", {"text": "a" * 1_500_000 + "THE END"})
+    with v2.connection() as conn:
+        log = jobs.stored_log(conn, job_id)
+    assert log["truncated"] and log["content"].endswith("THE END") and len(log["content"]) < 1_100_000 and log["content"].startswith("[earlier lines left out]")
+
+
+def test_the_log_endpoint_needs_the_token(fleet):
+    assert fleet.call("/jobs/1/log", {"text": "x"}, headers={}).status_code == 401

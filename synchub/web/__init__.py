@@ -75,8 +75,8 @@ def create_app(start_scheduler=False):
         config["current_user"] = (profile or {}).get("jellyfin_user_id") or ""
         return {"jellyfin_app": config, "current_profile": profile, "has_profiles": getattr(g, "has_profiles", False)}
 
-    from synchub.web import admin, api, fleet, pages, worker_api
-    for module in (pages, api, admin, fleet, worker_api):
+    from synchub.web import admin, api, fleet, pages, shares, worker_api
+    for module in (pages, api, admin, fleet, shares, worker_api):
         module.register(app)
     if csrf:
         csrf.exempt(app.view_functions["api_webhook"])

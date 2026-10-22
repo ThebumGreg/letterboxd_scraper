@@ -105,6 +105,18 @@ def _next_attempt_no(conn, job_id):
     return (conn.execute("SELECT MAX(attempt_no) FROM job_attempt WHERE job_id = ?", (job_id,)).fetchone()[0] or 0) + 1
 
 
+def roots_ready(worker, job):
+    """Whether the worker can reach the shares the job names. A worker that has not reported its shares yet is trusted;
+    one that has reported them is only given jobs on shares it says are mounted, verified and writable."""
+    reported = worker["status"].get("roots") if isinstance(worker.get("status"), dict) else None
+    if not isinstance(reported, dict):
+        return True
+    for root in (job["source_root"], job["dest_root"]):
+        if root is not None and not (isinstance(reported.get(root), dict) and reported[root].get("ok") is True):
+            return False
+    return True
+
+
 def claim(conn, worker, free_slots, free_bytes=None, now=None):
     """Gives the worker up to `free_slots` queued jobs it is allowed and able to run. A disabled, paused or draining worker gets none."""
     if not worker["enabled"] or worker["paused"] or worker["draining"]:
@@ -127,6 +139,8 @@ def claim(conn, worker, free_slots, free_bytes=None, now=None):
             continue
         if job["need_bytes"] and free_bytes is not None and job["need_bytes"] > free_bytes:
             continue
+        if not roots_ready(worker, job):
+            continue                                   # a share is not mounted (or not the right one) on this worker
         holder = job["preferred_worker_id"]
         if holder and holder != worker["id"] and job["preferred_until"] and job["preferred_until"] > now:
             continue                                   # another worker holds this job's files and has first call
@@ -145,6 +159,20 @@ def claim(conn, worker, free_slots, free_bytes=None, now=None):
     return claimed
 
 
+def resume_for(conn, worker_id, active):
+    """Jobs SyncHub thinks this worker is running that it is not working on: the agent restarted and must pick them up again.
+    `active` is the ids it is working on right now. The lease does not stop counting, so the agent should resume promptly."""
+    active = {int(i) for i in active or [] if str(i).lstrip("-").isdigit()}
+    out = []
+    for r in conn.execute("SELECT * FROM job WHERE worker_id = ? AND status = 'running' ORDER BY id", (worker_id,)).fetchall():
+        if r["id"] in active:
+            continue
+        job = row(r)
+        job["attempt_no"] = (conn.execute("SELECT MAX(attempt_no) FROM job_attempt WHERE job_id = ?", (job["id"],)).fetchone()[0]) or job["attempts"]
+        out.append(payload(job))
+    return out
+
+
 def running_for(conn, worker_id):
     return [r["id"] for r in conn.execute("SELECT id FROM job WHERE worker_id = ? AND status = 'running'", (worker_id,))]
 
@@ -160,6 +188,53 @@ def cleanups_for(conn, worker_id):
 
 def cleaned(conn, job_id, worker_id):
     conn.execute("UPDATE job SET cleanup = 0, preferred_worker_id = NULL, preferred_until = NULL WHERE id = ? AND preferred_worker_id = ?", (job_id, worker_id))
+
+
+# ---------------------------------------------------------------- logs on request
+MAX_LOG_CHARS = 1_000_000
+_HOLDER = "COALESCE(j.worker_id, j.preferred_worker_id, (SELECT a.worker_id FROM job_attempt a WHERE a.job_id = j.id ORDER BY a.attempt_no DESC LIMIT 1))"
+
+
+def log_holder(conn, job_id):
+    """The worker that has this job's log: the one running it, the one holding its files, or the last one that tried it."""
+    r = conn.execute(f"SELECT {_HOLDER} AS holder FROM job j WHERE j.id = ?", (job_id,)).fetchone()
+    return r["holder"] if r else None
+
+
+def request_log(conn, job_id):
+    """Asks the job's worker for its full log. It answers with its next poll. Returns the worker's id."""
+    if get(conn, job_id) is None:
+        raise JobError("That job no longer exists.")
+    holder = log_holder(conn, job_id)
+    if holder is None:
+        raise JobError("No worker has run this job yet, so there is no log to fetch.")
+    conn.execute("UPDATE job SET log_requested = 1 WHERE id = ?", (job_id,))
+    return holder
+
+
+def log_requests_for(conn, worker_id):
+    return [r["id"] for r in conn.execute(f"SELECT j.id FROM job j WHERE j.log_requested = 1 AND {_HOLDER} = ? ORDER BY j.id", (worker_id,))]
+
+
+def store_log(conn, job_id, worker_id, text, truncated=False, now=None):
+    """Keeps the log a worker uploaded (the latest only) and closes the request."""
+    if get(conn, job_id) is None:
+        raise JobError("That job no longer exists.")
+    if not conn.execute("SELECT 1 FROM job j WHERE j.id = ? AND (j.worker_id = ? OR j.preferred_worker_id = ? OR EXISTS "
+                        "(SELECT 1 FROM job_attempt a WHERE a.job_id = j.id AND a.worker_id = ?))", (job_id, worker_id, worker_id, worker_id)).fetchone():
+        raise JobError("That job has never been this worker's.")
+    text = str(text if text is not None else "")
+    if len(text) > MAX_LOG_CHARS:
+        text, truncated = "[earlier lines left out]\n" + text[-MAX_LOG_CHARS:], True
+    conn.execute("INSERT INTO job_log (job_id, worker_id, received_at, truncated, content) VALUES (?, ?, ?, ?, ?) "
+                 "ON CONFLICT(job_id) DO UPDATE SET worker_id = excluded.worker_id, received_at = excluded.received_at, truncated = excluded.truncated, content = excluded.content",
+                 (job_id, worker_id, now or db.now(), 1 if truncated else 0, text))
+    conn.execute("UPDATE job SET log_requested = 0 WHERE id = ?", (job_id,))
+
+
+def stored_log(conn, job_id):
+    r = conn.execute("SELECT l.*, w.name AS worker_name FROM job_log l LEFT JOIN worker w ON w.id = l.worker_id WHERE l.job_id = ?", (job_id,)).fetchone()
+    return dict(r) if r else None
 
 
 # ---------------------------------------------------------------- what a worker reports

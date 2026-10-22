@@ -8,7 +8,7 @@ from functools import wraps
 
 from flask import g, jsonify, request
 
-from synchub import db, jobs, workers
+from synchub import db, jobs, storage, workers
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +64,10 @@ def register(app):
                 workers.register(conn, g.worker["id"], _body())
             except workers.ProtocolError as exc:
                 return _error(str(exc), 426, protocol=workers.PROTOCOL)
+            roots = storage.for_agent(conn)
         logger.info(f"[workers] {g.worker['name']} registered")
         return jsonify(ok=True, worker_id=g.worker["id"], name=g.worker["name"], protocol=workers.PROTOCOL,
-                       poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS)
+                       poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS, roots=roots)
 
     @route("/poll", "poll")
     def poll():
@@ -78,12 +79,14 @@ def register(app):
                 lost = jobs.reconcile(conn, worker["id"], data["holding"])
                 if lost:
                     logger.warning(f"[jobs] {worker['name']} no longer holds job(s) {lost}; they were re-queued")
+            resume = jobs.resume_for(conn, worker["id"], data["active"]) if isinstance(data.get("active"), list) else []
             free_bytes = data.get("free_bytes")
             claimed = jobs.claim(conn, worker, data.get("free_slots") or 0, free_bytes if isinstance(free_bytes, (int, float)) else None)
             for job in claimed:
                 logger.info(f"[jobs] job {job['id']} ({job['kind']}: {job['title']}) went to {worker['name']}, attempt {job['attempt']}")
-            return jsonify(ok=True, jobs=claimed, cancel=jobs.cancels_for(conn, worker["id"]), cleanup=jobs.cleanups_for(conn, worker["id"]),
-                           paused=bool(worker["paused"]), draining=bool(worker["draining"]), poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS)
+            return jsonify(ok=True, jobs=claimed, resume=resume, cancel=jobs.cancels_for(conn, worker["id"]), cleanup=jobs.cleanups_for(conn, worker["id"]),
+                           log_requests=jobs.log_requests_for(conn, worker["id"]), paused=bool(worker["paused"]), draining=bool(worker["draining"]),
+                           poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS)
 
     @route("/jobs/<int:job_id>/progress", "progress")
     def job_progress(job_id):
@@ -125,4 +128,11 @@ def register(app):
     def job_cleaned(job_id):
         with db.connection() as conn:
             jobs.cleaned(conn, job_id, g.worker["id"])
+        return jsonify(ok=True)
+
+    @route("/jobs/<int:job_id>/log", "log")
+    def job_log(job_id):
+        data = _body()
+        with db.connection() as conn:
+            jobs.store_log(conn, job_id, g.worker["id"], data.get("text"), truncated=data.get("truncated") is True)
         return jsonify(ok=True)
