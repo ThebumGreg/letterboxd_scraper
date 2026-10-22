@@ -1,4 +1,5 @@
 """Poster images cached on disk by media ID. TMDB's image CDN first, then Jellyfin."""
+import calendar
 import logging
 import time
 from pathlib import Path
@@ -27,16 +28,42 @@ def _missing_marker(media_id):
     return _dir() / f"v2-{int(media_id)}.missing"
 
 
+def _has_cached(media_id):
+    target = cached_path(media_id)
+    return target.exists() and target.stat().st_size >= MIN_BYTES
+
+
+def _failure_still_counts(marker, refreshed_at):
+    """A failed lookup is not retried for a day, unless the title was re-read from TMDB after it failed (it may have a poster now)."""
+    if not marker.exists():
+        return False
+    failed_at = marker.stat().st_mtime
+    if time.time() - failed_at >= RETRY_AFTER_SECONDS:
+        return False
+    if refreshed_at:
+        try:
+            return calendar.timegm(time.strptime(refreshed_at, "%Y-%m-%d %H:%M:%S")) <= failed_at
+        except ValueError:
+            pass
+    return True
+
+
+def clear_failures():
+    """Forgets every remembered failure so the next request for those posters tries again. Returns how many there were."""
+    markers = list(_dir().glob("v2-*.missing"))
+    for marker in markers:
+        marker.unlink(missing_ok=True)
+    return len(markers)
+
+
 def ensure_poster(conn, media_id):
     """Returns the path of a cached poster, downloading it if needed, or None when none is available."""
     target = cached_path(media_id)
-    if target.exists() and target.stat().st_size >= MIN_BYTES:
+    if _has_cached(media_id):
         return target
     marker = _missing_marker(media_id)
-    if marker.exists() and time.time() - marker.stat().st_mtime < RETRY_AFTER_SECONDS:
-        return None
-    media = conn.execute("SELECT poster_path FROM media WHERE id = ?", (media_id,)).fetchone()
-    if media is None:
+    media = conn.execute("SELECT poster_path, metadata_refreshed_at FROM media WHERE id = ?", (media_id,)).fetchone()
+    if media is None or _failure_still_counts(marker, media["metadata_refreshed_at"]):
         return None
     _dir().mkdir(parents=True, exist_ok=True)
     db.assert_not_in_write_transaction(f"poster download for media {media_id}")
@@ -70,3 +97,22 @@ def ensure_poster(conn, media_id):
 
     marker.touch()
     return None
+
+
+def refresh_all(conn, progress=None, limit_titles=25):
+    """Tries to cache the poster of every title that has none yet. Returns counts and the first few titles with no poster anywhere."""
+    progress = progress or (lambda message, force=False: None)
+    rows = conn.execute("SELECT id, title, year FROM media ORDER BY title COLLATE NOCASE").fetchall()
+    stats = {"cached": 0, "downloaded": 0, "none": 0, "none_titles": []}
+    for number, row in enumerate(rows, 1):
+        if _has_cached(row["id"]):
+            stats["cached"] += 1
+            continue
+        progress(f"Poster: {row['title']} ({number} of {len(rows)})")
+        if ensure_poster(conn, row["id"]):
+            stats["downloaded"] += 1
+        else:
+            stats["none"] += 1
+            if len(stats["none_titles"]) < limit_titles:
+                stats["none_titles"].append(f"{row['title']} ({row['year']})" if row["year"] else row["title"])
+    return stats

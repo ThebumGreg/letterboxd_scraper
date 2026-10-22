@@ -36,6 +36,7 @@
     {{ task_card('scraper_serializd', 'Serializd', 'Reads TV watchlists of active profiles.', task_statuses.get('scraper_serializd'), url_for('trigger', name='serializd'), 'Scrape Serializd now') }}
     {{ task_card('id_resolver', 'Letterboxd ID resolver', 'Finds the TMDB ID of Letterboxd films from their film pages.', task_statuses.get('id_resolver'), url_for('trigger', name='id_resolver'), 'Resolve IDs now') }}
     {{ task_card('reconcile', 'Match &amp; update', 'Links everything to its movie or show, fetches TMDB details and episode lists, and recalculates every status.'|safe, task_statuses.get('reconcile'), url_for('trigger', name='reconcile'), 'Match now') }}
+    {{ task_card('posters', 'Posters', 'Tries every poster again: forgets earlier failures, asks TMDB for the poster of titles that have none, and saves every poster that is not cached yet.', task_statuses.get('posters'), url_for('trigger', name='posters'), 'Refresh posters now') }}
 </div>
 
 <div class="row g-4 mb-4">

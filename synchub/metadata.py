@@ -115,6 +115,30 @@ def needs_refresh(row, now=None):
     return now - refreshed >= timedelta(hours=hours)
 
 
+def fill_missing_poster_paths(conn, tmdb, progress=None):
+    """Asks TMDB for just the poster of every title that has none (one call each; episodes and other details are not touched)."""
+    progress = progress or (lambda message, force=False: None)
+    rows = conn.execute("SELECT id, kind, tmdb_id, title FROM media WHERE tmdb_id IS NOT NULL AND poster_path IS NULL ORDER BY title COLLATE NOCASE").fetchall()
+    stats = {"checked": 0, "found": 0, "none": 0, "errors": 0}
+    for number, row in enumerate(rows, 1):
+        progress(f"TMDB poster: {row['title']} ({number} of {len(rows)})")
+        try:
+            details = tmdb.movie(row["tmdb_id"]) if row["kind"] == "movie" else tmdb.show(row["tmdb_id"])
+            path = (details or {}).get("poster_path")
+            if path:
+                conn.execute("UPDATE media SET poster_path = ? WHERE id = ? AND poster_path IS NULL", (path, row["id"]))
+                conn.commit()
+                stats["found"] += 1
+            else:
+                stats["none"] += 1
+        except Exception as exc:
+            conn.rollback()
+            logger.warning(f"Could not read the poster of media {row['id']} ({row['title']}) from TMDB: {exc}")
+            stats["errors"] += 1
+        stats["checked"] += 1
+    return stats
+
+
 def refresh_pending(conn, tmdb, limit=200, now=None, progress=None):
     """Refreshes media that has never been refreshed or is stale, oldest first. Errors on one item do not stop the run."""
     now = now or db.now()

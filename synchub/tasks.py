@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 
-from synchub import automation, db, episodes, matching, metadata, settings, states
+from synchub import automation, db, episodes, matching, metadata, posters, settings, states
 from synchub.clients import ConfigError
 from synchub.clients.arr import RadarrClient, SonarrClient
 from synchub.clients.jellyfin import JellyfinClient
@@ -287,6 +287,28 @@ def reconcile():
     return run("reconcile", "Reconciling", work)
 
 
+def refresh_posters():
+    """Retries every poster: forgets earlier failures, asks TMDB for the poster path of titles lacking one, then caches every missing image."""
+    def work(report):
+        cleared = posters.clear_failures()
+        report(f"Cleared {cleared} remembered poster failure(s).", force=True)
+        note = ""
+        try:
+            tmdb = TmdbClient()
+        except ConfigError:
+            tmdb, note = None, " TMDB is not configured, so titles without a poster path could only use Jellyfin."
+        if tmdb:
+            with db.connection() as conn:
+                found = metadata.fill_missing_poster_paths(conn, tmdb, progress=report)
+            note = f" TMDB poster paths: {found['found']} found, {found['none']} have none" + (f", {found['errors']} failed (see the log)" if found["errors"] else "") + "."
+        with db.connection() as conn:
+            stats = posters.refresh_all(conn, progress=report)
+        if stats["none_titles"]:
+            logger.info(f"[posters] no poster anywhere for (first {len(stats['none_titles'])}): {'; '.join(stats['none_titles'])}")
+        return (f"Posters: {stats['downloaded']} downloaded, {stats['cached']} already cached, {stats['none']} not available from TMDB or Jellyfin.{note}")
+    return run("posters", "Refreshing posters", work)
+
+
 def with_reconcile(*steps):
     """A job that runs the given steps and then reconciles, so the dashboard reflects the new data."""
     def job():
@@ -313,7 +335,7 @@ def run_all():
 
 
 # ---------------------------------------------------------------- helpers for the web layer
-TASK_NAMES = ("jellyfin_movies", "jellyfin_tv", "radarr", "sonarr", "scraper_letterboxd", "scraper_serializd", "id_resolver", "reconcile", "all")
+TASK_NAMES = ("jellyfin_movies", "jellyfin_tv", "radarr", "sonarr", "scraper_letterboxd", "scraper_serializd", "id_resolver", "reconcile", "posters", "all")
 
 
 def all_statuses():
