@@ -1,0 +1,99 @@
+<!-- synchub/web/templates/library_queue.html -->
+{% extends "base.html" %}
+{% block title %}Library: {{ title }}{% endblock %}
+
+{% block content %}
+{% set filter_args = {'q': f.q, 'root': f.root, 'conf': f.conf} %}
+<nav aria-label="Queues" class="mb-3"><ul class="nav nav-pills flex-wrap gap-1">
+    <li class="nav-item"><a class="nav-link" href="{{ url_for('library_page') }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> Library</a></li>
+    {% for g in groups %}<li class="nav-item"><a class="nav-link{% if g == group %} active{% endif %}" href="{{ url_for('library_queue', group=g, q=f.q, root=f.root) }}">{{ titles[g] }} <span class="badge bg-secondary ms-1">{{ table[g].total }}</span></a></li>{% endfor %}
+</ul></nav>
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div><h2 class="mb-1">{{ title }}</h2><p class="text-body-secondary mb-0">{{ hint }}</p></div>
+    <div class="d-flex flex-wrap gap-2">
+        {% if total and group != 'done' %}<a class="btn btn-success" href="{{ url_for('library_review', group=group, **filter_args) }}">Review one by one</a>{% endif %}
+        <a class="btn btn-outline-secondary" href="{{ url_for('library_export', group=group, q=f.q, root=f.root) }}"><i class="bi bi-download" aria-hidden="true"></i> Export this list</a>
+    </div>
+</div>
+<div id="libMessage" class="alert d-none" role="status"></div>
+
+<form class="row g-2 mb-3" method="get" action="{{ url_for('library_queue', group=group) }}">
+    <div class="col-md-5"><label for="fq" class="visually-hidden">Search</label><input class="form-control" id="fq" name="q" value="{{ f.q }}" placeholder="Search a name or a path, for example a show"></div>
+    <div class="col-md-2"><label for="froot" class="visually-hidden">Share</label>
+        <select class="form-select" id="froot" name="root"><option value="">Every share</option>{% for r in roots %}<option value="{{ r }}"{% if r == f.root %} selected{% endif %}>{{ r }}</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label for="fconf" class="visually-hidden">Confidence</label>
+        <select class="form-select" id="fconf" name="conf"><option value="">Any confidence</option>{% for c in ['high', 'medium', 'low'] %}<option value="{{ c }}"{% if c == f.conf %} selected{% endif %}>{{ c|capitalize }}</option>{% endfor %}</select></div>
+    <div class="col-md-3 d-flex gap-2"><button class="btn btn-outline-info" type="submit">Filter</button>{% if f.q or f.root or f.conf %}<a class="btn btn-outline-secondary" href="{{ url_for('library_queue', group=group) }}">Clear</a>{% endif %}</div>
+</form>
+
+{% if high_medium %}
+<div class="panel p-3 mb-3 d-flex flex-wrap align-items-center gap-2">
+    <div class="me-auto small"><strong>Approve together.</strong> Low-confidence files and duplicates are never included: they are decided one at a time.</div>
+    <a class="btn btn-success btn-sm" href="{{ url_for('library_bulk', group=group, conf='medium', q=f.q, root=f.root) }}">Approve {{ high_medium }} (high and medium)&hellip;</a>
+    {% if high != high_medium %}<a class="btn btn-outline-success btn-sm" href="{{ url_for('library_bulk', group=group, conf='high', q=f.q, root=f.root) }}">Only the {{ high }} high&hellip;</a>{% endif %}
+</div>
+{% endif %}
+
+<div class="panel p-0 overflow-hidden mb-3">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0" id="queueTable">
+            <thead class="table-light"><tr><th class="ps-4">File</th><th>What we suggest</th><th>Confidence</th><th class="text-end">Size</th><th class="pe-4 text-end">Decide</th></tr></thead>
+            <tbody>
+            {% set ns = namespace(show=None, season=None) %}
+            {% for row in rows %}
+                {% set rec = row.rec %}{% set r = row.r %}
+                {% if rec.media_type == 'TV Episode' and (rec.show_title != ns.show or rec.season_number != ns.season) %}
+                    {% set ns.show = rec.show_title %}{% set ns.season = rec.season_number %}
+                    <tr class="table-secondary"><td colspan="5" class="ps-4 small fw-bold">{{ rec.show_title }}{% if rec.season_number is not none %} &middot; Season {{ rec.season_number }}{% endif %}</td></tr>
+                {% elif rec.media_type != 'TV Episode' and ns.show is not none %}{% set ns.show = None %}{% set ns.season = None %}{% endif %}
+                <tr data-record="{{ rec.id }}">
+                    <td class="ps-4" style="max-width: 360px;">
+                        <a class="fw-bold text-decoration-none" href="{{ url_for('library_record', record_id=rec.id, group=group, q=f.q, root=f.root, conf=f.conf) }}">{{ rec.approved_name or rec.recommended_name or rec.file_name }}</a>
+                        <div class="small text-body-secondary text-truncate" title="{{ rec.source_path }}">{{ rec.root_name }}: {{ rec.relative_path }}</div>
+                        {% if rec.missing_since %}<span class="badge bg-warning text-dark">not found any more</span>{% endif %}
+                        {% if rec.duplicate_group %}<span class="badge bg-info text-dark">duplicate</span>{% endif %}
+                    </td>
+                    <td class="small">{{ r.headline }}{% if r.steps and r.steps != ['Copy as is'] %}<div class="text-body-secondary">{{ r.steps[:2]|join('; ') }}{% if r.steps|length > 2 %}; &hellip;{% endif %}</div>{% endif %}</td>
+                    <td><span class="badge bg-{{ {'high': 'success', 'medium': 'warning', 'low': 'danger'}[r.confidence] }}{% if r.confidence == 'medium' %} text-dark{% endif %}">{{ r.confidence }}</span></td>
+                    <td class="text-end small text-nowrap">{{ row.size or '-' }}</td>
+                    <td class="pe-4 text-end text-nowrap">
+                        {% if r.group == 'done' and rec.approval_status != 'pending' and rec.migration_status == 'pending' %}
+                            <button type="button" class="btn btn-sm btn-outline-secondary" data-decide="undo" data-id="{{ rec.id }}">Undo</button>
+                        {% elif r.can_approve and not r.needs_name %}
+                            <button type="button" class="btn btn-sm btn-success" data-decide="approve" data-id="{{ rec.id }}">{{ 'Skip this copy' if r.kind == 'skip_duplicate' else 'Approve' }}</button>
+                        {% else %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('library_record', record_id=rec.id, group=group, q=f.q, root=f.root, conf=f.conf) }}">Open</a>{% endif %}
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="5" class="text-center text-muted py-4">Nothing here{% if f.q or f.root or f.conf %} with this filter{% endif %}.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% if pages > 1 %}
+<nav aria-label="Pages"><ul class="pagination justify-content-center">
+    {% for n in range(1, pages + 1) %}<li class="page-item{% if n == page %} active{% endif %}"><a class="page-link" href="{{ url_for('library_queue', group=group, page=n, q=f.q, root=f.root, conf=f.conf) }}">{{ n }}</a></li>{% endfor %}
+</ul></nav>
+<p class="text-center small text-body-secondary">{{ total }} files in this list</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/library.js') }}"></script>
+<script>
+(() => { try { const flash = sessionStorage.getItem('libraryFlash'); if (flash) { librarySay(flash, true); sessionStorage.removeItem('libraryFlash'); } } catch (e) { /* no storage: no message */ } })();
+document.addEventListener('click', async (e) => {
+    const button = e.target.closest('[data-decide]');
+    if (!button) return;
+    button.disabled = true;
+    const data = await libraryPost(`/api/library/record/${button.dataset.id}/${button.dataset.decide}`, {});
+    if (!data.ok) { librarySay(data.message || 'Failed.', false); button.disabled = false; return; }
+    const row = button.closest('tr');
+    row.remove();
+    librarySay(data.message, true);
+});
+</script>
+{% endblock %}

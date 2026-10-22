@@ -1,0 +1,134 @@
+<!-- synchub/web/templates/library_record.html -->
+{% extends "base.html" %}
+{% block title %}Library: {{ final_name or rec.file_name }}{% endblock %}
+
+{% macro badge(level) %}<span class="badge bg-{{ {'high': 'success', 'medium': 'warning', 'low': 'danger'}[level] }}{% if level == 'medium' %} text-dark{% endif %}">{{ level }} confidence</span>{% endmacro %}
+
+{% block content %}
+{% set decided = rec.approval_status != 'pending' %}
+<p class="mb-2"><a href="{{ url_for('library_queue', group=group, q=f.q, root=f.root, conf=f.conf) }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> {{ group_title }}</a>
+    <span class="text-body-secondary small ms-2">record #{{ rec.id }}</span></p>
+<h2 class="mb-1" style="overflow-wrap: anywhere;">{{ final_name or rec.file_name }}</h2>
+<div class="small text-body-secondary mb-3" style="overflow-wrap: anywhere;">{{ rec.root_name }}: {{ rec.relative_path }}{% if rec.source_path and rec.source_path != rec.root_name ~ ':' ~ rec.relative_path %} &middot; <span title="How a computer on the network opens it">{{ rec.source_path }}</span>{% endif %}</div>
+<div id="libMessage" class="alert d-none" role="status"></div>
+{% if missing %}<div class="alert alert-warning">This file was not found at its place when the share was last scanned ({{ rec.missing_since }}).</div>{% endif %}
+{% if rec.unreadable_reason %}<div class="alert alert-danger">The file could not be read: {{ rec.unreadable_reason }}</div>{% endif %}
+
+<div class="row g-3">
+    <div class="col-lg-7">
+        <div class="panel p-3 p-md-4 mb-3" id="recommendation">
+            <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                <h4 class="mb-0">{{ r.headline }}</h4>{{ badge(r.confidence) }}
+            </div>
+            {% if rec.approval_status == 'approved' %}<div class="alert alert-success py-2 small mb-2">Approved by {{ rec.approval_decided_by }} on {{ rec.approval_decided_at[:10] }}{% if rec.approval_note %}: {{ rec.approval_note }}{% endif %}.</div>
+            {% elif rec.approval_status == 'rejected' %}<div class="alert alert-secondary py-2 small mb-2">Rejected by {{ rec.approval_decided_by }} on {{ rec.approval_decided_at[:10] }}{% if rec.approval_note %}: {{ rec.approval_note }}{% endif %}.</div>{% endif %}
+            {% if r.steps %}<ul class="mb-2">{% for step in r.steps %}<li>{{ step }}</li>{% endfor %}</ul>{% endif %}
+            {% for note in r.notes %}<p class="small text-body-secondary mb-1">{{ note }}</p>{% endfor %}
+            {% if in_place %}<p class="small mb-0"><i class="bi bi-check2-circle text-success" aria-hidden="true"></i> This file is already at its place in the library.</p>
+            {% elif r.path %}<p class="small mb-0">It will be placed at <code>{{ r.path }}</code> in the destination share.</p>{% endif %}
+        </div>
+
+        {% if r.can_approve or r.needs_name %}
+        <div class="panel p-3 p-md-4 mb-3">
+            <label for="newName" class="form-label small mb-1">File name{% if r.needs_name %} <span class="text-danger">(a valid name is needed)</span>{% endif %}</label>
+            <input class="form-control" id="newName" value="{{ '' if r.needs_name else final_name }}" maxlength="255" autocomplete="off" aria-describedby="nameHelp">
+            <div class="form-text" id="nameHelp">Suggested: <code>{{ rec.recommended_name }}</code>. The extension stays. Press <kbd>e</kbd> to edit.</div>
+        </div>
+        {% endif %}
+
+        {% if streams and plans %}
+        <div class="panel p-0 overflow-hidden mb-3">
+            <div class="p-3 pb-2"><h6 class="mb-1">Tracks</h6><p class="small text-body-secondary mb-0">Untick <em>Remove</em> to keep a track anyway. You can keep more than we suggest, never remove more.</p></div>
+            <div class="table-responsive"><table class="table table-sm align-middle mb-0" id="tracks">
+                <thead class="table-light"><tr><th class="ps-3">#</th><th>Type</th><th>Language</th><th>Codec</th><th>Notes</th><th class="pe-3 text-end">Remove</th></tr></thead>
+                <tbody>{% for s in streams %}<tr>
+                    <td class="ps-3">{{ s.index }}</td><td>{{ s.type }}</td><td>{{ s.language_name }}{% if s.lang_source %} <span class="text-body-secondary" title="Worked out from the track's title">(inferred)</span>{% endif %}</td><td>{{ s.codec }}{% if s.channels and s.type == 'audio' %} {{ s.channels }}ch{% endif %}</td>
+                    <td class="small text-body-secondary">{{ ['default' if s.default, 'forced' if s.forced, 'SDH' if s.hearing_impaired, 'commentary' if s.comment, s.title]|select|join(', ') }}</td>
+                    <td class="pe-3 text-end">{% if s.remove %}<input type="checkbox" class="form-check-input" data-remove="{{ s.index }}" aria-label="Remove track {{ s.index }}" checked{% if s.locked %} disabled title="MKV cannot hold this subtitle format"{% endif %}>{% else %}<span class="text-body-secondary">keep</span>{% endif %}</td></tr>{% endfor %}</tbody>
+            </table></div>
+        </div>
+        {% endif %}
+
+        <div class="panel p-3 p-md-4 mb-3" id="actions">
+            {% if decided and rec.migration_status == 'pending' %}
+                <button type="button" class="btn btn-outline-secondary" data-act="undo">Undo this decision</button>
+            {% elif r.can_approve or r.needs_name %}
+                <div class="d-flex flex-wrap gap-2 align-items-center">
+                    <button type="button" class="btn btn-success btn-lg" id="act-approve" data-act="approve">{{ 'Skip this duplicate' if r.kind == 'skip_duplicate' else 'Approve' if not r.needs_name else 'Approve with this name' }} <kbd class="ms-1">a</kbd></button>
+                    <button type="button" class="btn btn-outline-danger" id="act-reject" data-act="reject">Reject <kbd class="ms-1">r</kbd></button>
+                    <a class="btn btn-outline-secondary" id="act-skip" href="{{ url_for('library_review', group=group, after=rec.id, q=f.q, root=f.root, conf=f.conf) }}">Skip <kbd class="ms-1">s</kbd></a>
+                </div>
+            {% elif r.override_allowed %}
+                <p class="mb-2"><strong>Played it and it is fine?</strong> Say what you tested and approve it as it is. Otherwise reject it.</p>
+                <div class="row g-2"><div class="col-md-8"><label for="testNote" class="visually-hidden">What you tested</label><input class="form-control" id="testNote" placeholder="Played it start to end on the TV, no problems" maxlength="500"></div>
+                    <div class="col-md-4 d-flex gap-2"><button type="button" class="btn btn-success" data-act="tested">I tested it</button><button type="button" class="btn btn-outline-danger" data-act="reject">Reject</button></div></div>
+            {% elif r.group != 'done' %}
+                <div class="d-flex gap-2"><button type="button" class="btn btn-outline-danger" data-act="reject">Reject</button><a class="btn btn-outline-secondary" href="{{ url_for('library_review', group=group, after=rec.id) }}">Skip</a></div>
+            {% else %}<p class="text-body-secondary mb-0">Nothing to decide here.</p>{% endif %}
+        </div>
+    </div>
+
+    <div class="col-lg-5">
+        <div class="panel p-3 mb-3">
+            <h6>Playback in Jellyfin</h6>
+            <div class="d-flex flex-wrap gap-1">{% for b in r.badges %}<span class="badge bg-{{ 'success' if b.ok else 'warning text-dark' }}" title="{{ b.hint }}">{{ b.label }}</span>{% endfor %}</div>
+        </div>
+        <div class="panel p-3 mb-3">
+            <h6>About the file</h6>
+            <dl class="row small mb-0">
+                {% for label, value in [('Size', size), ('Duration', duration), ('Container', rec.container), ('Video', ((rec.video_codec or '') ~ ' ' ~ (rec.resolution or ''))|trim), ('Frame rate', rec.frame_rate), ('Bitrate', (rec.bitrate_kbps|string ~ ' kbps') if rec.bitrate_kbps else None),
+                                        ('Audio', rec.audio_detail), ('Subtitles', rec.subtitle_detail), ('English audio', (rec.english_audio_status or '')|replace('_', ' ')),
+                                        ('Integrity', rec.integrity_status), ('What that proves', rec.integrity_scope), ('Problem found', rec.audit_error),
+                                        ('Type', rec.media_type), ('Show', rec.show_title), ('Season', rec.season_number), ('Name confidence', ((rec.naming_confidence or '') ~ ' (' ~ (rec.naming_score|string) ~ ')') if rec.naming_confidence else None),
+                                        ('Name notes', rec.naming_flags), ('Duplicates', rec.duplicate_status if rec.duplicate_status != 'Not Checked' else None), ('Analysed', rec.analyzed_at), ('Seen', rec.last_seen_at), ('Revision', rec.source_revision)] if value not in (None, '') %}
+                <dt class="col-5 text-body-secondary fw-normal">{{ label }}</dt><dd class="col-7" style="overflow-wrap: anywhere;">{{ value }}</dd>{% endfor %}
+            </dl>
+        </div>
+        {% if siblings %}
+        <div class="panel p-3 mb-3"><h6>Identical copies</h6>
+            <ul class="small mb-0 list-unstyled">{% for s in siblings %}<li><a href="{{ url_for('library_record', record_id=s.id, group=group) }}">{{ s.root_name }}: {{ s.relative_path }}</a><span class="text-body-secondary"> &middot; {{ s.duplicate_status.replace('Exact duplicate ', '') }}{% if s.approval_status != 'pending' %} &middot; {{ s.approval_status }}{% endif %}</span></li>{% endfor %}</ul></div>
+        {% endif %}
+        {% if reasons or warnings or errors %}
+        <div class="panel p-3 mb-3"><h6>Why</h6>
+            <ul class="small mb-0">{% for c, t in reasons %}<li><span class="text-body-secondary">{{ c }}:</span> {{ t }}</li>{% endfor %}{% for w in warnings if not reasons %}<li>{{ w }}</li>{% endfor %}{% for e in errors %}<li class="text-danger">{{ e }}</li>{% endfor %}</ul></div>
+        {% endif %}
+        <div class="panel p-3 mb-3"><h6>History</h6>
+            <ul class="small list-unstyled mb-0">{% for e in events %}<li>{{ e.created_at[:16] }} &middot; <strong>{{ e.detail.by if e.detail and e.detail.get('by') else e.actor }}</strong> &middot; {{ e.event_type.replace('_', ' ') }}{% if e.detail and e.detail.get('note') %} &middot; {{ e.detail.note }}{% endif %}</li>{% else %}<li class="text-body-secondary">Nothing yet.</li>{% endfor %}</ul></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/library.js') }}"></script>
+<script>
+(() => {
+    const id = {{ rec.id }}, group = {{ group|tojson }};
+    const filters = {{ ({'q': f.q, 'root': f.root, 'conf': f.conf}|tojson) }};
+    const next = () => {
+        const qs = new URLSearchParams({ after: id }); Object.entries(filters).forEach(([k, v]) => { if (v) qs.set(k, v); });
+        location.href = `/library/review/${encodeURIComponent(group)}?${qs}`;
+    };
+    async function act(kind) {
+        const body = {};
+        if (kind === 'approve') {
+            const name = document.getElementById('newName');
+            if (name) body.name = name.value;
+            body.keep_streams = [...document.querySelectorAll('[data-remove]')].filter((c) => !c.checked && !c.disabled).map((c) => parseInt(c.dataset.remove, 10));
+        }
+        if (kind === 'tested') body.note = document.getElementById('testNote')?.value || '';
+        document.querySelectorAll('#actions button').forEach((b) => { b.disabled = true; });
+        const data = await libraryPost(`/api/library/record/${id}/${kind}`, body);
+        if (!data.ok) { librarySay(data.message || 'Failed.', false); document.querySelectorAll('#actions button').forEach((b) => { b.disabled = false; }); return; }
+        if (kind === 'undo') { location.reload(); return; }
+        next();
+    }
+    document.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => act(b.dataset.act)));
+    document.addEventListener('keydown', (e) => {
+        if (e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) return;
+        const map = { a: 'act-approve', r: 'act-reject', s: 'act-skip' };
+        if (map[e.key]) { document.getElementById(map[e.key])?.click(); e.preventDefault(); }
+        if (e.key === 'e') { const n = document.getElementById('newName'); if (n) { n.focus(); n.select(); e.preventDefault(); } }
+    });
+})();
+</script>
+{% endblock %}

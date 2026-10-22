@@ -27,7 +27,7 @@
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav me-auto">
-                    {% for endpoint, label in [('index', 'Dashboard'), ('search_page', 'Search'), ('resolution_center', 'Resolution Center'), ('ddns_page', 'Dynamic DNS'), ('tools', 'Tools & Operations'), ('workers_page', 'Workers'), ('storage_page', 'Storage'), ('settings_page', 'Settings'), ('payloads_page', 'Payloads'), ('logs_page', 'Logs')] %}
+                    {% for endpoint, label in [('index', 'Dashboard'), ('search_page', 'Search'), ('library_page', 'Library'), ('resolution_center', 'Resolution Center'), ('ddns_page', 'Dynamic DNS'), ('tools', 'Tools & Operations'), ('workers_page', 'Workers'), ('storage_page', 'Storage'), ('settings_page', 'Settings'), ('payloads_page', 'Payloads'), ('logs_page', 'Logs')] %}
                         {% set href = url_for(endpoint) %}
                         {% set active = (path == '/') if href == '/' else path.startswith(href) %}
                         <li class="nav-item">

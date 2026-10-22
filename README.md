@@ -34,7 +34,18 @@ New states need no code or schema change: add a row to `state_def` and have a sc
 
 **Storage** (top bar) defines the Unraid shares the workers use: a short name, SMB or NFS, the server address, the share, and the folder every worker mounts it at. SyncHub cannot mount anything on a worker PC itself, so it generates the files that do (Docker mounts the shares, and a worker refuses any share whose `.synchub-root` marker file is missing or names a different share). Share logins never enter SyncHub; they go in the worker's own `.env`.
 
-The worker side is a small API (`/api/worker/v1/...`, token per worker, documented in `docs/DESIGN_ENCODING.md`, Appendix A) and an agent for Ubuntu in `agent/` (one Python file; `agent/README.md` has the install steps). Workers ask for jobs; a job whose worker goes silent returns to the queue and resumes where its files are. Verified copies work today; the Library page and the encoding itself are the next phases of that plan.
+The worker side is a small API (`/api/worker/v1/...`, token per worker, documented in `docs/DESIGN_ENCODING.md`, Appendix A) and an agent for Ubuntu in `agent/` (one Python file; `agent/README.md` has the install steps). Workers ask for jobs; a job whose worker goes silent returns to the queue and resumes where its files are. Verified copies and the Library scans work today; processing approved files and the encoding itself are the next phases of that plan.
+
+## Library
+
+**Library** (top bar) is the original media analysis and migration tool as a page. It looks at every video file on your shares, says in plain words what it would do with each one (copy as it is, a clean name, remove tracks you do not need, convert an old format) and how sure it is, and you approve what is right. Everything is meant to end up in one share (**Media** by default, as `Movies/<name>/<name>` and `TV Shows/<show>/Season NN/<name>`); files that are already in the right place are left alone.
+
+- **Look at a share** starts a scan on a worker, so it needs a worker with the share mounted (see Workers and Storage). Files it has already looked at and that have not changed are skipped, so running it again is quick. A scan can be stopped, and one that was interrupted carries on with what is left. Looking at files never changes anything on a share.
+- **The queues** (Ready to approve, Suggested changes, Worth a look, Format conversion, Needs you, Done) show how many files wait with high, medium and low confidence. Open a list to search and filter, or **Review one by one**: it shows the suggestion, the file name (editable), the tracks and why, and has Approve, Reject and Skip (keys `a`, `r`, `s`; `e` edits the name).
+- **Approve together** approves everything in a list that qualifies, after showing what it will approve. Low-confidence files are never included, and duplicates are decided one at a time.
+- **Find duplicates** compares files of the same size across all shares (reading only what it must) and suggests keeping the copy already in place.
+- **Export** gives the same CSV report as the original tool.
+- **Approving records a decision and nothing else.** Copying and converting the approved files is the next phase.
 
 ## Search and add
 
@@ -92,4 +103,4 @@ Tests use a temporary database and never touch the network (a guard fails any te
 
 ## Layout
 
-The code is in `synchub/`: `db.py` + `migrations/` (schema), `clients/` (Jellyfin, Radarr, Sonarr, TMDB), `ingest/` (one module per source, writing the `src_*` tables), `matching.py` and `episodes.py` (linking), `states.py` (statuses), `catalog.py` (what the pages read), `automation.py` (requests and auto-add), `tasks.py` and `scheduler.py` (jobs), `web/` (pages, templates and API). `config.py`, `logger.py` and `settings_validation.py` at the top level are shared helpers; `static/` holds the CSS, JavaScript and cached posters.
+The code is in `synchub/`: `db.py` + `migrations/` (schema), `clients/` (Jellyfin, Radarr, Sonarr, TMDB), `ingest/` (one module per source, writing the `src_*` tables), `matching.py` and `episodes.py` (linking), `library/` (the Library's decision logic, scans and duplicate search), `storage.py` and `jobs.py` (shares and worker jobs), `states.py` (statuses), `catalog.py` (what the pages read), `automation.py` (requests and auto-add), `tasks.py` and `scheduler.py` (jobs), `web/` (pages, templates and API). `config.py`, `logger.py` and `settings_validation.py` at the top level are shared helpers; `static/` holds the CSS, JavaScript and cached posters.
