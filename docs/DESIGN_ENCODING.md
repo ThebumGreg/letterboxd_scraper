@@ -1,6 +1,6 @@
-# SyncHub Encoding and Library Migration: Plan (v2.1)
+# SyncHub Encoding and Library Migration: Plan (v2.2)
 
-Status: **v2.1: manifests, Docker workers, shares managed from the site, and sample review first are incorporated. Phase 1 (control plane) is built and tested**; the next piece is Phase 2, the worker agent with storage. See §14 for the order, §16 for what is still open and Appendix A for the worker protocol exactly as built. v1 was written from the Media Analysis and Migration tool you attached (`main.py`, `migrate.py`, `media_db.py`, `media_jobs.py`, `media_config.py`, `webui.py`, `media_recommend.py`, `media_layout.py`, `media_roots.py`, `media_report.py`, `review.py` and the three `.md` files). Nothing from the tool was run.
+Status: **v2.2: Phases 1 (control plane) and 2 (worker agent and storage) are built and tested.** The agent copies files with verification, survives being killed mid-copy, and the site manages shares and generates the worker's setup files. The next piece is Phase 3, the Library page. See §14 for the order, §16 for what is still open and Appendix A for the worker protocol exactly as built. v1 was written from the Media Analysis and Migration tool you attached (`main.py`, `migrate.py`, `media_db.py`, `media_jobs.py`, `media_config.py`, `webui.py`, `media_recommend.py`, `media_layout.py`, `media_roots.py`, `media_report.py`, `review.py` and the three `.md` files). Nothing from the tool was run.
 
 ## 1. Requirements and decisions
 
@@ -349,7 +349,7 @@ Each phase ends with passing tests and something you can use. Tests use a fake w
 | Phase | Scope | Done when |
 |---|---|---|
 | **1. Control plane** | `worker` and `job` tables, tokens, register/poll/progress/complete/fail/needs-review/cancel, leases and the reaper, affinity, the Workers page and a recent-jobs list | A fake worker claims, reports, completes, loses a lease, is cancelled and is revoked, and the Workers page shows it |
-| **2. Worker agent and storage** | The agent (one Python file): register and poll, job folders and manifests, structured logging with rotation, status and mount-health reporting, log upload on request, crash recovery, Dockerfile, compose file and systemd unit. The site gets the **Storage page**, generated worker setup files and a "test copy" job form. The first real job type is the hash-verified **copy** (the library's "copy unchanged" stage) | A copy job between two real folders survives killing and restarting the agent mid-copy and finishes without copying twice; the Workers page shows each root's health |
+| **2. Worker agent and storage** (built) | The agent (one Python file): register and poll, job folders and manifests, structured logging with rotation, status and mount-health reporting, log upload on request, crash recovery, Dockerfile, compose file and systemd unit. The site gets the **Storage page**, generated worker setup files and a "test copy" job form. The first real job type is the hash-verified **copy** (the library's "copy unchanged" stage) | A copy job between two real folders survives killing and restarting the agent mid-copy and finishes without copying twice; the Workers page shows each root's health |
 | **3. Library: analysis and review** | `library_*` tables, storage roots, the ported recommendation, layout, roots and report modules, scan jobs on workers (skipping known files), the Library page with queues, review, bulk approve and CSV export | Everything the tool's CLI and web UI did for analysis and approval works from the Library page |
 | **4. Library: processing** | Approved records become jobs; resumable copy, track changes, remux and re-encode (whole-file); verification; publish and **Jellyfin notification** with confirmation; "verify finished files"; migration status | An approved legacy file is converted and appears In Library in Jellyfin, with the source untouched |
 | **5. Review workflow and previews** | The needs-review states and actions, the review screen, preview clips (random and worst-case), sample-based tests from your low-confidence file | A flagged job pauses, shows its clip, and obeys approve, retry, skip and reject |
@@ -363,25 +363,36 @@ Each phase ends with passing tests and something you can use. Tests use a fake w
 - The rest of SyncHub stays as it is: it listens on every interface with no login, and the profile picker is identity, not security, as you chose. When you add the planned access token it goes into the one request hook (§3), and the UI actions that change files will already be recorded with the profile that did them.
 - Meanwhile: nothing is deleted before verification, originals are kept for the retention period, destructive actions need a confirmation, and ffmpeg commands are built only from validated options (no shell, no free text).
 
-## Appendix A. Worker protocol as built (phase 1)
+## Appendix A. Worker protocol as built (phases 1 and 2)
 
 Base path `/api/worker/v1`, every call a `POST` with JSON, header `Authorization: Bearer <token>`. Answers are `{"ok": true, ...}` or `{"ok": false, "message": ...}`. 401 = token not accepted (missing, wrong or revoked), 403 = worker disabled, 409 = "that job is no longer yours" (the body has `"stop": true`: stop working on it and delete nothing yet), 426 = unsupported protocol version.
 
 | Call | Body | Answer |
 |---|---|---|
-| `/register` | `protocol` (must be 1), `version`, `os`, `hostname`, `slots`, `capabilities` (`ffmpeg`, `encoders`, `cores`...) | `worker_id`, `name`, `protocol`, `poll_seconds` (5), `lease_seconds` (90) |
-| `/poll` | `free_slots`, `free_bytes` (free space in the work folder), `holding` (ids of jobs whose files it still has, if it sends a list), `status` (summary shown on the Workers page: `work_free_bytes`, `originals_count`, `originals_bytes`...) | `jobs` (new jobs), `cancel` (job ids to stop), `cleanup` (job ids whose local files may now be deleted), `paused`, `draining`, `poll_seconds`, `lease_seconds` |
+| `/register` | `protocol` (must be 1), `version`, `os`, `hostname`, `slots`, `capabilities` (`ops`, `ffmpeg`, `encoders`, `cores`...) | `worker_id`, `name`, `protocol`, `poll_seconds` (5), `lease_seconds` (90), `roots` (each share: `name`, `mount_point`, `marker`, `marker_text`), `roots_hash` |
+| `/roots` | | The same `roots` and `roots_hash` without registering or marking the worker seen: for `--check` and `--init-roots` |
+| `/poll` | `free_slots`, `free_bytes` (free space in the work folder), `active` (ids it is working on right now), `holding` (ids of job folders it has), `status` (summary shown on the Workers page: `work_free_bytes`, `roots` {name: `ok`, `state`, `message`, `free_bytes`}, `jobs`, `version`) | `jobs` (new jobs), `resume` (jobs SyncHub thinks it runs that are not in `active`: it restarted), `cancel` (ids to stop), `cleanup` (ids whose local files and half-written share files may be deleted; answer with `/cleaned`), `release` (folders of jobs that are done or unknown to SyncHub), `log_requests` (ids whose full log to upload), `roots_hash` (changed: call `/roots`), `paused`, `draining`, `poll_seconds`, `lease_seconds` |
 | `/jobs/<id>/progress` | `stage`, `progress` (0 to 1), `fps`, `speed`, `eta_seconds`, `message`. Also the heartbeat | `cancel` (true: stop), `lease_seconds` |
 | `/jobs/<id>/complete` | `result` (object), `command` | |
 | `/jobs/<id>/fail` | `error_class`, `message`, `retryable`, `log_tail`, `command`, `keep_state` | `outcome`: `queued` (retry), `needs_review`, `failed` or `cancelled` |
 | `/jobs/<id>/needs_review` | `reason`, `detail` (object), `keep_state` | |
+| `/jobs/<id>/log` | `text` (the log; SyncHub keeps the end of anything over 1 MB), `truncated` | Accepted from the worker that ran, holds or last tried the job |
 | `/jobs/<id>/cleaned` | | the worker has deleted that job's local files |
 
-A job in `jobs` carries: `id`, `kind`, `title`, `attempt`, `plan`, `policy`, `decision` (a person's answer, if any), `source` and `dest` (`{root, rel}` or null). **Stages** a worker may report: `claimed, copy_in, analyze, plan, preview, encode, verify, copy_out, publish, scan, done`. **Error classes** with their own rules: `transient` (retry, back-off 1, 5, 15, 60 minutes), `worker_lost`, `source_changed`, `verification_failed`, `size_target_missed` (each: one more try, then a person), `encode_failed` (a person at once); any other class is not retried unless `retryable` is true.
+A job in `jobs` and `resume` carries: `id`, `kind`, `title`, `attempt`, `plan`, `policy`, `decision` (a person's answer, if any), `source` and `dest` (`{root, rel}` or null). **Stages** a worker may report: `claimed, copy_in, analyze, plan, preview, encode, verify, copy_out, publish, scan, done`. **Error classes** with their own rules: `transient` (retry, back-off 1, 5, 15, 60 minutes), `worker_lost`, `source_changed`, `verification_failed`, `size_target_missed` (each: one more try, then a person), `encode_failed` (a person at once); any other class (the agent also sends `dest_exists`, `permission_denied`, `unsupported_job`, `bad_job`, `agent_error`) is not retried unless `retryable` is true.
 
-Rules worth knowing: a claim is atomic (two workers never get the same job); a job whose worker is silent for 90 s goes back to the queue and its worker keeps first call on it for 30 minutes; after a decision or retry the worker that holds the job's files also gets 30 minutes' first call; a worker only receives jobs that fit its `free_bytes`, its tags and its free slots; a paused, draining or disabled worker receives none. Still to come (later phases): `analysis` (facts in, plan out), `scan` batches, log upload on request.
+Rules worth knowing: a claim is atomic (two workers never get the same job); a job whose worker is silent for 90 s goes back to the queue and its worker keeps first call on it for 30 minutes; after a decision or retry the worker that holds the job's files also gets 30 minutes' first call; a worker only receives jobs that fit its `free_bytes`, its tags and its free slots, whose `plan.op` is among its `capabilities.ops` (an agent that lists none is trusted), and whose shares it reports as ready (a worker that reports shares but not the one a job names, or says it is not ready, is skipped; the Jobs list then says "No online worker has X mounted and ready"); a paused, draining or disabled worker receives none. Still to come (later phases): `analysis` (facts in, plan out), `scan` batches.
 
-**Settings file for the agent (Phase 2)**, as the Workers page hands it out:
+### The agent as built (`agent/synchub_agent.py`, `agent/README.md`)
+
+- **Copy job** (`plan {"op": "copy"}`, source and destination as share + relative path): copy in (checkpoint every 256 MB, SHA-256 while reading, resumable), copy out to `<name>.synchub-partial` (checkpointed, resumable), read the copy back and compare SHA-256, then rename. A different file already at the destination fails the job (`dest_exists`); an identical one counts as done. The source's modified date is kept. A mismatch deletes both copies so the retry starts clean.
+- **Resume**: manifests are written atomically in `<work>/jobs/<id>-<hash>/`. Checkpoints are fsynced before they are recorded; on restart the agent truncates to the last checkpoint and carries on. A killed agent was tested with `SIGKILL` in the middle of copy in and of copy out: the resumed run read the source from the checkpoint and did not repeat a finished copy in.
+- **Reporting**: progress and heartbeat go from a thread of their own, so a slow SyncHub never slows a copy; if a job makes no progress for two minutes (a hung mount) the heartbeat stops and SyncHub takes the job back. The final report is saved first and re-sent until accepted; the big local files are removed only after SyncHub has it.
+- **Shares**: checked in the background (mounted, marker matches, writable, free space); a check that hangs is reported as "not responding" and never blocks the agent. `--init-roots` writes the markers once and never creates a folder.
+- **Commands**: `--check`, `--init-roots [--force]`, `--healthcheck`, `--version`. Settings: INI file or environment (`agent/README.md`).
+- **Shutdown** (SIGTERM, Docker stop): stops at the next safe point and reports nothing; the lease runs out and the job resumes when the agent is back.
+
+**Settings file for the agent**, as the Workers page hands it out (the same dialog also gives `.env`, `docker-compose.yml` and `/etc/fstab` lines for the shares defined on the Storage page):
 
 ```
 [synchub]
@@ -389,6 +400,8 @@ url = http://<synchub address>:5001
 token = sw_...
 name = encoder-1
 ```
+
+**Not verified yet** (no Docker daemon or Unraid server was available when this was built): that Docker's `cifs` and `nfs` volume options mount your Unraid shares as generated (the compose file validates with `docker compose config`); that Docker accepts an SMB host *name* (it looks names up for NFS only, so the generated file warns and an IP address is recommended); and that a comma in an SMB password written as two commas is passed through. `agent/Dockerfile` has not been built.
 
 ## 16. Risks and what is still open
 

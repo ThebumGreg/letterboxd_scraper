@@ -117,6 +117,13 @@ def roots_ready(worker, job):
     return True
 
 
+def can_run(worker, job):
+    """Whether the worker's agent knows how to do the job's operation. An agent that does not list its operations is trusted."""
+    ops = worker["capabilities"].get("ops") if isinstance(worker.get("capabilities"), dict) else None
+    op = job["plan"].get("op") if isinstance(job.get("plan"), dict) else None
+    return not (isinstance(ops, list) and op and op not in ops)
+
+
 def claim(conn, worker, free_slots, free_bytes=None, now=None):
     """Gives the worker up to `free_slots` queued jobs it is allowed and able to run. A disabled, paused or draining worker gets none."""
     if not worker["enabled"] or worker["paused"] or worker["draining"]:
@@ -135,7 +142,7 @@ def claim(conn, worker, free_slots, free_bytes=None, now=None):
         if len(claimed) >= room:
             break
         job = row(r)
-        if not set(job["required_tags"]) <= tags:
+        if not set(job["required_tags"]) <= tags or not can_run(worker, job):
             continue
         if job["need_bytes"] and free_bytes is not None and job["need_bytes"] > free_bytes:
             continue
@@ -171,6 +178,16 @@ def resume_for(conn, worker_id, active):
         job["attempt_no"] = (conn.execute("SELECT MAX(attempt_no) FROM job_attempt WHERE job_id = ?", (job["id"],)).fetchone()[0]) or job["attempts"]
         out.append(payload(job))
     return out
+
+
+def release_for(conn, holding):
+    """Of the jobs a worker still has folders for, those it no longer needs: the job is done, or SyncHub does not know it at all
+    (for example after the database was reset). Failed, cancelled and waiting jobs are never released here: their files are kept."""
+    ids = sorted({int(i) for i in holding or [] if str(i).isdigit()})[:2000]
+    if not ids:
+        return []
+    known = {r["id"]: r["status"] for r in conn.execute(f"SELECT id, status FROM job WHERE id IN ({','.join('?' * len(ids))})", ids)}
+    return [i for i in ids if known.get(i) in (None, "done")]
 
 
 def running_for(conn, worker_id):

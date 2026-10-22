@@ -39,7 +39,7 @@ def fleet(v2, app):
 # ---------------------------------------------------------------- who may call
 def test_every_call_needs_a_valid_token(fleet):
     for headers in ({}, {"Authorization": "Bearer"}, {"Authorization": "Bearer nope"}, {"Authorization": "Basic " + fleet.raw_token}, {"Authorization": fleet.raw_token}):
-        for path in ("/register", "/poll", "/jobs/1/progress", "/jobs/1/complete", "/jobs/1/fail", "/jobs/1/needs_review", "/jobs/1/cleaned"):
+        for path in ("/register", "/roots", "/poll", "/jobs/1/progress", "/jobs/1/complete", "/jobs/1/fail", "/jobs/1/needs_review", "/jobs/1/cleaned"):
             r = fleet.call(path, headers=headers)
             assert r.status_code == 401 and r.get_json() == {"ok": False, "message": "The worker token was not accepted."}, (path, headers)
 
@@ -68,7 +68,7 @@ def test_the_api_is_not_behind_the_profile_chooser_and_only_accepts_post(fleet, 
 def test_register_returns_the_settings_an_agent_needs(fleet, v2):
     info = {"protocol": workers.PROTOCOL, "version": "1.0", "os": "Ubuntu 24.04", "hostname": "enc1", "slots": 2, "capabilities": {"encoders": ["libx265"]}}
     r = fleet.call("/register", info).get_json()
-    assert r == {"ok": True, "worker_id": fleet.id, "name": "encoder-1", "protocol": workers.PROTOCOL, "poll_seconds": 5, "lease_seconds": jobs.LEASE_SECONDS, "roots": []}
+    assert r == {"ok": True, "worker_id": fleet.id, "name": "encoder-1", "protocol": workers.PROTOCOL, "poll_seconds": 5, "lease_seconds": jobs.LEASE_SECONDS, "roots": [], "roots_hash": r["roots_hash"]}
     with v2.connection() as conn:
         assert workers.get(conn, fleet.id)["capabilities"]["encoders"] == ["libx265"] and workers.get(conn, fleet.id)["online"]
 
@@ -315,3 +315,36 @@ def test_a_huge_log_keeps_its_end(fleet, v2):
 
 def test_the_log_endpoint_needs_the_token(fleet):
     assert fleet.call("/jobs/1/log", {"text": "x"}, headers={}).status_code == 401
+
+
+def test_roots_can_be_read_without_registering(fleet, v2):
+    add_shares(v2, "media")
+    got = fleet.call("/roots").get_json()
+    assert got["ok"] and got["name"] == "encoder-1" and got["protocol"] == workers.PROTOCOL and [r["name"] for r in got["roots"]] == ["media"]
+    with v2.connection() as conn:
+        assert workers.get(conn, fleet.id)["last_seen"] is None                              # asking is not the same as coming online
+
+
+def test_a_job_is_only_given_to_an_agent_that_can_do_its_operation(fleet, v2):
+    job_id = fleet.queue(plan={"op": "encode"})
+    copy_id = fleet.queue(plan={"op": "copy"})
+    plain_id = fleet.queue()
+    fleet.call("/register", {"protocol": workers.PROTOCOL, "capabilities": {"ops": ["copy"]}})
+    assert [j["id"] for j in fleet.poll()["jobs"]] == [copy_id, plain_id]                  # the encode job waits for an agent that can encode
+    assert fleet.job(job_id)["status"] == "queued"
+
+
+def test_an_agent_that_does_not_list_its_operations_is_trusted(fleet):
+    job_id = fleet.queue(plan={"op": "encode"})
+    fleet.call("/register", {"protocol": workers.PROTOCOL})
+    assert [j["id"] for j in fleet.poll()["jobs"]] == [job_id]
+
+
+def test_folders_for_finished_or_unknown_jobs_are_released_but_failed_ones_are_kept(fleet, v2):
+    done, failed, waiting = fleet.queue(), fleet.queue(), fleet.queue()
+    fleet.poll(free_slots=2)
+    with v2.connection() as conn:
+        conn.execute("UPDATE job SET status = 'done' WHERE id = ?", (done,))
+        conn.execute("UPDATE job SET status = 'failed' WHERE id = ?", (failed,))
+    assert fleet.poll(free_slots=0, holding=[done, failed, waiting, 999])["release"] == [done, 999]
+    assert fleet.poll(free_slots=0)["release"] == []                                       # no list, nothing to release

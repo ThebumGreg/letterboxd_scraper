@@ -64,10 +64,16 @@ def register(app):
                 workers.register(conn, g.worker["id"], _body())
             except workers.ProtocolError as exc:
                 return _error(str(exc), 426, protocol=workers.PROTOCOL)
-            roots = storage.for_agent(conn)
+            roots, roots_hash = storage.for_agent(conn), storage.roots_hash(conn)
         logger.info(f"[workers] {g.worker['name']} registered")
         return jsonify(ok=True, worker_id=g.worker["id"], name=g.worker["name"], protocol=workers.PROTOCOL,
-                       poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS, roots=roots)
+                       poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS, roots=roots, roots_hash=roots_hash)
+
+    @route("/roots", "roots")
+    def roots():
+        """The shares and their marker files, without registering: for `--check` and `--init-roots` on the worker."""
+        with db.connection() as conn:
+            return jsonify(ok=True, name=g.worker["name"], protocol=workers.PROTOCOL, roots=storage.for_agent(conn), roots_hash=storage.roots_hash(conn))
 
     @route("/poll", "poll")
     def poll():
@@ -80,12 +86,13 @@ def register(app):
                 if lost:
                     logger.warning(f"[jobs] {worker['name']} no longer holds job(s) {lost}; they were re-queued")
             resume = jobs.resume_for(conn, worker["id"], data["active"]) if isinstance(data.get("active"), list) else []
+            release = jobs.release_for(conn, data["holding"]) if isinstance(data.get("holding"), list) else []
             free_bytes = data.get("free_bytes")
             claimed = jobs.claim(conn, worker, data.get("free_slots") or 0, free_bytes if isinstance(free_bytes, (int, float)) else None)
             for job in claimed:
                 logger.info(f"[jobs] job {job['id']} ({job['kind']}: {job['title']}) went to {worker['name']}, attempt {job['attempt']}")
-            return jsonify(ok=True, jobs=claimed, resume=resume, cancel=jobs.cancels_for(conn, worker["id"]), cleanup=jobs.cleanups_for(conn, worker["id"]),
-                           log_requests=jobs.log_requests_for(conn, worker["id"]), paused=bool(worker["paused"]), draining=bool(worker["draining"]),
+            return jsonify(ok=True, jobs=claimed, resume=resume, release=release, cancel=jobs.cancels_for(conn, worker["id"]), cleanup=jobs.cleanups_for(conn, worker["id"]),
+                           log_requests=jobs.log_requests_for(conn, worker["id"]), roots_hash=storage.roots_hash(conn), paused=bool(worker["paused"]), draining=bool(worker["draining"]),
                            poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS)
 
     @route("/jobs/<int:job_id>/progress", "progress")

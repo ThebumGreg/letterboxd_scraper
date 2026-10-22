@@ -1,3 +1,7 @@
+import json
+import shutil
+import subprocess
+
 import pytest
 
 from synchub import jobs, storage, workers
@@ -123,7 +127,8 @@ def test_the_compose_file_is_valid_yaml_and_mounts_each_share_with_dockers_own_d
     yaml = pytest.importorskip("yaml")
     doc = yaml.safe_load(storage.compose_file("encoder-1", roots(SMB, NFS, {"name": "local", "protocol": "local", "share": "/srv/x", "mount_point": "/mnt/local"})))
     worker = doc["services"]["worker"]
-    assert worker["restart"] == "unless-stopped" and worker["env_file"] == ".env" and worker["build"] == "./agent"
+    assert worker["restart"] == "unless-stopped" and worker["build"] == "./agent" and "env_file" not in worker
+    assert set(worker["environment"]) == {"SYNCHUB_URL", "SYNCHUB_TOKEN", "SYNCHUB_NAME", "SYNCHUB_WORK"}               # the share login is not handed to the container
     assert "${WORK_DIR:-./work}:/work" in worker["volumes"] and "root_media:/mnt/tower/Media" in worker["volumes"]
     assert "root_tfiles:/mnt/tower/TFiles" in worker["volumes"] and "/srv/x:/mnt/local" in worker["volumes"]
     media, tfiles = doc["volumes"]["root_media"]["driver_opts"], doc["volumes"]["root_tfiles"]["driver_opts"]
@@ -159,3 +164,45 @@ def test_setup_files_cover_a_worker_with_no_shares_yet():
     files = storage.setup_files("encoder-1", "http://x:5001", "sw_t", [])
     assert set(files) == set(storage.SETUP_ORDER) == {".env", "docker-compose.yml", "synchub-agent.ini", "fstab"}
     assert "volumes:" in files["docker-compose.yml"] and "root_" not in files["docker-compose.yml"]
+
+
+def test_the_committed_example_files_are_exactly_what_synchub_generates():
+    from pathlib import Path
+    examples = Path(__file__).resolve().parents[2] / "agent" / "examples"
+    sample = roots({"name": "media", "protocol": "smb", "host": "192.168.1.10", "share": "Media", "mount_point": "/mnt/tower/Media"},
+                   {"name": "tfiles", "protocol": "smb", "host": "192.168.1.10", "share": "TFiles", "mount_point": "/mnt/tower/TFiles"})
+    for name, text in storage.setup_files("encoder-1", "http://192.168.1.20:5001", "sw_replace-with-the-token-from-synchub", sample).items():
+        shown = "env.example" if name == ".env" else name                      # a real .env is git-ignored, so the sample has another name
+        assert (examples / shown).read_text() == text, f"agent/examples/{shown} is out of date: regenerate it from storage.setup_files"
+
+
+def _compose_available():
+    if not shutil.which("docker"):
+        return False
+    return subprocess.run(["docker", "compose", "version"], capture_output=True).returncode == 0
+
+
+@pytest.mark.skipif(not _compose_available(), reason="docker compose is not installed")
+def test_docker_compose_itself_accepts_the_generated_files_and_fills_in_the_login(tmp_path):
+    files = storage.setup_files("encoder-1", "http://192.168.1.20:5001", "sw_token", roots(SMB, NFS))
+    (tmp_path / "docker-compose.yml").write_text(files["docker-compose.yml"])
+    (tmp_path / ".env").write_text(files[".env"].replace("SMB_USER=\n", "SMB_USER=bob\n").replace("SMB_PASSWORD=\n", "SMB_PASSWORD=p$$w\n"))
+    done = subprocess.run(["docker", "compose", "--project-directory", str(tmp_path), "config", "--format", "json"], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    config = json.loads(done.stdout)
+    # compose prints a literal $ as $$ (it is written $$ in .env for the same reason), so p$$w here is the password p$w
+    assert config["volumes"]["root_media"]["driver_opts"] == {"type": "cifs", "o": "addr=192.168.1.10,username=bob,password=p$$w,vers=3.0", "device": "//192.168.1.10/Media"}
+    assert config["volumes"]["root_tfiles"]["driver_opts"] == {"type": "nfs", "o": "addr=tower,nfsvers=4,hard", "device": ":/mnt/user/TFiles"}
+    environment = config["services"]["worker"]["environment"]
+    assert environment["SYNCHUB_TOKEN"] == "sw_token" and "SMB_PASSWORD" not in environment                   # the share login stays out of the container
+    (tmp_path / ".env").write_text(files[".env"].replace("SYNCHUB_TOKEN=sw_token", "SYNCHUB_TOKEN="))
+    done = subprocess.run(["docker", "compose", "--project-directory", str(tmp_path), "config", "-q"], capture_output=True, text=True)
+    assert done.returncode != 0 and "set SYNCHUB_TOKEN in .env" in done.stderr
+
+
+def test_an_smb_share_named_by_host_name_gets_a_warning_in_the_compose_file_but_an_ip_address_does_not():
+    named = storage.compose_file("w", roots({**SMB, "host": "tower"}))
+    assert "use the server's IP address" in named and "addr=tower" in named
+    assert "IP address" not in storage.compose_file("w", roots(SMB))
+    assert "IP address" not in storage.compose_file("w", roots({**NFS, "host": "tower"}))                  # Docker does look names up for NFS
+    pytest.importorskip("yaml").safe_load(named)

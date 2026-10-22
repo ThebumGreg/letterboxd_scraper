@@ -30,9 +30,11 @@ New states need no code or schema change: add a row to `state_def` and have a sc
 
 ## Workers (control plane)
 
-**Workers** (top bar) is where the PCs that will do scanning, copying and encoding are added and watched. **Add worker** gives a name, tags, a slot count and a one-time token with the settings snippet for that PC. A worker can be paused, drained (finish what it has, take nothing new), disabled, given a new token or have its token revoked. The page also lists recent jobs with their stage, progress and attempts, and lets you cancel, retry or decide jobs that are waiting for you (approve, retry, skip, reject).
+**Workers** (top bar) is where the PCs that do the heavy work are added and watched. **Add worker** gives a name, tags, a slot count and a one-time token, together with ready-made setup files for that PC (a Docker compose file, an `.env`, an agent settings file and `/etc/fstab` lines). A worker can be paused, drained (finish what it has, take nothing new), disabled, given a new token or have its token revoked. The page also lists each worker's shares ("ready", "not mounted", "wrong share"...), recent jobs with their stage, progress and attempts, lets you cancel, retry or decide jobs that are waiting for you, fetch a job's full log from its worker, and queue a **Test copy** (a verified copy of one file between two shares) to prove a worker end to end.
 
-The worker side is a small API (`/api/worker/v1/...`, token per worker, documented in `docs/DESIGN_ENCODING.md`, Appendix A). Workers ask for jobs; a job whose worker goes silent returns to the queue. The agent script for Ubuntu, the Library page and the encoding itself are the next phases of that plan; nothing queues real jobs yet.
+**Storage** (top bar) defines the Unraid shares the workers use: a short name, SMB or NFS, the server address, the share, and the folder every worker mounts it at. SyncHub cannot mount anything on a worker PC itself, so it generates the files that do (Docker mounts the shares, and a worker refuses any share whose `.synchub-root` marker file is missing or names a different share). Share logins never enter SyncHub; they go in the worker's own `.env`.
+
+The worker side is a small API (`/api/worker/v1/...`, token per worker, documented in `docs/DESIGN_ENCODING.md`, Appendix A) and an agent for Ubuntu in `agent/` (one Python file; `agent/README.md` has the install steps). Workers ask for jobs; a job whose worker goes silent returns to the queue and resumes where its files are. Verified copies work today; the Library page and the encoding itself are the next phases of that plan.
 
 ## Search and add
 

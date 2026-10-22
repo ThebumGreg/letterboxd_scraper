@@ -137,7 +137,7 @@
 
     // Setup files. Right after a token is made they hold it; nothing keeps them once the dialog closes.
     const NOTES = {
-        '.env': 'Save as .env next to docker-compose.yml, then fill in the Unraid user and password for the shares.',
+        '.env': 'Save as .env next to docker-compose.yml (then chmod 600 .env) and fill in the Unraid user and password for the shares.',
         'docker-compose.yml': 'Save next to .env and the agent folder from the SyncHub repository, then run: docker compose up -d --build',
         'synchub-agent.ini': 'Only for a worker that runs without Docker: python3 synchub_agent.py --config synchub-agent.ini',
         'fstab': 'Only for a worker that runs without Docker: add these lines to /etc/fstab so the shares mount at boot.',

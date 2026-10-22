@@ -71,7 +71,7 @@
                         <label for="shareProtocol" class="form-label">How workers connect</label>
                         <select class="form-select" id="shareProtocol">{% for key, label in protocols.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
                     </div>
-                    <div class="col-md-4 mb-3" data-network><label for="shareHost" class="form-label">Unraid address</label><input class="form-control" id="shareHost" placeholder="192.168.1.10" maxlength="253"></div>
+                    <div class="col-md-4 mb-3" data-network><label for="shareHost" class="form-label">Unraid address</label><input class="form-control" id="shareHost" placeholder="192.168.1.10" maxlength="253"><div class="form-text">An IP address is the most reliable: Docker mounts SMB shares without looking up names.</div></div>
                     <div class="col-md-4 mb-3"><label for="shareShare" class="form-label" id="shareShareLabel">Share name</label><input class="form-control" id="shareShare" required maxlength="200" placeholder="Media"><div class="form-text" id="shareShareHint"></div></div>
                 </div>
                 <div class="row">

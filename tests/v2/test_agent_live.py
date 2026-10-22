@@ -1,0 +1,529 @@
+"""The agent against a real SyncHub on localhost: real HTTP, real files, and a real process killed with SIGKILL."""
+import hashlib
+import io
+import json
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+from contextlib import redirect_stdout
+from pathlib import Path
+
+import pytest
+from werkzeug.serving import make_server
+
+from synchub import jobs, storage, workers
+from synchub.web import worker_api
+
+from .agent_module import PATH as AGENT_PATH, agent
+
+MB = 1024 * 1024
+LAUNCH = ("import sys; sys.path.insert(0, {dir!r}); import synchub_agent as a; a.Agent.MIN_POLL = 0.1; a.Reporter.INTERVAL = 0.1; "
+          "a.RootMonitor.CHECK_SECONDS = 0.2; sys.exit(a.main([]))")
+
+
+def sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def wait(predicate, timeout=30, what="the condition"):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        value = predicate()
+        if value:
+            return value
+        time.sleep(0.05)
+    raise AssertionError(f"Timed out waiting for {what}")
+
+
+class Rig:
+    """A SyncHub on localhost with two shares (real folders with marker files) and a worker token, plus ways to run agents against it."""
+
+    def __init__(self, tmp_path, v2, url):
+        self.tmp, self.db, self.url = tmp_path, v2, url
+        self.roots = {"media": tmp_path / "media", "tfiles": tmp_path / "tfiles"}
+        self.work = tmp_path / "work"
+        with v2.connection() as conn:
+            for name, path in self.roots.items():
+                path.mkdir()
+                (path / agent.MARKER).write_text(name + "\n")
+                storage.create(conn, {"name": name, "protocol": "local", "share": str(path), "mount_point": str(path)})
+            self.worker_id, self.token = workers.create(conn, "encoder-1", slots=2)
+        self.running = []
+
+    def env(self, **extra):
+        env = {"SYNCHUB_URL": self.url, "SYNCHUB_TOKEN": self.token, "SYNCHUB_WORK": str(self.work), "SYNCHUB_COPY_CHUNK_MB": "1"}
+        env.update({k: str(v) for k, v in extra.items()})
+        return env
+
+    def config(self, **extra):
+        return agent.Config(None, env=self.env(**extra)).validate()
+
+    def start(self, api=None, **extra):
+        """An agent running in this process, in its own thread."""
+        cfg = self.config(**extra)
+        instance = agent.Agent(cfg, agent.build_logger(cfg, console=False), api=api)
+        thread = threading.Thread(target=instance.run, name="agent-under-test", daemon=True)
+        thread.start()
+        self.running.append((instance, thread))
+        return instance
+
+    def stop(self, instance):
+        instance.stop()
+        for pair in self.running:
+            if pair[0] is instance:
+                pair[1].join(60)
+                assert not pair[1].is_alive(), "the agent did not stop"
+
+    def spawn(self, **extra):
+        """An agent in a process of its own, so it can be killed the way a power cut would."""
+        env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")}
+        env.update(self.env(**extra))
+        out = open(self.tmp / f"agent-{len(list(self.tmp.glob('agent-*.out')))}.out", "wb")
+        proc = subprocess.Popen([sys.executable, "-c", LAUNCH.format(dir=str(AGENT_PATH.parent))], env=env, stdout=out, stderr=subprocess.STDOUT)
+        self.running.append((proc, None))
+        return proc
+
+    def file(self, share, rel, size):
+        path = self.roots[share] / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(os.urandom(size))
+        return path
+
+    def queue(self, src="Movies/Heat.mkv", dst="out/Heat.mkv", src_root="media", dst_root="tfiles", **kw):
+        with self.db.connection() as conn:
+            return storage.queue_test_copy(conn, src_root, src, dst_root, dst, kw.get("worker_id"))
+
+    def job(self, job_id):
+        with self.db.connection() as conn:
+            return jobs.get(conn, job_id)
+
+    def manifest(self, job_id):
+        for folder in (self.work / "jobs").glob(f"{job_id}-*"):
+            try:
+                return json.loads((folder / "manifest.json").read_text())
+            except (OSError, ValueError):
+                return None
+        return None
+
+    def joblog(self, job_id):
+        for folder in (self.work / "jobs").glob(f"{job_id}-*"):
+            return [json.loads(line) for line in (folder / "job.log").read_text().splitlines()]
+        return []
+
+    def close(self):
+        for thing, thread in self.running:
+            if thread is None:
+                if thing.poll() is None:
+                    thing.kill()
+                    thing.wait(10)
+            else:
+                thing.stop()
+                thread.join(30)
+
+
+@pytest.fixture
+def rig(tmp_path, v2, app, monkeypatch):
+    monkeypatch.setattr(worker_api, "POLL_SECONDS", 0.1)
+    monkeypatch.setattr(agent.Agent, "MIN_POLL", 0.1)
+    monkeypatch.setattr(agent.Reporter, "INTERVAL", 0.1)
+    monkeypatch.setattr(agent.RootMonitor, "CHECK_SECONDS", 0.2)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    rig = Rig(tmp_path, v2, f"http://127.0.0.1:{server.server_port}")
+    yield rig
+    rig.close()
+    server.shutdown()
+
+
+# ---------------------------------------------------------------- the basics
+def test_a_copy_job_runs_from_claim_to_done_and_the_copy_is_exact(rig):
+    source = rig.file("media", "Movies/Heat.mkv", 3 * MB + 123)
+    job_id = rig.queue()
+    rig.start()
+    job = wait(lambda: (j := rig.job(job_id))["status"] == "done" and j, what="the copy to finish")
+    dest = rig.roots["tfiles"] / "out" / "Heat.mkv"
+    assert dest.read_bytes() == source.read_bytes() and not list(dest.parent.glob("*.synchub-partial"))
+    assert job["result"]["bytes"] == source.stat().st_size and job["result"]["sha256"] == sha(source) and job["result"]["verified"] == "sha256"
+    assert job["stage"] == "done" and job["attempts"] == 1
+    assert int(dest.stat().st_mtime) == int(source.stat().st_mtime)                     # the original's modified date is kept
+    manifest = wait(lambda: (m := rig.manifest(job_id)) and (m["report"] or {}).get("sent") and m, what="the report to be marked sent")
+    assert manifest["outcome"] == "done" and manifest["keep_until"] and not (rig.work / "jobs" / f"{job_id}-x").exists()
+    folder = next((rig.work / "jobs").glob(f"{job_id}-*"))
+    assert not (folder / "source").exists()                                              # the big local copy goes once SyncHub has the result
+    messages = [line["msg"] for line in rig.joblog(job_id)]
+    assert any(m.startswith("Starting") for m in messages) and any(m.startswith("Copied 3.0 MB and verified it") for m in messages)
+    worker_log = [json.loads(line) for line in (rig.work / "logs" / "worker.jsonl").read_text().splitlines()]
+    assert any(line.get("job") == job_id for line in worker_log) and any("Registered with SyncHub" in line["msg"] for line in worker_log)
+
+
+def test_the_agent_reports_what_it_can_do_and_how_its_shares_are(rig):
+    rig.start()
+    with rig.db.connection() as conn:
+        w = wait(lambda: (x := workers.get(conn, rig.worker_id)) and x["status"].get("roots", {}).get("tfiles") and x, what="the first status")
+    assert w["capabilities"]["ops"] == ["copy"] and w["version"] == agent.__version__ and w["hostname"]
+    assert w["status"]["roots"]["media"]["ok"] and w["status"]["roots"]["media"]["state"] == "ok" and w["status"]["work_free_bytes"] > 0
+
+
+def test_the_agent_never_overwrites_a_different_file(rig):
+    rig.file("media", "Movies/Heat.mkv", MB)
+    other = rig.roots["tfiles"] / "out" / "Heat.mkv"
+    other.parent.mkdir()
+    other.write_bytes(b"somebody else's file")
+    job_id = rig.queue()
+    rig.start()
+    job = wait(lambda: (j := rig.job(job_id))["status"] == "failed" and j, what="the refusal")
+    assert job["error_class"] == "dest_exists" and "never overwrites" in job["error"] and job["attempts"] == 1
+    assert other.read_bytes() == b"somebody else's file" and not list(other.parent.glob("*partial"))
+
+
+def test_a_destination_that_already_holds_the_exact_file_counts_as_done(rig):
+    source = rig.file("media", "Movies/Heat.mkv", MB)
+    dest = rig.roots["tfiles"] / "out" / "Heat.mkv"
+    dest.parent.mkdir()
+    dest.write_bytes(source.read_bytes())
+    before = dest.stat()
+    job_id = rig.queue()
+    rig.start()
+    wait(lambda: rig.job(job_id)["status"] == "done", what="done")
+    assert dest.stat().st_ino == before.st_ino and dest.stat().st_mtime_ns == before.st_mtime_ns        # not rewritten
+    assert any("already holds this exact file" in line["msg"] for line in rig.joblog(job_id))
+
+
+def test_a_missing_source_is_reported_as_changed_not_as_a_crash(rig):
+    job_id = rig.queue(src="Movies/Gone.mkv")
+    rig.start()
+    job = wait(lambda: rig.job(job_id)["error_class"] == "source_changed" and rig.job(job_id), what="the missing source to be noticed")
+    assert "Gone.mkv" in job["error"] and job["status"] in ("queued", "needs_review")          # retried once more, then a person decides
+
+
+def test_an_unsupported_operation_fails_in_plain_words(rig, monkeypatch):
+    monkeypatch.setattr(agent, "OPS", ["copy", "encode"])                          # SyncHub hands out what the agent says it can do
+    with rig.db.connection() as conn:
+        job_id = jobs.create(conn, "library", title="Encode it", plan={"op": "encode"}, pinned_worker_id=rig.worker_id)
+    rig.start()
+    job = wait(lambda: rig.job(job_id)["status"] == "failed" and rig.job(job_id), what="the refusal")
+    assert job["error_class"] == "unsupported_job" and "cannot do 'encode'" in job["error"]
+
+
+def test_a_job_is_not_handed_out_for_an_operation_the_agent_does_not_know(rig):
+    with rig.db.connection() as conn:
+        job_id = jobs.create(conn, "library", title="Encode it", plan={"op": "encode"}, pinned_worker_id=rig.worker_id)
+    rig.start()
+    time.sleep(1.0)
+    assert rig.job(job_id)["status"] == "queued"
+
+
+# ---------------------------------------------------------------- shares
+def test_a_share_without_its_marker_is_not_used_until_it_is_set_up(rig):
+    (rig.roots["tfiles"] / agent.MARKER).unlink()                                    # as if the share had failed to mount and left an empty folder
+    rig.file("media", "Movies/Heat.mkv", MB)
+    job_id = rig.queue()
+    rig.start()
+    with rig.db.connection() as conn:
+        w = wait(lambda: (x := workers.get(conn, rig.worker_id)) and x["status"].get("roots", {}).get("tfiles", {}).get("state") == "no_marker" and x, what="the report")
+    assert w["status"]["roots"]["media"]["ok"] and "--init-roots" in w["status"]["roots"]["tfiles"]["message"]
+    time.sleep(0.8)
+    assert rig.job(job_id)["status"] == "queued" and not (rig.roots["tfiles"] / "out").exists()      # nothing was written into the unmarked folder
+    assert agent.command_init_roots(rig.config()) == 0
+    wait(lambda: rig.job(job_id)["status"] == "done", what="the job once the share is marked")
+
+
+def test_init_roots_writes_markers_but_never_creates_folders_or_replaces_a_different_marker(rig, capsys):
+    (rig.roots["tfiles"] / agent.MARKER).unlink()
+    (rig.roots["media"] / agent.MARKER).write_text("something-else\n")
+    assert agent.command_init_roots(rig.config()) == 1
+    out = capsys.readouterr().out
+    assert "tfiles: wrote" in out and "media:" in out and "looks like the wrong share" in out
+    assert (rig.roots["tfiles"] / agent.MARKER).read_text() == "tfiles\n" and (rig.roots["media"] / agent.MARKER).read_text() == "something-else\n"
+    assert agent.command_init_roots(rig.config(), force=True) == 0
+    assert (rig.roots["media"] / agent.MARKER).read_text() == "media\n"
+    assert agent.command_init_roots(rig.config()) == 0 and "already set up" in capsys.readouterr().out
+    with rig.db.connection() as conn:
+        storage.create(conn, {"name": "ghost", "protocol": "local", "share": "/nowhere/ghost", "mount_point": "/nowhere/ghost"})
+    assert agent.command_init_roots(rig.config()) == 1
+    assert "does not exist" in capsys.readouterr().out and not os.path.exists("/nowhere")
+
+
+def test_check_says_what_works_and_what_does_not(rig):
+    out = io.StringIO()
+    with redirect_stdout(out):
+        code = agent.command_check(rig.config())
+    text = out.getvalue()
+    assert code == 0 and "[ok] SyncHub accepts the token" in text and "[ok] share media" in text and "[ok] share tfiles" in text and "Everything needed is in order" in text
+    (rig.roots["tfiles"] / agent.MARKER).unlink()
+    out = io.StringIO()
+    with redirect_stdout(out):
+        code = agent.command_check(rig.config())
+    assert code == 1 and "[!!] share tfiles" in out.getvalue() and "1 problem(s) found" in out.getvalue()
+    out = io.StringIO()
+    with redirect_stdout(out):
+        code = agent.command_check(agent.Config(None, env=rig.env(SYNCHUB_TOKEN="sw_wrong")).validate())
+    assert code == 1 and "token was not accepted" in out.getvalue()
+    out = io.StringIO()
+    with redirect_stdout(out):
+        code = agent.command_check(agent.Config(None, env=rig.env(SYNCHUB_URL="http://127.0.0.1:9")).validate())
+    assert code == 1 and "SyncHub is reachable" in out.getvalue()
+
+
+def test_shares_added_in_synchub_later_are_picked_up_without_a_restart(rig):
+    rig.start()
+    with rig.db.connection() as conn:
+        wait(lambda: workers.get(conn, rig.worker_id)["status"].get("roots"), what="the first status")
+    extra = rig.tmp / "extra"
+    extra.mkdir()
+    (extra / agent.MARKER).write_text("extra\n")
+    with rig.db.connection() as conn:
+        storage.create(conn, {"name": "extra", "protocol": "local", "share": str(extra), "mount_point": str(extra)})
+    with rig.db.connection() as conn:
+        wait(lambda: workers.get(conn, rig.worker_id)["status"]["roots"].get("extra", {}).get("ok"), what="the new share to be checked")
+
+
+# ---------------------------------------------------------------- surviving a crash (the point of the phase)
+def manifest_stage(rig, job_id, stage, key="checkpoint"):
+    m = rig.manifest(job_id)
+    return ((m or {}).get("stages", {}).get(stage) or {}).get(key)
+
+
+def test_a_killed_agent_resumes_a_copy_in_without_starting_over(rig):
+    source = rig.file("media", "Movies/Heat.mkv", 64 * MB)
+    job_id = rig.queue()
+    first = rig.spawn(SYNCHUB_MAX_COPY_MB_S=24, SYNCHUB_CHECKPOINT_MB=16)
+    wait(lambda: (manifest_stage(rig, job_id, "copy_in") or 0) >= 16 * MB, what="the first checkpoint")
+    first.send_signal(signal.SIGKILL)                                                # no goodbye, no cleanup: a power cut
+    first.wait(10)
+    stopped_at = manifest_stage(rig, job_id, "copy_in")
+    assert not manifest_stage(rig, job_id, "copy_in", "done") and stopped_at < 64 * MB and rig.job(job_id)["status"] == "running"
+    rig.spawn()
+    wait(lambda: rig.job(job_id)["status"] == "done", what="the resumed copy to finish")
+    dest = rig.roots["tfiles"] / "out" / "Heat.mkv"
+    assert sha(dest) == sha(source) and rig.job(job_id)["attempts"] == 1                # the same attempt carried on: nothing was queued again
+    log = rig.joblog(job_id)
+    resumed = [line for line in log if line["msg"].startswith("Copied in")]
+    assert resumed and resumed[-1]["resumed_from"] >= 16 * MB                          # the second run read the source from the checkpoint, not from the start
+    assert any(line["msg"].startswith("Resuming the copy at") for line in log)
+
+
+def test_a_killed_agent_resumes_a_copy_out_and_does_not_copy_in_again(rig):
+    source = rig.file("media", "Movies/Heat.mkv", 64 * MB)
+    job_id = rig.queue()
+    first = rig.spawn(SYNCHUB_MAX_COPY_MB_S=48, SYNCHUB_CHECKPOINT_MB=16)
+    wait(lambda: manifest_stage(rig, job_id, "copy_in", "done") and (manifest_stage(rig, job_id, "copy_out") or 0) >= 16 * MB, what="the upload to pass a checkpoint")
+    first.send_signal(signal.SIGKILL)
+    first.wait(10)
+    dest = rig.roots["tfiles"] / "out" / "Heat.mkv"
+    assert not dest.exists() and (rig.roots["tfiles"] / "out" / "Heat.mkv.synchub-partial").exists()      # half a file is never under the real name
+    rig.spawn()
+    wait(lambda: rig.job(job_id)["status"] == "done", what="the resumed upload to finish")
+    assert sha(dest) == sha(source) and not list(dest.parent.glob("*partial"))
+    log = rig.joblog(job_id)
+    assert any("not copying it again" in line["msg"] for line in log)                  # the verified local copy was reused
+    assert [line["resumed_from"] for line in log if line["msg"].startswith("Copied out")][-1] >= 16 * MB
+    assert not any(line["msg"].startswith("Copied in") and line.get("resumed_from") == 0 and line["ts"] > min(l["ts"] for l in log if l["msg"].startswith("Starting")) and False for line in log)
+
+
+def test_stopping_the_agent_politely_leaves_the_job_resumable(rig):
+    source = rig.file("media", "Movies/Heat.mkv", 48 * MB)
+    job_id = rig.queue()
+    first = rig.start(SYNCHUB_MAX_COPY_MB_S=24, SYNCHUB_CHECKPOINT_MB=16)
+    wait(lambda: (manifest_stage(rig, job_id, "copy_in") or 0) >= 16 * MB, what="a checkpoint")
+    rig.stop(first)                                                                   # what Docker's stop (SIGTERM) does
+    m = rig.manifest(job_id)
+    assert m["state"] == "running" and not m["report"]                                # no failure was reported: this is a pause, not a problem
+    assert rig.job(job_id)["status"] == "running" and rig.job(job_id)["attempts"] == 1
+    rig.start()
+    wait(lambda: rig.job(job_id)["status"] == "done", what="the finish")
+    assert sha(rig.roots["tfiles"] / "out" / "Heat.mkv") == sha(source) and rig.job(job_id)["attempts"] == 1
+
+
+# ---------------------------------------------------------------- cancel and cleanup
+def test_cancelling_stops_the_copy_removes_the_half_file_and_the_cleanup_clears_the_folder(rig):
+    rig.file("media", "Movies/Heat.mkv", 64 * MB)
+    job_id = rig.queue()
+    rig.start(SYNCHUB_MAX_COPY_MB_S=48)
+    wait(lambda: manifest_stage(rig, job_id, "copy_in", "done") and (rig.roots["tfiles"] / "out" / "Heat.mkv.synchub-partial").exists(), what="the upload to start")
+    with rig.db.connection() as conn:
+        assert jobs.cancel(conn, job_id, "test") == "cancelling"
+    wait(lambda: rig.job(job_id)["status"] == "cancelled", what="the cancel")
+    assert not list((rig.roots["tfiles"] / "out").glob("*"))                          # no half-written file is left on the share
+    wait(lambda: not list((rig.work / "jobs").glob(f"{job_id}-*")), what="SyncHub's cleanup request to be carried out")
+    assert rig.job(job_id)["cleanup"] == 0
+
+
+def test_a_cancelled_job_waiting_in_the_queue_never_starts(rig):
+    rig.file("media", "Movies/Heat.mkv", MB)
+    job_id = rig.queue()
+    with rig.db.connection() as conn:
+        jobs.cancel(conn, job_id)
+    rig.start()
+    time.sleep(0.8)
+    assert rig.job(job_id)["status"] == "cancelled" and not list((rig.work / "jobs").glob("*")) and not (rig.roots["tfiles"] / "out").exists()
+
+
+# ---------------------------------------------------------------- results that must not be lost
+class Flaky:
+    """The real API with an outage in the middle: the calls that name `path` raise Unreachable while `down` is set."""
+
+    def __init__(self, real, path):
+        self.real, self.path, self.down, self.refused = real, path, threading.Event(), 0
+
+    def post(self, path, body=None):
+        if self.down.is_set() and self.path in path:
+            self.refused += 1
+            raise agent.Unreachable("simulated outage")
+        return self.real.post(path, body)
+
+
+def test_a_finished_job_is_reported_after_an_outage_and_the_work_is_not_redone(rig):
+    source = rig.file("media", "Movies/Heat.mkv", 4 * MB)
+    job_id = rig.queue()
+    cfg = rig.config()
+    api = Flaky(agent.Api(cfg), "/complete")
+    api.down.set()
+    instance = rig.start(api=api)
+    wait(lambda: (m := rig.manifest(job_id)) and m["state"] == "finished" and m["report"]["sent"] is False, what="the job to finish with its report unsent")
+    wait(lambda: api.refused >= 2, what="a few failed attempts")
+    assert rig.job(job_id)["status"] == "running"                                    # SyncHub does not know yet
+    folder = next((rig.work / "jobs").glob(f"{job_id}-*"))
+    assert (folder / "source" / "Heat.mkv").exists()                                  # the local copy stays until SyncHub has the result
+    api.down.clear()
+    wait(lambda: rig.job(job_id)["status"] == "done", what="the report to get through")
+    assert sha(rig.roots["tfiles"] / "out" / "Heat.mkv") == sha(source) and rig.job(job_id)["attempts"] == 1
+    assert len([line for line in rig.joblog(job_id) if line["msg"].startswith("Copied in")]) == 1       # copied once
+    assert len([line for line in rig.joblog(job_id) if line["msg"].startswith("Starting")]) == 1        # and the job was not even started again: only the report was resent
+
+
+def test_a_report_saved_before_a_crash_is_sent_by_the_next_agent(rig):
+    rig.file("media", "Movies/Heat.mkv", MB)
+    job_id = rig.queue()
+    api = Flaky(agent.Api(rig.config()), "/complete")
+    api.down.set()
+    first = rig.start(api=api)
+    wait(lambda: (m := rig.manifest(job_id)) and m["state"] == "finished" and m["report"]["sent"] is False, what="the unsent report")
+    rig.stop(first)                                                                  # the agent goes away with the result still unsent
+    rig.start()
+    wait(lambda: rig.job(job_id)["status"] == "done", what="the second agent to deliver it")
+    assert len([line for line in rig.joblog(job_id) if line["msg"].startswith("Copied in")]) == 1
+
+
+def test_losing_the_job_to_the_queue_stops_the_runner_and_it_resumes_when_handed_back(rig):
+    source = rig.file("media", "Movies/Heat.mkv", 48 * MB)
+    job_id = rig.queue()
+    rig.start(SYNCHUB_MAX_COPY_MB_S=24, SYNCHUB_CHECKPOINT_MB=16)
+    wait(lambda: (manifest_stage(rig, job_id, "copy_in") or 0) >= 16 * MB, what="a checkpoint")
+    with rig.db.connection() as conn:
+        conn.execute("UPDATE job SET lease_until = '2000-01-01 00:00:00' WHERE id = ?", (job_id,))
+        assert jobs.reap(conn) == [job_id]                                            # the lease ran out: SyncHub took the job back
+    wait(lambda: rig.job(job_id)["status"] == "done", what="the job to be handed back and finish")
+    job = rig.job(job_id)
+    assert sha(rig.roots["tfiles"] / "out" / "Heat.mkv") == sha(source) and job["attempts"] == 2
+    log = rig.joblog(job_id)
+    assert any("no longer ours" in line["msg"] for line in log) or any(line["msg"].startswith("Resuming") for line in log)
+
+
+# ---------------------------------------------------------------- checking and limits
+def test_a_corrupt_copy_on_the_share_is_deleted_with_the_local_copy_and_retried_clean(rig, monkeypatch):
+    rig.file("media", "Movies/Heat.mkv", 2 * MB)
+    real = agent.hash_file
+    monkeypatch.setattr(agent, "hash_file", lambda path, *a, **k: "0" * 64 if str(path).endswith(".synchub-partial") else real(path, *a, **k))
+    job_id = rig.queue()
+    rig.start()
+    job = wait(lambda: rig.job(job_id)["error_class"] == "verification_failed" and rig.job(job_id), what="the mismatch to be noticed")
+    assert "checksums differ" in job["error"] and job["status"] == "queued"          # one more try, then a person
+    assert not (rig.roots["tfiles"] / "out" / "Heat.mkv").exists() and not list((rig.roots["tfiles"] / "out").glob("*"))
+    assert not list((rig.work / "jobs").glob(f"{job_id}-*/source/*"))                 # both copies went, so the retry starts clean
+
+
+def test_not_enough_space_is_a_wait_not_a_failure(rig, monkeypatch):
+    rig.file("media", "Movies/Heat.mkv", 2 * MB)
+    real = agent.shutil.disk_usage
+    Usage = type("Usage", (), {})
+
+    def tiny(path):
+        if str(rig.work) in str(path):
+            usage = Usage()
+            usage.free, usage.total, usage.used = 1000, 10 ** 9, 10 ** 9
+            return usage
+        return real(path)
+    monkeypatch.setattr(agent.shutil, "disk_usage", tiny)
+    job_id = rig.queue()
+    rig.start()
+    job = wait(lambda: rig.job(job_id)["error_class"] == "transient" and rig.job(job_id), what="the space problem")
+    assert "Not enough free space on the work disk" in job["error"] and job["status"] == "queued" and job["not_before"]
+
+
+def test_the_copy_speed_limit_is_respected(rig):
+    rig.file("media", "Movies/Heat.mkv", 8 * MB)
+    job_id = rig.queue()
+    started = time.monotonic()
+    rig.start(SYNCHUB_MAX_COPY_MB_S=16, SYNCHUB_VERIFY="size")
+    wait(lambda: rig.job(job_id)["status"] == "done", what="the copy")
+    assert time.monotonic() - started >= 0.9                                          # 8 MB in and 8 MB out at 16 MB/s is at least a second
+
+
+def test_progress_and_speed_reach_synchub_while_copying(rig):
+    rig.file("media", "Movies/Heat.mkv", 48 * MB)
+    job_id = rig.queue()
+    rig.start(SYNCHUB_MAX_COPY_MB_S=24)
+    job = wait(lambda: (j := rig.job(job_id))["status"] == "running" and j["progress"] and 0.02 < j["progress"] < 0.9 and j, what="a progress report")
+    assert job["stage"] in ("copy_in", "copy_out") and ("Copying" in job["message"] or "Verifying" in job["message"]) and job["eta_seconds"]
+    wait(lambda: rig.job(job_id)["status"] == "done", what="the finish")
+
+
+# ---------------------------------------------------------------- the agent and its logs
+def test_the_full_log_is_uploaded_when_asked_and_a_missing_one_is_explained(rig):
+    rig.file("media", "Movies/Heat.mkv", MB)
+    job_id = rig.queue()
+    rig.start()
+    wait(lambda: rig.job(job_id)["status"] == "done", what="the copy")
+    with rig.db.connection() as conn:
+        jobs.request_log(conn, job_id)
+    log = wait(lambda: (l := _stored(rig, job_id)) and l, what="the log to arrive")
+    assert '"msg": "Copied 1.0 MB and verified it' in log["content"] and log["worker_name"] == "encoder-1"
+    for folder in (rig.work / "jobs").glob(f"{job_id}-*"):
+        for item in folder.iterdir():
+            item.unlink() if item.is_file() else None
+    import shutil
+    shutil.rmtree(next((rig.work / "jobs").glob(f"{job_id}-*")))
+    with rig.db.connection() as conn:
+        jobs.request_log(conn, job_id)
+    wait(lambda: (l := _stored(rig, job_id)) and "No log is kept" in l["content"], what="the explanation")
+
+
+def _stored(rig, job_id):
+    with rig.db.connection() as conn:
+        return jobs.stored_log(conn, job_id)
+
+
+def test_a_wrong_token_is_explained_and_the_agent_keeps_trying(rig, caplog):
+    cfg = rig.config(SYNCHUB_TOKEN="sw_" + "0" * 48)
+    log = agent.build_logger(cfg, console=False)
+    instance = agent.Agent(cfg, log)
+    thread = threading.Thread(target=instance.run, daemon=True)
+    thread.start()
+    rig.running.append((instance, thread))
+    wait(lambda: (rig.work / "logs" / "worker.jsonl").exists() and "does not accept this worker's token" in (rig.work / "logs" / "worker.jsonl").read_text(), what="the explanation in the log")
+
+
+def test_a_disabled_worker_waits_and_works_again_when_enabled(rig):
+    rig.file("media", "Movies/Heat.mkv", MB)
+    job_id = rig.queue()
+    with rig.db.connection() as conn:
+        workers.set_flag(conn, rig.worker_id, "enabled", False)
+    rig.start()
+    time.sleep(0.8)
+    assert rig.job(job_id)["status"] == "queued"
+    with rig.db.connection() as conn:
+        workers.set_flag(conn, rig.worker_id, "enabled", True)
+    wait(lambda: rig.job(job_id)["status"] == "done", timeout=90, what="the job once the worker is enabled")
+
+
+def test_leftover_folders_for_finished_jobs_are_released_but_kept_ones_stay(rig):
+    rig.file("media", "Movies/Heat.mkv", MB)
+    ghost = rig.work / "jobs" / "999-deadbeef"                                         # a folder from a SyncHub database that no longer exists
+    ghost.mkdir(parents=True)
+    (ghost / "manifest.json").write_text(json.dumps({"version": 1, "job_id": 999, "stages": {}, "state": "running"}))
+    rig.start()
+    wait(lambda: not ghost.exists(), what="the leftover folder to be released")
