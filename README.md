@@ -2,17 +2,11 @@
 
 Keeps Letterboxd/Serializd watchlists, Jellyfin, Radarr and Sonarr in one place, shows what you have, what is on its way and what is missing, and can add wanted titles to Radarr/Sonarr.
 
-There are two apps in this repository while the rewrite is being finished:
+Start it with `python -m synchub.web` (port 5001, set `SYNCHUB_PORT` to change). The database is `data/synchub.db`, created on first start. The design is in [docs/DESIGN_V2.md](docs/DESIGN_V2.md).
 
-| | Old app | **New app (v2)** |
-|---|---|---|
-| Start | `python app.py` (port 5000) | `python -m synchub.web` (port 5001, `SYNCHUB_PORT` to change) |
-| Database | `data/letterboxd.db` | `data/synchub.db` (created on first start; nothing is copied from the old one) |
-| Design | | [docs/DESIGN_V2.md](docs/DESIGN_V2.md) |
+The original app and its `data/letterboxd.db` are no longer used; nothing is read from that file, so it can be deleted or kept as a backup.
 
-The two do not share data, so they can run side by side while you compare them.
-
-## Running the new app
+## Running the app
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -56,4 +50,4 @@ Tests use a temporary database and never touch the network (a guard fails any te
 
 ## Layout
 
-`synchub/` is the new app: `db.py` + `migrations/` (schema), `clients/` (Jellyfin, Radarr, Sonarr, TMDB), `ingest/` (one module per source, writing the `src_*` tables), `matching.py` and `episodes.py` (linking), `states.py` (statuses), `catalog.py` (what the pages read), `automation.py` (requests and auto-add), `tasks.py` and `scheduler.py` (jobs), `web/` (pages and API). The top-level `app.py`, `database.py` and friends are the old app and will be removed once the new one has replaced it.
+The code is in `synchub/`: `db.py` + `migrations/` (schema), `clients/` (Jellyfin, Radarr, Sonarr, TMDB), `ingest/` (one module per source, writing the `src_*` tables), `matching.py` and `episodes.py` (linking), `states.py` (statuses), `catalog.py` (what the pages read), `automation.py` (requests and auto-add), `tasks.py` and `scheduler.py` (jobs), `web/` (pages, templates and API). `config.py`, `logger.py` and `settings_validation.py` at the top level are shared helpers; `static/` holds the CSS, JavaScript and cached posters.

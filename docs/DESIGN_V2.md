@@ -1,12 +1,12 @@
-# SyncHub v2 — Data Model and Logic Redesign
+# SyncHub — Data Model and Logic Design
 
-Status: **Phases 0-4 implemented** in `synchub/` (run with `python -m synchub.web`). The old app is untouched and still runs; it is removed at cutover (Phase 5) once you have tried the new one.
+Status: **Phases 0-5 done.** The app lives in `synchub/` and runs with `python -m synchub.web`. The original app (`app.py`, `database.py` and its modules) has been removed.
 
 ## 1. Decisions already made
 
 | Topic | Decision |
 |---|---|
-| Database | Fresh database file (`data/synchub.db`). The current `data/letterboxd.db` is never touched and stays as a backup. |
+| Database | Fresh database file (`data/synchub.db`). The old app's `data/letterboxd.db` is never read or touched; it can be kept as a backup or deleted. |
 | Metadata authority | **TMDB is primary**; TVDB is the backup and the bridge to Sonarr. Matching uses several signals, never one ID alone. |
 | TV coverage | Every episode of a series is stored, including ones not in the library and not yet aired. |
 | Specials | Season 0 is stored, shown **last**, labelled **"Specials (Season 0)"**, collapsed by default, and **excluded from progress totals and "request all"**. Individual specials can still be requested. |
@@ -127,12 +127,10 @@ The layout stays. Templates change only where they decide state themselves.
 
 ## 8. Starting fresh (no migration)
 
-1. `data/synchub.db` is created from the migrations on first start. The old `data/letterboxd.db` is not read or modified.
+1. `data/synchub.db` is created from the migrations on first start. The old app's `data/letterboxd.db` is not read or modified.
 2. Enter settings (API keys, URLs) and create profiles in the new app. Uniqueness is enforced.
 3. Run the syncs: Jellyfin, Radarr, Sonarr, Letterboxd, Serializd, then TMDB metadata. Everything is rebuilt from the sources.
 4. Manual ID links and dismissed suggestions from the old app are not carried over; they are made again through the Resolution Center if still needed.
-
-The old and new apps can run side by side (new one on another port) until you are happy, then you cut over.
 
 ## 9. Phases
 
@@ -143,7 +141,7 @@ The old and new apps can run side by side (new one on another port) until you ar
 | 2 | TMDB metadata, matching engine, review queue | Test suite built from the messy cases above passes (dashes, same-title films, TVDB-only shows) |
 | 3 | State engine, queue ingest, `processing_event` | State table matches the rules for movies and episodes |
 | 4 | UI switched to the new tables | **Done.** Show page lists every episode with the right state; checked in a browser against realistic data |
-| 5 | Side-by-side run, cutover, retire old modules | You approve the cutover |
+| 5 | Cutover, retire old modules | **Done.** The old app, its templates, tests and helper scripts are removed |
 | 6 *(later)* | Authenticated API for transfer and encode scripts | A script can open and close a Transferring or Encoding event |
 
 ## 10. Risks and open items
