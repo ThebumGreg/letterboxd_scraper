@@ -6,13 +6,20 @@ play / transport / general commands to the selected session. Every request and
 the server's response is shown in a log so you can see what a client accepts.
 The API key stays on the server; the browser only talks to this app.
 
+For a Google TV / Android TV it can also drive the device over ADB (wake,
+launch the Jellyfin app, remote keys, screenshot) and then hand off to the
+Sessions API, so a sleeping TV can be woken and told what to play in one click.
+That needs the `adb` binary and "Network debugging" enabled on the TV.
+
   export JELLYFIN_URL=http://192.168.128.55:5000
   export JELLYFIN_API_KEY=xxxxxxxx
-  python remote_control_app.py            # http://127.0.0.1:5055
+  python remote_control_app.py [--adb-host 192.168.1.50]   # http://127.0.0.1:5055
 """
 import argparse
 import os
 import re
+import subprocess
+import time
 
 import requests
 from flask import Flask, Response, jsonify, request
@@ -26,7 +33,12 @@ PLAYSTATE_COMMANDS = {
 PLAY_COMMANDS = {"PlayNow", "PlayNext", "PlayLast", "PlayInstantMix", "PlayShuffle"}
 
 app = Flask(__name__)
-cfg = {"url": "", "key": "", "user_id": ""}
+cfg = {"url": "", "key": "", "user_id": "", "adb": "adb", "adb_target": "", "package": ""}
+
+ADB_TARGET_RE = re.compile(r"^[\w.\-]+(:\d+)?$")
+PACKAGE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$")
+KEY_RE = re.compile(r"^(KEYCODE_[A-Z0-9_]+|\d{1,3})$")
+TEXT_RE = re.compile(r"^[A-Za-z0-9 ._@-]{1,100}$")
 
 
 def auth_headers():
@@ -94,7 +106,7 @@ def index():
 
 @app.get("/api/config")
 def api_config():
-    return jsonify(url=cfg["url"])
+    return jsonify(url=cfg["url"], adbTarget=cfg["adb_target"], package=cfg["package"])
 
 
 @app.get("/api/sessions")
@@ -142,22 +154,24 @@ def api_episodes(series_id):
     return jsonify([item_summary(i) for i in r.json().get("Items", [])])
 
 
+def play_params(d):
+    params = {
+        "playCommand": d["playCommand"],
+        "itemIds": ",".join(d.get("itemIds") or []),
+    }
+    for key in ("startPositionTicks", "startIndex", "audioStreamIndex", "subtitleStreamIndex", "mediaSourceId"):
+        if d.get(key) not in (None, ""):
+            params[key] = d[key]
+    return params
+
+
 @app.post("/api/play")
 def api_play():
     d = request.get_json(force=True)
     sid = valid_session(d)
     if not sid or d.get("playCommand") not in PLAY_COMMANDS:
         return jsonify(status=0, ok=False, body="bad sessionId or playCommand"), 400
-    params = {
-        "playCommand": d["playCommand"],
-        "itemIds": ",".join(d.get("itemIds") or []),
-    }
-    for src, dst in (("startPositionTicks", "startPositionTicks"), ("startIndex", "startIndex"),
-                     ("audioStreamIndex", "audioStreamIndex"), ("subtitleStreamIndex", "subtitleStreamIndex"),
-                     ("mediaSourceId", "mediaSourceId")):
-        if d.get(src) not in (None, ""):
-            params[dst] = d[src]
-    return relay(jf("POST", f"/Sessions/{sid}/Playing", params=params))
+    return relay(jf("POST", f"/Sessions/{sid}/Playing", params=play_params(d)))
 
 
 @app.post("/api/playstate")
@@ -213,6 +227,179 @@ def api_message():
     payload = {"Header": d.get("header") or "", "Text": d.get("text") or "",
                "TimeoutMs": int(d.get("timeoutMs") or 5000)}
     return relay(jf("POST", f"/Sessions/{sid}/Message", json=payload))
+
+
+# ---------------------------------------------------------------- ADB (Google TV)
+
+class AdbError(Exception):
+    pass
+
+
+@app.errorhandler(AdbError)
+def adb_error(e):
+    return jsonify(status=500, ok=False, body=str(e)), 502
+
+
+def adb(*args, connect=False, timeout=15):
+    """Run adb against the configured TV and return stdout bytes."""
+    if not connect and not cfg["adb_target"]:
+        raise AdbError("Enter the TV's address and press Connect first.")
+    cmd = [cfg["adb"]] + ([] if connect else ["-s", cfg["adb_target"]]) + list(args)
+    try:
+        p = subprocess.run(cmd, capture_output=True, timeout=timeout)
+    except FileNotFoundError:
+        raise AdbError(f'adb not found ("{cfg["adb"]}"). Install it (sudo apt install adb) or pass --adb PATH.')
+    except subprocess.TimeoutExpired:
+        raise AdbError("adb timed out")
+    if p.returncode != 0:
+        err = (p.stderr or p.stdout).decode(errors="replace").strip()
+        if "unauthorized" in err:
+            err += " - accept the 'Allow USB debugging' prompt on the TV"
+        raise AdbError(err or f"adb exited with {p.returncode}")
+    return p.stdout
+
+
+def adb_text(*args, **kw):
+    return adb(*args, **kw).decode(errors="replace").strip()
+
+
+def adb_state():
+    """Wakefulness and the focused app package."""
+    adb("get-state")
+    out = adb_text("shell", "dumpsys power | grep -m1 mWakefulness=; dumpsys window | grep -m1 mCurrentFocus")
+    wake = re.search(r"mWakefulness=(\w+)", out)
+    focus = re.search(r"mCurrentFocus=.*?([A-Za-z][\w]*(?:\.\w+)+)/", out)
+    return {"awake": wake.group(1) if wake else None, "app": focus.group(1) if focus else None}
+
+
+def launch_app(package):
+    for category in ("android.intent.category.LEANBACK_LAUNCHER", "android.intent.category.LAUNCHER"):
+        out = adb_text("shell", "monkey", "-p", package, "-c", category, "1")
+        if "No activities found" not in out and "monkey aborted" not in out:
+            return out
+    raise AdbError(f"No launchable activity found for {package}")
+
+
+def adb_ok(body):
+    return jsonify(status=200, ok=True, body=body)
+
+
+@app.post("/api/adb/connect")
+def api_adb_connect():
+    target = (request.get_json(force=True).get("target") or "").strip()
+    if not ADB_TARGET_RE.match(target):
+        return jsonify(status=0, ok=False, body="bad address"), 400
+    if ":" not in target:
+        target += ":5555"
+    cfg["adb_target"] = target
+    out = adb_text("connect", target, connect=True)
+    if not out.startswith(("connected", "already connected")):
+        return jsonify(status=500, ok=False, body=out)
+    state = adb_state()  # raises with a hint if the TV hasn't authorised us yet
+    return adb_ok(f"{out}\nawake={state['awake']} app={state['app']}")
+
+
+@app.get("/api/adb/status")
+def api_adb_status():
+    try:
+        return jsonify(connected=True, target=cfg["adb_target"], **adb_state())
+    except AdbError as e:
+        return jsonify(connected=False, error=str(e))
+
+
+@app.post("/api/adb/key")
+def api_adb_key():
+    key = str(request.get_json(force=True).get("key", ""))
+    if not KEY_RE.match(key):
+        return jsonify(status=0, ok=False, body="bad key"), 400
+    adb("shell", "input", "keyevent", key)
+    return adb_ok(key)
+
+
+@app.post("/api/adb/text")
+def api_adb_text():
+    text = request.get_json(force=True).get("text", "")
+    if not TEXT_RE.match(text):
+        return jsonify(status=0, ok=False, body="text may only use letters, digits, space . _ @ -"), 400
+    adb("shell", "input", "text", text.replace(" ", "%s"))
+    return adb_ok(text)
+
+
+def package_arg(d):
+    pkg = (d or {}).get("package", "")
+    if not PACKAGE_RE.match(pkg):
+        raise AdbError("bad package name")
+    return pkg
+
+
+@app.post("/api/adb/launch")
+def api_adb_launch():
+    return adb_ok(launch_app(package_arg(request.get_json(force=True))))
+
+
+@app.post("/api/adb/stop")
+def api_adb_stop():
+    adb("shell", "am", "force-stop", package_arg(request.get_json(force=True)))
+    return adb_ok("stopped")
+
+
+@app.get("/api/adb/packages")
+def api_adb_packages():
+    out = adb_text("shell", "pm", "list", "packages", "-3")
+    return jsonify(sorted(l.split(":", 1)[1] for l in out.splitlines() if l.startswith("package:")))
+
+
+@app.get("/api/adb/screenshot")
+def api_adb_screenshot():
+    return Response(adb("exec-out", "screencap", "-p", timeout=20), mimetype="image/png")
+
+
+@app.post("/api/adb/wake_play")
+def api_adb_wake_play():
+    """Wake the TV, make sure the Jellyfin app is up, wait for its session, then play."""
+    d = request.get_json(force=True)
+    package = package_arg(d)
+    if d.get("playCommand") not in PLAY_COMMANDS or not d.get("itemIds"):
+        return jsonify(status=0, ok=False, body="bad playCommand or itemIds"), 400
+    match = (d.get("clientMatch") or "").lower()
+    steps = []
+
+    def sessions():
+        found = [s for s in jf("GET", "/Sessions").json()
+                 if s.get("SupportsRemoteControl") and match in f'{s.get("Client")} {s.get("DeviceName")}'.lower()]
+        return sorted(found, key=lambda s: s.get("LastActivityDate") or "", reverse=True)
+
+    state = adb_state()
+    if state["awake"] != "Awake":
+        adb("shell", "input", "keyevent", "KEYCODE_WAKEUP")
+        steps.append(f'Sent WAKEUP (was {state["awake"]})')
+        time.sleep(2)
+        state = adb_state()
+
+    target = None
+    if state["app"] == package:
+        steps.append("App already in the foreground")
+        target = (sessions() or [None])[0]
+    else:
+        # A session left over from an earlier run may still be listed; wait for one
+        # that is new or has reported activity since launch.
+        baseline = {s["Id"]: s.get("LastActivityDate") for s in sessions()}
+        launch_app(package)
+        steps.append(f"Launched {package} (was {state['app']})")
+        deadline = time.time() + 40
+        while time.time() < deadline and not target:
+            time.sleep(2)
+            fresh = [s for s in sessions() if baseline.get(s["Id"]) != s.get("LastActivityDate")]
+            target = fresh[0] if fresh else None
+
+    if not target:
+        steps.append(f'No Jellyfin session matching "{match}" with remote control appeared')
+        return jsonify(status=0, ok=False, body="\n".join(steps))
+    steps.append(f'Session {target.get("Client")} / {target.get("DeviceName")}')
+    time.sleep(1)  # let the client finish registering before the first command
+    r = jf("POST", f'/Sessions/{target["Id"]}/Playing', params=play_params(d))
+    steps.append(f'{d["playCommand"]} -> HTTP {r.status_code}')
+    return jsonify(status=r.status_code, ok=r.ok, body="\n".join(steps), sessionId=target["Id"])
 
 
 PAGE = r"""<!doctype html>
@@ -299,6 +486,33 @@ input,textarea{background:#0e1216}
       <button onclick="viewItem($('#vId').value,$('#vType').value)">Open detail page</button></div>
   </section>
 
+  <section class="wide"><h2>Google TV (ADB)</h2>
+    <div class="row">
+      <input id="adbHost" placeholder="TV address, e.g. 192.168.1.50 or 192.168.1.50:5555">
+      <button onclick="adbConnect()">Connect</button>
+      <button onclick="adbStatus()">Status</button>
+      <span id="adbSt" class="small dim">not connected</span>
+    </div>
+    <div class="row">
+      <input id="adbPkg" value="org.jellyfin.androidtv" placeholder="Jellyfin app package">
+      <button onclick="adbApp('launch')">Launch</button>
+      <button onclick="adbApp('stop')">Force stop</button>
+      <button onclick="adbPackages()">List apps</button>
+      <select id="adbPkgs" style="display:none" onchange="$('#adbPkg').value=this.value"></select>
+    </div>
+    <div class="row" id="adbKeys"></div>
+    <div class="row">
+      <input id="adbText" placeholder="Type text on the TV (letters, digits, space . _ @ -)">
+      <button onclick="adbType()">Send text</button>
+      <button onclick="adbShot()">Screenshot</button>
+    </div>
+    <div class="row small dim">
+      <label>Session match <input id="adbMatch" value="Android TV" style="max-width:180px"></label>
+      <label><input type="checkbox" id="wakePlay"> Wake TV + launch app via ADB before playing (Library &rarr; Play buttons)</label>
+    </div>
+    <img id="shot" alt="TV screenshot" style="display:none;max-width:480px;border:1px solid var(--line);border-radius:6px">
+  </section>
+
   <section class="wide"><h2>Log <button onclick="$('#log').innerHTML=''" class="small">clear</button></h2><div id="log"></div></section>
 </main>
 <script>
@@ -381,13 +595,21 @@ function viewItem(itemId, itemType){ if(itemId) act('Viewing ' + itemId, '/api/v
 
 /* library */
 const splitIds = () => $('#ids').value.split(',').map(x => x.trim()).filter(Boolean);
-function playIds(itemIds, playCommand, startIndex){
+async function playIds(itemIds, playCommand, startIndex){
   if(!itemIds.length) return;
   const pos = $('#optPos').value;
-  return act(`${playCommand} ${itemIds.length} item(s)`, '/api/play', {
+  const body = {
     itemIds, playCommand, startIndex,
     startPositionTicks: pos === '' ? undefined : Math.round(pos * TICKS),
-    audioStreamIndex: $('#optAud').value, subtitleStreamIndex: $('#optSub').value});
+    audioStreamIndex: $('#optAud').value, subtitleStreamIndex: $('#optSub').value};
+  if($('#wakePlay').checked){
+    const res = await call(`Wake + launch + ${playCommand}`, '/api/adb/wake_play',
+      {...body, package: $('#adbPkg').value, clientMatch: $('#adbMatch').value});
+    if(res.sessionId){ sel = res.sessionId; sig = ''; }
+    refresh(); adbStatus();
+    return res;
+  }
+  return act(`${playCommand} ${itemIds.length} item(s)`, '/api/play', body);
 }
 function itemRow(i, extra=''){
   return `<div class="item"><span class="name">${esc(label(i))} <span class="dim small">${esc(i.Type)}</span></span>${extra}
@@ -409,13 +631,50 @@ async function episodes(id, btn){
   box.innerHTML = r.map((e, n) => itemRow(e, `<button onclick='playIds(${JSON.stringify(ids)},"PlayNow",${n})'>Play from here</button>`)).join('');
 }
 
+/* google tv (adb) */
+const ADB_KEYS = [['Wake','KEYCODE_WAKEUP'],['Sleep','KEYCODE_SLEEP'],['Home','KEYCODE_HOME'],['Back','KEYCODE_BACK'],['Menu','KEYCODE_MENU'],
+  ['Up','KEYCODE_DPAD_UP'],['Down','KEYCODE_DPAD_DOWN'],['Left','KEYCODE_DPAD_LEFT'],['Right','KEYCODE_DPAD_RIGHT'],['OK','KEYCODE_DPAD_CENTER'],
+  ['Play/Pause','KEYCODE_MEDIA_PLAY_PAUSE'],['Stop','KEYCODE_MEDIA_STOP'],['Prev','KEYCODE_MEDIA_PREVIOUS'],['Next','KEYCODE_MEDIA_NEXT'],
+  ['Rewind','KEYCODE_MEDIA_REWIND'],['FF','KEYCODE_MEDIA_FAST_FORWARD'],['Vol +','KEYCODE_VOLUME_UP'],['Vol -','KEYCODE_VOLUME_DOWN'],['Mute','KEYCODE_VOLUME_MUTE']];
+let adbOn = false;
+async function adbStatus(){
+  const r = await call('adb status', '/api/adb/status');
+  adbOn = !!r.connected;
+  $('#adbSt').innerHTML = r.connected
+    ? `<span class="chip">${esc(r.target)}</span><span class="chip">${esc(r.awake)}</span><span class="chip">app: ${esc(r.app)}</span>`
+    : esc(r.error || 'not connected');
+}
+async function adbPost(label, path, body){ const r = await call(label, path, body); if(r.ok) setTimeout(adbStatus, 600); return r; }
+function adbConnect(){
+  localStorage.setItem('adbHost', $('#adbHost').value);
+  return adbPost('ADB connect', '/api/adb/connect', {target: $('#adbHost').value});
+}
+const adbKey = key => adbPost('ADB key ' + key, '/api/adb/key', {key});
+const adbApp = action => adbPost('ADB ' + action, '/api/adb/' + action, {package: $('#adbPkg').value});
+const adbType = () => adbPost('ADB text', '/api/adb/text', {text: $('#adbText').value});
+async function adbPackages(){
+  const r = await call('adb packages', '/api/adb/packages');
+  if(!Array.isArray(r)) return alert(r.body || 'Could not list apps');
+  $('#adbPkgs').innerHTML = r.map(p => `<option>${esc(p)}</option>`).join('');
+  $('#adbPkgs').style.display = '';
+}
+function adbShot(){ const i = $('#shot'); i.style.display = ''; i.src = '/api/adb/screenshot?t=' + Date.now(); }
+$('#shot').onerror = () => { $('#shot').style.display = 'none'; log('ADB screenshot', {status: 500, body: 'screenshot failed (is the TV connected?)'}); };
+$('#adbKeys').innerHTML = ADB_KEYS.map(([l, k]) => `<button onclick="adbKey('${k}')">${l}</button>`).join('');
+$('#adbHost').value = localStorage.getItem('adbHost') || '';
+setInterval(() => { if(adbOn) adbStatus(); }, 5000);
+
 /* init */
 $('#sess').onchange = e => { sel = e.target.value; sig = ''; refresh(); };
 $('#transport').innerHTML = TRANSPORT.map(c => `<button onclick="playstate('${c}')">${c}</button>`).join('');
 $('#cmds').innerHTML = COMMANDS.filter(c => !TEMPLATES[c]).map(c => `<button onclick="sendCmd('${c}')">${c}</button>`).join('');
 $('#rawCmd').innerHTML = COMMANDS.map(c => `<option>${c}</option>`).join('');
 fillTemplate();
-fetch('/api/config').then(r => r.json()).then(c => $('#srv').textContent = c.url);
+fetch('/api/config').then(r => r.json()).then(c => {
+  $('#srv').textContent = c.url;
+  if(c.adbTarget){ $('#adbHost').value = c.adbTarget; adbStatus(); }
+  if(c.package) $('#adbPkg').value = c.package;
+});
 refresh(); setInterval(refresh, 3000);
 </script></body></html>
 """
@@ -427,12 +686,20 @@ def main():
     p.add_argument("--api-key", default=os.environ.get("JELLYFIN_API_KEY"))
     p.add_argument("--user-id", default=os.environ.get("JELLYFIN_USER_ID", ""),
                    help="user for library search (default: first admin)")
+    p.add_argument("--adb-host", default=os.environ.get("ADB_HOST", ""),
+                   help="Google TV address (host or host:port) to preselect for ADB")
+    p.add_argument("--adb", default=os.environ.get("ADB_PATH", "adb"), help="path to the adb binary")
+    p.add_argument("--package", default=os.environ.get("JELLYFIN_PACKAGE", ""),
+                   help="Jellyfin app package on the TV (default org.jellyfin.androidtv)")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=5055)
     a = p.parse_args()
     if not a.url or not a.api_key:
         raise SystemExit("Set JELLYFIN_URL and JELLYFIN_API_KEY (or pass --url/--api-key).")
-    cfg.update(url=a.url.rstrip("/"), key=a.api_key, user_id=a.user_id)
+    if a.adb_host and not ADB_TARGET_RE.match(a.adb_host):
+        raise SystemExit("--adb-host must look like 192.168.1.50 or 192.168.1.50:5555")
+    cfg.update(url=a.url.rstrip("/"), key=a.api_key, user_id=a.user_id, adb=a.adb, package=a.package,
+               adb_target=(a.adb_host + (":5555" if a.adb_host and ":" not in a.adb_host else "")))
     app.run(host=a.host, port=a.port)
 
 
