@@ -97,7 +97,7 @@
         if (d.state === "in_library" && d.link) {
             const a = el("a", "btn btn-sm btn-success w-100 p-1 py-0 jellyfin-link", "Watch");
             a.href = d.link;
-            a.dataset.appLink = d.appLink || "";
+            a.dataset.jellyfinItem = d.jellyfinItem || "";
             a.target = "_blank";
             a.rel = "noopener noreferrer";
             foot.appendChild(a);
@@ -234,37 +234,6 @@
         }
     }, true);
     
-    // Page Visibility API Fallback for Jellyfin Deep Links
-    document.addEventListener("click", (e) => {
-        const btn = e.target.closest(".jellyfin-link");
-        if (btn && /iPad|iPhone|iPod|android/i.test(navigator.userAgent)) {
-            e.preventDefault();
-            const appLink = btn.dataset.appLink;
-            const webLink = btn.href;
-            
-            if (appLink) {
-                window.location.href = appLink;
-                
-                let appOpened = false;
-                const visibilityHandler = () => {
-                    if (document.hidden) {
-                        appOpened = true;
-                    }
-                };
-                document.addEventListener("visibilitychange", visibilityHandler);
-                
-                setTimeout(() => {
-                    document.removeEventListener("visibilitychange", visibilityHandler);
-                    if (!appOpened && !document.hidden) {
-                        window.location.href = webLink;
-                    }
-                }, 1500);
-            } else {
-                window.location.href = webLink;
-            }
-        }
-    });
-
     // Server-Sent Events (SSE) Listener
     if (window.EventSource) {
         const evtSource = new EventSource("/api/stream/events");

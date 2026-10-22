@@ -68,7 +68,7 @@
                 </span>
                 {% endif %}
                 {% if show.jellyfin_link %}
-                    <a href="{{ show.jellyfin_link }}" class="btn btn-success" target="_blank" rel="noopener noreferrer"><i class="bi bi-play-circle"></i> Watch on Jellyfin</a>
+                    <a href="{{ show.jellyfin_link }}" class="btn btn-success" data-jellyfin-item="{{ show.jellyfin_item_id }}" target="_blank" rel="noopener noreferrer"><i class="bi bi-play-circle"></i> Watch on Jellyfin</a>
                 {% endif %}
                 <button type="button" class="btn btn-outline-secondary" id="refreshBtn"><i class="bi bi-arrow-repeat"></i> Refresh details</button>
             </div>

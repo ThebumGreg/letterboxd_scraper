@@ -147,6 +147,29 @@ def test_unconfigured_services_fail_visibly(v2):
         assert status(v2, name)["status"] == "failed" and "not configured" in status(v2, name)["message"]
 
 
+def test_jellyfin_sync_remembers_the_server_id_for_app_links(v2, monkeypatch):
+    from .test_ingest_jellyfin import FakeJellyfin
+
+    class Jellyfin(FakeJellyfin):
+        info = {"Id": "srv123", "ServerName": "Home"}
+
+        def system_info(self):
+            if isinstance(self.info, Exception):
+                raise self.info
+            return self.info
+
+    client = Jellyfin([])
+    monkeypatch.setattr(tasks, "JellyfinClient", lambda: client)
+    tasks.sync_jellyfin_movies()
+    assert settings.get("jellyfin_server_id") == "srv123" and status(v2, "jellyfin_movies")["status"] == "completed"
+    client.info = {"Id": "other"}
+    tasks.sync_jellyfin_movies()
+    assert settings.get("jellyfin_server_id") == "other"                  # follows the server it is pointed at
+    client.info = RuntimeError("down")
+    tasks.sync_jellyfin_movies()
+    assert settings.get("jellyfin_server_id") == "other" and status(v2, "jellyfin_movies")["status"] == "completed"      # not worth failing the sync over
+
+
 def test_disabled_jellyfin_is_skipped_not_failed(v2):
     settings.set_value("disable_jellyfin_connection", "1")
     tasks.sync_jellyfin_tv()

@@ -26,6 +26,12 @@ def create_app(start_scheduler=False):
     db.migrate()
     tasks.reset_stale()
 
+    @app.context_processor
+    def jellyfin_app():
+        from synchub import catalog
+        with db.connection() as conn:
+            return {"jellyfin_app": catalog.jellyfin_app_config(conn)}
+
     from synchub.web import admin, api, pages
     for module in (pages, api, admin):
         module.register(app)

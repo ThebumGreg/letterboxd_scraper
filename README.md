@@ -18,7 +18,7 @@ Then open http://localhost:5001 and:
 
 1. **Settings**: enter your TMDB API key (needed for titles, posters and episode lists), the Jellyfin/Radarr/Sonarr URLs and API keys (use *Test connection*), and create your profiles. Each Letterboxd, Serializd or Jellyfin identity can belong to only one profile.
 2. **Tools & Operations**: press **Run all**. It reads Jellyfin, scrapes the watchlists, resolves IDs, matches everything to a movie or show, fetches every episode from TMDB, then reads Radarr and Sonarr and works out each item's status.
-3. **Resolution Center**: approve or dismiss the matches the app was not sure about, or link an item by TMDB ID.
+3. **Resolution Center**: approve or dismiss the matches the app was not sure about, or link an item by TMDB ID. **Approve all** (top of the page) approves the strongest suggestion for every title listed and leaves titles whose best suggestions are tied for you to decide.
 
 After that the scheduler repeats the work on the intervals set in Settings (0 turns a job off). Radarr/Sonarr webhooks (`/api/webhook/radarr`, `/api/webhook/sonarr`) refresh the status within seconds of a download starting or finishing.
 
@@ -28,7 +28,20 @@ Missing, Queued (monitored in Radarr/Sonarr, nothing yet), Downloading (in the R
 
 New states need no code or schema change: add a row to `state_def` and have a script write `processing_event` rows.
 
+## Opening items in the Jellyfin app (iPhone and iPad)
+
+"Watch on Jellyfin" opens the Jellyfin web page everywhere. On an iPhone or iPad it opens the item in the Jellyfin (Swiftfin) app instead, using `swiftfin://<server id>/<user id>/item/<item id>`, and falls back to the web page after about two seconds if the app does not take over.
+
+- The **server ID** is read from Jellyfin during a Jellyfin sync, so run **Tools, Sync movies/TV** once after upgrading.
+- The **user** must be a Jellyfin user that is signed in to the app on that device. Give each profile its Jellyfin user in Settings. With more than one, the first tap asks "Who is watching?" and remembers the answer on that device; the link at the bottom of every page changes it.
+- If tapping does nothing useful, check that the user chosen is the one signed in to the app, and that the app is installed.
+
 ## Troubleshooting
+
+**Posters missing:** **Tools, Refresh posters** forgets earlier failures, asks TMDB for the poster of every title that has none, and saves every poster that is not cached yet. The log names the first titles that have no poster anywhere.
+
+**Radarr/Sonarr "root folder does not exist" or a wrong quality profile:** **Settings, Test connection** (Radarr/Sonarr) now checks the chosen profile and root folder against the service itself and lists the real ones; the dropdowns load when the page opens and flag a saved value the service does not have. Nothing is added until both are valid, and automatic adding stops with one message (`BLOCKED, N waiting: ...` in the task status) instead of one failure per title.
+
 
 A task looks stuck, or fails with "database is locked":
 

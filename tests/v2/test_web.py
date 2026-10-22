@@ -61,6 +61,36 @@ def test_dashboard_lists_titles_with_state_attributes(client, seeded):
     assert "1 of 6 episodes" in html or "1 of 6" in html
 
 
+def _app_config(page):
+    return json.loads(re.search(r'<script type="application/json" id="jellyfin-app-config">(.*?)</script>', page, re.S).group(1))
+
+
+def test_pages_carry_what_the_browser_needs_to_open_the_jellyfin_app(client, v2):
+    with v2.connection() as conn:
+        conn.execute("INSERT INTO profile (name, letterboxd_username, jellyfin_user_id) VALUES ('Bob', 'bob', 'bbb222')")
+        conn.execute("INSERT INTO profile (name, jellyfin_user_id) VALUES ('alice', 'aaa111')")
+        conn.execute("INSERT INTO profile (name, letterboxd_username) VALUES ('No Jellyfin', 'nj')")
+    page = text(client.get("/"))
+    assert _app_config(page) == {"server_id": "", "users": [{"id": "aaa111", "name": "alice"}, {"id": "bbb222", "name": "Bob"}]}
+    assert 'id="jellyfinUserModal"' not in page                                # no server ID yet (no Jellyfin sync): no chooser
+    settings.set_value("jellyfin_server_id", "srv123")
+    page = text(client.get("/"))
+    assert _app_config(page)["server_id"] == "srv123" and 'id="jellyfinUserModal"' in page and 'js/jellyfin-app.js' in page
+
+
+def test_jellyfin_links_carry_the_item_id_not_a_url(client, v2, seeded):
+    with v2.connection() as conn:
+        mid = conn.execute("INSERT INTO media (kind, title, tmdb_id, year) VALUES ('movie', 'Heat', '949', 1995)").lastrowid
+        conn.execute("INSERT INTO src_jellyfin_item (item_id, type, first_seen, last_seen) VALUES ('jfheat', 'movie', 'a', 'a')")
+        conn.execute("INSERT INTO link (entity_type, entity_id, source, source_key, method, confidence) VALUES ('media', ?, 'jellyfin', 'jfheat', 'x', 1.0)", (mid,))
+        conn.execute("INSERT INTO item_state (target_type, target_id, state_code) VALUES ('movie', ?, 'in_library')", (mid,))
+    settings.set_value("jellyfin_url", "http://jf:8096")
+    movie_page = text(client.get(f"/movie/{mid}"))
+    assert re.search(r'<a href="http://jf:8096/web/index.html#/details\?id=jfheat"[^>]*data-jellyfin-item="jfheat"', movie_page)
+    row = re.search(r'<tr class="item-row[^>]*data-id="%d"[^>]*>' % mid, text(client.get("/"))).group(0)
+    assert 'data-jellyfin-item="jfheat"' in row and "jellyfin://" not in row and "data-app-link" not in row
+
+
 def test_show_page_lists_seasons_with_specials_last_and_labelled(client, seeded):
     html = text(client.get(f"/show/{seeded}"))
     labels = re.findall(r'<span>(Season \d+|Specials \(Season 0\))</span>', html)

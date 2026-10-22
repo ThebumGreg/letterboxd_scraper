@@ -94,10 +94,22 @@ def run(task_name, label, fn):
         lock.release()
 
 
+def _remember_server_id(client):
+    """Links that open the Jellyfin app need the server's ID. It is read here, once per sync, never while a page renders."""
+    try:
+        server_id = (client.system_info() or {}).get("Id")
+    except Exception as exc:
+        logger.warning(f"Could not read the Jellyfin server ID (links that open the Jellyfin app need it): {exc}")
+        return
+    if server_id and server_id != settings.get("jellyfin_server_id"):
+        settings.set_value("jellyfin_server_id", server_id)
+
+
 def _jellyfin(scope, label, report):
     if settings.get("disable_jellyfin_connection") == "1":
         return "Jellyfin integration is disabled in Settings."
     client = JellyfinClient()
+    _remember_server_id(client)
     report("Reading items from Jellyfin...", force=True)
     with db.connection() as conn:
         result = jf_ingest.sync(conn, client, scope, progress=report)

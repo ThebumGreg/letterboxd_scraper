@@ -90,7 +90,7 @@
                 data-users="|{% for u in r.wanted_by + r.watched_by %}{{ u|lower }}|{% endfor %}"
                 data-added-by="{{ r.wanted_by|join(', ') }}" data-user-count="{{ r.user_count }}"
                 data-link="{{ r.jellyfin_link if r.state == 'in_library' and r.jellyfin_link else '' }}"
-                data-app-link="{{ r.jellyfin_app_link or '' }}"
+                data-jellyfin-item="{{ r.jellyfin_item_id or '' }}"
                 data-summary="{% if r.kind == 'show' and r.aired %}{{ r.in_library }} of {{ r.aired }} episodes{% endif %}">
                 <td><img src="{{ r.poster }}" alt="" width="45" height="65" class="rounded poster poster-thumb" loading="lazy"></td>
                 <td>
@@ -107,7 +107,7 @@
                 <td><span class="badge bg-primary">{{ r.user_count }}</span></td>
                 <td>
                     {% if r.state == 'in_library' and r.jellyfin_link %}
-                        <a href="{{ r.jellyfin_link }}" class="btn btn-sm btn-success jellyfin-link" data-app-link="{{ r.jellyfin_app_link or '' }}" target="_blank" rel="noopener noreferrer">Watch on Jellyfin</a>
+                        <a href="{{ r.jellyfin_link }}" class="btn btn-sm btn-success jellyfin-link" data-jellyfin-item="{{ r.jellyfin_item_id }}" target="_blank" rel="noopener noreferrer">Watch on Jellyfin</a>
                     {% else %}
                         <span class="sse-badge-container">{{ state_badge(r.state_label, r.state_color, r.state_icon, r.progress_pct if r.state == 'downloading' else none) }}</span>
                     {% endif %}

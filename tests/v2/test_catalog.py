@@ -60,7 +60,7 @@ def test_list_catalog_movies_and_shows(conn):
     assert list(rows) == ["Alpha", "Beta", "Delta", "Gamma"]
     a = rows["Alpha"]
     assert (a["state"], a["state_label"], a["in_jellyfin"], a["url"], a["poster"]) == ("in_library", "In Library", True, f"/movie/{movie_ok}", f"/poster/{movie_ok}")
-    assert a["jellyfin_link"] == "http://jf:8096/web/index.html#/details?id=jf1" and a["jellyfin_app_link"] == "jellyfin://details?id=jf1"
+    assert a["jellyfin_link"] == "http://jf:8096/web/index.html#/details?id=jf1" and a["jellyfin_item_id"] == "jf1"
     b = rows["Beta"]
     assert (b["state"], b["progress_pct"], b["wanted_by"], b["user_count"], b["jellyfin_link"]) == ("downloading", 43, ["Alice"], 1, None)
     assert rows["Gamma"]["state"] == "missing"

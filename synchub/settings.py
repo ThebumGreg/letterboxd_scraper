@@ -10,7 +10,7 @@ DEFAULTS = {
     "metadata_refresh_hours": "24",
     "request_delay_min": str(DEFAULT_REQUEST_DELAY_RANGE[0]), "request_delay_max": str(DEFAULT_REQUEST_DELAY_RANGE[1]),
     "user_delay_min": str(DEFAULT_USER_DELAY_RANGE[0]), "user_delay_max": str(DEFAULT_USER_DELAY_RANGE[1]),
-    "disable_jellyfin_connection": "0", "jellyfin_url": "", "radarr_url": "", "sonarr_url": "",
+    "disable_jellyfin_connection": "0", "jellyfin_url": "", "jellyfin_server_id": "", "radarr_url": "", "sonarr_url": "",
     "radarr_enable_queue_addition": "0", "radarr_dry_run": "0",
     "radarr_min_user_count": "1", "radarr_quality_profile_id": "1", "radarr_root_folder": "/movies",
     "sonarr_enable_queue_addition": "0", "sonarr_dry_run": "0",

@@ -45,6 +45,13 @@ def _jellyfin_link(base_url, item_id):
     return f"{base_url}/web/index.html#/details?id={item_id}" if base_url and item_id else None
 
 
+def jellyfin_app_config(conn):
+    """What a browser needs to open an item in the Jellyfin iOS app: the server's ID and the Jellyfin users to choose from."""
+    users = [{"id": r["jellyfin_user_id"], "name": r["name"]} for r in conn.execute(
+        "SELECT name, jellyfin_user_id FROM profile WHERE jellyfin_user_id IS NOT NULL AND jellyfin_user_id <> '' ORDER BY name COLLATE NOCASE")]
+    return {"server_id": settings.get("jellyfin_server_id"), "users": users}
+
+
 def _show_rollups(conn, today):
     ranks = {r["code"]: r["rank"] for r in conn.execute("SELECT code, rank FROM state_def")}
     per_show = defaultdict(lambda: {"counts": {}, "episodes": 0})
@@ -98,7 +105,7 @@ def list_catalog(conn, today=None):
             "wanted_by": d["wanted_by"], "watched_by": d["watched_by"], "user_count": len(d["wanted_by"]),
             "in_jellyfin": m["id"] in jf, "in_radarr": m["id"] in radarr, "in_sonarr": m["id"] in sonarr,
             "jellyfin_link": _jellyfin_link(base, jf.get(m["id"])),
-            "jellyfin_app_link": f"jellyfin://details?id={jf[m['id']]}" if m["id"] in jf else None,
+            "jellyfin_item_id": jf.get(m["id"]),
             **extra,
         })
     return rows
@@ -131,6 +138,7 @@ def media_detail(conn, media_id):
     d.update(requesters_of(conn, media_id))
     d["in_jellyfin"] = bool(jf)
     d["jellyfin_link"] = _jellyfin_link(base, jf)
+    d["jellyfin_item_id"] = jf
     d["in_radarr"] = media_id in _active_links(conn, "radarr", "src_radarr_movie", "radarr_id")
     d["in_sonarr"] = media_id in _active_links(conn, "sonarr", "src_sonarr_series", "sonarr_id")
     return d
