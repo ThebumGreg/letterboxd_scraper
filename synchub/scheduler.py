@@ -25,6 +25,16 @@ def queue_poll_seconds():
     return 0 if seconds == 0 else max(10, seconds)
 
 
+REAPER_SECONDS = 30
+
+
+def _reap_jobs():
+    """Takes back jobs whose worker has gone silent."""
+    from synchub import db, jobs
+    with db.connection() as conn:
+        jobs.reap(conn)
+
+
 def _scrape_job():
     for step in (tasks.scrape_letterboxd, tasks.scrape_serializd, tasks.resolve_letterboxd_ids, tasks.reconcile):
         step()
@@ -45,6 +55,7 @@ def configure():
         hours = interval_hours(key, default)
         if hours > 0:
             scheduler.add_job(fn, "interval", hours=hours, id=job_id, max_instances=1, coalesce=True)
+    scheduler.add_job(_reap_jobs, "interval", seconds=REAPER_SECONDS, id="job_reaper", max_instances=1, coalesce=True)
     seconds = queue_poll_seconds()
     if seconds > 0:
         scheduler.add_job(tasks.poll_queues, "interval", seconds=seconds, id="job_queue_poll", max_instances=1, coalesce=True)

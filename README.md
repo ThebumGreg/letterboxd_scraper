@@ -28,6 +28,12 @@ Missing, Queued (monitored in Radarr/Sonarr, nothing yet), Downloading (in the R
 
 New states need no code or schema change: add a row to `state_def` and have a script write `processing_event` rows.
 
+## Workers (control plane)
+
+**Workers** (top bar) is where the PCs that will do scanning, copying and encoding are added and watched. **Add worker** gives a name, tags, a slot count and a one-time token with the settings snippet for that PC. A worker can be paused, drained (finish what it has, take nothing new), disabled, given a new token or have its token revoked. The page also lists recent jobs with their stage, progress and attempts, and lets you cancel, retry or decide jobs that are waiting for you (approve, retry, skip, reject).
+
+The worker side is a small API (`/api/worker/v1/...`, token per worker, documented in `docs/DESIGN_ENCODING.md`, Appendix A). Workers ask for jobs; a job whose worker goes silent returns to the queue. The agent script for Ubuntu, the Library page and the encoding itself are the next phases of that plan; nothing queues real jobs yet.
+
 ## Search and add
 
 **Search** (top bar) looks a title up on TMDB and can send it straight to Radarr or Sonarr. Type a title, optionally with a year (`Heat 1995`); if a title simply ends in a number-like year (`Blade Runner 2049`) the whole text is searched when the year finds nothing. Results show movies, then shows, with where each already stands (In Library, Queued, Downloading ...). Nothing is saved until you add something.

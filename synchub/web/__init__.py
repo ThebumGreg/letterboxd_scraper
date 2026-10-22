@@ -75,11 +75,14 @@ def create_app(start_scheduler=False):
         config["current_user"] = (profile or {}).get("jellyfin_user_id") or ""
         return {"jellyfin_app": config, "current_profile": profile, "has_profiles": getattr(g, "has_profiles", False)}
 
-    from synchub.web import admin, api, pages
-    for module in (pages, api, admin):
+    from synchub.web import admin, api, fleet, pages, worker_api
+    for module in (pages, api, admin, fleet, worker_api):
         module.register(app)
     if csrf:
         csrf.exempt(app.view_functions["api_webhook"])
+        for name, view in app.view_functions.items():
+            if name.startswith("worker_api_"):
+                csrf.exempt(view)                     # agents have no browser session; they send their own token
 
     if start_scheduler:
         from synchub import scheduler

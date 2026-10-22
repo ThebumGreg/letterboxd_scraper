@@ -1,6 +1,6 @@
 # SyncHub Encoding and Library Migration: Plan (v2)
 
-Status: **v2, your decisions incorporated.** Phase 1 (control plane) is the next piece of code; see §14 for the order and §16 for what is still open. v1 was written from the Media Analysis and Migration tool you attached (`main.py`, `migrate.py`, `media_db.py`, `media_jobs.py`, `media_config.py`, `webui.py`, `media_recommend.py`, `media_layout.py`, `media_roots.py`, `media_report.py`, `review.py` and the three `.md` files). Nothing from the tool was run.
+Status: **v2, your decisions incorporated. Phase 1 (control plane) is built and tested**; the next piece is Phase 2, the worker agent. See §14 for the order, §16 for what is still open and Appendix A for the worker protocol exactly as built. v1 was written from the Media Analysis and Migration tool you attached (`main.py`, `migrate.py`, `media_db.py`, `media_jobs.py`, `media_config.py`, `webui.py`, `media_recommend.py`, `media_layout.py`, `media_roots.py`, `media_report.py`, `review.py` and the three `.md` files). Nothing from the tool was run.
 
 ## 1. Requirements and decisions
 
@@ -327,6 +327,33 @@ Each phase ends with passing tests and something you can use. Tests use a fake w
 - Each worker has its **own token** (random, shown once, stored hashed, revocable and rotatable). Worker endpoints accept only that token.
 - The rest of SyncHub stays as it is: it listens on every interface with no login, and the profile picker is identity, not security, as you chose. When you add the planned access token it goes into the one request hook (§3), and the UI actions that change files will already be recorded with the profile that did them.
 - Meanwhile: nothing is deleted before verification, originals are kept for the retention period, destructive actions need a confirmation, and ffmpeg commands are built only from validated options (no shell, no free text).
+
+## Appendix A. Worker protocol as built (phase 1)
+
+Base path `/api/worker/v1`, every call a `POST` with JSON, header `Authorization: Bearer <token>`. Answers are `{"ok": true, ...}` or `{"ok": false, "message": ...}`. 401 = token not accepted (missing, wrong or revoked), 403 = worker disabled, 409 = "that job is no longer yours" (the body has `"stop": true`: stop working on it and delete nothing yet), 426 = unsupported protocol version.
+
+| Call | Body | Answer |
+|---|---|---|
+| `/register` | `protocol` (must be 1), `version`, `os`, `hostname`, `slots`, `capabilities` (`ffmpeg`, `encoders`, `cores`...) | `worker_id`, `name`, `protocol`, `poll_seconds` (5), `lease_seconds` (90) |
+| `/poll` | `free_slots`, `free_bytes` (free space in the work folder), `holding` (ids of jobs whose files it still has, if it sends a list), `status` (summary shown on the Workers page: `work_free_bytes`, `originals_count`, `originals_bytes`...) | `jobs` (new jobs), `cancel` (job ids to stop), `cleanup` (job ids whose local files may now be deleted), `paused`, `draining`, `poll_seconds`, `lease_seconds` |
+| `/jobs/<id>/progress` | `stage`, `progress` (0 to 1), `fps`, `speed`, `eta_seconds`, `message`. Also the heartbeat | `cancel` (true: stop), `lease_seconds` |
+| `/jobs/<id>/complete` | `result` (object), `command` | |
+| `/jobs/<id>/fail` | `error_class`, `message`, `retryable`, `log_tail`, `command`, `keep_state` | `outcome`: `queued` (retry), `needs_review`, `failed` or `cancelled` |
+| `/jobs/<id>/needs_review` | `reason`, `detail` (object), `keep_state` | |
+| `/jobs/<id>/cleaned` | | the worker has deleted that job's local files |
+
+A job in `jobs` carries: `id`, `kind`, `title`, `attempt`, `plan`, `policy`, `decision` (a person's answer, if any), `source` and `dest` (`{root, rel}` or null). **Stages** a worker may report: `claimed, copy_in, analyze, plan, preview, encode, verify, copy_out, publish, scan, done`. **Error classes** with their own rules: `transient` (retry, back-off 1, 5, 15, 60 minutes), `worker_lost`, `source_changed`, `verification_failed`, `size_target_missed` (each: one more try, then a person), `encode_failed` (a person at once); any other class is not retried unless `retryable` is true.
+
+Rules worth knowing: a claim is atomic (two workers never get the same job); a job whose worker is silent for 90 s goes back to the queue and its worker keeps first call on it for 30 minutes; after a decision or retry the worker that holds the job's files also gets 30 minutes' first call; a worker only receives jobs that fit its `free_bytes`, its tags and its free slots; a paused, draining or disabled worker receives none. Still to come (later phases): `analysis` (facts in, plan out), `scan` batches, log upload on request.
+
+**Settings file for the agent (Phase 2)**, as the Workers page hands it out:
+
+```
+[synchub]
+url = http://<synchub address>:5001
+token = sw_...
+name = encoder-1
+```
 
 ## 16. Risks and what is still open
 

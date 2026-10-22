@@ -1,0 +1,230 @@
+<!-- synchub/web/templates/workers.html -->
+{% extends "base.html" %}
+{% block title %}Workers{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+        <h2 class="mb-2">Workers</h2>
+        <p class="text-body-secondary mb-0">The PCs that do the heavy work (scanning, copying, encoding). They ask SyncHub for jobs, so nothing needs opening on them. Each has its own token.</p>
+    </div>
+    <button type="button" class="btn btn-success" id="addWorkerBtn"><i class="bi bi-plus-lg" aria-hidden="true"></i> Add worker</button>
+</div>
+<div id="fleetMessage" class="alert d-none" role="status"></div>
+
+<div id="fleet">{% include "_fleet.html" %}</div>
+
+<!-- Add / edit -->
+<div class="modal fade" id="workerModal" tabindex="-1" aria-labelledby="workerModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <form class="modal-content" id="workerForm">
+            <div class="modal-header"><h5 class="modal-title" id="workerModalTitle">Add worker</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+            <div class="modal-body">
+                <div class="mb-3"><label for="workerName" class="form-label">Name</label><input class="form-control" id="workerName" required maxlength="60" placeholder="encoder-1"></div>
+                <div class="row">
+                    <div class="col-8 mb-3"><label for="workerTags" class="form-label">Tags</label><input class="form-control" id="workerTags" placeholder="gpu fast"><div class="form-text">A job can require tags. Optional.</div></div>
+                    <div class="col-4 mb-3"><label for="workerSlots" class="form-label">Slots</label><input type="number" class="form-control" id="workerSlots" min="1" max="16" value="1"><div class="form-text">Jobs at once</div></div>
+                </div>
+                <div class="small text-danger" id="workerError" role="alert"></div>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-success">Save</button></div>
+        </form>
+    </div>
+</div>
+
+<!-- The token, shown once -->
+<div class="modal fade" id="tokenModal" tabindex="-1" aria-labelledby="tokenModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title" id="tokenModalTitle">Copy this into the worker's settings file</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+            <div class="modal-body">
+                <p class="text-warning small mb-2">The token is shown only now. If it is lost, make a new one (the old one stops working).</p>
+                <pre class="p-3 rounded border" id="tokenConfig" style="white-space: pre-wrap; user-select: all;"></pre>
+                <button type="button" class="btn btn-outline-info btn-sm" id="copyConfig">Copy</button> <span class="small" id="copyResult" role="status"></span>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-success" data-bs-dismiss="modal">Done</button></div>
+        </div>
+    </div>
+</div>
+
+<!-- A decision for a job that is waiting -->
+<div class="modal fade" id="decisionModal" tabindex="-1" aria-labelledby="decisionTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title" id="decisionTitle">Waiting for you</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+            <div class="modal-body">
+                <p class="mb-3" id="decisionReason"></p>
+                <label for="decisionNote" class="form-label">Note (optional)</label>
+                <input class="form-control" id="decisionNote" maxlength="500">
+                <div class="small text-danger mt-2" id="decisionError" role="alert"></div>
+            </div>
+            <div class="modal-footer flex-wrap">
+                <button type="button" class="btn btn-outline-danger" data-decision="reject">Reject</button>
+                <button type="button" class="btn btn-outline-secondary" data-decision="skip" title="Leave the file as it is and do not ask again until it changes">Skip</button>
+                <button type="button" class="btn btn-outline-info" data-decision="retry">Retry</button>
+                <button type="button" class="btn btn-success" data-decision="approve">Approve as recommended</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Job details -->
+<div class="modal fade" id="jobModal" tabindex="-1" aria-labelledby="jobModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title" id="jobModalTitle">Job</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+            <div class="modal-body" id="jobBody"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const fleet = document.getElementById('fleet'), message = document.getElementById('fleetMessage');
+    const modal = (id) => bootstrap.Modal.getOrCreateInstance(document.getElementById(id));
+    const post = async (url, body) => {
+        try {
+            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(body || {}) });
+            return await res.json();
+        } catch (e) { return { ok: false, message: 'Could not reach the server.' }; }
+    };
+    const say = (text, ok) => { message.className = 'alert ' + (ok ? 'alert-success' : 'alert-danger'); message.textContent = text; };
+    const busy = () => document.querySelector('.modal.show, .dropdown-menu.show');
+
+    async function refresh() {
+        if (busy()) return;
+        try {
+            const res = await fetch('/workers/fragment');
+            if (res.ok && !busy()) fleet.innerHTML = await res.text();
+        } catch (e) { /* the next tick tries again */ }
+    }
+    setInterval(refresh, 5000);
+
+    function showToken(data) {
+        document.getElementById('tokenConfig').textContent = data.config;
+        document.getElementById('copyResult').textContent = '';
+        modal('tokenModal').show();
+    }
+    // Nothing keeps the token once its dialog is closed.
+    document.getElementById('tokenModal').addEventListener('hidden.bs.modal', () => { document.getElementById('tokenConfig').textContent = ''; });
+    document.getElementById('copyConfig').addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(document.getElementById('tokenConfig').textContent); document.getElementById('copyResult').textContent = 'Copied.'; }
+        catch (e) { document.getElementById('copyResult').textContent = 'Select the text and copy it.'; }
+    });
+
+    // Add or edit a worker
+    let editing = null;
+    const form = document.getElementById('workerForm');
+    function openForm(title, values) {
+        document.getElementById('workerModalTitle').textContent = title;
+        document.getElementById('workerName').value = values.name || '';
+        document.getElementById('workerTags').value = values.tags || '';
+        document.getElementById('workerSlots').value = values.slots || 1;
+        document.getElementById('workerError').textContent = '';
+        modal('workerModal').show();
+    }
+    document.getElementById('addWorkerBtn').addEventListener('click', () => { editing = null; openForm('Add worker', {}); });
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const body = { name: document.getElementById('workerName').value, tags: document.getElementById('workerTags').value, slots: document.getElementById('workerSlots').value };
+        const data = await post(editing ? `/api/workers/${editing}/update` : '/api/workers', body);
+        if (!data.ok) { document.getElementById('workerError').textContent = data.message || 'Failed.'; return; }
+        modal('workerModal').hide();
+        if (!editing) showToken(data); else say(data.message, true);
+        refresh();
+    });
+
+    // Buttons in the (re-rendered) tables
+    let deciding = null;
+    document.addEventListener('click', async (e) => {
+        const edit = e.target.closest('[data-edit-worker]');
+        if (edit) { editing = edit.dataset.editWorker; openForm('Edit worker', { name: edit.dataset.name, tags: edit.dataset.tags, slots: edit.dataset.slots }); return; }
+
+        const action = e.target.closest('[data-worker-action], [data-job-action]');
+        if (action) {
+            if (action.dataset.confirm && !confirm(action.dataset.confirm)) return;
+            const url = action.dataset.workerAction ? `/api/workers/${action.dataset.id}/${action.dataset.workerAction}` : `/api/jobs/${action.dataset.id}/${action.dataset.jobAction}`;
+            const data = await post(url);
+            if (data.token) showToken(data); else say(data.message || (data.ok ? 'Done.' : 'Failed.'), data.ok);
+            refresh();
+            return;
+        }
+
+        const review = e.target.closest('[data-review-job]');
+        if (review) {
+            deciding = review.dataset.reviewJob;
+            document.getElementById('decisionTitle').textContent = `Job #${deciding} is waiting for you`;
+            document.getElementById('decisionReason').textContent = review.dataset.reason || 'The worker is not sure what to do.';
+            document.getElementById('decisionNote').value = '';
+            document.getElementById('decisionError').textContent = '';
+            modal('decisionModal').show();
+            return;
+        }
+
+        const decision = e.target.closest('[data-decision]');
+        if (decision && deciding) {
+            const data = await post(`/api/jobs/${deciding}/${decision.dataset.decision}`, { note: document.getElementById('decisionNote').value });
+            if (!data.ok) { document.getElementById('decisionError').textContent = data.message || 'Failed.'; return; }
+            modal('decisionModal').hide();
+            say(data.message, true);
+            refresh();
+            return;
+        }
+
+        const details = e.target.closest('[data-job-details]');
+        if (details) {
+            e.preventDefault();
+            const res = await fetch(`/api/jobs/${details.dataset.jobDetails}`);
+            const data = await res.json();
+            if (!data.ok) { say(data.message || 'Could not load the job.', false); return; }
+            renderJob(data.job);
+            modal('jobModal').show();
+        }
+    });
+
+    function renderJob(job) {
+        const body = document.getElementById('jobBody');
+        body.textContent = '';
+        document.getElementById('jobModalTitle').textContent = `#${job.id} ${job.title || job.kind}`;
+        const facts = [['Status', job.status.replace('_', ' ')], ['Stage', job.stage], ['Worker', job.worker_name], ['Source', job.source_root ? `${job.source_root}: ${job.source_rel}` : null],
+                       ['Destination', job.dest_root ? `${job.dest_root}: ${job.dest_rel}` : null], ['Tries', `${job.attempts} of ${job.max_attempts}`],
+                       ['Waiting because', job.review_reason], ['Last error', job.error ? `${job.error_class}: ${job.error}` : null], ['Message', job.message], ['Created', job.created_at], ['Finished', job.finished_at]];
+        const list = document.createElement('dl');
+        list.className = 'row small';
+        facts.filter(([, value]) => value).forEach(([label, value]) => {
+            const dt = document.createElement('dt'); dt.className = 'col-sm-3'; dt.textContent = label;
+            const dd = document.createElement('dd'); dd.className = 'col-sm-9'; dd.textContent = value;
+            list.append(dt, dd);
+        });
+        body.appendChild(list);
+        if (job.decision && job.decision.action) {
+            const note = document.createElement('p');
+            note.className = 'small text-body-secondary';
+            note.textContent = `Last decision: ${job.decision.action} by ${job.decision.by} at ${job.decision.at}${job.decision.note ? ' (' + job.decision.note + ')' : ''}`;
+            body.appendChild(note);
+        }
+        const title = document.createElement('h6'); title.textContent = 'Attempts'; body.appendChild(title);
+        (job.attempt_history || []).forEach((a) => {
+            const box = document.createElement('div'); box.className = 'border rounded p-2 mb-2 small';
+            const head = document.createElement('div'); head.className = 'fw-semibold';
+            head.textContent = `#${a.attempt_no} on ${a.worker_name || 'a worker'}: ${a.outcome || 'running'}${a.error_class ? ' (' + a.error_class + ')' : ''}`;
+            box.appendChild(head);
+            [['Started', a.started_at], ['Finished', a.finished_at], ['Error', a.error]].filter(([, v]) => v).forEach(([label, v]) => {
+                const line = document.createElement('div'); line.textContent = `${label}: ${v}`; box.appendChild(line);
+            });
+            ['command', 'log_tail'].forEach((key) => {
+                if (!a[key]) return;
+                const pre = document.createElement('pre'); pre.className = 'mt-2 mb-0 p-2 rounded border'; pre.style.whiteSpace = 'pre-wrap'; pre.textContent = a[key];
+                const label = document.createElement('div'); label.className = 'mt-2 text-body-secondary'; label.textContent = key === 'command' ? 'Command' : 'Log tail';
+                box.append(label, pre);
+            });
+            body.appendChild(box);
+        });
+        if (!(job.attempt_history || []).length) body.appendChild(Object.assign(document.createElement('p'), { className: 'small text-body-secondary', textContent: 'No attempts yet.' }));
+    }
+})();
+</script>
+{% endblock %}
