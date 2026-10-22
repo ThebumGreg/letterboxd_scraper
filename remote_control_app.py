@@ -191,7 +191,16 @@ def api_viewing():
     sid = valid_session(d)
     if not sid or not d.get("itemId"):
         return jsonify(status=0, ok=False, body="bad sessionId or itemId"), 400
-    params = {"itemId": d["itemId"], "itemType": d.get("itemType") or "Movie"}
+    if not SESSION_ID_RE.match(d["itemId"]):
+        return jsonify(status=0, ok=False, body="bad itemId"), 400
+    # Newer servers require itemName as well as itemType; look both up from the item.
+    item = jf("GET", f"/Items/{d['itemId']}", params={"userId": lookup_user_id()})
+    item = item.json() if item.ok else {}
+    params = {
+        "itemId": d["itemId"],
+        "itemType": item.get("Type") or d.get("itemType") or "Movie",
+        "itemName": item.get("Name") or d.get("itemName") or "Item",
+    }
     return relay(jf("POST", f"/Sessions/{sid}/Viewing", params=params))
 
 
