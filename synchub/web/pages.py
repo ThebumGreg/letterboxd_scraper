@@ -1,10 +1,11 @@
 """HTML pages."""
 import logging
+import os
 
-from flask import abort, flash, redirect, render_template, request, send_file, send_from_directory, url_for
+from flask import abort, flash, jsonify, redirect, render_template, request, send_file, send_from_directory, url_for
 
 from config import BASE_DIR
-from synchub import catalog, db, ddns, posters, profiles, search, settings, states, tasks, webhooks
+from synchub import backup, catalog, db, ddns, posters, profiles, search, settings, states, tasks, webhooks
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.tmdb import TmdbClient
 
@@ -46,6 +47,17 @@ def register(app):
             defs = states.definitions(conn)
             defs["partial"] = {"code": "partial", "label": "Partial", "color": "warning", "icon": "bi-pie-chart"}
         return render_template("show_details.html", show=show, summary=summary, defs=defs)
+
+    @app.route("/healthz")
+    def healthz():
+        """For the container's health check: the app is up and the database answers. Reveals nothing else, so it needs no sign-in."""
+        try:
+            with db.connection() as conn:
+                version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+        except Exception as exc:
+            logger.warning(f"Health check failed: {exc}")
+            return jsonify(ok=False), 503
+        return jsonify(ok=True, schema=version)
 
     @app.route("/poster/<int:media_id>")
     def poster(media_id):
@@ -141,8 +153,10 @@ def register(app):
     def settings_page():
         with db.connection() as conn:
             profile_list = profiles.list_all(conn)
-        return render_template("settings.html", settings={**settings.DEFAULTS, **settings.get_all()}, profiles=profile_list,
-                               webhook_status=webhooks.status_for_all(), suggested_synchub_url=request.host_url.rstrip("/"))
+        values = {**settings.DEFAULTS, **settings.get_all()}
+        in_docker = os.getenv("SYNCHUB_IN_DOCKER") == "1"
+        return render_template("settings.html", settings=values, profiles=profile_list, webhook_status=webhooks.status_for_all(), suggested_synchub_url=request.host_url.rstrip("/"),
+                               local_addresses=backup.addresses_on_this_machine(values) if in_docker else [], last_backup=backup.latest())
 
     @app.route("/payloads")
     def payloads_page():

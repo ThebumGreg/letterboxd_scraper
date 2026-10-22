@@ -259,7 +259,7 @@ def test_snapshot_lists_a_connection_with_a_pending_write(v2):
 
 def test_diagnostics_endpoint_and_page(v2):
     from synchub.web import create_app
-    client = create_app().test_client()
+    client = create_app(csrf=False).test_client()
     data = client.get("/api/diagnostics").get_json()
     assert set(data) == {"time", "pid", "database", "running_tasks", "database_connections", "threads"}
     page = client.get("/diagnostics").get_data(as_text=True)

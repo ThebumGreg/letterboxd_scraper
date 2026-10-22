@@ -7,6 +7,14 @@
 {% block content %}
 <h2 class="mb-4">System Settings &amp; Configuration</h2>
 
+{% if local_addresses %}
+<div class="alert alert-warning" role="alert" id="localAddressWarning">
+    <strong>These addresses will not work from inside Docker.</strong> <code>localhost</code> and <code>127.0.0.1</code> mean the SyncHub container itself, not your server.
+    Use the address other devices use (for example <code>http://192.168.1.10:8096</code>) for:
+    {% for key in local_addresses %}<code>{{ key }}</code>{{ ', ' if not loop.last }}{% endfor %}.
+</div>
+{% endif %}
+
 {% if can('access') %}
 <div class="col-12 mb-4">
     <div class="panel p-3 p-md-4 mb-0">
@@ -164,6 +172,18 @@
                     </div>
                 </div>
                 {% endfor %}
+            </div>
+
+            <!-- Database backups -->
+            <div class="panel p-3 p-md-4 mb-4" id="databaseBackups">
+                <h5 class="text-success mb-1">Database backups</h5>
+                <p class="small text-body-secondary">Every night at 03:30 SyncHub saves a consistent copy of its database (settings, profiles, decisions, everything) in the <code>backups</code> folder beside it, and keeps the newest few. A copy is also saved before an upgrade changes the database. <a href="{{ url_for('tools') }}">Tools</a> has a button to do it now.</p>
+                <div class="mb-2">
+                    <label for="backup_keep" class="form-label">Nightly copies to keep</label>
+                    <input type="number" class="form-control" id="backup_keep" name="backup_keep" value="{{ settings.get('backup_keep') or 7 }}" min="0" max="365" step="1" required>
+                    <div class="form-text">0 turns the nightly copy off.</div>
+                </div>
+                <div class="small text-body-secondary">Newest copy: {% if last_backup %}<strong>{{ last_backup[0].name }}</strong>, {{ last_backup[1].strftime('%Y-%m-%d %H:%M') }}{% else %}none yet{% endif %}.</div>
             </div>
         </div>
 

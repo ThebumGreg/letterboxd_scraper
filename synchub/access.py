@@ -44,7 +44,7 @@ PUBLIC, OPEN = "public", "open"                       # no profile needed / any 
 # Which permission each endpoint needs, first match wins. A trailing * matches a prefix. A new endpoint that matches nothing is refused
 # until it is listed here (a test lists every endpoint of the app to make sure none is forgotten).
 RULES = (
-    ("who", PUBLIC), ("static", PUBLIC), ("poster", PUBLIC), ("api_webhook", PUBLIC), ("worker_api_*", PUBLIC),     # webhooks and workers have their own ways in
+    ("who", PUBLIC), ("static", PUBLIC), ("poster", PUBLIC), ("healthz", PUBLIC), ("api_webhook", PUBLIC), ("worker_api_*", PUBLIC),     # webhooks and workers have their own ways in
     ("api_tasks", OPEN),
     ("index", "dashboard"), ("movie_details", "dashboard"), ("show_details", "dashboard"), ("api_season", "dashboard"), ("stream_events", "dashboard"),
     ("search_page", "search"), ("api_search_seasons", "search"),

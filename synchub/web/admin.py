@@ -24,6 +24,7 @@ TRIGGERS = {
     "id_resolver": (tasks.with_reconcile(tasks.resolve_letterboxd_ids), "ID resolver started."),
     "reconcile": (tasks.reconcile, "Reconcile started."),
     "posters": (tasks.refresh_posters, "Poster refresh started."),
+    "backup": (tasks.backup_database, "Database backup started."),
     "all": (tasks.run_all, "Full run started."),
 }
 _TOKEN_RE = re.compile(r"(?i)\b(api_?key|token|apikey|password)=([^&\s]+)")

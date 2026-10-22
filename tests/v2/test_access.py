@@ -199,7 +199,7 @@ def test_attempts_survive_a_restart_because_they_are_in_the_database(v2, conn, p
     for _ in range(3):
         access.check_pin(conn, people["alice"], "0000")
     conn.commit()
-    create_app()                                                                  # "restart"
+    create_app(csrf=False)                                                                  # "restart"
     assert access.check_pin(conn, people["alice"], "0000") == ("wrong", 1)
 
 
@@ -221,9 +221,9 @@ def test_the_signing_key_is_kept_so_a_restart_does_not_sign_anyone_out(v2, monke
     monkeypatch.delenv("SECRET_KEY", raising=False)
     first = access.persistent_secret()
     assert len(first) == 64 and access.persistent_secret() == first
-    assert create_app().secret_key == first and create_app().secret_key == first
+    assert create_app(csrf=False).secret_key == first and create_app(csrf=False).secret_key == first
     monkeypatch.setenv("SECRET_KEY", "from-the-environment")
-    assert create_app().secret_key == "from-the-environment"
+    assert create_app(csrf=False).secret_key == "from-the-environment"
 
 
 def test_the_session_length_is_a_setting_with_a_safe_fallback(v2):
@@ -403,7 +403,7 @@ def test_guests_have_their_own_permissions_and_a_browser_that_never_chose_is_a_g
     conn.commit()
     choose(browser, "0")
     assert browser.get("/").status_code == 200 and browser.get("/settings").status_code == 403 and "This is not open to guests" in text(browser.get("/settings"))
-    fresh = create_app().test_client()
+    fresh = create_app(csrf=False).test_client()
     assert fresh.get("/api/logs").status_code == 403 and fresh.get("/").status_code == 302                         # pages still send a newcomer to choose
     assert fresh.get("/api/tasks").status_code == 200                                                              # open to anyone
 
@@ -567,7 +567,7 @@ def test_changing_your_own_pin_keeps_this_device_signed_in_and_removing_it_forge
     r = api(admin, f"/api/access/profile/{people['alice']}/pin", {"pin": "9753"})
     assert r.status_code == 200 and "PIN saved" in r.get_json()["message"] and cookie(admin, PIN_COOKIE) not in (None, before)
     assert admin.get("/access").status_code == 200                                                                  # still in, with the new proof
-    other = create_app().test_client()
+    other = create_app(csrf=False).test_client()
     assert choose(other, people["alice"], "4821").status_code == 401                                              # the old PIN is gone
     assert choose(other, people["alice"], "9753").status_code == 302
     r = api(admin, f"/api/access/profile/{people['alice']}/pin/clear")
@@ -575,7 +575,7 @@ def test_changing_your_own_pin_keeps_this_device_signed_in_and_removing_it_forge
 
 
 def test_changing_someone_elses_pin_signs_them_out_but_not_you(admin, app, v2, conn, people):
-    cara = create_app().test_client()
+    cara = create_app(csrf=False).test_client()
     sign_in(cara, people["cara"], "1357")
     assert cara.get("/library").status_code == 200
     api(admin, f"/api/access/profile/{people['cara']}/pin", {"pin": "8642"})
@@ -583,14 +583,14 @@ def test_changing_someone_elses_pin_signs_them_out_but_not_you(admin, app, v2, c
 
 
 def test_sign_out_everywhere_and_unlock_work_from_the_page(admin, v2, conn, people):
-    cara = create_app().test_client()
+    cara = create_app(csrf=False).test_client()
     sign_in(cara, people["cara"], "1357")
     assert api(admin, f"/api/access/profile/{people['cara']}/signout").get_json()["ok"] and cara.get("/library").status_code == 302
     for _ in range(5):
-        choose(create_app().test_client(), people["cara"], "0000")
+        choose(create_app(csrf=False).test_client(), people["cara"], "0000")
     assert "locked for" in text(admin.get("/access"))
     assert api(admin, f"/api/access/profile/{people['cara']}/unlock").get_json()["message"] == "Unlocked."
-    assert "locked for" not in text(admin.get("/access")) and choose(create_app().test_client(), people["cara"], "1357").status_code == 302
+    assert "locked for" not in text(admin.get("/access")) and choose(create_app(csrf=False).test_client(), people["cara"], "1357").status_code == 302
 
 
 def test_the_remembered_days_are_validated(admin):

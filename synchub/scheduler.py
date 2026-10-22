@@ -64,6 +64,9 @@ def configure():
             scheduler.add_job(fn, "interval", hours=hours, id=job_id, max_instances=1, coalesce=True)
     scheduler.add_job(_reap_jobs, "interval", seconds=REAPER_SECONDS, id="job_reaper", max_instances=1, coalesce=True)
     scheduler.add_job(_prune_jellyfin_events, "interval", hours=24, id="job_prune_jellyfin_events", max_instances=1, coalesce=True)
+    from synchub import backup
+    if backup.keep_count():
+        scheduler.add_job(tasks.backup_database, "cron", hour=3, minute=30, id="job_backup", max_instances=1, coalesce=True, misfire_grace_time=3600)
     seconds = queue_poll_seconds()
     if seconds > 0:
         scheduler.add_job(tasks.poll_queues, "interval", seconds=seconds, id="job_queue_poll", max_instances=1, coalesce=True)

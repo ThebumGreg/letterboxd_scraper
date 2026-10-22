@@ -6,7 +6,7 @@ from pathlib import Path
 from flask import Flask, g, jsonify, redirect, render_template, request, url_for
 
 from config import BASE_DIR
-from synchub import access, db, tasks
+from synchub import access, backup, db, tasks
 
 logger = logging.getLogger(__name__)
 
@@ -64,15 +64,25 @@ def _deny(label, status=403, message=None):
     return render_template("forbidden.html", label=label, message=message), status
 
 
-def create_app(start_scheduler=False):
+def create_app(start_scheduler=False, csrf=True):
+    """`csrf=False` is for tests that post without a browser's token; the app is never run without it."""
     import logger as app_logging      # noqa: F401  (importing it sets up the rotating log file)
     app = Flask(__name__, template_folder=str(Path(__file__).parent / "templates"), static_folder=str(BASE_DIR / "static"))
-    try:
-        from flask_wtf import CSRFProtect
+    if csrf:
+        try:
+            from flask_wtf import CSRFProtect
+        except ImportError as exc:
+            raise RuntimeError("Flask-WTF is needed for CSRF protection: run  pip install -r requirements.txt") from exc
         csrf = CSRFProtect(app)
-    except ImportError:
+    else:
         csrf = None
 
+    try:
+        saved = backup.copy_before_upgrade()
+        if saved:
+            logger.info(f"The database is older than this version: a copy was saved as {saved} before upgrading it.")
+    except Exception as exc:
+        logger.warning(f"Could not save a copy of the database before upgrading it: {exc}")
     db.migrate()
     app.secret_key = os.getenv("SECRET_KEY") or access.persistent_secret()
     tasks.reset_stale()

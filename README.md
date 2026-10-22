@@ -10,7 +10,7 @@ The original app and its `data/letterboxd.db` are no longer used; nothing is rea
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt     # includes Flask-WTF: forms and buttons are protected against forged requests (CSRF)
 python -m synchub.web
 ```
 
@@ -19,6 +19,12 @@ Then open http://localhost:5001 and:
 1. **Settings**: enter your TMDB API key (needed for titles, posters and episode lists), the Jellyfin/Radarr/Sonarr URLs and API keys (use *Test connection*), and create your profiles. Each Letterboxd, Serializd or Jellyfin identity can belong to only one profile.
 2. **Tools & Operations**: press **Run all**. It reads Jellyfin, scrapes the watchlists, resolves IDs, matches everything to a movie or show, fetches every episode from TMDB, then reads Radarr and Sonarr and works out each item's status.
 3. **Resolution Center**: approve or dismiss the matches the app was not sure about, or link an item by TMDB ID. **Approve all** (top of the page) approves the strongest suggestion for every title listed and leaves titles whose best suggestions are tied for you to decide.
+
+## Running it in Docker (Unraid for the app, Ubuntu for the workers)
+
+The repository has a `Dockerfile` and `docker-compose.yml` for the app (one `/data` volume holds the database, logs, poster cache and backups) and `agent/Dockerfile` for the worker. **[docs/DEPLOY.md](docs/DEPLOY.md) is the step-by-step guide**: building the image, moving your existing database, running on Unraid, setting up the shares and the workers, updating, restoring, and what to do when something is wrong.
+
+Two commands worth knowing, which also work from a checkout: `python -m synchub.backup create FILE` makes a **consistent copy of the database while the app runs** (copying `synchub.db` by hand can miss recent changes that still sit in the `-wal` file next to it) and `python -m synchub.backup check FILE` says what is in a copy, whether it is sound, and which service addresses will stop working after a move (a `localhost` address means the container itself inside Docker). SyncHub also saves a copy every night at 03:30 (the newest 7 are kept; Settings, *Database backups*) and before any upgrade changes the database. `GET /healthz` answers while the app and its database are up.
 
 After that the scheduler repeats the work on the intervals set in Settings (0 turns a job off). Radarr/Sonarr webhooks (`/api/webhook/radarr`, `/api/webhook/sonarr`) refresh the status within seconds of a download starting or finishing.
 
@@ -125,4 +131,4 @@ Tests use a temporary database and never touch the network (a guard fails any te
 
 ## Layout
 
-The code is in `synchub/`: `db.py` + `migrations/` (schema), `clients/` (Jellyfin, Radarr, Sonarr, TMDB), `ingest/` (one module per source, writing the `src_*` tables), `matching.py` and `episodes.py` (linking), `library/` (the Library's decision logic, scans and duplicate search), `storage.py` and `jobs.py` (shares and worker jobs), `access.py` (PINs and permissions), `jellyfin_events.py` (kept Jellyfin events), `ddns.py` and `ddns_check.py` (dynamic DNS and its delay check), `states.py` (statuses), `catalog.py` (what the pages read), `automation.py` (requests and auto-add), `tasks.py` and `scheduler.py` (jobs), `web/` (pages, templates and API). `config.py`, `logger.py` and `settings_validation.py` at the top level are shared helpers; `static/` holds the CSS, JavaScript and cached posters.
+The code is in `synchub/`: `db.py` + `migrations/` (schema), `clients/` (Jellyfin, Radarr, Sonarr, TMDB), `ingest/` (one module per source, writing the `src_*` tables), `matching.py` and `episodes.py` (linking), `library/` (the Library's decision logic, scans and duplicate search), `storage.py` and `jobs.py` (shares and worker jobs), `access.py` (PINs and permissions), `backup.py` (consistent copies, checks and restore of the database), `jellyfin_events.py` (kept Jellyfin events), `ddns.py` and `ddns_check.py` (dynamic DNS and its delay check), `states.py` (statuses), `catalog.py` (what the pages read), `automation.py` (requests and auto-add), `tasks.py` and `scheduler.py` (jobs), `web/` (pages, templates and API). `config.py`, `logger.py` and `settings_validation.py` at the top level are shared helpers; `static/` holds the CSS, JavaScript and cached posters.

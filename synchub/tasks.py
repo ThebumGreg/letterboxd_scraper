@@ -116,6 +116,19 @@ def _jellyfin(scope, label, report):
     return f"{label}: {result['seen']} item(s) synced, {result['removed']} no longer reported."
 
 
+def backup_database():
+    """A consistent copy of the database in the backups folder, keeping the newest few (Settings, 'Database backups')."""
+    def work():
+        from synchub import backup
+        keep = backup.keep_count()
+        if not keep:
+            return "Backups are turned off in Settings."
+        path = backup.create()
+        removed = backup.prune(keep)
+        return f"Saved {path.name} ({path.stat().st_size / 1048576:.1f} MB)." + (f" Removed {len(removed)} older {'copy' if len(removed) == 1 else 'copies'}." if removed else "")
+    return run("backup", "Backing up the database", work)
+
+
 def sync_jellyfin_movies():
     return run("jellyfin_movies", "Syncing Jellyfin movies", lambda report: _jellyfin("movies", "Jellyfin movies", report))
 

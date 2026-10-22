@@ -41,7 +41,7 @@ def no_ddns_watcher(monkeypatch):
 @pytest.fixture
 def app(v2):
     from synchub.web import create_app
-    flask_app = create_app()
+    flask_app = create_app(csrf=False)
     flask_app.config["TESTING"] = True
     return flask_app
 
