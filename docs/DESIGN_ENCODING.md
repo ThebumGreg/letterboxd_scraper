@@ -1,6 +1,6 @@
-# SyncHub Encoding and Library Migration: Plan (v2)
+# SyncHub Encoding and Library Migration: Plan (v2.1)
 
-Status: **v2, your decisions incorporated. Phase 1 (control plane) is built and tested**; the next piece is Phase 2, the worker agent. See §14 for the order, §16 for what is still open and Appendix A for the worker protocol exactly as built. v1 was written from the Media Analysis and Migration tool you attached (`main.py`, `migrate.py`, `media_db.py`, `media_jobs.py`, `media_config.py`, `webui.py`, `media_recommend.py`, `media_layout.py`, `media_roots.py`, `media_report.py`, `review.py` and the three `.md` files). Nothing from the tool was run.
+Status: **v2.1: manifests, Docker workers, shares managed from the site, and sample review first are incorporated. Phase 1 (control plane) is built and tested**; the next piece is Phase 2, the worker agent with storage. See §14 for the order, §16 for what is still open and Appendix A for the worker protocol exactly as built. v1 was written from the Media Analysis and Migration tool you attached (`main.py`, `migrate.py`, `media_db.py`, `media_jobs.py`, `media_config.py`, `webui.py`, `media_recommend.py`, `media_layout.py`, `media_roots.py`, `media_report.py`, `review.py` and the three `.md` files). Nothing from the tool was run.
 
 ## 1. Requirements and decisions
 
@@ -16,6 +16,9 @@ Status: **v2, your decisions incorporated. Phase 1 (control plane) is built and 
 | 8 | **Resume after a restart or interruption** without losing progress; do not copy or encode the same file twice; keep original and new file apart until verified; keep files and logs when a job fails | Work folders and manifests (§6.3, §8), resumable encoding (§8.3), failure preservation (§8.4) |
 | 9 | **Low-confidence** cases pause for review, with a clear approve / retry / skip workflow in the UI, and a **30 to 60 second preview clip** at the recommended compression to watch before approving | §8.5, §12 |
 | 10 | Worker **logging**; recommendation on a **local database**; central status; log rotation; easy to find a job's logs | §6.3, §6.4, §6.5 |
+| 11 | **Manifests, not SQLite**, agreed. The worker runs in **Docker**, which provides its working directory as a volume | Docker image and compose file (§6.1) |
+| 12 | The workers need both Unraid shares (`Media`, `TFiles`); unsure whether NFS or SMB, and whether the site can manage it | §6.6: the site holds the definitions, generates the Docker or fstab setup and shows each worker's mount health; the mounting itself happens on the worker PC |
+| 13 | **Review a sample before automatic approval**: force a manual look at a sample first, to learn what the low-confidence cases are | §12.1: the sample is made and sent for review **before** the full encode, and the system stops asking once you have approved enough similar ones |
 
 Earlier decisions still hold: SyncHub is the master controller and tells Jellyfin about new files; the original tool lives on its own standalone **Library** page; movies above about 30 GB are compressed toward about 25 GB.
 
@@ -103,9 +106,9 @@ Job states and stages are data and text, so new stages need no schema change.
 
 ### 6.1 Agent and installation (Ubuntu)
 
-- **One Python file, standard library only**, plus `ffmpeg` and `ffprobe` from the package manager. A settings file in the style of `media_review.ini` and a ready-made **systemd unit** (starts at boot, restarts on failure). The shares are mounted by the OS (NFS or SMB in `/etc/fstab`); the settings file lists each root's mount point.
-- Settings file: SyncHub address and token, work folder, originals folder, logs folder, mount points per root, ffmpeg paths, slots, optional active hours, retention overrides.
-- At start the agent reports capabilities (ffmpeg version, which encoders actually work by encoding one second of test video, CPU cores, free space) and reads its local state (§6.3).
+- **One Python file, standard library only** (`agent/synchub_agent.py`). It runs in **Docker** (recommended): the image is Python plus ffmpeg, the compose file mounts a volume for the work folder (job folders, kept originals, logs) and the shares, and Docker restarts it after a crash or reboot. Without Docker, the same file runs under a **systemd unit** with ffmpeg from the package manager.
+- Settings come from a file in the style of `media_review.ini` or from environment variables (handier in Docker): SyncHub address, token, work folder, mount points per root, ffmpeg paths, slots, retention overrides, optional active hours. The Workers page hands out a ready-made compose file and settings snippet with the token filled in.
+- At start the agent reports capabilities (ffmpeg version, which encoders actually work by encoding one second of test video, CPU cores, free space), checks its shares (§6.6) and reads its local state (§6.3). `--check` prints all of that and exits.
 
 ### 6.2 Encoders (CPU now, GPU later)
 
@@ -138,6 +141,26 @@ SQLite would earn its place only for something with many thousands of small fact
 <originals>/<date>_<job-id>/   the kept original + meta.json (kept until, verified, replaced at)
 <logs>/worker.jsonl (+ .1 .. .5)
 ```
+
+### 6.6 Shares: how a worker reaches Unraid
+
+A worker needs the shares mounted as ordinary folders (for example `/mnt/tower/Media` and `/mnt/tower/TFiles`). Two ways, both work with Unraid:
+
+| | **SMB (cifs)** | **NFS (v4)** |
+|---|---|---|
+| Setup on Unraid | Already on; give the workers a user with read/write on the two shares | Turn NFS on (Settings), then export each share to the worker IPs with `rw` (rule syntax and the Unraid web UI have had bugs: check the system log after saving) |
+| Credentials | A user name and password (kept in a `.env` file next to the compose file, never in SyncHub) | None; access is by IP address |
+| Known issues | A password to manage | Anecdotal reports of "stale file handle" errors on `/mnt/user` shares when the mover relocates files from the cache; NFSv4 and keeping the share off the cache are the usual workarounds |
+| My recommendation | **Start with SMB**: you already use it from Windows and it avoids the mover issue reports. Move to NFSv4 later if speed matters | |
+
+The files being copied are large, and the encoder runs for hours, so both options use "hard" behaviour: if the share drops, the copy waits and then fails visibly rather than writing a short file.
+
+**What the site manages.** SyncHub cannot mount anything on a worker PC (that needs the PC's own permissions), but it holds everything else:
+
+1. **Storage page**: each root's name (`media`, `tfiles`), protocol, Unraid address, share or export path and options, plus how Jellyfin, Radarr and Sonarr see the same root (for path translation and Jellyfin notifications).
+2. **Setup files**: from those definitions SyncHub generates the worker's `docker-compose.yml` (Docker's own NFS or CIFS volume definitions, so Docker does the mounting and a failed mount stops the container instead of writing into an empty local folder) and, for non-Docker workers, the matching `/etc/fstab` lines.
+3. **Mount health**: every worker reports, for each root, whether it is there, whether it is the right share, whether it is writable and how much space is free. The Workers page shows it, and a worker refuses to use a root it cannot verify.
+4. **Marker file**: each share root holds a small `.synchub-root` file containing its name. The agent will not read or write a root without it. This prevents the classic accident of a share that failed to mount (an empty local folder) quietly receiving files, and a mix-up between `Media` and `TFiles`. `--init-roots` creates the marker files once, when you ask it to.
 
 ### 6.4 Logging
 
@@ -205,6 +228,8 @@ The job folder, its log and the last failing command are **kept** (default 14 da
 | cancelled | you pressed Cancel | ffmpeg stopped within seconds; partial output removed, copy kept until cleanup |
 
 ### 8.5 Needs review (low confidence)
+
+(The first time you meet each kind of file, a sample is reviewed too; see §12.1.)
 
 A job pauses, instead of guessing, when the system cannot be confident. Reasons include: the bits-per-pixel floor would be broken (§11.2), unusual HDR or Dolby Vision profile 5, no English audio or unknown language, the source changed twice, a low-confidence name or destination (library), the size target missed after the retry, verification failed twice, quality score below threshold, unreliable calibration.
 
@@ -303,6 +328,16 @@ You asked to watch a 30 to 60 second clip at the recommended compression before 
 - When it is made: always for **needs review** cases that involve compression (so it is ready when you look), and on demand from any compression recommendation through a **Preview** button. A setting can also require a preview before every automatic compression (off by default, because compression is automatic).
 - Previews live in SyncHub's data folder and in the job's folder on the worker; neither is ever put in the Jellyfin library. A low-confidence sample file from you becomes a test case for this and the review workflow.
 
+### 12.1 Sample review first
+
+You asked to be forced to look at a sample before automatic approval, to learn which files are low-confidence. **Yes, and the sample is made before the full encode.**
+
+1. A job with a lossy plan (compress or re-encode) copies the source to the worker, **analyzes it, then makes only the preview clip** (a minute or two of work). The job pauses as **needs review** with the clip, the numbers and the plan, and **keeps its local copy**, so nothing is copied twice.
+2. You watch, then **Approve** (the full encode starts at once with exactly the settings you saw), **Approve with changes** (a new target, then a new clip), **Skip** or **Reject**.
+3. **Policy** (`review_first`, in Settings → Encoding): `always` (every lossy job, the default while you are learning), `until_trusted` (ask until you have approved K similar files without changes, default K = 3, then those go straight through), `low_confidence_only` (the plan's own confidence decides) or `never`.
+4. "Similar" means the same **signature**: resolution class, video codec family, HDR type, bit depth and a size band. Approving without changes counts toward trust for that signature; rejecting, changing or finding a problem resets it.
+5. Every reviewed sample is recorded with its numbers and your answer. That record is how the low-confidence rules get tuned, and it shows which kinds of file you actually turn down.
+
 ## 13. Notifications
 
 Sent through the Apprise settings SyncHub already has, one message per event: **compression started** (title, source size, target, predicted size, worker), **compression completed** (before and after size, saving, quality score, time taken), **needs your review** (reason, link), **job failed** (what failed, link), **worker offline** with work waiting. Each can be switched on or off in Settings.
@@ -314,7 +349,7 @@ Each phase ends with passing tests and something you can use. Tests use a fake w
 | Phase | Scope | Done when |
 |---|---|---|
 | **1. Control plane** | `worker` and `job` tables, tokens, register/poll/progress/complete/fail/needs-review/cancel, leases and the reaper, affinity, the Workers page and a recent-jobs list | A fake worker claims, reports, completes, loses a lease, is cancelled and is revoked, and the Workers page shows it |
-| **2. Worker agent** | The Ubuntu script: register and poll, job folders and manifests, structured logging with rotation, status reporting, log upload on request, crash recovery, systemd unit; a "copy and verify" job to prove the loop | A job survives killing and restarting the agent mid-copy and finishes without copying twice |
+| **2. Worker agent and storage** | The agent (one Python file): register and poll, job folders and manifests, structured logging with rotation, status and mount-health reporting, log upload on request, crash recovery, Dockerfile, compose file and systemd unit. The site gets the **Storage page**, generated worker setup files and a "test copy" job form. The first real job type is the hash-verified **copy** (the library's "copy unchanged" stage) | A copy job between two real folders survives killing and restarting the agent mid-copy and finishes without copying twice; the Workers page shows each root's health |
 | **3. Library: analysis and review** | `library_*` tables, storage roots, the ported recommendation, layout, roots and report modules, scan jobs on workers (skipping known files), the Library page with queues, review, bulk approve and CSV export | Everything the tool's CLI and web UI did for analysis and approval works from the Library page |
 | **4. Library: processing** | Approved records become jobs; resumable copy, track changes, remux and re-encode (whole-file); verification; publish and **Jellyfin notification** with confirmation; "verify finished files"; migration status | An approved legacy file is converted and appears In Library in Jellyfin, with the source untouched |
 | **5. Review workflow and previews** | The needs-review states and actions, the review screen, preview clips (random and worst-case), sample-based tests from your low-confidence file | A flagged job pauses, shows its clip, and obeys approve, retry, skip and reject |
@@ -366,9 +401,10 @@ name = encoder-1
 | Calibration samples unrepresentative | Four spread samples, a size check, one automatic retry |
 | Jellyfin slow to notice a file | Confirm step, Rescan button, optional Webhook plugin |
 
-**Open questions** (my recommendations are the defaults I would build):
+**Answered:** manifests instead of SQLite (yes), Docker workers, both Unraid shares needed, sample review first instead of a prepared low-confidence file.
 
-1. **Local database:** I recommend job folders with manifests instead of SQLite on the workers (§6.3). OK?
+**Still open** (my recommendations are the defaults I would build):
+
+1. **SMB or NFS** for the workers (§6.6)? I recommend SMB to start.
 2. **Preview delivery:** upload the two clips to SyncHub (capped, kept 7 days) and play them in the browser. OK?
-3. **Mount points** on the Ubuntu workers for the Unraid shares (for the settings file), for example `/mnt/tower/Media` and `/mnt/tower/TFiles`?
-4. When we reach phase 5, please send the sample low-confidence file.
+3. **Unraid details** for the Storage page: its address and the exact share names (`Media`, `TFiles`, and which one holds the Jellyfin library).
