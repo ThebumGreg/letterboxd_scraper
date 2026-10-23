@@ -1,0 +1,109 @@
+<!-- The workers and jobs tables: rendered with the page and swapped in every few seconds. -->
+<h4 class="mb-3">Workers <small class="text-muted">({{ workers|length }})</small></h4>
+<div class="panel p-0 overflow-hidden mb-5">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0" id="workerTable">
+            <thead class="table-light">
+                <tr><th class="ps-4">Worker</th><th>Status</th><th>Machine</th><th>Jobs</th><th>Space</th><th>Shares</th><th>Seen</th><th class="pe-4 text-end">Actions</th></tr>
+            </thead>
+            <tbody>
+                {% for w in workers %}
+                <tr data-worker="{{ w.id }}">
+                    <td class="ps-4">
+                        <div class="fw-bold">{{ w.name }}</div>
+                        {% for tag in w.tags %}<span class="badge bg-secondary me-1">{{ tag }}</span>{% endfor %}
+                        <div class="small text-body-secondary">token ...{{ w.token_hint or 'none' }}</div>
+                    </td>
+                    <td><span class="badge bg-{{ w.state_color }}{% if w.state_color in ['info', 'warning'] %} text-dark{% endif %}">{{ w.state }}</span></td>
+                    <td class="small">
+                        {{ w.hostname or '-' }}{% if w.os %}<div class="text-body-secondary">{{ w.os }}</div>{% endif %}
+                        {% if w.version %}<div class="text-body-secondary">agent {{ w.version }}</div>{% endif %}
+                        {% if w.encoders %}<div class="text-body-secondary" title="Encoders this worker can use">{{ w.encoders }}</div>{% endif %}
+                    </td>
+                    <td>{{ w.running }} / {{ w.slots }}</td>
+                    <td class="small">
+                        {% if w.free %}{{ w.free }} free{% else %}-{% endif %}
+                        {% if w.originals %}<div class="text-body-secondary" title="Original files kept for the retention period">originals: {{ w.originals }}</div>{% endif %}
+                    </td>
+                    <td class="small">
+                        {% for r in w.roots %}<div class="{{ '' if w.online else 'opacity-50' }}"><span class="badge bg-{{ r.color }}{% if r.color == 'warning' %} text-dark{% endif %}" title="{{ r.message or '' }}">{{ r.label }}</span> {{ r.name }}</div>
+                        {% else %}<span class="text-body-secondary" title="Add shares on the Storage page">-</span>{% endfor %}
+                    </td>
+                    <td class="small">{{ w.seen }}</td>
+                    <td class="pe-4 text-end text-nowrap">
+                        {% if not w.revoked and w.enabled %}
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-worker-action="{{ 'resume' if w.paused else 'pause' }}" data-id="{{ w.id }}">{{ 'Resume' if w.paused else 'Pause' }}</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-worker-action="{{ 'undrain' if w.draining else 'drain' }}" data-id="{{ w.id }}"
+                                title="A draining worker finishes its jobs and takes no more">{{ 'Stop draining' if w.draining else 'Drain' }}</button>
+                        {% endif %}
+                        <div class="btn-group">
+                            <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" aria-label="More for {{ w.name }}">More</button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                <li><button type="button" class="dropdown-item" data-edit-worker="{{ w.id }}" data-name="{{ w.name }}" data-tags="{{ w.tags|join(' ') }}" data-slots="{{ w.slots }}">Edit name, tags, slots</button></li>
+                                <li><button type="button" class="dropdown-item" data-setup-worker="{{ w.id }}">Setup files (Docker, fstab)</button></li>
+                                <li><button type="button" class="dropdown-item" data-worker-action="{{ 'enable' if not w.enabled else 'disable' }}" data-id="{{ w.id }}">{{ 'Enable' if not w.enabled else 'Disable' }}</button></li>
+                                <li><button type="button" class="dropdown-item" data-worker-action="rotate" data-id="{{ w.id }}" data-confirm="Make a new token for {{ w.name }}? The old one stops working at once.">New token</button></li>
+                                {% if not w.revoked %}<li><button type="button" class="dropdown-item" data-worker-action="revoke" data-id="{{ w.id }}" data-confirm="Revoke {{ w.name }}'s token? It will be refused until you make a new one.">Revoke token</button></li>{% endif %}
+                                <li><hr class="dropdown-divider"></li>
+                                <li><button type="button" class="dropdown-item text-danger" data-worker-action="delete" data-id="{{ w.id }}" data-confirm="Remove {{ w.name }}? Its past jobs stay in the list.">Remove</button></li>
+                            </ul>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="8" class="text-center text-muted py-4">No workers yet. Add one to get a token for its settings file.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<h4 class="mb-3">Jobs
+    <small class="text-muted">{{ summary }}</small>
+</h4>
+<div class="panel p-0 overflow-hidden mb-5">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0" id="jobTable">
+            <thead class="table-light">
+                <tr><th class="ps-4">Job</th><th>Status</th><th style="min-width: 180px;">Progress</th><th>Worker</th><th>Tries</th><th>Updated</th><th class="pe-4 text-end">Actions</th></tr>
+            </thead>
+            <tbody>
+                {% for j in jobs %}
+                {% set color = {'running': 'primary', 'queued': 'secondary', 'needs_review': 'warning', 'done': 'success', 'failed': 'danger', 'cancelled': 'dark', 'skipped': 'dark'}.get(j.status, 'secondary') %}
+                <tr data-job="{{ j.id }}">
+                    <td class="ps-4">
+                        <a href="#" class="fw-bold text-decoration-none" data-job-details="{{ j.id }}">#{{ j.id }} {{ j.title or j.kind }}</a>
+                        <div class="small text-body-secondary">{{ j.kind }}</div>
+                    </td>
+                    <td><span class="badge bg-{{ color }}{% if color == 'warning' %} text-dark{% endif %}">{{ j.status.replace('_', ' ') }}</span></td>
+                    <td class="small">
+                        {% if j.status == 'running' %}
+                        <div>{{ (j.stage or 'starting').replace('_', ' ') }}{% if j.percent is not none %} {{ j.percent }}%{% endif %}{% if j.eta %} &middot; {{ j.eta }} left{% endif %}</div>
+                        {% if j.percent is not none %}<div class="progress mt-1" style="height: 5px;" role="progressbar" aria-valuenow="{{ j.percent }}" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width: {{ j.percent }}%"></div></div>{% endif %}
+                        {% endif %}
+                        {% if j.status == 'needs_review' and j.review_reason %}<div class="text-warning">{{ j.review_reason }}</div>
+                        {% elif j.message and j.status != 'running' %}<div class="text-body-secondary">{{ j.message }}</div>{% endif %}
+                        {% if j.waiting_for %}<div class="text-warning">{{ j.waiting_for }}</div>{% endif %}
+                        {% if j.status in ['failed'] and j.error %}<div class="text-danger">{{ j.error_class }}: {{ j.error }}</div>{% endif %}
+                    </td>
+                    <td class="small">{{ j.worker_name or (j.holder_name and 'held by ' ~ j.holder_name) or '-' }}</td>
+                    <td class="small">{{ j.attempts }}/{{ j.max_attempts }}</td>
+                    <td class="small">{{ j.updated }}</td>
+                    <td class="pe-4 text-end text-nowrap">
+                        {% if j.status == 'needs_review' %}
+                        <button type="button" class="btn btn-sm btn-warning" data-review-job="{{ j.id }}" data-reason="{{ j.review_reason or '' }}">Decide</button>
+                        {% endif %}
+                        {% if j.status in ['queued', 'running', 'needs_review'] %}
+                        <button type="button" class="btn btn-sm btn-outline-danger" data-job-action="cancel" data-id="{{ j.id }}" data-confirm="Cancel job #{{ j.id }}?">Cancel</button>
+                        {% elif j.status in ['failed', 'cancelled', 'skipped'] %}
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-job-action="retry" data-id="{{ j.id }}">Retry</button>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7" class="text-center text-muted py-4">No jobs yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>

@@ -1,0 +1,41 @@
+<!-- synchub/web/templates/library_bulk.html -->
+{% extends "base.html" %}
+{% block title %}Approve together{% endblock %}
+
+{% block content %}
+<p><a href="{{ url_for('library_queue', group=group, q=f.q, root=f.root) }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> {{ title }}</a></p>
+<h2 class="mb-2">Approve together</h2>
+<div id="libMessage" class="alert d-none" role="status"></div>
+{% if not candidates %}
+<div class="alert alert-secondary">Nothing qualifies. Only files in &ldquo;{{ title }}&rdquo; with {{ floor }} confidence that can be approved as suggested are included; low-confidence files and duplicates never are.</div>
+{% else %}
+<div class="panel p-3 p-md-4 mb-3">
+    <p class="mb-2">You are about to approve <strong>{{ candidates }}</strong> file{{ 's' if candidates != 1 }} ({{ size }}) in &ldquo;{{ title }}&rdquo; exactly as suggested ({{ floor }} confidence only).{% if f.q or f.root %} Filter: {% if f.q %}<code>{{ f.q }}</code>{% endif %} {% if f.root %}share <code>{{ f.root }}</code>{% endif %}{% endif %}</p>
+    <p class="small text-body-secondary mb-3">Approving records a decision and nothing else: no file is copied or changed. Each approval can be undone on the list.</p>
+    <div class="d-flex gap-2">
+        <button type="button" class="btn btn-success" id="confirmBulk">Approve {{ candidates }} file{{ 's' if candidates != 1 }}</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('library_queue', group=group, q=f.q, root=f.root) }}">Cancel</a>
+    </div>
+</div>
+<h5 class="mb-2">A sample{% if candidates > sample|length %} (the first {{ sample|length }}){% endif %}</h5>
+<div class="panel p-0 overflow-hidden mb-4">
+    <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+        <thead class="table-light"><tr><th class="ps-4">File</th><th>Will be placed at</th><th class="pe-4">What we suggest</th></tr></thead>
+        <tbody>{% for row in sample %}<tr><td class="ps-4 small">{{ row.rec.root_name }}: {{ row.rec.relative_path }}</td><td class="small"><code>{{ row.r.path or '-' }}</code></td><td class="pe-4 small">{{ row.r.headline }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/library.js') }}"></script>
+<script>
+document.getElementById('confirmBulk')?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    const data = await libraryPost({{ url_for('api_library_bulk', group=group)|tojson }}, { conf: {{ ('high' if floor == 'high' else 'medium')|tojson }}, q: {{ f.q|tojson }}, root: {{ f.root|tojson }} });
+    if (!data.ok) { librarySay(data.message || 'Failed.', false); e.target.disabled = false; return; }
+    sessionStorage.setItem('libraryFlash', data.message);
+    location.href = {{ url_for('library_queue', group=group, q=f.q, root=f.root)|tojson }};
+});
+</script>
+{% endblock %}

@@ -25,10 +25,6 @@ __pycache__/
 /static/posters/*
 !/static/posters/.gitkeep
 
-# CSV Exports
-/exports/
-*.csv
-
 # Environment & IDE Configuration
 .env
 .vscode/
