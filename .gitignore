@@ -33,3 +33,6 @@ __pycache__/
 .env
 .vscode/
 .idea/
+# Whole-house remote
+devices.json
+remote_control.log*
