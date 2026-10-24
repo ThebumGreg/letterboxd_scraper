@@ -111,7 +111,9 @@ def favicon():
 
 @app.get("/api/config")
 def api_config():
+    icons = Path(STATIC) / "icons"
     return jsonify(jellyfinUrl=state.jf.url if state.jf else None,
+                   iconFiles=sorted(f.name for f in icons.glob("*") if f.suffix in (".png", ".svg", ".webp", ".jpg")),
                    jellyfinPublicUrl=(state.public_url or (state.jf.url if state.jf else None)),
                    configPath=str(state.config_path), configError=state.config_error,
                    devices=[d.describe() for d in state.devices.values()])
@@ -184,8 +186,28 @@ def api_device_power(dev_id):
     if json_body().get("state") == "on":
         result = orchestrator.power_on(d, state.logbook)
         return reply(result["ok"], "\n".join(result["steps"]), steps=result["steps"])
-    d.power(False)
-    return reply(True, "off")
+    return reply(True, d.sleep())
+
+
+@app.post("/api/devices/<dev_id>/sleep")
+def api_device_sleep(dev_id):
+    return reply(True, device(dev_id).sleep(json_body().get("mode")))
+
+
+@app.post("/api/devices/<dev_id>/screensaver")
+def api_device_screensaver(dev_id):
+    return reply(True, device(dev_id).screensaver())
+
+
+@app.post("/api/devices/<dev_id>/probe")
+def api_device_probe(dev_id):
+    result = device(dev_id).probe()
+    return reply(True, result["summary"], ports=result["ports"], ping=result["ping"])
+
+
+@app.post("/api/devices/<dev_id>/diagnose")
+def api_device_diagnose(dev_id):
+    return reply(True, device(dev_id).diagnose())
 
 
 @app.post("/api/devices/<dev_id>/wol")

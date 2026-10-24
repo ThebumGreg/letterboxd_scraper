@@ -9,15 +9,22 @@ const TRANSPORT = ['Pause','Unpause','PlayPause','Stop','PreviousTrack','NextTra
 const KEY_LABELS = {home:'Home',back:'Back',options:'✱ Options',info:'Info',search:'Search',play_pause:'⏯',stop:'⏹',rewind:'⏪',ff:'⏩',prev:'⏮',next:'⏭',replay:'↺ Replay',
   vol_up:'Vol +',vol_down:'Vol −',mute:'Mute',ch_up:'Ch +',ch_down:'Ch −',backspace:'⌫',enter:'Enter'};
 const KEYBOARD = {ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',Enter:'ok',Escape:'back',Backspace:'back',Home:'home',' ':'play_pause',m:'mute','+':'vol_up','=':'vol_up','-':'vol_down'};
-// Brand colours for the fallback icon badge (a real icon file or the device's own icon wins when available)
-const BRANDS = [['jellyfin','#00a4dc'],['netflix','#e50914'],['youtube','#ff0000'],['disney','#113ccf'],['prime','#00a8e1'],['hulu','#1ce783','#000'],
-  ['max','#5822b4'],['plex','#e5a00d','#000'],['spotify','#1db954','#000'],['apple','#555'],['peacock','#222'],['paramount','#0064ff'],['home','#4a5a6a'],['roku','#6c1d99']];
+// Logos (simple-icons, CC0) drawn white on the brand colour. Matched as whole words against "name package".
+const LOGOS = [['jellyfin','jellyfin','#00a4dc'],['netflix','netflix','#e50914'],['youtube tv','youtubetv','#ff0000'],['youtube music','youtubemusic','#ff0000'],
+  ['youtube','youtube','#ff0000'],['prime video','primevideo','#00a8e1'],['prime','primevideo','#00a8e1'],['max','max','#5822b4'],['plex','plex','#e5a00d'],
+  ['spotify','spotify','#1db954'],['apple tv','appletv','#3a3a3c'],['apple','appletv','#3a3a3c'],['paramount','paramountplus','#0064ff'],['twitch','twitch','#9146ff'],
+  ['crunchyroll','crunchyroll','#f47521'],['tubi','tubi','#fa382f'],['play store','googleplay','#01875f'],['kodi','kodi','#17b2e7'],['roku','roku','#6c1d99'],
+  ['fandango','fandango','#ff7300'],['nbc','nbc','#444444'],['cbs','cbs','#0033a0']];
+// Brands with no logo file: an initials badge in the brand colour
+const COLOURS = [['disney','#113ccf'],['hulu','#1ce783','#000'],['peacock','#222'],['espn','#c00'],['home','#4a5a6a'],['live tv','#4a5a6a']];
 
 const S = {
   devices: [], devId: localStorage.getItem('devId') || '', status: {}, apps: {}, appsLoaded: {}, publicUrl: '',
   sessions: [], sessSel: 'auto', logAll: [], logLast: 0, keyboard: localStorage.getItem('kbd') === '1', sig: '', items: {},
+  iconFiles: [], badIcons: new Set(), showSystem: false,
 };
 const W = {item: null, devId: null};
+const POWER_LABEL = {dreaming: 'screensaver'};
 const dev = () => S.devices.find(d => d.id === S.devId);
 const has = cap => (dev()?.capabilities || []).includes(cap);
 
@@ -44,24 +51,37 @@ const devPath = (p, id = S.devId) => `/api/devices/${encodeURIComponent(id)}${p}
 const lastLine = t => String(t || 'failed').split('\n').filter(Boolean).pop();
 
 /* ------------------------------------------------------------------ icons */
-function badge(name) {
-  const key = String(name || '?').toLowerCase();
-  const brand = BRANDS.find(b => key.includes(b[0]));
-  let hue = 0; for (const c of key) hue = (hue * 31 + c.charCodeAt(0)) % 360;
+function brandOf(app) {
+  const hay = `${app.name} ${app.id}`.toLowerCase().replace(/[^a-z0-9+]+/g, ' ');
+  const has = kw => new RegExp(`(^| )${kw}( |$)`).test(hay);
+  const logo = LOGOS.find(l => has(l[0]));
+  if (logo) return {logo: logo[1], color: logo[2]};
+  const c = COLOURS.find(x => has(x[0]));
+  return c ? {color: c[1], text: c[2]} : null;
+}
+function badge(name, brand) {
+  let hue = 0; for (const c of String(name)) hue = (hue * 31 + c.charCodeAt(0)) % 360;
   const el = document.createElement('span');
   el.className = 'ico';
-  el.style.background = brand ? brand[1] : `hsl(${hue} 45% 38%)`;
-  if (brand && brand[2]) el.style.color = brand[2];
+  el.style.background = brand ? brand.color : `hsl(${hue} 45% 38%)`;
+  if (brand && brand.text) el.style.color = brand.text;
   el.textContent = String(name || '?').replace(/[^A-Za-z0-9+]/g, ' ').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
   return el;
 }
 function iconHtml(d, app) {
-  const src = d && (d.capabilities.includes('icons') ? devPath('/icon/' + encodeURIComponent(app.id), d.id) : `/static/icons/${encodeURIComponent(app.id)}.png`);
-  return `<img class="ico" src="${esc(src)}" data-fallback="${esc(app.name)}" alt="">`;
+  if (!app || !app.id) return badge(app && app.name || '?').outerHTML;
+  const override = S.iconFiles.find(f => f.replace(/\.[^.]+$/, '') === app.id);   // a file you dropped into static/icons/
+  if (override) return `<img class="ico" src="/static/icons/${encodeURIComponent(override)}" alt="">`;
+  const key = `${d.id}:${app.id}`;
+  if (d.capabilities.includes('icons') && !S.badIcons.has(key))                     // the device's own icon (Roku)
+    return `<img class="ico" src="${esc(devPath('/icon/' + encodeURIComponent(app.id), d.id))}" data-bad="${esc(key)}" data-fallback="${esc(app.name)}" alt="">`;
+  const brand = brandOf(app);
+  if (brand && brand.logo) return `<span class="ico logo" style="--bg:${brand.color};--m:url(/static/icons/logos/${brand.logo}.svg)"></span>`;
+  return badge(app.name, brand).outerHTML;
 }
-document.addEventListener('error', e => {
+document.addEventListener('error', e => {   // a device icon that failed: remember it so it is never requested again
   const i = e.target;
-  if (i.tagName === 'IMG' && i.classList.contains('ico')) i.replaceWith(badge(i.dataset.fallback));
+  if (i.tagName === 'IMG' && i.dataset.bad) { S.badIcons.add(i.dataset.bad); i.replaceWith(badge(i.dataset.fallback, brandOf({name: i.dataset.fallback, id: ''}))); }
 }, true);
 
 /* ------------------------------------------------------------------ devices */
@@ -69,6 +89,7 @@ async function loadConfig() {
   const c = await api('GET', '/api/config');
   S.devices = c.devices || [];
   S.publicUrl = c.jellyfinPublicUrl || '';
+  S.iconFiles = c.iconFiles || [];
   if (!dev()) S.devId = S.devices[0]?.id || '';
   const banner = $('#banner');
   banner.hidden = !c.configError;
@@ -88,7 +109,7 @@ function renderDevBar() {
   $('#devbar').innerHTML = S.devices.map(d => {
     const st = S.status[d.id], pl = playingTitle(d.id);
     const cls = !st ? '' : !st.online ? 'offline' : st.power || '';
-    const sub = !st ? '…' : !st.online ? 'offline' : [st.power, pl ? (pl.paused ? '⏸ ' : '▶ ') + pl.title : st.appName].filter(Boolean).join(' · ');
+    const sub = !st ? '…' : !st.online ? (st.unresponsive ? 'asleep?' : 'offline') : [POWER_LABEL[st.power] || st.power, pl ? (pl.paused ? '⏸ ' : '▶ ') + pl.title : st.appName].filter(Boolean).join(' · ');
     return `<div class="dev ${d.id === S.devId ? 'sel' : ''}" data-act="selectdev" data-id="${esc(d.id)}"><span class="dot ${cls}"></span><div>${esc(d.name)}<div class="sub">${esc(sub)}</div></div></div>`;
   }).join('') || '<span class="dim small">No devices configured</span>';
 }
@@ -113,8 +134,9 @@ function renderRemote() {
   const pairing = has('pairing') ? `<div class="pair" id="pairBox" hidden><b>Pairing required</b>
       <div class="small dim">Press Start, then type the code that appears on the TV.</div>
       <div class="row"><button data-act="pairStart">Start pairing</button><input id="pairCode" placeholder="code on TV" maxlength="8" style="max-width:120px"><button data-act="pairFinish">Finish</button></div></div>` : '';
-  const power = has('power_on') ? `<div class="rgrid r2"><button data-act="power" data-state="on" class="pwr">⏻ Power on</button><button data-act="power" data-state="off" class="pwr">⏻ Power off</button></div>
-    <div class="rgrid r2"><button data-act="wol" title="Send a Wake-on-LAN magic packet">⚡ Wake-on-LAN</button><button data-act="detectMac" title="Read the device's MAC address (it must be on)">Detect MAC</button></div>
+  const sleepLabel = d.sleepMode === 'screensaver' ? 'Sleep (screensaver)' : 'Sleep (standby)';
+  const power = has('power_on') ? `<div class="rgrid r2"><button data-act="power" data-state="on" class="pwr">⏻ Wake / power on</button><button data-act="power" data-state="off" class="pwr" title="This device's sleep mode is ${esc(d.sleepMode)} (set &quot;sleep&quot; in devices.json)">⏻ ${sleepLabel}</button></div>
+    <div class="rgrid r2">${has('screensaver') ? '<button data-act="screensaver" title="Soft sleep: the TV stays reachable and any key wakes it">🖼 Screensaver</button>' : ''}<button data-act="wol" title="Send a Wake-on-LAN magic packet">⚡ Wake-on-LAN</button><button data-act="detectMac" title="Read the device's MAC address (it must be on)">Detect MAC</button><button data-act="probe" title="Which network ports answer right now? Run it on and in standby">Probe network</button>${has('diagnose') ? '<button data-act="diagnose" title="Read power, screensaver and network settings from the TV">Diagnose</button>' : ''}</div>
     <div class="small dim" id="macLine" style="text-align:center"></div>` : '';
   const more = d.extraKeys.length ? `<details class="adv"><summary>More keys</summary><div class="rgrid r2">${d.extraKeys.map(x => `<button data-act="rawkey" data-native="${esc(x.key)}" title="${esc(x.key)}">${esc(x.label)}</button>`).join('')}</div></details>` : '';
   const text = has('text') ? `<div class="row"><input id="txt" placeholder="Type on the TV"><button data-act="text">Send</button></div>` : '';
@@ -147,8 +169,9 @@ function renderRemoteStatus() {
   const st = S.status[S.devId], el = $('#rstat');
   if (!el) return;
   el.innerHTML = !st ? '…' : st.online
-    ? `<span class="chip">${esc(st.power)}</span><span class="chip">${esc(st.appName || st.app || 'unknown app')}</span>` +
+    ? `<span class="chip">${esc(POWER_LABEL[st.power] || st.power)}</span><span class="chip">${esc(st.appName || st.app || 'unknown app')}</span>` +
       (st.volume ? `<span class="chip">vol ${esc(st.volume.level)}/${esc(st.volume.max)}${st.volume.muted ? ' muted' : ''}</span>` : '')
+    : st.unresponsive ? `<span class="chip" style="color:var(--warn)">asleep? not answering</span> ${esc(st.error || '')}`
     : `<span class="chip" style="color:var(--bad)">offline</span> ${esc(st.error || '')}`;
   const pair = $('#pairBox'); if (pair) pair.hidden = !(st && st.needsPairing);
   const mac = $('#macLine'); if (mac) mac.textContent = st && st.mac ? `MAC ${st.mac}` : 'MAC unknown (press Detect MAC while the device is on)';
@@ -178,9 +201,13 @@ function renderApps() {
   const d = dev(); if (!d) return;
   const list = S.apps[d.id] || [], st = S.status[d.id] || {};
   const tile = a => `<button data-act="launch" data-app="${esc(a.id)}" class="tile ${a.id === st.app ? 'active' : ''}" title="${esc(a.id)}">${iconHtml(d, a)}<span class="n">${esc(a.name)}</span></button>`;
-  const apps = list.filter(a => a.type !== 'tvin'), inputs = list.filter(a => a.type === 'tvin');
-  $('#apps').innerHTML = (apps.map(tile).join('') + (inputs.length ? '<div class="grp small dim">TV inputs</div>' + inputs.map(tile).join('') : '')) || '<span class="dim">No apps found</span>';
+  const system = list.filter(a => a.system), inputs = list.filter(a => a.type === 'tvin');
+  const apps = list.filter(a => a.type !== 'tvin' && (S.showSystem || !a.system));
+  $('#apps').innerHTML = (apps.map(tile).join('') +
+    (inputs.length ? '<div class="grp small dim">TV inputs</div>' + inputs.map(tile).join('') : '') +
+    (system.length ? `<div class="grp small dim"><label><input type="checkbox" id="showSys" ${S.showSystem ? 'checked' : ''}> show ${system.length} system app(s)</label></div>` : '')) || '<span class="dim">No apps found</span>';
 }
+document.addEventListener('change', e => { if (e.target.id === 'showSys') { S.showSystem = e.target.checked; renderApps(); } });
 
 /* ------------------------------------------------------------------ jellyfin sessions + now playing */
 function activeSession() {
@@ -320,8 +347,8 @@ function stateHint(d) {
   const st = S.status[d.id];
   if (!st) return 'checking…';
   const mac = st.mac || d.hasMac;
-  if (!st.online) return st.needsPairing ? 'needs pairing first' : mac ? 'unreachable — will try Wake-on-LAN, then open Jellyfin and play' : 'unreachable — no MAC known for Wake-on-LAN';
-  if (st.power !== 'on') return `${st.power} — will power on, open Jellyfin and play`;
+  if (!st.online) return st.needsPairing ? 'needs pairing first' : `${st.unresponsive ? 'asleep' : 'unreachable'} — will try ${d.wakeMethods.join(', ')}, then open Jellyfin and play`;
+  if (st.power !== 'on') return `${POWER_LABEL[st.power] || st.power} — will wake it, open Jellyfin and play`;
   if (/jellyfin/i.test(st.appName || '')) return 'in Jellyfin — will start playing right away';
   return `on, in ${st.appName || 'another app'} — will switch to Jellyfin and play`;
 }
@@ -375,6 +402,9 @@ const ACTIONS = {
   rawkey: (b) => sendNative(b, b.dataset.native),
   rawkeybox: (b) => { const v = $('#rawKey').value.trim(); if (v) sendNative(b, v); },
   power: async (b) => { await run(b, api('POST', devPath('/power'), {state: b.dataset.state})); pollStatus(dev()); },
+  screensaver: async (b) => { await run(b, api('POST', devPath('/screensaver'), {})); pollStatus(dev()); },
+  probe: (b) => run(b, api('POST', devPath('/probe'), {})),
+  diagnose: (b) => run(b, api('POST', devPath('/diagnose'), {})),
   wol: async (b) => { await run(b, api('POST', devPath('/wol'), {})); setTimeout(() => pollStatus(dev()), 4000); },
   detectMac: async (b) => { await run(b, api('POST', devPath('/detect-mac'), {})); pollStatus(dev()); },
   pairStart: (b) => run(b, api('POST', devPath('/pair/start'), {})),

@@ -39,6 +39,8 @@ class RokuDriver(Driver):
         ("Power toggle", "Power"), ("Find remote", "FindRemote"),
     )
     default_session_rule = {"client": "Roku"}
+    default_wake = ("key", "wol")
+    probe_ports = {8060: "ECP"}
 
     def __init__(self, cfg, logbook, options=None):
         super().__init__(cfg, logbook, options)

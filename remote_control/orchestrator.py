@@ -1,6 +1,8 @@
 """Get a device ready for Jellyfin playback: power on, open the Jellyfin app, find its session."""
 import time
+from concurrent.futures import ThreadPoolExecutor, wait
 
+from .devices import DeviceError
 from .jellyfin import match_session, summarize_session
 
 
@@ -21,45 +23,66 @@ def _wait_for(predicate, timeout, interval=2):
     return None
 
 
-def ensure_on(driver, step, timeout=25):
+def ensure_on(driver, step):
     """Bring a device from any power state to "on". -> the device status, or None on failure.
 
-    unreachable   -> Wake-on-LAN (needs a MAC), then wait for it to answer
-    standby/off   -> the device's power-on key, falling back to Wake-on-LAN if that does nothing
-    screensaver   -> same wake path
+    Anything that is not clearly on gets every configured wake method at once (Wake-on-LAN, the device's
+    own power key, a Cast launch, a queued ADB key, ...). They are all safe to repeat, and which one a
+    given TV honours in standby varies, so waiting for the first success beats trying them one by one.
     """
+    timeout = int(driver.cfg.get("wake_timeout", 45))
     st = driver.status()
-    if not st["online"]:
-        if st.get("needsPairing"):
-            step(f'{driver.name} is not paired yet. Use "Start pairing" on its remote first.', False)
-            return None
-        if not driver.mac:
-            step(f'{driver.name} is unreachable ({st.get("error")}). Press "Detect MAC" while it is on, or add '
-                 '"mac" to devices.json, so Wake-on-LAN can be tried.', False)
-            return None
-        driver.wol()
-        step(f"Unreachable; sent Wake-on-LAN to {driver.mac}")
-        st = _wait_for(lambda: (s := driver.status(quiet=True))["online"] and s, timeout)
-        if not st:
-            step("Still unreachable after Wake-on-LAN. The TV may not support it (check its network-standby / "
-                 "'wake on Wi-Fi' setting), or this computer is not on the TV's network segment.", False)
-            return None
-        step("Device is reachable again")
-
-    if st["power"] != "on":
-        driver.power(True)
-        step(f'Sent power on (was {st["power"]})')
-        woke = _wait_for(lambda: (s := driver.status(quiet=True))["power"] == "on" and s, timeout, 1.5)
-        if not woke and driver.mac:
-            driver.wol()
-            step("Power key had no effect; sent Wake-on-LAN as well")
-            woke = _wait_for(lambda: (s := driver.status(quiet=True))["power"] == "on" and s, timeout, 1.5)
-        if woke:
-            time.sleep(2)  # let the launcher finish drawing before we start an app
-            return woke
-        step("Device never reported powered on", False)
+    if st["online"] and st["power"] == "on":
+        return st
+    if st.get("needsPairing") and not st["online"]:
+        step(f'{driver.name} is not paired yet. Use "Start pairing" on its remote first.', False)
         return None
-    return st
+
+    # Reachable but screen off or dreaming: the device's own key is enough. Unreachable: try everything.
+    methods = ["key"] if st["online"] else driver.wake_methods()
+    step(f'{driver.name} is {st.get("power") or "unreachable"}'
+         f'{" (" + st["error"] + ")" if st.get("error") else ""}; waking via {", ".join(methods)}')
+    executor = ThreadPoolExecutor(max_workers=max(1, len(methods)))
+    futures = {executor.submit(driver.wake_with, m): m for m in methods}
+    done, pending = wait(futures, timeout=15)
+    sent = len(pending)
+    for fut in done:
+        try:
+            step(f"Wake via {futures[fut]}: {fut.result()}")
+            sent += 1
+        except DeviceError as e:
+            step(f"Wake via {futures[fut]} failed: {e}", False)
+    for fut in pending:
+        step(f"Wake via {futures[fut]} is still running in the background", True)
+    executor.shutdown(wait=False)
+    if not sent:
+        step("None of the wake methods could even be sent, so there is nothing to wait for.", False)
+        return None
+
+    keyed = methods == ["key"]
+
+    def came_on():
+        nonlocal keyed
+        s = driver.status(quiet=True)
+        if s["online"] and s["power"] == "on":
+            return s
+        if s["online"] and not keyed:
+            # It answers now (e.g. after Wake-on-LAN) but is still off: press its own power key once.
+            keyed = True
+            try:
+                step(f'Device answers but is {s["power"]}: {driver.wake_with("key")}')
+            except DeviceError as e:
+                step(f"Power key failed: {e}", False)
+        return None
+
+    woke = _wait_for(came_on, timeout, 2)
+    if not woke:
+        step(f"The device did not come on within {timeout}s. Run Probe network now and compare it with a probe while "
+             "the TV is on: whichever ports answer in standby show which wake method can work. TVs often ignore "
+             "Wake-on-LAN; the screensaver sleep mode avoids needing to wake them at all.", False)
+        return None
+    time.sleep(2)  # let the launcher finish drawing before we start an app
+    return woke
 
 
 def power_on(driver, logbook):

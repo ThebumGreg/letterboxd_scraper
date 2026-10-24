@@ -31,8 +31,8 @@ then open `http://<this-computer>:5055/?token=SOMETHING-LONG` once on the phone 
 
 | TV is | What happens |
 |---|---|
-| unreachable | Wake-on-LAN (needs `mac`), wait until it answers |
-| standby / screensaver | power-on key, then Wake-on-LAN as a fallback if the key does nothing |
+| unreachable or asleep (not answering) | every configured wake method at once (see "Waking and sleeping"), then wait |
+| reachable but screen off / screensaver | the device's own power key |
 | on, another app | launch the Jellyfin app, wait for its session to appear |
 | already in Jellyfin | play right away |
 
@@ -57,22 +57,55 @@ media session (best effort; depends on the Android version and whether the app p
 Network access = Default or Permissive. Real app icons come from the Roku. Playback state comes from the Roku
 media player (many apps report state but not the title; Jellyfin's own session supplies it when you use Jellyfin).
 
-### Wake-on-LAN
+### Waking and sleeping a TV
 
-Press **Detect MAC** while a device is on, then put the address in `devices.json` as `"mac"` (Roku reports its own).
-Add `"broadcast": "192.168.1.255"` (your subnet's broadcast address) if the default broadcast does not reach it.
-Not every TV can be woken this way: look for a "Wake on LAN / Wake on Wi-Fi / network standby" setting, and note
-that streamers such as the Chromecast with Google TV have none but stay reachable in standby, so the power key
-works instead. The magic packet only reaches the TV if this computer is on the same network segment. Under WSL2's
-default NAT networking it will not; use `networkingMode=mirrored` in `.wslconfig`, or run the app on the host or a Pi.
+A TV in standby is the hard part. Many TVs (TCL included, going by the logs from a real one) switch their network
+off in standby, so ADB hangs, Wake-on-LAN is ignored, and the only thing that wakes them is their own remote.
+"Wake / power on" therefore does not rely on one trick. If the TV is not clearly on it fires every method listed
+in the device's `wake` setting at once, then waits (`wake_timeout`, default 45 s) for it to report on:
+
+| method | how | needs |
+|---|---|---|
+| `remote` | connects over the Android TV Remote protocol and presses power if the TV says it is off | `googletv` type, paired |
+| `adb` | queues `KEYCODE_WAKEUP`; delivered whenever the TV's network wakes, so it is not waited on | ADB enabled |
+| `wol` | Wake-on-LAN magic packets (broadcast, your subnet's `broadcast`, and unicast) | `mac`, TV setting enabled |
+| `cast` | launches a Cast receiver, which wakes Chromecast-built-in TVs that support wake-on-cast | `pip install pychromecast` |
+| `key` | the device's own power-on key (Roku; also used whenever a device is reachable but screen-off) | reachable |
+
+Defaults: `googletv` = remote, wol, cast (+adb if enabled); `androidtv` = adb, wol, cast; `roku` = key, wol.
+Every attempt and its result is in the Log, so you can see which one worked.
+
+**Find out what your TV does in standby.** Press **Probe network** while the TV is on, put it to sleep, wait
+a minute, and press it again. Any port that still answers in standby is a way in: 6466 means the Remote protocol
+can wake it (use `googletv`), 8009 means Cast can, and if nothing answers, only the TV's own remote, an IR
+blaster, or avoiding standby will work. **Diagnose** (ADB) prints the TV's power, screensaver and network
+settings, including which interface (Wi-Fi or Ethernet) and MAC the TV uses. Wake-on-LAN needs the MAC of the
+interface the TV is actually connected with.
+
+**Avoid standby: `"sleep": "screensaver"`.** The Sleep button then starts the screensaver instead of putting the
+TV to standby. The TV stays reachable, any key wakes it instantly, and everything keeps working. The panel stays
+lit, and you need a screensaver enabled on the TV (Settings > System > Ambient mode / Screen saver); the app
+reports it clearly if there is none. The **Screensaver** button does this on demand whatever the setting is.
+Needs ADB (`androidtv`, or `googletv` with `"adb": true`). Check the TV's own power-saving timers too, since a
+TV can still drop into standby by itself after a while.
+
+**Wake-on-LAN notes:** press **Detect MAC** while the device is on and put the address in `devices.json` as
+`"mac"` (Roku reports its own). Add `"broadcast": "192.168.1.255"` (your subnet's broadcast) if the default
+broadcast does not reach it. The packet only arrives if this computer is on the same network segment; under
+WSL2's default NAT networking it will not (use `networkingMode=mirrored` in `.wslconfig`, or run the app on
+the host).
 
 ## Config reference
 
 `jellyfin.app`: app to open for playback (package name on Android TV; name or channel id on Roku).
 `jellyfin.session`: how that app's session looks in Jellyfin's `/Sessions` (`client` and `device` substrings,
 and/or exact `device_id`); the Session menu in the UI shows the real values.
-App icons: the Roku supplies its own; for Android TV drop `<package>.png` into `remote_control/static/icons/`,
-otherwise a coloured badge is used.
+`sleep`: `standby` (default) or `screensaver`. `wake`, `wake_timeout`: see above. `broadcast`: subnet broadcast
+address for Wake-on-LAN. `apps`: (googletv without ADB) list of package names to show in the app grid.
+
+App icons: the Roku supplies its own. For everything else the app draws the service's logo (bundled, see
+`static/icons/logos/README.md`) on its brand colour, or an initials badge. Vendor/system packages such as `com.tcl.*`
+are hidden behind "show system apps". To override any icon, drop `<package>.png` into `remote_control/static/icons/`.
 
 ## Adding another kind of device
 

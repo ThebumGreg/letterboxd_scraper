@@ -7,10 +7,20 @@
       "host": "192.168.1.50",
       "mac": "AA:BB:CC:DD:EE:FF",
       "broadcast": "192.168.1.255",
-      "adb": false,
+      "adb": true,
+      "sleep": "screensaver",
+      "wake": [
+        "remote",
+        "adb",
+        "wol",
+        "cast"
+      ],
+      "wake_timeout": 45,
       "jellyfin": {
         "app": "org.jellyfin.androidtv",
-        "session": { "client": "Android TV" }
+        "session": {
+          "client": "Android TV"
+        }
       }
     },
     {
@@ -20,7 +30,9 @@
       "host": "192.168.1.60",
       "jellyfin": {
         "app": "Jellyfin",
-        "session": { "client": "Roku" }
+        "session": {
+          "client": "Roku"
+        }
       }
     }
   ]

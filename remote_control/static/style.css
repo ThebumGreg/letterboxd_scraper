@@ -101,3 +101,8 @@ dialog::backdrop{background:rgba(0,0,0,.65)}
 /* pairing */
 .pair{background:#41331a;border:1px solid var(--warn);border-radius:12px;padding:10px;margin-bottom:8px}
 .pair[hidden]{display:none}
+
+/* logo icons: white logo on the brand colour */
+.ico.logo{position:relative}
+.ico.logo::after{content:"";width:62%;height:62%;background:#fff;-webkit-mask:var(--m) center/contain no-repeat;mask:var(--m) center/contain no-repeat}
+.ico.logo{background:var(--bg)}

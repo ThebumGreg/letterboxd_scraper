@@ -8,7 +8,9 @@ in devices.json with a matching "type".
 """
 import json
 import re
+import shutil
 import socket
+import subprocess
 import time
 from pathlib import Path
 
@@ -67,6 +69,8 @@ class Driver:
     keymap = {}                     # logical key -> native key (None = unsupported)
     extra_keys = ()                 # ((label, native key), ...) shown under "More keys"
     default_session_rule = {}       # how this kind of device's Jellyfin client appears in /Sessions
+    default_wake = ("key", "wol")   # wake methods fired together when the device is not on
+    probe_ports = {}                # port -> name, for the network probe
 
     def __init__(self, cfg, logbook, options=None):
         self.cfg = cfg
@@ -101,6 +105,71 @@ class Driver:
 
     def detect_mac(self):
         raise DeviceError("MAC detection is not supported by this device type")
+
+    # --- waking ---------------------------------------------------------------------------
+    def wake_methods(self):
+        return list(self.cfg.get("wake") or self.default_wake)
+
+    def wake_with(self, name):
+        """Send one wake attempt. -> a short description; raises DeviceError if it cannot be tried."""
+        fn = getattr(self, f"_wake_{name}", None)
+        if not fn:
+            raise DeviceError(f"unknown wake method {name!r}")
+        return fn()
+
+    def _wake_key(self):
+        self.power(True)
+        return "sent the power-on key"
+
+    def _wake_wol(self):
+        info = self.wol()
+        return f"magic packet sent to {len(info['targets'])} addresses"
+
+    def _wake_cast(self):
+        from .cast import cast_wake
+        return cast_wake(self.host)
+
+    # --- sleeping ---------------------------------------------------------------------------
+    def sleep(self, mode=None):
+        """Put the device to sleep. mode: "standby" (default) or "screensaver" (stays reachable)."""
+        mode = mode or self.cfg.get("sleep") or "standby"
+        if mode == "screensaver":
+            return self.screensaver()
+        self.power(False)
+        return "standby"
+
+    def screensaver(self):
+        raise DeviceError("this device cannot start a screensaver")
+
+    def diagnose(self):
+        raise DeviceError("diagnostics are not available for this device type")
+
+    # --- network probe ----------------------------------------------------------------------
+    def probe(self):
+        """Which network paths answer right now? Run it with the device on and again in standby."""
+        t0 = time.perf_counter()
+        ports, lines = [], []
+        for port, name in self.probe_ports.items():
+            p0 = time.perf_counter()
+            try:
+                socket.create_connection((self.host, port), timeout=1.5).close()
+                opened, note = True, "open"
+            except OSError as e:
+                opened, note = False, e.strerror or type(e).__name__
+            ms = round((time.perf_counter() - p0) * 1000)
+            ports.append({"port": port, "name": name, "open": opened})
+            lines.append(f"{port} {name}: {note} ({ms} ms)")
+        ping = None
+        if shutil.which("ping"):
+            try:
+                ping = subprocess.run(["ping", "-c", "1", "-W", "1", self.host], capture_output=True, timeout=4).returncode == 0
+            except (OSError, subprocess.TimeoutExpired):
+                ping = None
+        lines.insert(0, f"ping: {'replies' if ping else 'no reply' if ping is False else 'not tested'}")
+        any_open = any(p["open"] for p in ports) or bool(ping)
+        self.logbook.add("network", self.id, "probe", f"tcp connect {self.host} " + ",".join(map(str, self.probe_ports)),
+                         None, any_open, (time.perf_counter() - t0) * 1000, "\n".join(lines))
+        return {"ping": ping, "ports": ports, "summary": "\n".join(lines)}
 
     def close(self):
         """Release connections (called when the device list is reloaded)."""
@@ -153,6 +222,8 @@ class Driver:
             "extraKeys": [{"label": l, "key": k} for l, k in self.extra_keys],
             "sessionRule": self.session_rule(),
             "hasMac": bool(self.mac),
+            "sleepMode": self.cfg.get("sleep") or "standby",
+            "wakeMethods": self.wake_methods(),
         }
 
 

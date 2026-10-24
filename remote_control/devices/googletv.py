@@ -60,6 +60,7 @@ class GoogleTVDriver(Driver):
         ("HDMI 3", "KEYCODE_TV_INPUT_HDMI_3"), ("HDMI 4", "KEYCODE_TV_INPUT_HDMI_4"),
     )
     default_session_rule = {"client": "Android TV"}
+    default_wake = ("remote", "wol", "cast")
 
     def __init__(self, cfg, logbook, options=None):
         super().__init__(cfg, logbook, options)
@@ -71,10 +72,13 @@ class GoogleTVDriver(Driver):
         self.api_port = int(cfg.get("port", 6466))
         self.pair_port = int(cfg.get("pair_port", 6467))
         caps = {"keys", "apps", "text", "launch", "power_on", "power_off", "pairing"}
+        self.probe_ports = {self.api_port: "Remote protocol", self.pair_port: "Remote pairing", 8009: "Cast", 8008: "Cast HTTP"}
         self.adb = None
         if cfg.get("adb"):
             self.adb = AndroidTVDriver({**cfg, "type": "androidtv", "port": cfg.get("adb_port", 5555)}, logbook, self.options)
-            caps.add("screenshot")
+            caps |= {"screenshot", "screensaver", "diagnose"}
+            self.probe_ports[self.adb.port] = "ADB"
+            self.default_wake = ("remote", "adb", "wol", "cast")
         self.capabilities = frozenset(caps)
         self.needs_pairing = False
         self._remote = None
@@ -218,6 +222,26 @@ class GoogleTVDriver(Driver):
         if not TEXT_RE.match(text):
             raise DeviceError("text must be printable ASCII (max 100 chars)")
         self._call("send_text", text, "text")
+
+    def _wake_remote(self):
+        self.power(True)   # connects, then sends POWER only if the TV reports itself off
+        return "connected over the Remote protocol and sent the power key"
+
+    def _wake_adb(self):
+        if not self.adb:
+            raise DeviceError('ADB is not enabled for this device ("adb": true)')
+        return self.adb._wake_adb()
+
+    def _need_adb(self, what):
+        if not self.adb:
+            raise DeviceError(f'{what} needs ADB: set "adb": true on this device')
+        return self.adb
+
+    def screensaver(self):
+        return self._need_adb("The screensaver").screensaver()
+
+    def diagnose(self):
+        return self._need_adb("Diagnose").diagnose()
 
     def screenshot(self):
         if not self.adb:
