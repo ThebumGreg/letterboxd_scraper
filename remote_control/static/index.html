@@ -7,18 +7,20 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Remote">
+<meta name="apple-mobile-web-app-title" content="SyncHub Remote">
 <link rel="apple-touch-icon" href="/static/pwa/icon-180.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/static/pwa/icon-192.png">
 <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
-<title>Remote</title>
+<title>SyncHub Remote</title>
 <link rel="stylesheet" href="/static/style.css">
-</head><body class="remote-body">
+</head>
+<body class="remote-body">
 <header class="topbar">
   <div id="devbar"></div>
-  <a class="btn gear" href="/settings" title="Settings and testing" aria-label="Settings and testing">⚙<span class="gl"> Settings</span></a>
+  <a class="btn gear" href="/settings" title="Settings" aria-label="Settings">⚙<span class="gl"> Settings</span></a>
 </header>
 <div id="banner" hidden></div>
+<div id="notices"></div>
 <main class="remote-page">
   <section id="remote" class="remote-card"><div class="dim">Loading…</div></section>
 </main>

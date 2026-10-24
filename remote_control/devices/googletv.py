@@ -17,14 +17,13 @@ import time
 from pathlib import Path
 
 from . import Driver, DeviceError, register
-from .androidtv import FRIENDLY, PACKAGE_RE, AndroidTVDriver
+from .androidtv import DREAM_APPS, FRIENDLY, PACKAGE_RE, AndroidTVDriver
 
 LINK_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://\S{1,300}$")
 KEY_RE = re.compile(r"^(KEYCODE_)?[A-Z0-9_]{1,40}$|^\d{1,3}$")
 TEXT_RE = re.compile(r"^[\x20-\x7e]{1,100}$")
 CODE_RE = re.compile(r"^[0-9A-F]{6}$")
 LAUNCHERS = {"com.google.android.apps.tv.launcherx", "com.google.android.tvlauncher"}
-DREAM_APPS = {"com.google.android.apps.tv.dreamx"}   # the Google TV screensaver ("Ambient mode")
 DEFAULT_APPS = [{"id": pkg, "name": name, "type": "app"} for pkg, name in FRIENDLY.items() if pkg not in LAUNCHERS]
 
 
@@ -220,6 +219,9 @@ class GoogleTVDriver(Driver):
             out["media"] = self.adb.media(app)
         return out
 
+    def _in_screensaver(self, status):
+        return status.get("power") == "dreaming" or status.get("app") in DREAM_APPS
+
     def valid_native_key(self, key):
         return bool(KEY_RE.match(key))
 
@@ -253,6 +255,7 @@ class GoogleTVDriver(Driver):
         is_package = bool(PACKAGE_RE.match(app_id))
         if not (is_package or LINK_RE.match(app_id)):
             raise DeviceError("app must be a package name or a link")
+        self.leave_screensaver()
         failures = []
         if self.adb and is_package:
             try:

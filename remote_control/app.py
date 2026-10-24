@@ -8,13 +8,15 @@ import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlparse
 
 from flask import Flask, Response, g, jsonify, request, send_from_directory
 
-from . import orchestrator
-from .devices import DeviceError, load_devices
+from . import discovery, orchestrator
+from .devices import HOST_RE, ID_RE as DEVICE_ID_RE, REGISTRY, DeviceError, load_devices
 from .jellyfin import JellyfinClient, JellyfinError, match_session, summarize_session
 from .logbook import LogBook
+from .notices import NOTICES
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 ID_RE = re.compile(r"^[0-9A-Za-z_-]+$")
@@ -32,10 +34,13 @@ app = Flask(__name__, static_folder=STATIC, static_url_path="/static")
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 state = SimpleNamespace(logbook=LogBook(), jf=None, devices={}, config_path=None, config_error=None,
                         options={}, last_status={}, token="", public_url="", icons={},
-                        prefs={"quick": {}, "session": {}, "play": {}}, prefs_path=None, prefs_lock=threading.Lock(), apps_cache={})
+                        prefs={"quick": {}, "session": {}, "play": {}, "apps": {}, "devices": []}, prefs_path=None, prefs_lock=threading.Lock(), apps_cache={})
 
 APPS_TTL = 600           # seconds an installed-app list is reused
 QUICK_MAX = 4            # apps pinned to a remote
+APPS_MAX = 300           # apps one TV can have on its remote
+MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}[:-]?){5}[0-9A-Fa-f]{2}$")
+SLEEP_MODES = ("standby", "screensaver")
 APP_ID_RE = re.compile(r"^[\w.\-]{1,120}$")
 
 
@@ -107,11 +112,11 @@ def reload_devices():
             state.logbook.add("system", old.id, "close", ok=False, response=str(e))
     state.icons.clear()
     state.apps_cache.clear()
-    state.devices, state.config_error = load_devices(state.config_path, state.logbook, state.options)
+    state.devices, state.config_error = load_devices(state.config_path, state.logbook, state.options, state.prefs["devices"])
     apply_session_overrides()
     state.last_status.clear()
     state.logbook.add("system", None, "config", ok=state.config_error is None,
-                      response=state.config_error or f"Loaded {len(state.devices)} device(s) from {state.config_path}")
+                      response=state.config_error or f"Loaded {len(state.devices)} device(s)")
 
 
 # ------------------------------------------------------------------ pages / config / log
@@ -125,19 +130,51 @@ def settings_page():
     return send_from_directory(STATIC, "settings.html")
 
 
+@app.get("/tvs")
+def tvs_page():
+    return send_from_directory(STATIC, "tvs.html")
+
+
+@app.get("/advanced")
+def advanced_page():
+    return send_from_directory(STATIC, "advanced.html")
+
+
 @app.get("/manifest.webmanifest")
 def web_manifest():
     return send_from_directory(os.path.join(STATIC, "pwa"), "manifest.webmanifest", mimetype="application/manifest+json")
 
 
+def clean_apps(apps, limit):
+    """[{"id", "name"}] with valid, unique ids; raises DeviceError on anything malformed."""
+    if not isinstance(apps, list) or len(apps) > limit:
+        raise DeviceError(f"choose up to {limit} apps")
+    clean = []
+    for a in apps:
+        if not isinstance(a, dict) or not APP_ID_RE.match(str(a.get("id", ""))):
+            raise DeviceError("bad app id")
+        if a["id"] not in [c["id"] for c in clean]:
+            clean.append({"id": a["id"], "name": str(a.get("name") or a["id"])[:60]})
+    return clean
+
+
 def load_prefs():
+    empty = {"quick": {}, "session": {}, "play": {}, "apps": {}, "devices": []}
     try:
         data = json.loads(Path(state.prefs_path).read_text(encoding="utf-8"))
-        state.prefs = {"quick": {k: v for k, v in (data.get("quick") or {}).items() if isinstance(v, list)},
-                       "session": {k: v for k, v in (data.get("session") or {}).items() if isinstance(v, dict)},
-                       "play": {k: v for k, v in (data.get("play") or {}).items() if v == "url"}}
+        prefs = {"quick": {}, "apps": {},
+                 "session": {k: v for k, v in (data.get("session") or {}).items() if isinstance(v, dict)},
+                 "play": {k: v for k, v in (data.get("play") or {}).items() if v == "url"},
+                 "devices": [d for d in (data.get("devices") or []) if isinstance(d, dict)]}
+        for key, limit in (("quick", QUICK_MAX), ("apps", APPS_MAX)):
+            for dev_id, apps in (data.get(key) or {}).items():
+                try:
+                    prefs[key][dev_id] = clean_apps(apps, limit)
+                except DeviceError:
+                    pass   # one bad entry must not discard everything else
+        state.prefs = prefs
     except (OSError, ValueError, TypeError, AttributeError):
-        state.prefs = {"quick": {}, "session": {}, "play": {}}
+        state.prefs = empty
 
 
 def apply_session_overrides():
@@ -163,19 +200,30 @@ def api_prefs():
 @app.put("/api/prefs/quick/<dev_id>")
 def api_prefs_quick(dev_id):
     device(dev_id)
-    apps = json_body().get("apps")
-    if not isinstance(apps, list) or len(apps) > QUICK_MAX:
-        raise DeviceError(f"choose up to {QUICK_MAX} apps")
-    clean = []
-    for a in apps:
-        if not isinstance(a, dict) or not APP_ID_RE.match(str(a.get("id", ""))):
-            raise DeviceError("bad app id")
-        if a["id"] not in [c["id"] for c in clean]:
-            clean.append({"id": a["id"], "name": str(a.get("name") or a["id"])[:60]})
+    clean = clean_apps(json_body().get("apps"), QUICK_MAX)
     with state.prefs_lock:
         state.prefs["quick"][dev_id] = clean
         save_prefs()
     return reply(True, f"saved {len(clean)} quick-launch app(s)", apps=clean)
+
+
+@app.put("/api/prefs/apps/<dev_id>")
+def api_prefs_apps(dev_id):
+    """Which apps a TV's remote shows. Saved with names, so the remote can draw them before the TV's app list loads."""
+    device(dev_id)
+    clean = clean_apps(json_body().get("apps"), APPS_MAX)
+    with state.prefs_lock:
+        state.prefs["apps"][dev_id] = clean
+        save_prefs()
+    return reply(True, f"{len(clean)} app(s) will show on the remote", apps=clean)
+
+
+@app.delete("/api/prefs/apps/<dev_id>")
+def api_prefs_apps_reset(dev_id):
+    with state.prefs_lock:
+        state.prefs["apps"].pop(dev_id, None)
+        save_prefs()
+    return reply(True, "showing the default apps")
 
 
 @app.put("/api/prefs/session/<dev_id>")
@@ -232,13 +280,145 @@ def api_config():
                    iconFiles=sorted(f.name for f in icons.glob("*") if f.suffix in (".png", ".svg", ".webp", ".jpg")),
                    jellyfinPublicUrl=(state.public_url or (state.jf.url if state.jf else None)),
                    configPath=str(state.config_path), configError=state.config_error,
-                   devices=[d.describe() for d in state.devices.values()])
+                   devices=[{**d.describe(), "managed": d.id in managed_ids()} for d in state.devices.values()])
 
 
 @app.post("/api/reload")
 def api_reload():
     reload_devices()
     return api_config()
+
+
+# ------------------------------------------------------------------ TV management
+def managed_ids():
+    return {c["id"] for c in state.prefs["devices"]}
+
+
+def tv_view(d):
+    cfg = d.cfg
+    return {"id": d.id, "name": d.name, "type": d.type, "typeLabel": d.label, "host": d.host, "mac": d.mac or "",
+            "sleep": cfg.get("sleep") or "standby", "adb": bool(cfg.get("adb")) or d.type == "androidtv",
+            "managed": d.id in managed_ids(), "source": "saved in the app" if d.id in managed_ids() else "devices.json"}
+
+
+def slug(name, fallback):
+    text = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:30].strip("-")
+    return text if text and text[0].isalnum() else fallback
+
+
+def clean_tv(body, dev_id=None):
+    """Validate the fields the TVs page edits. -> a device config ready to save."""
+    kind, name, host = body.get("type"), str(body.get("name") or "").strip()[:60], str(body.get("host") or "").strip()
+    if kind not in REGISTRY:
+        raise DeviceError(f"choose a type: {', '.join(sorted(REGISTRY))}")
+    if not HOST_RE.match(host):
+        raise DeviceError("enter the TV's IP address (such as 192.168.1.50)")
+    others = [d for d in state.devices.values() if d.id != dev_id]
+    clash = next((d for d in others if d.host == host), None)
+    if clash:
+        raise DeviceError(f"{host} is already added as {clash.name}")
+    if not name:
+        name = {"roku": "Roku", "googletv": "Google TV", "androidtv": "Android TV"}.get(kind, kind)
+    if dev_id is None:
+        taken = {d.id for d in state.devices.values()} | managed_ids()
+        base = dev_id = slug(name, kind)
+        n = 1
+        while dev_id in taken:
+            n += 1
+            dev_id = f"{base}-{n}"
+        if not DEVICE_ID_RE.match(dev_id):
+            raise DeviceError("could not make an id from that name")
+    cfg = {"id": dev_id, "name": name, "type": kind, "host": host}
+    mac = str(body.get("mac") or "").strip()
+    if mac:
+        if not MAC_RE.match(mac):
+            raise DeviceError("the MAC address should look like AA:BB:CC:DD:EE:FF")
+        cfg["mac"] = re.sub(r"[^0-9A-Fa-f]", "", mac).upper()
+        cfg["mac"] = ":".join(cfg["mac"][i:i + 2] for i in range(0, 12, 2))
+    sleep = body.get("sleep") or "standby"
+    if sleep not in SLEEP_MODES:
+        raise DeviceError("sleep must be standby or screensaver")
+    adb = bool(body.get("adb")) and kind == "googletv"
+    if sleep == "screensaver" and not (adb or kind == "androidtv"):
+        raise DeviceError("The screensaver sleep mode needs ADB: tick \"Also use ADB\" for this Google TV, or choose standby")
+    if sleep != "standby":
+        cfg["sleep"] = sleep
+    if adb:
+        cfg["adb"] = True
+    return cfg
+
+
+def save_managed(devices):
+    with state.prefs_lock:
+        state.prefs["devices"] = devices
+        save_prefs()
+    reload_devices()
+
+
+@app.get("/api/tvs")
+def api_tvs():
+    return jsonify(tvs=[tv_view(d) for d in state.devices.values()], configPath=str(state.config_path))
+
+
+@app.post("/api/tvs")
+def api_tvs_add():
+    cfg = clean_tv(json_body())
+    save_managed(state.prefs["devices"] + [cfg])
+    state.logbook.add("system", cfg["id"], "tv added", response=f'{cfg["name"]} ({cfg["type"]}) at {cfg["host"]}')
+    return reply(True, f'Added {cfg["name"]}', tv=tv_view(state.devices[cfg["id"]]) if cfg["id"] in state.devices else None)
+
+
+@app.put("/api/tvs/<dev_id>")
+def api_tvs_edit(dev_id):
+    if dev_id not in managed_ids():
+        raise DeviceError("This TV is set in devices.json; edit it there")
+    cfg = clean_tv(json_body(), dev_id)
+    old = next(c for c in state.prefs["devices"] if c["id"] == dev_id)
+    cfg.update({k: v for k, v in old.items() if k not in cfg and k not in ("mac", "adb", "sleep")})   # keep fields the page does not edit
+    save_managed([cfg if c["id"] == dev_id else c for c in state.prefs["devices"]])
+    return reply(True, f'Saved {cfg["name"]}', tv=tv_view(state.devices[dev_id]) if dev_id in state.devices else None)
+
+
+@app.delete("/api/tvs/<dev_id>")
+def api_tvs_remove(dev_id):
+    if dev_id not in managed_ids():
+        raise DeviceError("This TV is set in devices.json; remove it there")
+    with state.prefs_lock:
+        for key in ("quick", "apps", "session", "play"):
+            state.prefs[key].pop(dev_id, None)
+    save_managed([c for c in state.prefs["devices"] if c["id"] != dev_id])
+    state.logbook.add("system", dev_id, "tv removed", response=dev_id)
+    return reply(True, "Removed")
+
+
+@app.get("/api/discovery/ranges")
+def api_discovery_ranges():
+    hosts = [d.host for d in state.devices.values()]
+    if state.jf:
+        hosts.append(urlparse(state.jf.url).hostname or "")
+    return jsonify(ranges=discovery.suggest_ranges(hosts))
+
+
+@app.post("/api/discovery/scan")
+def api_discovery_scan():
+    """Look for TVs on the network. Takes a few seconds."""
+    ranges = json_body().get("ranges")
+    if ranges is None:
+        ranges = discovery.suggest_ranges([d.host for d in state.devices.values()])
+    t0 = time.time()
+    try:
+        result = discovery.discover(ranges, known={d.host: d.id for d in state.devices.values()},
+                                    cert_dir=state.options.get("cert_dir", ".remote_control/certs"))
+    except discovery.DiscoveryError as e:
+        raise DeviceError(str(e))
+    state.logbook.add("system", None, "discovery", response=f"found {len(result['found'])} TV(s) in {time.time() - t0:.1f}s"
+                      + (f" ({'; '.join(result['notes'])})" if result["notes"] else ""), ok=bool(result["found"]))
+    return jsonify(ok=True, **result)
+
+
+@app.get("/api/notices")
+def api_notices():
+    return jsonify(notices=NOTICES)
 
 
 @app.get("/api/log")

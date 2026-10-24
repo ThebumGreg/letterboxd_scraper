@@ -128,14 +128,30 @@ class RokuDriver(Driver):
     def deeplink(self, app_id, media_type, content_id, series_id=None, running=False):
         """Ask the Jellyfin app to play an item. The app acts on it at once, from the start (no resume point).
 
-        A running app receives it as an input event (ECP /input); otherwise it is launched with the link."""
+        If the app is already on screen (often mid-playback), the Roku is sent Home first so the app starts
+        fresh with the link; handing a new item to an app that is busy playing is what fails."""
         params = {"contentId": content_id, "mediaType": media_type}
         if series_id:
             params["seriesID"] = series_id
         if running:
-            self._ecp("POST", "/input", action=f"deep link {media_type}", params=params)
-            return "sent to the running Jellyfin app"
+            self._leave_app(app_id)
         return self.launch(app_id, params)
+
+    def _leave_app(self, app_id, timeout=8):
+        """Press Home and wait for the app to leave the screen."""
+        t0 = time.perf_counter()
+        self.send_key("Home")
+        end = time.time() + timeout
+        while time.time() < end:
+            time.sleep(0.5)
+            if self.status(quiet=True).get("app") != app_id:
+                break
+        else:
+            self.log("home", "", None, False, (time.perf_counter() - t0) * 1000,
+                     f"app {app_id} was still on screen {timeout}s after Home; opening the link anyway")
+            return
+        time.sleep(1)   # let the home screen settle before launching
+        self.log("home", "", None, True, (time.perf_counter() - t0) * 1000, "went Home before opening the new item")
 
     def play_url(self, url, title, fmt="mp4"):
         """Start a video from a URL with the "Play on Roku" channel (no Jellyfin app or session needed)."""

@@ -6,7 +6,7 @@ const KEYS = {home:'Home',back:'Back',options:'✱',play_pause:'⏯',rewind:'⏪
 
 function renderRemote() {
   const d = dev(), el = $('#remote');
-  if (!d) { el.innerHTML = '<div class="dim">No device configured. Add one to devices.json.</div>'; return; }
+  if (!d) { el.innerHTML = '<div class="dim">No TV added yet. Open <a href="/tvs">TVs</a> to find yours on the network and add it.</div>'; return; }
   const k = (key, label, cls = '') => `<button data-act="key" data-key="${key}" class="${cls}" ${d.keys[key] ? '' : 'disabled'} title="${key}">${label || KEYS[key]}</button>`;
   const volume = ['vol_down', 'mute', 'vol_up'].some(x => d.keys[x]);
   // Volume buttons are press-and-hold buttons (see "volume" below), so they use data-hold rather than data-act.
@@ -14,7 +14,7 @@ function renderRemote() {
   // On a phone the two groups stack; on a tablet they sit side by side (info and apps left, the pad right)
   el.innerHTML = `
     <div class="r-top"><h3>${esc(d.name)}</h3><div id="rstat" class="small"></div></div>
-    <div id="pairNote" class="pair" hidden>Not paired with this TV yet. <a href="/settings">Open Settings</a> and use “Start pairing”.</div>
+    <div id="pairNote" class="pair" hidden>Not paired with this TV yet. Open <a href="/tvs">TVs</a> and use “Start pairing”.</div>
     <div class="r-info">
       <div id="now" class="np"></div>
       ${has('power_on') ? `<div class="rgrid r2"><button data-act="power" data-state="on" class="pwr">⏻ Power on</button><button data-act="power" data-state="off" class="pwr">☾ Sleep</button></div>` : ''}
@@ -30,8 +30,9 @@ function renderRemote() {
       <div class="rgrid r3">${k('rewind')}${k('play_pause')}${k('ff')}</div>
       ${volume ? `<div class="rgrid r3">${vol('vol_down', 'Vol −')}${k('mute')}${vol('vol_up', 'Vol +')}</div>` : ''}
     </div>
-    <button data-act="watch" class="primary watchbtn">🎬 Watch a movie…</button>`;
-  renderStatus(); renderNow(); renderQuick();
+    <button data-act="watch" class="primary watchbtn">🎬 Watch a movie…</button>
+    <div id="rapps" class="r-apps"></div>`;
+  renderStatus(); renderNow(); renderQuick(); renderApps();
 }
 
 function renderStatus() {
@@ -81,12 +82,22 @@ function renderQuick() {
   if (el.dataset.sig !== html) { el.dataset.sig = html; el.innerHTML = html; }
 }
 
+// The apps chosen on the Settings page, below the quick-launch row (anything already in that row is not repeated)
+function renderApps() {
+  const d = dev(), el = $('#rapps'); if (!d || !el) return;
+  const st = S.status[d.id] || {}, quick = new Set(quickApps(d).map(a => a.id));
+  const list = visibleApps(d).filter(a => !quick.has(a.id));
+  const html = list.length ? `<div class="r-apps-h small dim">Apps</div><div class="agrid">${list.map(a =>
+    `<button data-act="launch" data-app="${esc(a.id)}" class="tile ${a.id === st.app ? 'active' : ''}" title="${esc(a.name)}">${iconHtml(d, a)}<span class="n">${esc(a.name)}</span></button>`).join('')}</div>` : '';
+  if (el.dataset.sig !== html) { el.dataset.sig = html; el.innerHTML = html; }
+}
+
 Object.assign(Page, {
   onSelect: renderRemote,
-  onStatus: d => { if (d.id === S.devId) { renderStatus(); renderNow(); renderQuick(); } },
+  onStatus: d => { if (d.id === S.devId) { renderStatus(); renderNow(); renderQuick(); renderApps(); } },
   onSessions: renderNow,
-  onApps: renderQuick,
-  onPrefs: renderQuick,
+  onApps: () => { renderQuick(); renderApps(); },
+  onPrefs: () => { renderQuick(); renderApps(); },
 });
 
 /* ------------------------------------------------------------------ volume

@@ -1,6 +1,6 @@
 'use strict';
-/* Shared by the Remote page (/) and the Settings & testing page (/settings): state, polling,
-   icons, quick-launch preferences, the "Watch a movie…" dialog and the log. Pages plug in through Page hooks. */
+/* Shared by every page (Remote /, Settings /settings, TVs /tvs, Advanced /advanced): state, polling, icons, app
+   preferences, the "Watch a movie…" dialog, notices and the log. Pages plug in through Page hooks. */
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const TICKS = 1e7;
@@ -21,10 +21,10 @@ const S = {
   devices: [], devId: localStorage.getItem('devId') || '', status: {}, publicUrl: '',
   apps: {}, appsLoaded: {}, appsLoading: {}, appsError: {}, showSystem: false,
   sessions: [], sessSel: 'auto', items: {}, iconFiles: [], badIcons: new Set(),
-  prefs: {quick: {}}, quickMax: 4, logAll: [], logLast: 0, build: null,
+  prefs: {quick: {}, apps: {}}, quickMax: 4, notices: [], logAll: [], logLast: 0, build: null,
 };
 const W = {item: null, devId: null};
-const Page = {};   // hooks a page can set: onSelect, onStatus, onSessions, onApps, onPrefs, onLog
+const Page = {};   // hooks a page can set: onSelect, onStatus, onSessions, onApps, onPrefs, onLog (Page.noApps skips listing apps)
 const hook = (name, ...args) => Page[name] && Page[name](...args);
 const dev = () => S.devices.find(d => d.id === S.devId);
 const has = cap => (dev()?.capabilities || []).includes(cap);
@@ -93,7 +93,7 @@ async function loadConfig() {
   S.devices = c.devices || [];
   S.publicUrl = c.jellyfinPublicUrl || '';
   S.iconFiles = c.iconFiles || [];
-  S.prefs = p.prefs || {quick: {}};
+  S.prefs = {quick: {}, apps: {}, ...(p.prefs || {})};
   S.quickMax = p.quickMax || 4;
   if (!dev()) S.devId = S.devices[0]?.id || '';
   const banner = $('#banner');
@@ -102,7 +102,7 @@ async function loadConfig() {
   if (fd) fd.innerHTML = '<option value="">all devices</option>' + S.devices.map(d => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('');
   renderDevBar(); selectDevice(S.devId, true);
 }
-// Re-read the device list (its session rules change when one is chosen on the Settings page)
+// Re-read the device list (its session rules change when one is chosen on the Advanced page)
 async function refreshDevices() {
   const c = await api('GET', '/api/config');
   if (c.devices) S.devices = c.devices;
@@ -138,7 +138,7 @@ const pollAll = () => Promise.all(S.devices.map(pollStatus));
 
 /* ------------------------------------------------------------------ apps and quick launch */
 async function loadApps(force) {
-  const d = dev(); if (!d) return;
+  const d = dev(); if (!d || Page.noApps) return;
   if (S.appsLoading[d.id]) return;
   if (S.appsLoaded[d.id] && !force) { hook('onApps'); return; }
   S.appsLoading[d.id] = true; hook('onApps');
@@ -170,6 +170,51 @@ async function resetQuick(d) {
   await api('DELETE', `/api/prefs/quick/${encodeURIComponent(d.id)}`);
 }
 
+// Apps shown on the remote beyond the quick-launch row (chosen on the Settings page; none until chosen)
+const visibleApps = d => S.prefs.apps[d.id] || [];
+async function setVisible(d, apps) {
+  S.prefs.apps[d.id] = apps; hook('onPrefs');
+  const r = await api('PUT', `/api/prefs/apps/${encodeURIComponent(d.id)}`, {apps});
+  if (!r.ok) alert(r.body || 'Could not save');
+}
+async function resetVisible(d) {
+  delete S.prefs.apps[d.id]; hook('onPrefs');
+  await api('DELETE', `/api/prefs/apps/${encodeURIComponent(d.id)}`);
+}
+function renderQuickStrip() {
+  const d = dev(), el = $('#quickStrip'); if (!d || !el) return;
+  const list = quickApps(d);
+  el.innerHTML = `<div class="small"><b>Quick launch</b> ${quickSaved(d) ? '' : '<span class="dim">(defaults. Pin or reorder to save your own)</span>'}
+      ${quickSaved(d) ? '<button class="small" data-act="qreset">reset to defaults</button>' : ''}</div>` +
+    (list.length ? `<div class="qrow">${list.map((a, i) => `<span class="qchip">${iconHtml(d, a)}<span>${esc(a.name)}</span>
+        <button class="small" data-act="qmove" data-i="${i}" data-d="-1" ${i === 0 ? 'disabled' : ''} title="Move earlier">‹</button>
+        <button class="small" data-act="qmove" data-i="${i}" data-d="1" ${i === list.length - 1 ? 'disabled' : ''} title="Move later">›</button>
+        <button class="small" data-act="qdel" data-i="${i}" title="Remove">✕</button></span>`).join('')}</div>`
+      : '<div class="dim small">Nothing pinned yet.</div>');
+}
+
+/* ------------------------------------------------------------------ nav + what's-new notices */
+const NAV = [['/', 'Remote'], ['/settings', 'Settings'], ['/tvs', 'TVs'], ['/advanced', 'Advanced']];
+function renderNav() {
+  const el = $('#nav'); if (!el) return;
+  el.innerHTML = NAV.map(([href, label]) => `<a href="${href}" ${location.pathname === href ? 'class="on" aria-current="page"' : ''}>${label}</a>`).join('');
+}
+function seenNotices() { try { return JSON.parse(localStorage.getItem('seenNotices') || '[]'); } catch (_) { return []; } }
+function markSeen(id) { try { localStorage.setItem('seenNotices', JSON.stringify([...new Set([...seenNotices(), id])])); } catch (_) {} }
+async function loadNotices() {
+  const r = await api('GET', '/api/notices');
+  S.notices = r.notices || [];
+  S.notices.filter(n => n.href === location.pathname).forEach(n => markSeen(n.id));   // you are already looking at it
+  renderNotices(); hook('onNotices');
+}
+function renderNotices() {   // one at a time, so a notice never pushes the remote off a phone screen
+  const el = $('#notices'); if (!el) return;
+  const seen = seenNotices(), unseen = S.notices.filter(n => !seen.includes(n.id)), n = unseen[0];
+  el.innerHTML = !n ? '' : `<div class="notice" role="status"><div class="ntext"><b>${esc(n.title)}</b>${unseen.length > 1 ? ` <span class="dim small">(${unseen.length - 1} more)</span>` : ''}<div class="small">${esc(n.body)}</div></div>
+    <div class="nbtns">${n.href ? `<a class="btn primary" href="${esc(n.href)}" data-notice="${esc(n.id)}">${esc(n.action || 'Open')}</a>` : ''}<button data-act="dismissNotice" data-id="${esc(n.id)}">Dismiss</button></div></div>`;
+}
+document.addEventListener('click', e => { const a = e.target.closest('[data-notice]'); if (a) markSeen(a.dataset.notice); });
+
 /* ------------------------------------------------------------------ jellyfin sessions + now playing */
 function activeSession() {
   if (S.sessSel !== 'auto') return S.sessions.find(s => s.Id === S.sessSel);
@@ -190,7 +235,7 @@ function nowParts(d, s) {
 }
 function needSession() {
   const s = activeSession();
-  if (!s) alert('No Jellyfin session for this device. Use “Prepare device” in Settings, or open the Jellyfin app on it.');
+  if (!s) alert('No Jellyfin session for this device. Use “Prepare device” in Advanced settings, or open the Jellyfin app on it.');
   return s;
 }
 function jfAct(btn, path, body) {
@@ -317,6 +362,20 @@ const ACTIONS = {
   watchAgain: () => chooseTarget(W.item),
   watchOn: b => watchOn(b.dataset.dev),
   watchPhone: () => watchPhone(),
+  dismissNotice: b => { markSeen(b.dataset.id); renderNotices(); },
+  pin: b => {
+    const d = dev(), cur = quickApps(d), i = cur.findIndex(a => a.id === b.dataset.app);
+    if (i >= 0) return setQuick(d, cur.filter((_, n) => n !== i));
+    if (cur.length >= S.quickMax) return alert(`Quick launch holds ${S.quickMax} apps. Remove one first.`);
+    setQuick(d, [...cur, {id: b.dataset.app, name: b.dataset.name}]);
+  },
+  qdel: b => { const d = dev(); setQuick(d, quickApps(d).filter((_, n) => n !== Number(b.dataset.i))); },
+  qmove: b => {
+    const d = dev(), cur = [...quickApps(d)], i = Number(b.dataset.i), j = i + Number(b.dataset.d);
+    if (j < 0 || j >= cur.length) return;
+    [cur[i], cur[j]] = [cur[j], cur[i]]; setQuick(d, cur);
+  },
+  qreset: () => resetQuick(dev()),
 };
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-act]');
@@ -336,6 +395,7 @@ async function fetchLog() {
 
 /* ------------------------------------------------------------------ start */
 async function startApp() {
+  renderNav(); loadNotices();
   await loadConfig();
   pollAll(); pollSessions(); fetchLog();
   setInterval(pollAll, 5000);

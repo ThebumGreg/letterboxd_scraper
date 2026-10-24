@@ -1,6 +1,6 @@
 {
-  "name": "Whole-House Remote",
-  "short_name": "Remote",
+  "name": "SyncHub Remote",
+  "short_name": "SyncHub",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

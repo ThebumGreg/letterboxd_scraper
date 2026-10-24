@@ -26,6 +26,7 @@ LOGICAL_KEYS = (
 )
 
 REGISTRY = {}
+SCREENSAVER_SETTLE = 2.0   # seconds to let the launcher draw after leaving the screensaver, before opening an app
 
 
 class DeviceError(Exception):
@@ -156,6 +157,26 @@ class Driver:
     def screensaver(self):
         raise DeviceError("this device cannot start a screensaver")
 
+    def leave_screensaver(self, status=None):
+        """Get out of the screensaver before opening an app (a launch sent to a dreaming TV is often dropped).
+        Returns True if it had to. Drivers whose screensaver can be told apart override _in_screensaver/_leave."""
+        status = status if status is not None else self.status(quiet=True)
+        if not (status.get("online") and self._in_screensaver(status)):
+            return False
+        self._leave_screensaver()
+        self.log("screensaver", "", None, True, SCREENSAVER_SETTLE * 1000,
+                 f"left the screensaver (Home), then waited {SCREENSAVER_SETTLE:g}s before opening the app")
+        time.sleep(SCREENSAVER_SETTLE)
+        return True
+
+    def _in_screensaver(self, status):
+        return status.get("power") == "dreaming"
+
+    def _leave_screensaver(self):
+        native = self.keymap.get("home")
+        if native:
+            self.send_key(native)
+
     def diagnose(self):
         raise DeviceError("diagnostics are not available for this device type")
 
@@ -258,16 +279,20 @@ def build_driver(cfg, logbook, options):
     return cls(cfg, logbook, options)
 
 
-def load_devices(path, logbook, options):
-    """-> (devices by id in file order, error message or None)."""
-    devices = {}
-    if not path or not Path(path).exists():
-        return devices, f"No device file at {path}. Copy devices.example.json to devices.json and edit it."
-    try:
-        raw = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
-        return devices, f"Could not read {path}: {e}"
-    for cfg in raw.get("devices", []):
+def load_devices(path, logbook, options, managed=()):
+    """-> (devices by id, error message or None).
+
+    Devices come from the device file (hand-written, may be absent) and from `managed`, the list saved by
+    the TVs page. A file entry wins when both use the same id."""
+    devices, error = {}, None
+    configs = []
+    if path and Path(path).exists():
+        try:
+            configs += json.loads(Path(path).read_text(encoding="utf-8")).get("devices", [])
+        except (OSError, ValueError, AttributeError) as e:
+            error = f"Could not read {path}: {e}"
+    configs += list(managed)
+    for cfg in configs:
         try:
             drv = build_driver(cfg, logbook, options)
         except DeviceError as e:
@@ -277,7 +302,7 @@ def load_devices(path, logbook, options):
             logbook.add("system", drv.id, "config", ok=False, response=f"duplicate device id {drv.id}")
             continue
         devices[drv.id] = drv
-    return devices, None
+    return devices, error
 
 
 from . import androidtv, googletv, roku  # noqa: E402,F401  (registers the built-in drivers)

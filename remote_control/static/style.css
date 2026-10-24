@@ -225,3 +225,34 @@ main{padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env
   .tile{padding:6px 2px}.tile .ico{width:38px;height:38px}
   .watchbtn{margin-top:8px;padding:11px}
 }
+
+/* ---------------------------------------------------------------- page navigation, notices, settings, TVs */
+.tabs{display:flex;gap:4px;flex-wrap:wrap}
+.tabs a{padding:6px 12px;border-radius:8px;color:var(--dim);text-decoration:none;border:1px solid transparent}
+.tabs a.on{color:var(--fg);background:var(--key);border-color:var(--line)}
+@media (hover:hover){.tabs a:hover{color:var(--fg)}}
+header .tabs{order:1}header #devbar{order:2}
+.intro{margin:10px 16px 0;color:var(--dim);font-size:13px}.intro a,.small a,.newsitem a{color:var(--acc)}
+
+.notice{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:8px 12px;padding:10px 14px;border-radius:12px;background:#17304d;border:1px solid var(--acc)}
+.notice .ntext{flex:1;min-width:200px}.notice .nbtns{display:flex;gap:6px}
+.notice .btn{text-decoration:none;display:inline-flex;align-items:center}
+.notice{padding:8px 12px}.notice .nbtns button,.notice .btn{padding:5px 10px}
+
+.page-narrow{display:block;max-width:760px;margin:0 auto}
+.page-narrow>section{margin-bottom:12px}
+.apps .tile.pick{width:100%;position:relative}
+.apps .tile.pick.shown{border-color:var(--ok);background:#1d3b25}
+.apps .tile.pick.shown::after{content:"✓";position:absolute;left:4px;top:2px;color:var(--ok);font-weight:700;font-size:14px}
+.agrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:8px;margin:6px 0}
+.r-apps{margin-top:14px}.r-apps-h{margin:0 2px}
+#appFilter{flex:1;min-width:140px}
+.newsitem{padding:8px 0;border-top:1px solid var(--line)}.newsitem:first-child{border-top:0}
+
+.tvcard{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px;background:#151b21}
+.tvhead{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.tvhead b{font-size:15px}
+.field{display:block;margin:8px 0;font-size:13px;color:var(--dim)}
+.field input:not([type=checkbox]),.field select{display:block;width:100%;margin-top:3px}
+.field.check{display:flex;gap:8px;align-items:flex-start}
+#tvForm .field[hidden]{display:none}
+@media (min-width:700px){.agrid{gap:12px}.r-apps{grid-column:1/-1}}

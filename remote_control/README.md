@@ -1,4 +1,4 @@
-# Whole-house remote
+# SyncHub Remote (whole-house remote)
 
 One web UI to pick a TV, drive it like a remote, launch its apps, see what is playing, and start a movie
 on any TV from whatever state it is in. Every outbound call (ADB, Android TV Remote, Roku ECP, Wake-on-LAN,
@@ -9,25 +9,41 @@ Jellyfin) is shown in the Log panel with request, response, status and timing, a
 pip install -r remote_control/requirements.txt
 export JELLYFIN_URL=http://192.168.128.55:5000
 export JELLYFIN_API_KEY=...
-cp devices.example.json devices.json     # edit hosts / names
 python remote_control_app.py             # listens on 0.0.0.0:5000 (--host / --port, or REMOTE_HOST / REMOTE_PORT)
 ```
 
-## The two pages
+Then open the **TVs** page and press *Scan network* to add your TVs. `devices.json` (copy `devices.example.json`) is
+still supported for hand-written setups and the advanced options below; TVs from both places are shown together.
+
+## The four pages
 
 **Remote** (`/`) is the everyday page, laid out for a phone: the TV's name and state, a **Now playing** block built
 into the remote (what is on, with Pause/Resume, ±30 s and Stop when Jellyfin is playing it), Power on / Sleep, a
 **quick-launch row** of up to four apps, Back / Home / Options, the D-pad, rewind / play-pause / fast-forward, volume,
 and the **Watch a movie…** button. On a computer the arrow keys, Enter, Esc, Space, `m` and `+`/`-` drive it too.
 
-**Settings & testing** (`/settings`, the ⚙ button) holds everything else: every key, text entry, screenshot, wake and
-sleep tests (Wake-on-LAN, screensaver, Probe network, Diagnose, Detect MAC), pairing, the full app list, Jellyfin
-sessions, library search and commands, and the log.
+**Settings** (`/settings`, the ⚙ button) holds the everyday choices. *Apps on your remote*: pick, per TV, which apps appear
+below the quick-launch row (tap an app to show or hide it; Show all / Hide all). Until you choose, only the quick-launch
+row is shown. *Quick launch*: tap ☆ on an app (or ‹ › ✕ on the strip to reorder or remove), up to four. Each TV has its
+own lists, shared by every browser that opens the app and saved in `.remote_control/prefs.json` (`--prefs` changes the
+location). Until you pin your own, the first four of Jellyfin, Netflix, YouTube, Disney+, Prime Video, Hulu, Plex and
+Max that the TV has are used. A Google TV controlled without ADB cannot list its installed apps, so only common apps are
+offered; enable ADB for it on the TVs page to see everything.
 
-**Choosing quick-launch apps:** on Settings, tap ☆ on an app (or ‹ › ✕ on the quick-launch strip to reorder or
-remove). Each TV has its own list, shared by every browser that opens the app, and saved in
-`.remote_control/prefs.json` (`--prefs` changes the location). Until you choose, the first four of Jellyfin,
-Netflix, YouTube, Disney+, Prime Video, Hulu, Plex and Max that the TV has are used.
+**TVs** (`/tvs`) manages the devices. *Find TVs on your network* looks for Rokus (SSDP) and Google / Android TVs (mDNS,
+which needs the `zeroconf` package), and also tries the control ports of every address in a range (default: the /24
+around the TVs and Jellyfin server you already have). The range scan is what works under **WSL2, Docker and VMs**, where
+multicast does not reach your network; only private ranges up to a /22 are accepted. Add a found TV with one tap (or
+add one by hand), then press *Start pairing* for a Google TV. Edit or remove TVs saved in the app; TVs from
+`devices.json` are listed but edited in that file. TVs saved in the app live in `prefs.json`.
+
+**Advanced settings** (`/advanced`) is the testing page: every key, text entry, screenshot, wake and sleep tests
+(Wake-on-LAN, screensaver, Probe network, Diagnose, Detect MAC), pairing, the full app list, Jellyfin sessions, library
+search and commands, and the log. Use it to try a new TV model or configuration without cluttering the pages above.
+
+**What's new.** New features announce themselves with a banner at the top of the Remote and Settings pages (one at a
+time, shown once per browser until dismissed); Settings keeps the full list. Add an entry to `remote_control/notices.py`
+when a feature ships.
 
 **Volume:** tap Vol +/− for one step, tap repeatedly for one step per tap, or hold for a steady repeat that speeds up
 after about 1.5 s and 3 s (the `+`/`-` keys do the same on a computer). Requests never overlap: steps that pile up
@@ -86,6 +102,10 @@ media player (many apps report state but not the title; Jellyfin's own session s
 
 ### Opening apps on a Google TV
 
+**Opening an app from the screensaver.** A launch sent to a TV that is showing its screensaver is often dropped, so the
+app first presses Home, waits two seconds for the launcher to draw, and then opens the app. This applies to both Google TV
+driver types and to every route that opens an app (quick launch, Watch a movie, Prepare device).
+
 Some TVs reject the Remote protocol's app links (a TCL logged `Received an error from the device:
 remote_app_link_launch_request` for every launch). So for `googletv` devices with `"adb": true`, launching goes
 over ADB first, which worked on that TV. Without ADB the app tries an Intent link, then the `market://` link, and
@@ -95,12 +115,13 @@ treated as success. Set `"adb": true` if app launching fails.
 ### Roku: how a movie gets started
 
 **The official Jellyfin Roku app cannot be controlled through Jellyfin sessions, by design.** Its source registers
-`SupportedCommands: []` and `SupportsMediaControl: false` and has no handler for server commands, so Settings shows its
+`SupportedCommands: []` and `SupportsMediaControl: false` and has no handler for server commands, so Advanced settings shows its
 session as `remote control: no` and play commands never reach it. What it does support is a **deep link**, which it acts on
 at once. So a Roku plays like this (`"play": "auto"`, the default):
 
-1. **Deep link.** The app is launched with `contentId` and `mediaType` (or, if it is already on screen, sent them as an input
-   event). It starts playing inside the real Jellyfin app, so Jellyfin sees the session and records progress and watched
+1. **Deep link.** The app is launched with `contentId` and `mediaType`. If the Jellyfin app is already on screen (for example
+   still playing something else), the Roku is sent **Home** first, then the app is launched with the new link, because
+   handing a new item to an app that is busy playing fails. It starts playing inside the real Jellyfin app, so Jellyfin sees the session and records progress and watched
    state. Works for movies, episodes, series, seasons, collections and music; a series link starts the series. The app
    always starts from the beginning (it ignores a resume point), and there is no queue (Play now only). Success is confirmed
    from Jellyfin's session list.
@@ -112,7 +133,7 @@ at once. So a Roku plays like this (`"play": "auto"`, the default):
    from `JELLYFIN_URL`; `stream_mode` is `auto`, `direct` or `hls`.
 
 A link that was sent but not confirmed (app still loading, or not signed in) is reported as such and is **not** followed by
-a stream, so two playbacks never compete. Settings ▸ Jellyfin has a **Play via** menu (device setting, Jellyfin session,
+a stream, so two playbacks never compete. Advanced ▸ Jellyfin has a **Play via** menu (device setting, Jellyfin session,
 deep link, stream URL) to try each route, and `"play": "deeplink"`, `"url"` or `"session"` in `devices.json` pins one.
 
 **About DLNA.** The "Roku Media Player" channel is a DLNA *client*: it browses a DLNA server (Jellyfin's DLNA plugin can be
@@ -164,7 +185,7 @@ the host).
 (for example `Jellyfin Roku`, `Jellyfin Android TV`, `Swiftfin tvOS`) and a `DeviceName`. A device's
 `jellyfin.session` rule says which one is its own. Version numbers are ignored (`Jellyfin Roku 3.2.4` matches
 `Jellyfin Roku`; the version is Roku's app version, not part of the name). If the rule matches nothing the default for
-that kind of device is tried, with a warning in the Log. To see the real names, open **Settings ▸ Jellyfin ▸
+that kind of device is tried, with a warning in the Log. To see the real names, open **Advanced ▸ Jellyfin ▸
 Sessions Jellyfin can see**: every session is listed with the TV it maps to, and **Use for this TV** saves the right one
 (in `prefs.json`, so `devices.json` stays untouched; **reset** undoes it). If a session shows `remote control: no`,
 that app tells Jellyfin it cannot be controlled remotely and play commands cannot reach it.

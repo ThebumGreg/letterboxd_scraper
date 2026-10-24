@@ -7,6 +7,7 @@ import time
 
 from . import Driver, DeviceError, register
 
+DREAM_APPS = {"com.google.android.apps.tv.dreamx"}   # the Google TV screensaver ("Ambient mode")
 PACKAGE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$")
 KEY_RE = re.compile(r"^(KEYCODE_[A-Z0-9_]+|\d{1,3})$")
 TEXT_RE = re.compile(r"^[A-Za-z0-9 ._@-]{1,100}$")
@@ -237,6 +238,9 @@ class AndroidTVDriver(Driver):
                 return self.mac
         raise DeviceError("Could not read a MAC address over ADB")
 
+    def _in_screensaver(self, status):
+        return status.get("power") == "dreaming" or status.get("app") in DREAM_APPS
+
     def valid_native_key(self, key):
         return bool(KEY_RE.match(key))
 
@@ -312,6 +316,7 @@ class AndroidTVDriver(Driver):
     def launch(self, app_id, params=None):
         if not PACKAGE_RE.match(app_id):
             raise DeviceError("bad package name")
+        self.leave_screensaver()
         for category in ("android.intent.category.LEANBACK_LAUNCHER", "android.intent.category.LAUNCHER"):
             out = self._adb("shell", "monkey", "-p", app_id, "-c", category, "1", action=f"launch {app_id}")
             if "No activities found" not in out and "monkey aborted" not in out:
