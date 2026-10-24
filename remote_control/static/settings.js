@@ -93,6 +93,13 @@ function renderSessionTable() {
   const d = dev(), el = $('#sessTable'), line = $('#ruleLine'); if (!el || !d) return;
   line.innerHTML = `<b>${esc(d.name)}</b> looks for a session with ${esc(ruleText(d.sessionRule))} ` +
     (d.sessionOverride ? '(your choice) <button class="small" data-act="sessReset">reset to devices.json</button>' : '(from devices.json, or the default for this kind of device)');
+  const how = {
+    url: d.playLearned ? 'streaming a URL <span class="dim">(learned: this device\'s Jellyfin app cannot be remote controlled)</span> <button class="small" data-act="playReset">try the Jellyfin app again</button>'
+      : 'streaming a URL <span class="dim">(devices.json)</span>',
+    auto: 'the Jellyfin app first, streaming a URL if that app cannot be remote controlled',
+    session: 'the Jellyfin app\'s session',
+  }[d.playVia];
+  $('#playLine').innerHTML = has('url_play') ? `<b>${esc(d.name)}</b> plays through ${how}.` : '';
   el.innerHTML = S.sessions.length ? S.sessions.map(s => `<div class="item"><span class="name"><b>${esc(s.Client)}</b>${s.Version ? ' ' + esc(s.Version) : ''} · ${esc(s.DeviceName)}
       <span class="dim small">· id ${esc(String(s.DeviceId).slice(0, 8))}… · ${esc(s.UserName)} · remote control: ${s.SupportsRemoteControl ? 'yes' : '<span style="color:var(--bad)">no</span>'}</span>
       ${s.deviceId ? `<span class="chip">→ ${esc(devName(s.deviceId))}</span>` : ''}</span>
@@ -145,6 +152,7 @@ async function playIds(btn, itemIds, playCommand, startIndex) {
     $('#prepState').textContent = $('#prep').checked ? 'preparing…' : '';
     const r = await run(btn, api('POST', devPath('/play'), {...body, prepare: $('#prep').checked}));
     $('#prepState').textContent = !r.ok ? lastLine(r.body) : r.confirmed === false ? 'accepted, but not playing' : r.confirmed ? 'playing' : 'sent';
+    if (r.learned) refreshDevices();
     pollSessions(); pollStatus(dev());
     return r;
   }
@@ -237,6 +245,7 @@ Object.assign(ACTIONS, {
     const r = await run(b, api('PUT', `/api/prefs/session/${encodeURIComponent(S.devId)}`, {client: s.Client, device: s.DeviceName}));
     if (r.ok) { await refreshDevices(); pollSessions(); } else alert(r.body || 'Could not save');
   },
+  playReset: async () => { await api('DELETE', `/api/prefs/play/${encodeURIComponent(S.devId)}`); await refreshDevices(); },
   sessReset: async () => { await api('DELETE', `/api/prefs/session/${encodeURIComponent(S.devId)}`); await refreshDevices(); pollSessions(); },
   prepare: async b => {
     if (!S.devId) return;

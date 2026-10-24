@@ -94,8 +94,11 @@ treated as success. Set `"adb": true` if app launching fails.
 
 ### Roku: playing without the Jellyfin app's remote control
 
-The Jellyfin Roku app may not accept play commands (Settings ▸ Sessions shows `remote control: no`). Set
-`"play": "url"` on the Roku and the app skips the Jellyfin app and its session entirely: it wakes the Roku, then hands it
+The Jellyfin Roku app may not accept play commands (Settings ▸ Sessions shows `remote control: no`). You do not have to
+configure anything: a Roku is in **auto** mode by default. The first play tries the Jellyfin app, and if its session reports it
+cannot be remote controlled the movie is streamed instead and that is remembered (in `prefs.json`), so later plays stream
+immediately. Settings ▸ Jellyfin says which way a device plays and has a button to try the Jellyfin app again. To skip the
+trial, set `"play": "url"` on the Roku (or `"play": "session"` to never stream). In stream mode the app skips the Jellyfin app and its session entirely: it wakes the Roku, then hands it
 a stream URL through **Play on Roku**, the same ECP call the Roku phone app casts through. Jellyfin direct-plays
 files the Roku understands (MP4/MKV with H.264 or HEVC video and AAC, AC3, E-AC3 or MP3 audio) and otherwise sends an
 HLS transcode (H.264 + AAC). The log shows which and why. Roku's own media-player status then drives Now playing, and

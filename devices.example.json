@@ -33,8 +33,7 @@
         "session": {
           "client": "Jellyfin Roku"
         }
-      },
-      "play": "url"
+      }
     }
   ]
 }

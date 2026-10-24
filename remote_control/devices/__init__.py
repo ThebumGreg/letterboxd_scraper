@@ -86,6 +86,16 @@ class Driver:
         return self.logbook.add(self.log_kind or self.type, self.id, action, request, status, ok, ms, response)
 
     session_override = None   # set from the UI ("Use for this TV"); wins over devices.json
+    play_learned = None       # "url" once the device's Jellyfin app turned out not to accept remote commands
+
+    def play_mode(self):
+        """session | url | auto. Devices that can stream a URL default to auto: try the Jellyfin app, else stream."""
+        configured = self.cfg.get("play")
+        if configured in ("session", "url", "auto"):
+            return configured
+        if "url_play" in self.capabilities:
+            return "url" if self.play_learned == "url" else "auto"
+        return "session"
 
     def session_rule(self):
         return self.session_override or self.jellyfin.get("session") or self.default_session_rule
@@ -225,7 +235,8 @@ class Driver:
             "extraKeys": [{"label": l, "key": k} for l, k in self.extra_keys],
             "sessionRule": self.session_rule(),
             "sessionOverride": bool(self.session_override),
-            "playVia": self.cfg.get("play") or "session",
+            "playVia": self.play_mode(),
+            "playLearned": self.play_learned == "url" and not self.cfg.get("play"),
             "hasMac": bool(self.mac),
             "sleepMode": self.cfg.get("sleep") or "standby",
             "wakeMethods": self.wake_methods(),

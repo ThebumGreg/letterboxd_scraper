@@ -32,7 +32,7 @@ app = Flask(__name__, static_folder=STATIC, static_url_path="/static")
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 state = SimpleNamespace(logbook=LogBook(), jf=None, devices={}, config_path=None, config_error=None,
                         options={}, last_status={}, token="", public_url="", icons={},
-                        prefs={"quick": {}, "session": {}}, prefs_path=None, prefs_lock=threading.Lock(), apps_cache={})
+                        prefs={"quick": {}, "session": {}, "play": {}}, prefs_path=None, prefs_lock=threading.Lock(), apps_cache={})
 
 APPS_TTL = 600           # seconds an installed-app list is reused
 QUICK_MAX = 4            # apps pinned to a remote
@@ -134,14 +134,16 @@ def load_prefs():
     try:
         data = json.loads(Path(state.prefs_path).read_text(encoding="utf-8"))
         state.prefs = {"quick": {k: v for k, v in (data.get("quick") or {}).items() if isinstance(v, list)},
-                       "session": {k: v for k, v in (data.get("session") or {}).items() if isinstance(v, dict)}}
+                       "session": {k: v for k, v in (data.get("session") or {}).items() if isinstance(v, dict)},
+                       "play": {k: v for k, v in (data.get("play") or {}).items() if v == "url"}}
     except (OSError, ValueError, TypeError, AttributeError):
-        state.prefs = {"quick": {}, "session": {}}
+        state.prefs = {"quick": {}, "session": {}, "play": {}}
 
 
 def apply_session_overrides():
     for d in state.devices.values():
         d.session_override = state.prefs["session"].get(d.id)
+        d.play_learned = state.prefs["play"].get(d.id)
         d._warned_rule = False
 
 
@@ -198,6 +200,16 @@ def api_prefs_session_reset(dev_id):
         save_prefs()
     apply_session_overrides()
     return reply(True, "back to the rule in devices.json")
+
+
+@app.delete("/api/prefs/play/<dev_id>")
+def api_prefs_play_reset(dev_id):
+    """Forget that a device's Jellyfin app cannot be controlled, so the session route is tried again."""
+    with state.prefs_lock:
+        state.prefs["play"].pop(dev_id, None)
+        save_prefs()
+    apply_session_overrides()
+    return reply(True, "will try the Jellyfin app's session again")
 
 
 @app.delete("/api/prefs/quick/<dev_id>")
@@ -412,33 +424,64 @@ def play_params(d):
     return params
 
 
+def play_by_url(d, body, prior_steps=()):
+    """Hand the device a stream URL (no Jellyfin app or session involved)."""
+    if body["playCommand"] != "PlayNow":
+        raise DeviceError("Stream playback supports Play now only (there is no queue)")
+    ids, index = body["itemIds"], int(body.get("startIndex") or 0)
+    result = orchestrator.play_url(d, jf(), state.logbook, ids[index] if index < len(ids) else ids[0], body.get("startPositionTicks"))
+    steps = list(prior_steps) + result["steps"]
+    return reply(result["ok"], "\n".join(steps), steps=steps, confirmed=result["confirmed"], via="url")
+
+
+def learn_url_play(d):
+    with state.prefs_lock:
+        state.prefs["play"][d.id] = "url"
+        save_prefs()
+    apply_session_overrides()
+
+
 @app.post("/api/devices/<dev_id>/play")
 def api_device_play(dev_id):
-    """Optionally prepare the device, then PlayNow/Next/Last on its Jellyfin session."""
+    """Optionally prepare the device, then play. Via the device's Jellyfin session, or (for devices that can) a stream URL.
+
+    In auto mode the Jellyfin app is tried first. If its session reports it cannot be remote controlled, the movie is
+    streamed instead, and that is remembered so the next play skips straight to streaming."""
     d = device(dev_id)
     body = json_body()
     if body.get("playCommand") not in PLAY_COMMANDS or not body.get("itemIds"):
         raise DeviceError("bad playCommand or itemIds")
-    via = body.get("via") or d.cfg.get("play") or "session"
-    if via == "url":
-        if "url_play" not in d.capabilities:
-            raise DeviceError(f"{d.name} cannot play from a stream URL")
-        if body["playCommand"] != "PlayNow":
-            raise DeviceError("Stream playback supports Play now only (there is no queue)")
-        ids, index = body["itemIds"], int(body.get("startIndex") or 0)
-        result = orchestrator.play_url(d, jf(), state.logbook, ids[index] if index < len(ids) else ids[0],
-                                       body.get("startPositionTicks"))
-        return reply(result["ok"], "\n".join(result["steps"]), steps=result["steps"], confirmed=result["confirmed"])
+    mode = body.get("via") or d.play_mode()
+    can_stream = "url_play" in d.capabilities
+    if mode == "url" and not can_stream:
+        raise DeviceError(f"{d.name} cannot play from a stream URL")
+    if mode == "auto" and not can_stream:
+        mode = "session"
+    if mode == "url":
+        return play_by_url(d, body)
     steps = []
     if body.get("prepare", True):
         result = orchestrator.prepare(d, jf(), state.logbook)
         steps = result["steps"]
         if not result["ok"]:
+            if mode == "auto" and body["playCommand"] == "PlayNow" and result.get("reason") in ("not_remote", "no_match"):
+                note = ("The Jellyfin app on this device cannot be remote controlled, so it is streamed directly instead"
+                        if result["reason"] == "not_remote" else
+                        "No usable Jellyfin session appeared, so the movie is streamed directly instead")
+                state.logbook.add("system", dev_id, "play", response=note, ok=True)
+                if result["reason"] == "not_remote":
+                    learn_url_play(d)
+                out = play_by_url(d, body, steps + [note])
+                payload = out.get_json()
+                payload["learned"] = result["reason"] == "not_remote"
+                return jsonify(payload)
             return reply(False, "\n".join(steps), steps=steps)
         session = result["session"]
     else:
         found = orchestrator.device_sessions(jf(), d)
         if not found:
+            if mode == "auto" and body["playCommand"] == "PlayNow":
+                return play_by_url(d, body, ["No Jellyfin session is open on this device, so the movie is streamed directly"])
             raise JellyfinError(f"No Jellyfin session for {d.name}. Tick 'prepare device first' or open the app.")
         session = summarize_session(found[0])
     r = jf().play(session["Id"], play_params(body))

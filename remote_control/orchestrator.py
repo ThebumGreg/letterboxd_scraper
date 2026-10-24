@@ -35,17 +35,18 @@ def device_sessions(jf, driver):
 
 
 def explain_no_session(jf, driver):
-    """Why no session matched, with what Jellyfin does list, so the rule can be corrected."""
+    """-> (message, reason): why no session matched, with what Jellyfin does list, so the rule can be corrected.
+    reason is "not_remote" when the app's session exists but cannot take commands, else "no_match"."""
     raw = jf.sessions()
     rules = rule_ladder(driver)
     not_remote = [s for s in raw if not s.get("SupportsRemoteControl") and any(match_session(r, s) for r in rules)]
     if not_remote:
         s = not_remote[0]
         return (f'Jellyfin has a session for {s.get("Client")} / {s.get("DeviceName")}, but it reports that it cannot be '
-                "controlled remotely (SupportsRemoteControl is false), so the app on this device ignores play commands.")
+                "controlled remotely (SupportsRemoteControl is false), so the app on this device ignores play commands."), "not_remote"
     seen = "; ".join(f'{s.get("Client")} / {s.get("DeviceName")}' for s in raw) or "none"
     return (f"No Jellyfin session matched {rules[0]}. Sessions Jellyfin lists right now: {seen}. On Settings, under "
-            f'"Sessions Jellyfin can see", choose "Use for {driver.name}" on the right one.')
+            f'"Sessions Jellyfin can see", choose "Use for {driver.name}" on the right one.'), "no_match"
 
 
 def _wait_for(predicate, timeout, interval=2):
@@ -150,23 +151,34 @@ def prepare(driver, jf, logbook, session_timeout=40):
         return {"ok": False, "steps": steps, "session": None}
 
     app = driver.jellyfin_app()
+
+    def uncontrollable():
+        """The app's session exists but says it cannot take commands: no point waiting or launching."""
+        rules = rule_ladder(driver)
+        return any(not x.get("SupportsRemoteControl") and any(match_session(r, x) for r in rules) for x in jf.sessions())
+
+    if not device_sessions(jf, driver) and uncontrollable():
+        message, reason = explain_no_session(jf, driver)
+        return {**fail(message), "reason": reason}
     baseline = {s["Id"]: s.get("LastActivityDate") for s in device_sessions(jf, driver)}
     if st["app"] == app:
         step(f"Jellyfin app ({app}) already in the foreground")
-        session = _wait_for(lambda: (device_sessions(jf, driver) or [None])[0], 15)
+        session = _wait_for(lambda: (device_sessions(jf, driver) or [None])[0] or ("uncontrollable" if uncontrollable() else None), 15)
     else:
         try:
             how = driver.launch(app)
         except DeviceError as e:
             return fail(str(e))
         step(f'Launched {app} (was {st["app"]}): {how or "sent"}')
-        # A stale session may linger from an earlier run, so wait for one that is new
-        # or has reported activity since the launch.
+        # A stale session may linger from an earlier run, so wait for one that is new or has reported activity
+        # since the launch (or for the app to show it cannot be controlled, which ends the wait early).
         session = _wait_for(
-            lambda: next((s for s in device_sessions(jf, driver) if baseline.get(s["Id"]) != s.get("LastActivityDate")), None),
+            lambda: next((s for s in device_sessions(jf, driver) if baseline.get(s["Id"]) != s.get("LastActivityDate")), None)
+            or ("uncontrollable" if uncontrollable() else None),
             session_timeout)
-    if not session:
-        return fail(explain_no_session(jf, driver))
+    if not session or session == "uncontrollable":
+        message, reason = explain_no_session(jf, driver)
+        return {**fail(message), "reason": reason}
     step(f'Session found: {session.get("Client")} / {session.get("DeviceName")}')
     time.sleep(1)  # let the client finish registering before the first command
     return {"ok": True, "steps": steps, "session": summarize_session(session)}

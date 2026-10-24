@@ -243,6 +243,8 @@ async function watchSearch() {
 function stateHint(d) {
   const st = S.status[d.id];
   if (!st) return 'checking…';
+  if (d.playVia === 'auto' && st.online && st.power === 'on')
+    return 'will use the Jellyfin app if it accepts remote control, otherwise stream the movie directly';
   if (d.playVia === 'url')   // streams straight from Jellyfin: no Jellyfin app or session involved
     return !st.online ? `${st.unresponsive ? 'asleep' : 'unreachable'} — will try ${d.wakeMethods.join(', ')}, then stream it directly`
       : st.power !== 'on' ? 'standby — will wake it, then stream it directly' : 'will start the stream directly (no Jellyfin app needed)';
@@ -285,6 +287,7 @@ async function watchOn(devId) {
   $('#wResult').innerHTML = r.ok && r.confirmed ? `<div class="wres good">✓ Now playing on ${esc(d.name)}</div>`
     : r.ok ? `<div class="wres warn">⚠ ${esc(d.name)} accepted the command, but Jellyfin never reported it playing. The app may not support remote play; see the log.</div>`
     : `<div class="wres fail">✗ ${esc(lastLine(r.body))}</div>`;
+  if (r.learned) refreshDevices();   // the app learned this device cannot be remote controlled and now streams
   if (r.ok) selectDevice(devId);
 }
 function watchPhone() {
