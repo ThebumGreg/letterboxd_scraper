@@ -57,6 +57,14 @@ media session (best effort; depends on the Android version and whether the app p
 Network access = Default or Permissive. Real app icons come from the Roku. Playback state comes from the Roku
 media player (many apps report state but not the title; Jellyfin's own session supplies it when you use Jellyfin).
 
+### Opening apps on a Google TV
+
+Some TVs reject the Remote protocol's app links (a TCL logged `Received an error from the device:
+remote_app_link_launch_request` for every launch). So for `googletv` devices with `"adb": true`, launching goes
+over ADB first, which worked on that TV. Without ADB the app tries an Intent link, then the `market://` link, and
+checks that the app really came to the front; a TV-side rejection is logged and reported instead of being
+treated as success. Set `"adb": true` if app launching fails.
+
 ### Waking and sleeping a TV
 
 A TV in standby is the hard part. Many TVs (TCL included, going by the logs from a real one) switch their network

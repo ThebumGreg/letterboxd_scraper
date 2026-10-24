@@ -8,7 +8,9 @@ apps, take screenshots or read what is playing, so those come from a configured 
 Setup: `pip install androidtvremote2`, then press "Start pairing" in the UI and enter the code the TV shows.
 """
 import asyncio
+import collections
 import concurrent.futures
+import logging
 import re
 import threading
 import time
@@ -22,7 +24,30 @@ KEY_RE = re.compile(r"^(KEYCODE_)?[A-Z0-9_]{1,40}$|^\d{1,3}$")
 TEXT_RE = re.compile(r"^[\x20-\x7e]{1,100}$")
 CODE_RE = re.compile(r"^[0-9A-F]{6}$")
 LAUNCHERS = {"com.google.android.apps.tv.launcherx", "com.google.android.tvlauncher"}
+DREAM_APPS = {"com.google.android.apps.tv.dreamx"}   # the Google TV screensaver ("Ambient mode")
 DEFAULT_APPS = [{"id": pkg, "name": name, "type": "app"} for pkg, name in FRIENDLY.items() if pkg not in LAUNCHERS]
+
+
+class _DeviceErrors(logging.Handler):
+    """The library only logs errors a TV sends back (such as a rejected app launch), so capture them."""
+
+    def __init__(self):
+        super().__init__(logging.ERROR)
+        self.recent = collections.deque(maxlen=50)
+        self.logbook = None
+
+    def emit(self, record):
+        message = record.getMessage()
+        self.recent.append((time.time(), message))
+        if self.logbook is not None and "error from the device" in message:
+            self.logbook.add("atvremote", None, "device error", "", None, False, None, message)
+
+    def since(self, t):
+        return [m for ts, m in self.recent if ts >= t and "error from the device" in m]
+
+
+_ERRORS = _DeviceErrors()
+logging.getLogger("androidtvremote2").addHandler(_ERRORS)
 
 
 class _Loop:
@@ -80,6 +105,7 @@ class GoogleTVDriver(Driver):
             self.probe_ports[self.adb.port] = "ADB"
             self.default_wake = ("remote", "adb", "wol", "cast")
         self.capabilities = frozenset(caps)
+        _ERRORS.logbook = logbook
         self.needs_pairing = False
         self._remote = None
         self._pairing = None
@@ -149,7 +175,7 @@ class GoogleTVDriver(Driver):
             except DeviceError:
                 pass
 
-    def _call(self, method, arg, action, retry=True):
+    def _call(self, method, arg, action, retry=True, record=True):
         """Run one non-blocking remote call on the loop thread (the library is not thread-safe)."""
         self._ensure()
         request = f"{method}({arg!r})"
@@ -165,11 +191,12 @@ class GoogleTVDriver(Driver):
             from androidtvremote2 import ConnectionClosed
             if isinstance(e, ConnectionClosed) and retry:
                 self._reset()
-                return self._call(method, arg, action, retry=False)
+                return self._call(method, arg, action, retry=False, record=record)
             self.log(action, request, None, False, (time.perf_counter() - t0) * 1000, f"{type(e).__name__}: {e}")
             raise DeviceError(f"{type(e).__name__}: {e}")
         # The protocol gives no acknowledgement, only that the message was queued.
-        self.log(action, request, None, True, (time.perf_counter() - t0) * 1000, "queued (the protocol has no acknowledgement)")
+        if record:
+            self.log(action, request, None, True, (time.perf_counter() - t0) * 1000, "queued (the protocol has no acknowledgement)")
 
     # --- Driver interface ---------------------------------------------------------------
     def status(self, quiet=False):
@@ -182,7 +209,10 @@ class GoogleTVDriver(Driver):
             return {"online": False, "power": None, "app": None, "needsPairing": self.needs_pairing,
                     "error": "Connection lost; reconnecting"}
         is_on, app = s.get("is_on"), s.get("app")
-        out = {"online": True, "power": "on" if is_on else "standby" if is_on is False else None,
+        power = "on" if is_on else "standby" if is_on is False else None
+        if is_on and app in DREAM_APPS:
+            power = "dreaming"
+        out = {"online": True, "power": power,
                "app": app, "appName": FRIENDLY.get(app, app), "volume": s.get("volume"),
                "needsPairing": self.needs_pairing, "detail": s.get("info")}
         if self.adb and is_on:
@@ -198,6 +228,9 @@ class GoogleTVDriver(Driver):
     def power(self, on):
         self._ensure()
         is_on = self._state.get("is_on")
+        if on and self._state.get("app") in DREAM_APPS:
+            self.send_key("KEYCODE_HOME")   # leaves the screensaver; POWER would switch the TV off
+            return
         # KEYCODE_POWER toggles, so only send it when it will change something.
         if (on and is_on) or (not on and is_on is False):
             self.log("power", "", None, True, None, f"already {'on' if on else 'standby'}; nothing sent")
@@ -214,9 +247,47 @@ class GoogleTVDriver(Driver):
         return DEFAULT_APPS
 
     def launch(self, app_id, params=None):
-        if not (PACKAGE_RE.match(app_id) or LINK_RE.match(app_id)):
+        """Open an app. Some TVs (a TCL, in testing) reject the Remote protocol's app links, so ADB goes first
+        when it is enabled, and every Remote attempt is checked: the app must actually come to the front."""
+        is_package = bool(PACKAGE_RE.match(app_id))
+        if not (is_package or LINK_RE.match(app_id)):
             raise DeviceError("app must be a package name or a link")
-        self._call("send_launch_app_command", app_id, f"launch {app_id}")
+        failures = []
+        if self.adb and is_package:
+            try:
+                self.adb.launch(app_id)
+                return "launched via ADB"
+            except DeviceError as e:
+                failures.append(f"ADB: {e}")
+        links = ([f"intent://#Intent;action=android.intent.action.MAIN;category=android.intent.category.LEANBACK_LAUNCHER;"
+                  f"package={app_id};end", f"market://launch?id={app_id}"] if is_package else [app_id])
+        for link in links:
+            ok, why = self._launch_link(link, app_id if is_package else None)
+            if ok:
+                return f"launched via a {link.split(':', 1)[0]}: link over the Remote protocol"
+            failures.append(f"{link.split(':', 1)[0]}: link {why}")
+        raise DeviceError(f"Could not open {app_id}: " + "; ".join(failures) +
+                          ("" if self.adb else '. Set "adb": true on this device to launch apps over ADB, which works on TVs '
+                                               "that reject app links."))
+
+    def _launch_link(self, link, package):
+        """Send one launch link and watch for the outcome. -> (ok, reason)."""
+        t0 = time.time()
+        self._call("send_launch_app_command", link, f"launch {link[:70]}", record=False)
+        while time.time() - t0 < 4:
+            errors = _ERRORS.since(t0)
+            if errors:
+                self.log("launch", link, None, False, (time.time() - t0) * 1000, errors[0])
+                return False, "was rejected by the TV"
+            if package and self._state.get("app") == package:
+                self.log("launch", link, None, True, (time.time() - t0) * 1000, f"{package} is in the foreground")
+                return True, ""
+            time.sleep(0.2)
+        if package:
+            self.log("launch", link, None, False, 4000, f"sent, but the TV never switched to {package}")
+            return False, "was sent but the TV did not switch to the app"
+        self.log("launch", link, None, True, 4000, "sent (a link cannot be verified)")
+        return True, ""
 
     def text(self, text):
         if not TEXT_RE.match(text):

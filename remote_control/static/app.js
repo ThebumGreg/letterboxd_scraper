@@ -455,6 +455,7 @@ document.addEventListener('click', e => {
 async function fetchLog() {
   if ($('#fPause').checked) return;
   const r = await api('GET', '/api/log?since=' + S.logLast);
+  if (r.build) { if (!S.build) S.build = r.build; else if (S.build !== r.build) return location.reload(); }   // server was updated
   if (!r.entries || !r.entries.length) return;
   S.logLast = r.last;
   S.logAll = S.logAll.concat(r.entries).slice(-2000);

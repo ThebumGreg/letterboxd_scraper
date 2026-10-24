@@ -121,8 +121,11 @@ def prepare(driver, jf, logbook, session_timeout=40):
         step(f"Jellyfin app ({app}) already in the foreground")
         session = _wait_for(lambda: (device_sessions(jf, driver) or [None])[0], 15)
     else:
-        driver.launch(app)
-        step(f'Launched {app} (was {st["app"]})')
+        try:
+            how = driver.launch(app)
+        except DeviceError as e:
+            return fail(str(e))
+        step(f'Launched {app} (was {st["app"]}): {how or "sent"}')
         # A stale session may linger from an earlier run, so wait for one that is new
         # or has reported activity since the launch.
         session = _wait_for(

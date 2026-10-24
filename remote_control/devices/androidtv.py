@@ -35,6 +35,7 @@ FRIENDLY = {
     "com.tcl.tv": "TCL Live TV",
     "com.tcl.tv.plus": "TCL TV+",
     "com.tcl.suspension": "TV menu",
+    "com.google.android.apps.tv.dreamx": "Screensaver",
 }
 # Vendor and platform packages that clutter the launcher grid (hidden unless asked for).
 SYSTEM_PREFIXES = ("com.tcl.", "com.android.", "com.google.android.tvlauncher", "com.google.android.apps.tv.",

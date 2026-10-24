@@ -19,6 +19,13 @@ ID_RE = re.compile(r"^[0-9A-Za-z_-]+$")
 PLAYSTATE_COMMANDS = {"Stop", "Pause", "Unpause", "NextTrack", "PreviousTrack", "Seek", "Rewind", "FastForward", "PlayPause"}
 PLAY_COMMANDS = {"PlayNow", "PlayNext", "PlayLast", "PlayInstantMix", "PlayShuffle"}
 
+def _build_id():
+    """Changes whenever the code changes, so a tab left open across an update can reload itself."""
+    newest = max((f.stat().st_mtime for f in Path(__file__).parent.rglob("*") if f.suffix in (".py", ".js", ".css", ".html")), default=0)
+    return str(int(newest))
+
+
+BUILD = _build_id()
 app = Flask(__name__, static_folder=STATIC, static_url_path="/static")
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 state = SimpleNamespace(logbook=LogBook(), jf=None, devices={}, config_path=None, config_error=None,
@@ -128,7 +135,7 @@ def api_reload():
 @app.get("/api/log")
 def api_log():
     entries = state.logbook.since(int(request.args.get("since", 0)))
-    return jsonify(entries=entries, last=entries[-1]["id"] if entries else int(request.args.get("since", 0)))
+    return jsonify(entries=entries, last=entries[-1]["id"] if entries else int(request.args.get("since", 0)), build=BUILD)
 
 
 @app.delete("/api/log")
