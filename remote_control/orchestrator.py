@@ -6,11 +6,45 @@ from .devices import DeviceError
 from .jellyfin import match_session, summarize_session
 
 
+def rule_ladder(driver):
+    """The device's session rule, then its kind's default rule as a fallback."""
+    rules = [driver.session_rule()]
+    if driver.default_session_rule and driver.default_session_rule not in rules:
+        rules.append(driver.default_session_rule)
+    return rules
+
+
+def effective_rule(driver, sessions):
+    """The first rule in the ladder that matches any of these sessions (or the primary rule if none do)."""
+    rules = rule_ladder(driver)
+    return next((r for r in rules if any(match_session(r, s) for s in sessions)), rules[0])
+
+
 def device_sessions(jf, driver):
     """Jellyfin sessions that belong to this device, newest activity first."""
-    rule = driver.session_rule()
-    found = [s for s in jf.sessions() if s.get("SupportsRemoteControl") and match_session(rule, s)]
+    raw = [s for s in jf.sessions() if s.get("SupportsRemoteControl")]
+    rule = effective_rule(driver, raw)
+    if rule != driver.session_rule() and not getattr(driver, "_warned_rule", False):
+        driver._warned_rule = True
+        jf.logbook.add("system", driver.id, "session rule", ok=False,
+                       response=f"The session rule {driver.session_rule()} matched nothing, so the default {rule} is being used. "
+                                'Fix it on Settings under "Sessions Jellyfin can see".')
+    found = [s for s in raw if match_session(rule, s)]
     return sorted(found, key=lambda s: s.get("LastActivityDate") or "", reverse=True)
+
+
+def explain_no_session(jf, driver):
+    """Why no session matched, with what Jellyfin does list, so the rule can be corrected."""
+    raw = jf.sessions()
+    rules = rule_ladder(driver)
+    not_remote = [s for s in raw if not s.get("SupportsRemoteControl") and any(match_session(r, s) for r in rules)]
+    if not_remote:
+        s = not_remote[0]
+        return (f'Jellyfin has a session for {s.get("Client")} / {s.get("DeviceName")}, but it reports that it cannot be '
+                "controlled remotely (SupportsRemoteControl is false), so the app on this device ignores play commands.")
+    seen = "; ".join(f'{s.get("Client")} / {s.get("DeviceName")}' for s in raw) or "none"
+    return (f"No Jellyfin session matched {rules[0]}. Sessions Jellyfin lists right now: {seen}. On Settings, under "
+            f'"Sessions Jellyfin can see", choose "Use for {driver.name}" on the right one.')
 
 
 def _wait_for(predicate, timeout, interval=2):
@@ -115,7 +149,6 @@ def prepare(driver, jf, logbook, session_timeout=40):
         return {"ok": False, "steps": steps, "session": None}
 
     app = driver.jellyfin_app()
-    rule = driver.session_rule()
     baseline = {s["Id"]: s.get("LastActivityDate") for s in device_sessions(jf, driver)}
     if st["app"] == app:
         step(f"Jellyfin app ({app}) already in the foreground")
@@ -132,7 +165,7 @@ def prepare(driver, jf, logbook, session_timeout=40):
             lambda: next((s for s in device_sessions(jf, driver) if baseline.get(s["Id"]) != s.get("LastActivityDate")), None),
             session_timeout)
     if not session:
-        return fail(f"No Jellyfin session matching {rule} with remote control appeared")
+        return fail(explain_no_session(jf, driver))
     step(f'Session found: {session.get("Client")} / {session.get("DeviceName")}')
     time.sleep(1)  # let the client finish registering before the first command
     return {"ok": True, "steps": steps, "session": summarize_session(session)}

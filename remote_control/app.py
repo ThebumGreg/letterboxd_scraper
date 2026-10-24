@@ -32,7 +32,7 @@ app = Flask(__name__, static_folder=STATIC, static_url_path="/static")
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 state = SimpleNamespace(logbook=LogBook(), jf=None, devices={}, config_path=None, config_error=None,
                         options={}, last_status={}, token="", public_url="", icons={},
-                        prefs={"quick": {}}, prefs_path=None, prefs_lock=threading.Lock(), apps_cache={})
+                        prefs={"quick": {}, "session": {}}, prefs_path=None, prefs_lock=threading.Lock(), apps_cache={})
 
 APPS_TTL = 600           # seconds an installed-app list is reused
 QUICK_MAX = 4            # apps pinned to a remote
@@ -108,6 +108,7 @@ def reload_devices():
     state.icons.clear()
     state.apps_cache.clear()
     state.devices, state.config_error = load_devices(state.config_path, state.logbook, state.options)
+    apply_session_overrides()
     state.last_status.clear()
     state.logbook.add("system", None, "config", ok=state.config_error is None,
                       response=state.config_error or f"Loaded {len(state.devices)} device(s) from {state.config_path}")
@@ -132,9 +133,16 @@ def web_manifest():
 def load_prefs():
     try:
         data = json.loads(Path(state.prefs_path).read_text(encoding="utf-8"))
-        state.prefs = {"quick": {k: v for k, v in (data.get("quick") or {}).items() if isinstance(v, list)}}
+        state.prefs = {"quick": {k: v for k, v in (data.get("quick") or {}).items() if isinstance(v, list)},
+                       "session": {k: v for k, v in (data.get("session") or {}).items() if isinstance(v, dict)}}
     except (OSError, ValueError, TypeError, AttributeError):
-        state.prefs = {"quick": {}}
+        state.prefs = {"quick": {}, "session": {}}
+
+
+def apply_session_overrides():
+    for d in state.devices.values():
+        d.session_override = state.prefs["session"].get(d.id)
+        d._warned_rule = False
 
 
 def save_prefs():
@@ -166,6 +174,30 @@ def api_prefs_quick(dev_id):
         state.prefs["quick"][dev_id] = clean
         save_prefs()
     return reply(True, f"saved {len(clean)} quick-launch app(s)", apps=clean)
+
+
+@app.put("/api/prefs/session/<dev_id>")
+def api_prefs_session(dev_id):
+    """Pin which Jellyfin session belongs to a TV (chosen from what Jellyfin actually lists)."""
+    device(dev_id)
+    body = json_body()
+    rule = {k: str(body[k]).strip()[:120] for k in ("client", "device", "device_id") if str(body.get(k) or "").strip()}
+    if not rule:
+        raise DeviceError("give a client, device or device_id")
+    with state.prefs_lock:
+        state.prefs["session"][dev_id] = rule
+        save_prefs()
+    apply_session_overrides()
+    return reply(True, f"{state.devices[dev_id].name} will use sessions matching {rule}", rule=rule)
+
+
+@app.delete("/api/prefs/session/<dev_id>")
+def api_prefs_session_reset(dev_id):
+    with state.prefs_lock:
+        state.prefs["session"].pop(dev_id, None)
+        save_prefs()
+    apply_session_overrides()
+    return reply(True, "back to the rule in devices.json")
 
 
 @app.delete("/api/prefs/quick/<dev_id>")
@@ -421,10 +453,11 @@ def api_jf_sessions():
         state.logbook.poll_failed("jf-sessions", "jellyfin", None, "sessions poll", "GET /Sessions", 0, str(e))
         raise
     state.logbook.poll_ok("jf-sessions", "jellyfin", None, "sessions poll")
+    rules = {d.id: orchestrator.effective_rule(d, raw) for d in state.devices.values()}
     out = []
     for s in raw:
         summary = summarize_session(s)
-        summary["deviceId"] = next((d.id for d in state.devices.values() if match_session(d.session_rule(), s)), None)
+        summary["deviceId"] = next((did for did, rule in rules.items() if match_session(rule, s)), None)
         out.append(summary)
     return jsonify(out)
 

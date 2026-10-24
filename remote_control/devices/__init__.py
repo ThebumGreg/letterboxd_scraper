@@ -85,8 +85,10 @@ class Driver:
     def log(self, action, request="", status=None, ok=None, ms=None, response=""):
         return self.logbook.add(self.log_kind or self.type, self.id, action, request, status, ok, ms, response)
 
+    session_override = None   # set from the UI ("Use for this TV"); wins over devices.json
+
     def session_rule(self):
-        return self.jellyfin.get("session") or self.default_session_rule
+        return self.session_override or self.jellyfin.get("session") or self.default_session_rule
 
     def wol(self):
         """Send Wake-on-LAN for this device (needs its MAC)."""
@@ -222,6 +224,7 @@ class Driver:
             "keys": {k: self.keymap.get(k) is not None for k in LOGICAL_KEYS},
             "extraKeys": [{"label": l, "key": k} for l, k in self.extra_keys],
             "sessionRule": self.session_rule(),
+            "sessionOverride": bool(self.session_override),
             "hasMac": bool(self.mac),
             "sleepMode": self.cfg.get("sleep") or "standby",
             "wakeMethods": self.wake_methods(),

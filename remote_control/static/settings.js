@@ -85,7 +85,18 @@ function renderSessions() {
       S.sessions.map(s => `<option value="${esc(s.Id)}" title="DeviceId ${esc(s.DeviceId)}">${esc(s.Client)} - ${esc(s.DeviceName)} (${esc(s.UserName)})</option>`).join('');
     sel.value = S.sessSel;
   }
-  renderNowDetail(); renderCaps();
+  renderNowDetail(); renderCaps(); renderSessionTable();
+}
+const ruleText = r => Object.entries(r || {}).map(([k, v]) => `${k.replace('_', ' ')} “${v}”`).join(' and ') || 'nothing';
+function renderSessionTable() {
+  const d = dev(), el = $('#sessTable'), line = $('#ruleLine'); if (!el || !d) return;
+  line.innerHTML = `<b>${esc(d.name)}</b> looks for a session with ${esc(ruleText(d.sessionRule))} ` +
+    (d.sessionOverride ? '(your choice) <button class="small" data-act="sessReset">reset to devices.json</button>' : '(from devices.json, or the default for this kind of device)');
+  el.innerHTML = S.sessions.length ? S.sessions.map(s => `<div class="item"><span class="name"><b>${esc(s.Client)}</b>${s.Version ? ' ' + esc(s.Version) : ''} · ${esc(s.DeviceName)}
+      <span class="dim small">· id ${esc(String(s.DeviceId).slice(0, 8))}… · ${esc(s.UserName)} · remote control: ${s.SupportsRemoteControl ? 'yes' : '<span style="color:var(--bad)">no</span>'}</span>
+      ${s.deviceId ? `<span class="chip">→ ${esc(devName(s.deviceId))}</span>` : ''}</span>
+      <button data-act="sessUse" data-id="${esc(s.Id)}">Use for ${esc(d.name)}</button></div>`).join('')
+    : '<span class="dim">Jellyfin lists no sessions right now. Open the Jellyfin app on the TV.</span>';
 }
 function renderCaps() {
   const s = activeSession(), sup = s ? s.SupportedCommands : [];
@@ -220,6 +231,12 @@ Object.assign(ACTIONS, {
     [cur[i], cur[j]] = [cur[j], cur[i]]; setQuick(d, cur);
   },
   qreset: () => resetQuick(dev()),
+  sessUse: async b => {
+    const s = S.sessions.find(x => x.Id === b.dataset.id); if (!s) return;
+    const r = await run(b, api('PUT', `/api/prefs/session/${encodeURIComponent(S.devId)}`, {client: s.Client, device: s.DeviceName}));
+    if (r.ok) { await refreshDevices(); pollSessions(); } else alert(r.body || 'Could not save');
+  },
+  sessReset: async () => { await api('DELETE', `/api/prefs/session/${encodeURIComponent(S.devId)}`); await refreshDevices(); pollSessions(); },
   prepare: async b => {
     if (!S.devId) return;
     $('#prepState').textContent = 'preparing… (see log)';

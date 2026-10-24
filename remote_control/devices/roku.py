@@ -151,7 +151,25 @@ class RokuDriver(Driver):
         if not APP_RE.match(app_id):
             raise DeviceError("bad app id")
         clean = {k: v for k, v in (params or {}).items() if k in ("contentId", "mediaType") and v}
-        self._ecp("POST", f"/launch/{app_id}", action=f"launch {app_id}", params=clean or None)
+        shown = f"POST /launch/{app_id}" + (f" params={clean}" if clean else "")
+        t0 = time.perf_counter()
+        ms = lambda: (time.perf_counter() - t0) * 1000
+        try:
+            # Roku answers a launch only once the channel is up, which can take well over the usual 5 s
+            self._ecp("POST", f"/launch/{app_id}", quiet=True, params=clean or None, timeout=25)
+            self.log(f"launch {app_id}", shown, 200, True, ms(), "")
+            return "launched"
+        except DeviceError as e:
+            if "timed out" not in str(e).lower():
+                self.log(f"launch {app_id}", shown, None, False, ms(), str(e))
+                raise
+        for _ in range(12):   # no answer in time: the channel may still have started, so look
+            time.sleep(1)
+            if self.status(quiet=True).get("app") == app_id:
+                self.log(f"launch {app_id}", shown, None, True, ms(), "the Roku was slow to answer, but the app is now running")
+                return "launched (the Roku was slow to answer)"
+        self.log(f"launch {app_id}", shown, None, False, ms(), "no answer, and the app never came to the front")
+        raise DeviceError(f"The Roku did not start app {app_id}")
 
     def text(self, text):
         if not TEXT_RE.match(text):

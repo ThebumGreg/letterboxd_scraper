@@ -132,6 +132,15 @@ the host).
 
 ## Config reference
 
+**How a TV is matched to its Jellyfin session.** Jellyfin reports each app as a session with a `Client` name
+(for example `Jellyfin Roku`, `Jellyfin Android TV`, `Swiftfin tvOS`) and a `DeviceName`. A device's
+`jellyfin.session` rule says which one is its own. Version numbers are ignored (`Jellyfin Roku 3.2.4` matches
+`Jellyfin Roku`; the version is Roku's app version, not part of the name). If the rule matches nothing the default for
+that kind of device is tried, with a warning in the Log. To see the real names, open **Settings ▸ Jellyfin ▸
+Sessions Jellyfin can see**: every session is listed with the TV it maps to, and **Use for this TV** saves the right one
+(in `prefs.json`, so `devices.json` stays untouched; **reset** undoes it). If a session shows `remote control: no`,
+that app tells Jellyfin it cannot be controlled remotely and play commands cannot reach it.
+
 `jellyfin.app`: app to open for playback (package name on Android TV; name or channel id on Roku).
 `jellyfin.session`: how that app's session looks in Jellyfin's `/Sessions` (`client` and `device` substrings,
 and/or exact `device_id`); the Session menu in the UI shows the real values.

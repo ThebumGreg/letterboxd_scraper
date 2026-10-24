@@ -102,6 +102,12 @@ async function loadConfig() {
   if (fd) fd.innerHTML = '<option value="">all devices</option>' + S.devices.map(d => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('');
   renderDevBar(); selectDevice(S.devId, true);
 }
+// Re-read the device list (its session rules change when one is chosen on the Settings page)
+async function refreshDevices() {
+  const c = await api('GET', '/api/config');
+  if (c.devices) S.devices = c.devices;
+  hook('onSessions');
+}
 const sessionFor = id => S.sessions.find(s => s.deviceId === id);
 function playingTitle(id) {
   if (S.status[id] && !S.status[id].online) return null;   // a lingering Jellyfin session says nothing about an offline TV

@@ -1,4 +1,5 @@
 """Jellyfin Sessions API client. Every call is recorded in the log book."""
+import re
 import time
 
 import requests
@@ -15,6 +16,7 @@ def summarize_session(s):
         "Client": s.get("Client"),
         "DeviceName": s.get("DeviceName"),
         "DeviceId": s.get("DeviceId"),
+        "Version": s.get("ApplicationVersion"),
         "UserName": s.get("UserName"),
         "SupportsRemoteControl": s.get("SupportsRemoteControl"),
         "SupportedCommands": s.get("SupportedCommands") or [],
@@ -38,15 +40,25 @@ def summarize_item(i):
     }
 
 
+_VERSION = re.compile(r"\bv?\d+(?:\.\d+)+\b")
+
+
+def _norm(text):
+    """Lowercase and drop version numbers, so "Jellyfin Roku 3.2.4" and "Jellyfin Roku" are the same client."""
+    return re.sub(r"\s+", " ", _VERSION.sub("", (text or "").lower())).strip()
+
+
+def _contains(wanted, actual):
+    return (_norm(wanted) or wanted.lower()) in _norm(actual)
+
+
 def match_session(rule, session):
     """rule: {"client": substr, "device": substr, "device_id": exact}; all given parts must match."""
     if not rule:
         return False
-    client = (session.get("Client") or "").lower()
-    device = (session.get("DeviceName") or "").lower()
-    if rule.get("client") and rule["client"].lower() not in client:
+    if rule.get("client") and not _contains(rule["client"], session.get("Client")):
         return False
-    if rule.get("device") and rule["device"].lower() not in device:
+    if rule.get("device") and not _contains(rule["device"], session.get("DeviceName")):
         return False
     if rule.get("device_id") and rule["device_id"] != session.get("DeviceId"):
         return False
