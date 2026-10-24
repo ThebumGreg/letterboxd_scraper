@@ -31,9 +31,10 @@
       "jellyfin": {
         "app": "Jellyfin",
         "session": {
-          "client": "Roku"
+          "client": "Jellyfin Roku"
         }
-      }
+      },
+      "play": "url"
     }
   ]
 }

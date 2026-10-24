@@ -12,6 +12,8 @@ import requests
 
 from . import Driver, DeviceError, register
 
+PLAY_ON_ROKU = "15985"   # the Roku system channel that plays a video from a URL (what the Roku phone app casts through)
+SECRET = re.compile(r"(api_key(?:=|%3D))[^&%]+", re.I)
 KEY_RE = re.compile(r"^[A-Za-z0-9_%]{1,40}$")
 APP_RE = re.compile(r"^[\w.\-]+$")
 TEXT_RE = re.compile(r"^[\x20-\x7e]{1,100}$")
@@ -22,7 +24,7 @@ class RokuDriver(Driver):
     type = "roku"
     log_kind = "roku"
     label = "Roku / Roku TV (ECP)"
-    capabilities = frozenset({"keys", "apps", "text", "power_on", "power_off", "launch", "icons"})
+    capabilities = frozenset({"keys", "apps", "text", "power_on", "power_off", "launch", "icons", "url_play"})
     keymap = {
         "home": "Home", "back": "Back",
         "up": "Up", "down": "Down", "left": "Left", "right": "Right", "ok": "Select",
@@ -45,6 +47,7 @@ class RokuDriver(Driver):
     def __init__(self, cfg, logbook, options=None):
         super().__init__(cfg, logbook, options)
         self.base = f"http://{self.host}:{int(cfg.get('port', 8060))}"
+        self._cast_title, self._cast_at = None, 0.0
 
     # --- ECP plumbing -------------------------------------------------------------------
     def _ecp(self, method, path, action=None, quiet=False, params=None, timeout=5):
@@ -101,10 +104,10 @@ class RokuDriver(Driver):
             "detail": {k: info.findtext(k) for k in ("friendly-device-name", "model-name", "software-version", "is-tv", "power-mode")},
         }
         if power == "on" and app_id not in (None, "home", "screensaver"):
-            out["media"] = self._media(quiet)
+            out["media"] = self._media(quiet, app_id)
         return out
 
-    def _media(self, quiet):
+    def _media(self, quiet, app_id=None):
         """Playback state from the active channel (apps vary in how much they report)."""
         try:
             player = self._xml(self._ecp("GET", "/query/media-player", action="media-player", quiet=True).text)
@@ -114,8 +117,27 @@ class RokuDriver(Driver):
         if state in (None, "none", "close"):
             return None
         ms = lambda tag: int(m.group(1)) if (m := re.match(r"\s*(\d+)", player.findtext(tag) or "")) else None
+        # Roku does not report a title; for something we cast ourselves we know it
+        ours = self._cast_title if (app_id == PLAY_ON_ROKU or time.time() - self._cast_at < 7200) else None
         return {"state": {"play": "playing", "pause": "paused", "buffer": "buffering", "startup": "starting"}.get(state, state),
-                "title": None, "positionMs": ms("position"), "durationMs": ms("duration"), "source": "Roku media player"}
+                "title": ours, "positionMs": ms("position"), "durationMs": ms("duration"), "source": "Roku media player"}
+
+    def play_url(self, url, title, fmt="mp4"):
+        """Start a video from a URL with the "Play on Roku" channel (no Jellyfin app or session needed)."""
+        query = f"t=v&u={quote(url, safe='')}&k=(null)&videoName={quote(title or 'Video', safe='')}&videoFormat={fmt}"
+        shown = f"POST /input/{PLAY_ON_ROKU}?" + SECRET.sub(r"\1***", query)   # the API key must never reach the log
+        t0 = time.perf_counter()
+        try:
+            r = requests.post(f"{self.base}/input/{PLAY_ON_ROKU}?{query}", timeout=25)
+        except requests.RequestException as e:
+            self.log("play on roku", shown, 0, False, (time.perf_counter() - t0) * 1000, SECRET.sub(r"\1***", str(e)))
+            raise DeviceError(f"Roku unreachable: {SECRET.sub(r'api_key=***', str(e))}")
+        ok = r.ok
+        self.log("play on roku", shown, r.status_code, ok, (time.perf_counter() - t0) * 1000, r.text[:300])
+        if not ok:
+            raise DeviceError(f"The Roku refused the stream (HTTP {r.status_code})")
+        self._cast_title, self._cast_at = title, time.time()
+        return "stream sent to Play on Roku"
 
     def detect_mac(self):
         self.status(quiet=True)

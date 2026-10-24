@@ -225,6 +225,7 @@ class Driver:
             "extraKeys": [{"label": l, "key": k} for l, k in self.extra_keys],
             "sessionRule": self.session_rule(),
             "sessionOverride": bool(self.session_override),
+            "playVia": self.cfg.get("play") or "session",
             "hasMac": bool(self.mac),
             "sleepMode": self.cfg.get("sleep") or "standby",
             "wakeMethods": self.wake_methods(),

@@ -10,6 +10,7 @@ const ALL_KEYS = [['up','▲'],['down','▼'],['left','◀'],['right','▶'],['o
 /* ------------------------------------------------------------------ device tools */
 function renderTools() {
   const d = dev(), el = $('#tools');
+  $('#viaLabel').hidden = !has('url_play');   // only devices that can take a stream URL offer the choice
   if (!d) { el.innerHTML = '<div class="dim">No device selected</div>'; return; }
   const pairing = has('pairing') ? `<div class="pair" id="pairBox" hidden><b>Pairing required</b>
       <div class="small dim">Press Start, then type the code that appears on the TV.</div>
@@ -139,7 +140,7 @@ async function playIds(btn, itemIds, playCommand, startIndex) {
   const pos = $('#optPos').value;
   const body = {itemIds, playCommand, startIndex,
     startPositionTicks: pos === '' ? undefined : Math.round(pos * TICKS),
-    audioStreamIndex: $('#optAud').value, subtitleStreamIndex: $('#optSub').value};
+    audioStreamIndex: $('#optAud').value, subtitleStreamIndex: $('#optSub').value, via: $('#via').value || undefined};
   if (S.devId && S.sessSel === 'auto') {
     $('#prepState').textContent = $('#prep').checked ? 'preparing…' : '';
     const r = await run(btn, api('POST', devPath('/play'), {...body, prepare: $('#prep').checked}));

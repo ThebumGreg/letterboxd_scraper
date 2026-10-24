@@ -92,6 +92,27 @@ over ADB first, which worked on that TV. Without ADB the app tries an Intent lin
 checks that the app really came to the front; a TV-side rejection is logged and reported instead of being
 treated as success. Set `"adb": true` if app launching fails.
 
+### Roku: playing without the Jellyfin app's remote control
+
+The Jellyfin Roku app may not accept play commands (Settings ▸ Sessions shows `remote control: no`). Set
+`"play": "url"` on the Roku and the app skips the Jellyfin app and its session entirely: it wakes the Roku, then hands it
+a stream URL through **Play on Roku**, the same ECP call the Roku phone app casts through. Jellyfin direct-plays
+files the Roku understands (MP4/MKV with H.264 or HEVC video and AAC, AC3, E-AC3 or MP3 audio) and otherwise sends an
+HLS transcode (H.264 + AAC). The log shows which and why. Roku's own media-player status then drives Now playing, and
+the remote's ⏯ ⏪ ⏩ keys control it.
+
+What you give up: Jellyfin is not told about the playback (no resume point or watched mark), there is no queue (Play now
+only), and the TV fetches the stream itself, so the URL contains your API key. It is masked in every log but visible to
+anything on your network that can see the Roku's traffic. `stream_base` (optional) is the address the *Roku* should use to
+reach Jellyfin, if that differs from `JELLYFIN_URL`; `stream_mode` is `auto` (default), `direct` or `hls`.
+Settings ▸ Jellyfin has a **Play via** menu to try either path without editing the config.
+
+**About DLNA.** The "Roku Media Player" channel is a DLNA *client*: it browses a DLNA server (Jellyfin's DLNA plugin can be
+one) and you pick titles with the Roku remote, so nothing can tell it what to play. Pushing to a Roku as a DLNA renderer
+depends on the model and firmware, and finding renderers uses multicast, which does not cross WSL2's NAT. Jellyfin's own
+"Play To" does list DLNA renderers it finds as sessions; if your Roku shows up that way it appears under Settings ▸
+Sessions and the normal session route controls it.
+
 ### Waking and sleeping a TV
 
 A TV in standby is the hard part. Many TVs (TCL included, going by the logs from a real one) switch their network

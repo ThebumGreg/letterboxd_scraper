@@ -419,6 +419,16 @@ def api_device_play(dev_id):
     body = json_body()
     if body.get("playCommand") not in PLAY_COMMANDS or not body.get("itemIds"):
         raise DeviceError("bad playCommand or itemIds")
+    via = body.get("via") or d.cfg.get("play") or "session"
+    if via == "url":
+        if "url_play" not in d.capabilities:
+            raise DeviceError(f"{d.name} cannot play from a stream URL")
+        if body["playCommand"] != "PlayNow":
+            raise DeviceError("Stream playback supports Play now only (there is no queue)")
+        ids, index = body["itemIds"], int(body.get("startIndex") or 0)
+        result = orchestrator.play_url(d, jf(), state.logbook, ids[index] if index < len(ids) else ids[0],
+                                       body.get("startPositionTicks"))
+        return reply(result["ok"], "\n".join(result["steps"]), steps=result["steps"], confirmed=result["confirmed"])
     steps = []
     if body.get("prepare", True):
         result = orchestrator.prepare(d, jf(), state.logbook)

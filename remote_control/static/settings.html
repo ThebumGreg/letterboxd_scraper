@@ -62,6 +62,7 @@
       <div class="row"><input id="q" placeholder="Search movies / shows / episodes"><button data-act="search">Search</button></div>
       <div class="row small dim">
         <label><input type="checkbox" id="prep" checked> Prepare device first</label>
+        <label id="viaLabel" hidden>Play via <select id="via"><option value="">device setting</option><option value="session">Jellyfin session</option><option value="url">stream URL</option></select></label>
         <input id="optPos" type="number" min="0" placeholder="start (s)" style="max-width:90px">
         <input id="optAud" type="number" min="0" placeholder="audio idx" style="max-width:90px">
         <input id="optSub" type="number" min="-1" placeholder="sub idx" style="max-width:90px">

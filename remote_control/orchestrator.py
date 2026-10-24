@@ -2,6 +2,7 @@
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 
+from . import casting
 from .devices import DeviceError
 from .jellyfin import match_session, summarize_session
 
@@ -169,6 +170,42 @@ def prepare(driver, jf, logbook, session_timeout=40):
     step(f'Session found: {session.get("Client")} / {session.get("DeviceName")}')
     time.sleep(1)  # let the client finish registering before the first command
     return {"ok": True, "steps": steps, "session": summarize_session(session)}
+
+
+def play_url(driver, jf, logbook, item_id, start_ticks=None):
+    """Power the device on, then hand it a stream URL. -> {"ok", "steps", "confirmed"}.
+
+    No Jellyfin app or session is involved, so Jellyfin does not learn about the playback
+    (no resume point or watched mark), but nothing depends on the TV app's remote control.
+    """
+    steps = []
+
+    def step(msg, ok=True):
+        steps.append(msg)
+        logbook.add("system", driver.id, "play (stream)", response=msg, ok=ok)
+
+    def fail(msg):
+        step(msg, False)
+        return {"ok": False, "steps": steps, "confirmed": None}
+
+    if not ensure_on(driver, step):
+        return {"ok": False, "steps": steps, "confirmed": None}
+    item = jf.item(item_id)
+    if not item.get("Id"):
+        return fail(f"Jellyfin has no item {item_id}")
+    url, fmt, why = casting.stream_url(jf, item, driver.cfg.get("stream_base"), driver.cfg.get("stream_mode", "auto"), start_ticks)
+    step(f'Streaming "{item.get("Name")}" to {driver.name}: {why}')
+    try:
+        driver.play_url(url, item.get("Name"), fmt)
+    except DeviceError as e:
+        return fail(str(e))
+    playing = _wait_for(lambda: ((driver.status(quiet=True).get("media") or {}).get("state") in ("playing", "buffering", "starting")), 25, 2)
+    if playing:
+        step("The device reports the stream playing")
+    else:
+        step("The stream was sent, but the device never reported it playing. The TV may not support this file or Jellyfin's address "
+             "may not be reachable from it (set stream_base in devices.json to Jellyfin's LAN address).", False)
+    return {"ok": True, "steps": steps, "confirmed": bool(playing)}
 
 
 def _norm(item_id):

@@ -243,6 +243,9 @@ async function watchSearch() {
 function stateHint(d) {
   const st = S.status[d.id];
   if (!st) return 'checking…';
+  if (d.playVia === 'url')   // streams straight from Jellyfin: no Jellyfin app or session involved
+    return !st.online ? `${st.unresponsive ? 'asleep' : 'unreachable'} — will try ${d.wakeMethods.join(', ')}, then stream it directly`
+      : st.power !== 'on' ? 'standby — will wake it, then stream it directly' : 'will start the stream directly (no Jellyfin app needed)';
   if (!st.online) return st.needsPairing ? 'needs pairing first' : `${st.unresponsive ? 'asleep' : 'unreachable'} — will try ${d.wakeMethods.join(', ')}, then open Jellyfin and play`;
   if (st.power !== 'on') return `${POWER_LABEL[st.power] || st.power} — will wake it, open Jellyfin and play`;
   if (/jellyfin/i.test(st.appName || '')) return 'in Jellyfin — will start playing right away';
