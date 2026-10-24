@@ -1,0 +1,4 @@
+# Add to /etc/fstab, then:  sudo mkdir -p <each mount point>  &&  sudo mount -a
+# SMB needs a credentials file (sudo nano /etc/synchub-smb.cred; sudo chmod 600 /etc/synchub-smb.cred) containing two lines:  username=...  and  password=...
+//192.168.1.10/Media  /mnt/tower/Media  cifs  credentials=/etc/synchub-smb.cred,vers=3.0,_netdev,nofail  0  0
+//192.168.1.10/TFiles  /mnt/tower/TFiles  cifs  credentials=/etc/synchub-smb.cred,vers=3.0,_netdev,nofail  0  0

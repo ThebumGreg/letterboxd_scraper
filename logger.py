@@ -1,5 +1,6 @@
 # logger.py
 import logging
+import os
 import sys
 from logging.handlers import RotatingFileHandler
 from config import LOG_FILE_PATH, LOGS_DIR
@@ -23,7 +24,8 @@ def setup_logger(name: str = "letterboxd_scraper") -> logging.Logger:
     )
 
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+    # SYNCHUB_LOG_LEVEL=DEBUG shows every outgoing HTTP call; the default is INFO.
+    root_logger.setLevel(getattr(logging, os.getenv("SYNCHUB_LOG_LEVEL", "INFO").upper(), logging.INFO))
 
     # Filter polling noise on Werkzeug logger
     werkzeug_logger = logging.getLogger("werkzeug")

@@ -23,6 +23,18 @@
         });
     });
 
+    /* ---------- missing posters fall back to a placeholder on every page ---------- */
+    const NO_POSTER = "data:image/svg+xml;utf8," + encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 130"><rect width="90" height="130" fill="#2c3440"/>' +
+        '<text x="45" y="68" font-size="11" fill="#8899aa" text-anchor="middle" font-family="sans-serif">No poster</text></svg>');
+    document.addEventListener("error", (e) => {
+        const t = e.target;
+        if (t && t.tagName === "IMG" && t.classList.contains("poster") && !t.dataset.fallback) {
+            t.dataset.fallback = "1";
+            t.src = NO_POSTER;
+        }
+    }, true);
+
     /* ---------- live task status (Tools page) ---------- */
     if (document.querySelector("[data-task-badge]")) {
         const BADGE = { in_progress: "bg-primary", pending: "bg-warning text-dark", completed: "bg-success", failed: "bg-danger" };
@@ -159,6 +171,41 @@
             if (!e.defaultPrevented) saving = true;
         });
 
+        // "Set up in Radarr/Sonarr" buttons: ask the service to create the SyncHub webhook. Blank secrets mean "use the saved value".
+        settingsForm.querySelectorAll("[data-webhook-setup]").forEach((btn) => {
+            btn.addEventListener("click", async () => {
+                const service = btn.dataset.webhookSetup;
+                const out = settingsForm.querySelector(`[data-webhook-result="${service}"]`);
+                const fields = {};
+                btn.dataset.webhookFields.split(",").forEach((n) => { const i = document.getElementById(n); if (i) fields[n] = i.value; });
+                const show = (text, cls) => { out.className = "small d-block " + cls; out.textContent = text; };
+                btn.disabled = true;
+                show("Working...", "text-body-secondary");
+                try {
+                    const res = await fetch("/api/webhook-setup/" + encodeURIComponent(service), {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", Accept: "application/json", ...csrfHeaders() },
+                        body: JSON.stringify({ fields }),
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    show(data.message || (res.ok ? "Done." : `Failed (HTTP ${res.status})`), res.ok && data.ok !== false ? "text-success" : "text-danger");
+                } catch (err) {
+                    show(err.message, "text-danger");
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+        });
+
+        // Keep the webhook addresses shown in step with the SyncHub address field.
+        const addressField = document.getElementById("synchub_url");
+        if (addressField) {
+            const base = () => (addressField.value.trim() || addressField.placeholder).replace(/\/+$/, "");
+            addressField.addEventListener("input", () => {
+                document.querySelectorAll("[data-webhook-url]").forEach((el) => { el.textContent = `${base()}/api/webhook/${el.dataset.webhookUrl}`; });
+            });
+        }
+
         // "Test connection" buttons. Blank secret fields mean "use the saved value" on the server.
         settingsForm.querySelectorAll("[data-test-service]").forEach((btn) => {
             btn.addEventListener("click", async () => {
@@ -176,7 +223,7 @@
                         headers: { "Content-Type": "application/json", Accept: "application/json", ...csrfHeaders() },
                         body: JSON.stringify({ fields }),
                     });
-                    if (res.status === 404) throw new Error("The server has no test endpoint yet (see BACKEND_NOTES.md).");
+                    if (res.status === 404) throw new Error("The server has no test endpoint for this service.");
                     const data = await res.json().catch(() => ({}));
                     const ok = res.ok && data.ok !== false;
                     show(data.message || (ok ? "Connection OK" : `Failed (HTTP ${res.status})`), ok ? "text-success" : "text-danger");

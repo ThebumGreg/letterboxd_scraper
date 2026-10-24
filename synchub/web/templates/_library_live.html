@@ -1,0 +1,84 @@
+<!-- The parts of the Library overview that change while scans run: the queues, the shares and the runs. Swapped in every few seconds. -->
+{% if not total and not runs %}
+<div class="alert alert-info"><i class="bi bi-info-circle" aria-hidden="true"></i> <strong>Nothing has been scanned yet.</strong>
+    {% if not roots %}Add your shares on the <a href="{{ url_for('storage_page') }}">Storage</a> page first, then choose one below and press <em>Start scan</em>.
+    {% else %}Choose a share below and press <em>Start scan</em>. A worker on the <a href="{{ url_for('workers_page') }}">Workers</a> page does the looking; this page fills as files are analysed.{% endif %}</div>
+{% endif %}
+
+<div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3 mb-4" id="queueCards">
+    {% for g in groups %}
+    <div class="col">
+        <div class="panel h-100 p-3 d-flex flex-column" data-queue="{{ g.key }}">
+            <div class="d-flex justify-content-between align-items-start mb-1">
+                <h5 class="mb-0">{{ g.title }}</h5>
+                <span class="fs-4 fw-bold lh-1" aria-label="{{ g.total }} files">{{ g.total }}</span>
+            </div>
+            <div class="small mb-2">
+                {% if g.high %}<span class="badge bg-success">{{ g.high }} high</span>{% endif %}
+                {% if g.medium %}<span class="badge bg-warning text-dark">{{ g.medium }} medium</span>{% endif %}
+                {% if g.low %}<span class="badge bg-danger">{{ g.low }} low</span>{% endif %}
+            </div>
+            <p class="small text-body-secondary flex-grow-1">{{ g.hint }}</p>
+            <div class="d-flex gap-2 flex-wrap">
+                {% if g.total and g.key != 'done' %}<a class="btn btn-sm btn-success" href="{{ url_for('library_review', group=g.key) }}">Review one by one</a>{% endif %}
+                <a class="btn btn-sm btn-outline-secondary{% if not g.total %} disabled{% endif %}" href="{{ url_for('library_queue', group=g.key) }}"{% if not g.total %} aria-disabled="true" tabindex="-1"{% endif %}>Open list</a>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<h5 class="mb-2">Shares</h5>
+<div class="panel p-0 overflow-hidden mb-4">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0" id="shareSummary">
+            <thead class="table-light"><tr><th class="ps-4">Share</th><th class="text-end">Files</th><th class="text-end">Size</th><th class="text-end">Approved</th><th class="text-end">Missing</th><th class="text-end pe-4">Unreadable</th></tr></thead>
+            <tbody>
+            {% for s in shares %}
+                <tr><td class="ps-4 fw-bold">{{ s.name }}{% if s.destination %} <span class="badge bg-success ms-1" title="Approved files are brought into this share">destination</span>{% endif %}{% if s.label %}<div class="small text-body-secondary fw-normal">{{ s.label }}</div>{% endif %}</td>
+                    <td class="text-end">{{ s.files }}</td><td class="text-end">{{ s.size }}</td><td class="text-end">{{ s.approved }}</td>
+                    <td class="text-end">{{ s.missing or '-' }}</td><td class="text-end pe-4">{{ s.unreadable or '-' }}</td></tr>
+            {% else %}
+                <tr><td colspan="6" class="text-center text-muted py-4">No shares yet. Add them on the <a href="{{ url_for('storage_page') }}">Storage</a> page.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<h5 class="mb-2">Scans and searches</h5>
+<div class="panel p-0 overflow-hidden mb-4">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0" id="runTable">
+            <thead class="table-light"><tr><th class="ps-4">Started</th><th>What</th><th style="min-width: 220px;">State</th><th>Found</th><th class="pe-4 text-end"></th></tr></thead>
+            <tbody>
+            {% for run in runs %}
+                {% set color = {'queued': 'secondary', 'running': 'primary', 'waiting': 'warning', 'completed': 'success', 'completed_with_errors': 'warning', 'failed': 'danger', 'cancelled': 'dark'}.get(run.status, 'secondary') %}
+                <tr data-run="{{ run.id }}">
+                    <td class="ps-4 small">{{ run.when }}<div class="text-body-secondary">{{ run.started_by or '' }}</div></td>
+                    <td>{% if run.kind == 'scan' %}Scan <strong>{{ run.root_name }}</strong>{% if run.prefix %}/{{ run.prefix }}{% endif %}{% if run.options.force %} <span class="badge bg-secondary">every file</span>{% endif %}
+                        {% else %}Duplicate search{% endif %}</td>
+                    <td class="small">
+                        <span class="badge bg-{{ color }}{% if color == 'warning' %} text-dark{% endif %}">{{ run.status.replace('_', ' ') }}</span>
+                        {% if run.status == 'running' and run.percent is not none %}<span class="ms-1">{{ run.percent }}%</span>
+                            <div class="progress mt-1" style="height: 5px;" role="progressbar" aria-valuenow="{{ run.percent }}" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width: {{ run.percent }}%"></div></div>{% endif %}
+                        {% if run.message and run.active %}<div class="text-body-secondary">{{ run.message }}</div>{% endif %}
+                        {% if run.error %}<div class="text-danger">{{ run.error }}</div>{% endif %}
+                        {% if run.counts.get('last_walk_error') %}<div class="text-warning">A folder could not be listed: {{ run.counts.last_walk_error }}</div>{% endif %}
+                    </td>
+                    <td class="small">
+                        {% if run.kind == 'scan' %}{{ run.counts.get('found', 0) }} files{% if run.counts.get('analyzed') is not none and run.counts.get('need') %}, {{ run.counts.get('analyzed', 0) }} of {{ run.counts.need }} analysed{% endif %}
+                            {% if run.counts.get('missing') %}<div class="text-body-secondary">{{ run.counts.missing }} not found any more</div>{% endif %}
+                            {% if run.counts.get('approvals_reset') %}<div class="text-warning">{{ run.counts.approvals_reset }} approval(s) withdrawn: the file changed</div>{% endif %}
+                        {% else %}{{ run.counts.get('hashed', 0) }} read, {{ run.counts.get('ruled_out', 0) }} ruled out{% if run.counts.get('groups') is not none %}<div class="text-body-secondary">{{ run.counts.groups }} group(s) of identical files</div>{% endif %}{% endif %}
+                    </td>
+                    <td class="pe-4 text-end">{% if run.active %}<button type="button" class="btn btn-sm btn-outline-danger" data-cancel-run="{{ run.id }}" data-confirm="Stop this {{ 'scan' if run.kind == 'scan' else 'search' }}? What it already reported is kept.">Stop</button>{% endif %}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="5" class="text-center text-muted py-4">No scans yet.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+<div id="libraryActive" data-active="{{ 1 if active else 0 }}" hidden></div>

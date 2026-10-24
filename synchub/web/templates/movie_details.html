@@ -1,0 +1,86 @@
+<!-- synchub/web/templates/movie_details.html -->
+{% extends "base.html" %}
+{% from "_macros.html" import state_badge with context %}
+
+{% block title %}{{ movie.title }} - Details{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+    <a href="{{ url_for('index') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back to Dashboard</a>
+</div>
+
+<div class="panel mb-4 overflow-hidden">
+    <div class="row g-0">
+        <div class="col-md-2 text-center p-3 bg-dark bg-opacity-25 border-end border-secondary border-opacity-10">
+            <img src="/poster/{{ movie.id }}" alt="{{ movie.title }} poster" class="img-fluid rounded shadow poster" style="max-height: 250px;">
+        </div>
+        <div class="col-md-10 p-3 p-md-4">
+            <h2 class="fw-bold">
+                {{ movie.title }}
+                {% if movie.year %}<span class="text-muted fs-5 fw-normal">({{ movie.year }})</span>{% endif %}
+            </h2>
+
+            <div class="mb-3 mt-2 d-flex flex-wrap gap-2 align-items-center">
+                <span class="badge badge-movie">MOVIE</span>
+                {{ state_badge(state_info.label, state_info.color, state_info.icon, (state.progress * 100)|round|int if state.progress is not none and state.state == 'downloading' else none) }}
+            </div>
+
+            {% if movie.overview %}<p class="text-body-secondary" style="max-width: 70ch;">{{ movie.overview }}</p>{% endif %}
+
+            <dl class="sd-facts mb-3">
+                {% if movie.tmdb_id %}<div><dt>TMDB</dt><dd><a class="text-decoration-none" target="_blank" rel="noopener noreferrer" href="https://www.themoviedb.org/movie/{{ movie.tmdb_id }}"><span class="badge bg-secondary">{{ movie.tmdb_id }}</span></a></dd></div>{% endif %}
+                {% if movie.imdb_id %}<div><dt>IMDb</dt><dd><span class="badge bg-secondary">{{ movie.imdb_id }}</span></dd></div>{% endif %}
+            </dl>
+
+            <p class="mb-1"><strong>Wanted by:</strong>
+                {% for u in movie.wanted_by %}<span class="badge bg-secondary">{{ u }}</span>{% else %}<span class="text-muted">nobody right now</span>{% endfor %}
+            </p>
+            {% if movie.watched_by %}
+            <p class="mb-1"><strong>Watched by:</strong>
+                {% for u in movie.watched_by %}<span class="badge bg-dark border">{{ u }}</span>{% endfor %}
+            </p>
+            {% endif %}
+
+            <div class="mt-4 d-flex flex-wrap gap-2">
+                {% if state.state == 'missing' and not movie.in_radarr and movie.tmdb_id %}
+                    <button type="button" class="btn btn-outline-info" id="requestMovieBtn"><i class="bi bi-cloud-download"></i> Request in Radarr</button>
+                {% endif %}
+                {% if movie.jellyfin_link and state.state == 'in_library' %}
+                    <a href="{{ movie.jellyfin_link }}" class="btn btn-success" data-jellyfin-item="{{ movie.jellyfin_item_id }}" target="_blank" rel="noopener noreferrer"><i class="bi bi-play-circle"></i> Watch on Jellyfin</a>
+                {% endif %}
+                <button type="button" class="btn btn-outline-secondary" id="refreshBtn"><i class="bi bi-arrow-repeat"></i> Refresh details</button>
+            </div>
+            <div id="actionResult" class="small mt-2" role="status"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const out = document.getElementById('actionResult');
+    async function post(url, button, reload) {
+        button.disabled = true;
+        out.className = 'small mt-2 text-body-secondary';
+        out.textContent = 'Working...';
+        try {
+            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: '{}' });
+            const data = await res.json().catch(() => ({}));
+            out.className = 'small mt-2 ' + (data.ok ? 'text-success' : 'text-danger');
+            out.textContent = data.message || (data.ok ? 'Done.' : 'Failed.');
+            if (data.ok && reload) setTimeout(() => location.reload(), 1200);
+            else button.disabled = false;
+        } catch (e) {
+            out.className = 'small mt-2 text-danger';
+            out.textContent = 'Could not reach the server.';
+            button.disabled = false;
+        }
+    }
+    const request = document.getElementById('requestMovieBtn');
+    if (request) request.addEventListener('click', () => post('/api/request/movie/{{ movie.id }}', request, true));
+    document.getElementById('refreshBtn').addEventListener('click', (e) => post('/api/movie/{{ movie.id }}/refresh', e.currentTarget, true));
+})();
+</script>
+{% endblock %}

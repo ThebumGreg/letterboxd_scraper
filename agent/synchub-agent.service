@@ -1,0 +1,29 @@
+# For a worker PC without Docker. Install:
+#   sudo mkdir -p /opt/synchub-agent /var/lib/synchub-agent
+#   sudo cp synchub_agent.py media_analysis.py /opt/synchub-agent/
+#   sudo cp synchub-agent.ini /etc/synchub-agent.ini && sudo chmod 600 /etc/synchub-agent.ini    (it holds the token)
+#   sudo cp synchub-agent.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#   sudo systemctl enable --now synchub-agent
+# Needs python3 (3.8 or newer) and ffmpeg (library scans and, later, encoding):  sudo apt install python3 ffmpeg
+[Unit]
+Description=SyncHub worker agent
+Wants=network-online.target
+After=network-online.target remote-fs.target
+# The agent refuses to use a share that is not mounted and marked, so waiting for the mounts is optional. To wait anyway:
+# RequiresMountsFor=/mnt/tower/Media /mnt/tower/TFiles
+
+[Service]
+Type=simple
+# A user that may read and write the shares and /var/lib/synchub-agent. Create one with:  sudo useradd --system --home /var/lib/synchub-agent synchub
+User=synchub
+ExecStart=/usr/bin/python3 /opt/synchub-agent/synchub_agent.py --config /etc/synchub-agent.ini
+Restart=always
+RestartSec=10
+# The agent finishes at the next safe point after SIGTERM; unfinished jobs resume on the next start.
+KillSignal=SIGTERM
+TimeoutStopSec=90
+# Encoding is long and heavy: let the PC's own use come first.
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

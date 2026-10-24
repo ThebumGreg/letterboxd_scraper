@@ -1,0 +1,50 @@
+<!-- synchub/web/templates/who.html -->
+{% extends "base.html" %}
+{% from "_macros.html" import csrf_field with context %}
+{% block title %}Who is watching?{% endblock %}
+
+{% block content %}
+<div class="text-center my-4 my-md-5">
+{% if ask_pin %}
+    <h2 class="mb-2">Enter the PIN for {{ ask_pin.name }}</h2>
+    <p class="text-body-secondary mb-4">It is remembered on this device, so you will not be asked every time.</p>
+    <div class="d-inline-flex flex-column align-items-center gap-2 who-card p-3 mb-3">
+        <span class="rounded-circle bg-success text-white d-inline-flex align-items-center justify-content-center fs-2 fw-bold" style="width: 72px; height: 72px;" aria-hidden="true">{{ ask_pin.name[:1]|upper }}</span>
+        <span class="fw-semibold">{{ ask_pin.name }}</span>
+    </div>
+    {% if error %}<div class="alert alert-danger mx-auto" style="max-width: 22rem;" role="alert" id="pinError">{{ error }}</div>{% endif %}
+    <form method="POST" action="{{ url_for('who') }}" class="mx-auto" style="max-width: 16rem;" autocomplete="off">
+        {{ csrf_field() }}
+        <input type="hidden" name="next" value="{{ destination }}">
+        <input type="hidden" name="profile_id" value="{{ ask_pin.id }}">
+        <label for="pinInput" class="visually-hidden">PIN</label>
+        <input type="password" class="form-control form-control-lg text-center mb-3" id="pinInput" name="pin" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8" autocomplete="off" autofocus required placeholder="PIN">
+        <div class="d-grid gap-2">
+            <button type="submit" class="btn btn-success btn-lg">Continue</button>
+            <a class="btn btn-link text-body-secondary" href="{{ url_for('who', next=destination) }}">Choose someone else</a>
+        </div>
+    </form>
+{% else %}
+    <h2 class="mb-2">Who is watching?</h2>
+    <p class="text-body-secondary mb-4">Pick your profile. A profile with a lock asks for its PIN; the choice is remembered on this device.</p>
+
+    <form method="POST" action="{{ url_for('who') }}" class="d-flex flex-wrap justify-content-center gap-3">
+        {{ csrf_field() }}
+        <input type="hidden" name="next" value="{{ destination }}">
+        {% for p in profiles %}
+        <button type="submit" name="profile_id" value="{{ p.id }}" class="btn btn-outline-success who-card d-flex flex-column align-items-center gap-2 p-3{% if not p.is_active %} opacity-75{% endif %}"
+                aria-label="Continue as {{ p.name }}{% if p.has_pin %} (asks for a PIN){% endif %}">
+            <span class="rounded-circle bg-success text-white d-inline-flex align-items-center justify-content-center fs-2 fw-bold" style="width: 72px; height: 72px;" aria-hidden="true">{{ p.name[:1]|upper }}</span>
+            <span class="fw-semibold">{{ p.name }}{% if p.has_pin %} <i class="bi bi-lock-fill small" aria-hidden="true"></i>{% endif %}</span>
+        </button>
+        {% endfor %}
+    </form>
+
+    <form method="POST" action="{{ url_for('who') }}" class="mt-4">
+        {{ csrf_field() }}
+        <input type="hidden" name="next" value="{{ destination }}">
+        <button type="submit" name="profile_id" value="0" class="btn btn-link text-body-secondary">Just looking (continue as a guest)</button>
+    </form>
+{% endif %}
+</div>
+{% endblock %}

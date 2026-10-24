@@ -1,0 +1,143 @@
+<!-- synchub/web/templates/resolution.html -->
+{% extends "base.html" %}
+{% block title %}Resolution Center{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+        <h2 class="mb-2">Resolution Center</h2>
+        <p class="text-body-secondary mb-0">Titles from Letterboxd and Serializd that could not be matched with certainty. Nothing here is linked until you decide.</p>
+    </div>
+    <button type="button" id="approve-all" class="btn btn-success {{ 'd-none' if not reviews }}">
+        <i class="bi bi-check2-all"></i> Approve all (<span data-review-count>{{ reviews|length }}</span>)
+    </button>
+</div>
+<div id="review-status" class="alert alert-info d-none" role="status"></div>
+
+<h4 class="mb-3">Suggested matches <small class="text-muted">(<span data-review-count>{{ reviews|length }}</span>)</small></h4>
+<div id="review-empty" class="alert alert-secondary shadow-sm mb-5 {{ 'd-none' if reviews }}"><i class="bi bi-info-circle"></i> No suggestions waiting.</div>
+{% if reviews %}
+<div class="row row-cols-1 row-cols-md-2 g-4 mb-5" id="review-grid">
+    {% for item in reviews %}
+    <div class="col" data-review-card>
+        <div class="panel h-100 border border-info d-flex flex-column p-3 p-md-4">
+            <div class="mb-3 pb-3 border-bottom border-info border-opacity-25">
+                <small class="text-body-secondary d-block mb-1">{{ item.source|capitalize }} {{ 'film' if item.kind == 'movie' else 'show' }}</small>
+                <h6 class="mb-0">{{ item.title or item.key }}</h6>
+                <small class="text-muted">{{ item.year or 'Unknown year' }}</small>
+            </div>
+            {% for c in item.candidates %}
+            <div class="d-flex justify-content-between align-items-center gap-2 py-2 {% if not loop.last %}border-bottom border-secondary border-opacity-25{% endif %}" data-candidate>
+                <div class="min-w-0">
+                    <div class="fw-semibold text-truncate">
+                        {{ c.candidate_title or ('TMDB ' ~ c.candidate_tmdb_id) }}{% if c.candidate_year %} <span class="text-muted fw-normal">({{ c.candidate_year }})</span>{% endif %}
+                    </div>
+                    <small class="text-body-secondary d-block">{{ c.reason }} ({{ (c.confidence * 100)|round|int }}% sure)</small>
+                    <a class="small text-decoration-none" target="_blank" rel="noopener noreferrer"
+                       href="https://www.themoviedb.org/{{ 'movie' if item.kind == 'movie' else 'tv' }}/{{ c.candidate_tmdb_id }}">Check on TMDB <i class="bi bi-box-arrow-up-right"></i></a>
+                </div>
+                <div class="d-flex gap-1 flex-shrink-0">
+                    <button class="btn btn-sm btn-outline-danger" data-review-action="dismiss" data-review-id="{{ c.id }}">Dismiss</button>
+                    <button class="btn btn-sm btn-success" data-review-action="approve" data-review-id="{{ c.id }}">Approve</button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<h4 class="mb-3">Unmatched items <small class="text-muted">(<span id="unmatched-count">{{ unmatched|length }}</span>)</small></h4>
+<div class="panel p-0 overflow-hidden mb-5">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr><th class="ps-4">Title</th><th>Year</th><th>Type</th><th>Listed by</th><th class="pe-4">Link by TMDB ID</th></tr>
+            </thead>
+            <tbody>
+                {% for u in unmatched %}
+                <tr>
+                    <td class="fw-bold ps-4">{{ u.title or u.key }}<div class="small text-body-secondary fw-normal">{{ u.source }}: {{ u.key }}</div></td>
+                    <td>{{ u.year or '-' }}</td>
+                    <td><span class="badge {{ 'badge-tv' if u.kind == 'show' else 'badge-movie' }}">{{ 'TV' if u.kind == 'show' else 'MOVIE' }}</span></td>
+                    <td class="small">{{ u.users }}</td>
+                    <td class="pe-4" style="max-width: 320px;">
+                        <form class="d-flex gap-2 link-form" data-source="{{ u.source }}" data-key="{{ u.key }}" data-kind="{{ u.kind }}">
+                            <input type="number" min="1" class="form-control form-control-sm" placeholder="TMDB ID" required aria-label="TMDB ID for {{ u.title or u.key }}">
+                            <button type="submit" class="btn btn-sm btn-outline-info">Link</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                {% endfor %}
+                <tr id="unmatched-empty" class="{{ 'd-none' if unmatched }}"><td colspan="5" class="text-center text-muted py-4">Everything is matched.</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    async function send(url, body) {
+        try {
+            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(body) });
+            return await res.json();
+        } catch (e) { return { ok: false, message: 'Could not reach the server.' }; }
+    }
+    const approveAll = document.getElementById('approve-all');
+    const status = document.getElementById('review-status');
+
+    function say(message) { status.textContent = message; status.classList.toggle('d-none', !message); }
+
+    function updateCounts() {
+        const cards = document.querySelectorAll('[data-review-card]').length;
+        document.querySelectorAll('[data-review-count]').forEach((el) => { el.textContent = cards; });
+        document.getElementById('review-empty').classList.toggle('d-none', cards > 0);
+        approveAll.classList.toggle('d-none', cards === 0);
+        const rows = document.querySelectorAll('.link-form').length;
+        document.getElementById('unmatched-count').textContent = rows;
+        document.getElementById('unmatched-empty').classList.toggle('d-none', rows > 0);
+    }
+
+    // Once one suggestion for a title is approved the server settles all of that title's suggestions,
+    // so the whole card goes. A dismissed suggestion only removes its own line, and the card when it was the last.
+    function removeCard(card) { card?.remove(); updateCounts(); }
+
+    document.querySelectorAll('[data-review-action]').forEach((btn) => btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        const card = btn.closest('[data-review-card]');
+        const data = await send(`/api/resolution/${btn.dataset.reviewAction}`, { review_id: parseInt(btn.dataset.reviewId, 10) });
+        if (!data.ok) { alert(data.message || 'Failed.'); btn.disabled = false; return; }
+        say('');
+        if (btn.dataset.reviewAction === 'approve') { removeCard(card); return; }
+        btn.closest('[data-candidate]').remove();
+        if (!card.querySelector('[data-candidate]')) removeCard(card); else updateCounts();
+    }));
+
+    approveAll?.addEventListener('click', async () => {
+        const best = [...document.querySelectorAll('[data-review-card]')].map((card) => card.querySelector('[data-review-action="approve"]'));
+        if (!best.length) return;
+        if (!confirm(`Approve the best suggestion for ${best.length} title${best.length === 1 ? '' : 's'}? Titles whose suggestions are equally likely are left for you to decide.`)) return;
+        approveAll.disabled = true;
+        const data = await send('/api/resolution/approve-all', { review_ids: best.map((btn) => parseInt(btn.dataset.reviewId, 10)) });
+        approveAll.disabled = false;
+        if (!data.ok) { alert(data.message || 'Failed.'); return; }
+        const done = new Set(data.approved.concat(data.stale));
+        best.filter((btn) => done.has(parseInt(btn.dataset.reviewId, 10))).forEach((btn) => btn.closest('[data-review-card]').remove());
+        updateCounts();
+        say(data.message);
+    });
+
+    document.querySelectorAll('.link-form').forEach((form) => form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const input = form.querySelector('input');
+        const data = await send('/api/resolution/link', { source: form.dataset.source, key: form.dataset.key, kind: form.dataset.kind, tmdb_id: input.value.trim() });
+        if (data.ok) { form.closest('tr').remove(); updateCounts(); } else alert(data.message || 'Failed.');
+    }));
+})();
+</script>
+{% endblock %}

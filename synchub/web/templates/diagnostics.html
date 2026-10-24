@@ -1,0 +1,78 @@
+<!-- synchub/web/templates/diagnostics.html -->
+{% extends "base.html" %}
+{% block title %}Diagnostics{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <h2 class="mb-0"><i class="bi bi-activity" aria-hidden="true"></i> What is the app doing?</h2>
+    <div class="form-check form-switch mb-0">
+        <input class="form-check-input" type="checkbox" role="switch" id="autoRefresh" checked>
+        <label class="form-check-label" for="autoRefresh">Refresh every 3 s</label>
+    </div>
+</div>
+<p class="text-body-secondary">Use this when a task looks stuck or reports "database is locked". Copy the text at the bottom into a bug report if you need help.</p>
+
+<div class="row g-4 mb-4">
+    <div class="col-lg-6"><div class="panel p-3 h-100"><h5 class="text-success">Running tasks</h5><div id="tasks" class="small">Loading...</div></div></div>
+    <div class="col-lg-6"><div class="panel p-3 h-100"><h5 class="text-success">Database</h5><div id="database" class="small">Loading...</div></div></div>
+</div>
+<div class="panel p-3 mb-4">
+    <h5 class="text-success">Open database connections</h5>
+    <p class="small text-body-secondary mb-2">A connection marked <span class="badge bg-warning text-dark">writing</span> has unsaved changes and blocks other writers until it finishes. Anything writing for more than a few seconds is suspicious.</p>
+    <div id="connections" class="small">Loading...</div>
+</div>
+<div class="panel p-3 mb-4">
+    <h5 class="text-success">Threads doing work</h5>
+    <p class="small text-body-secondary mb-2">Where each background thread is right now. The last line shows what it is waiting on (for example a network call or a lock).</p>
+    <div id="threads" class="small">Loading...</div>
+</div>
+<div class="panel p-3 mb-5">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <h5 class="text-success mb-0">Raw snapshot</h5>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="copyBtn">Copy</button>
+    </div>
+    <pre class="small mb-0" id="raw" style="max-height: 24rem; overflow: auto;"></pre>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const $ = (id) => document.getElementById(id);
+    const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
+    const table = (headers, rows) => {
+        if (!rows.length) return el('div', 'text-body-secondary', 'None.');
+        const t = el('table', 'table table-sm align-middle mb-0'); const head = el('tr');
+        headers.forEach((h) => head.append(el('th', '', h))); t.append(el('thead')); t.firstChild.append(head);
+        const body = el('tbody'); rows.forEach((r) => { const tr = el('tr'); r.forEach((c) => { const td = el('td'); c instanceof Node ? td.append(c) : (td.textContent = c); tr.append(td); }); body.append(tr); });
+        t.append(body); return t;
+    };
+    const secs = (s) => s === null || s === undefined ? '?' : (s >= 120 ? Math.round(s / 60) + ' min' : s + ' s');
+
+    function render(d) {
+        $('tasks').replaceChildren(table(['Task', 'Running for', 'Doing'], d.running_tasks.map((t) => [t.task, secs(t.running_for_seconds), t.message || ''])));
+        const db = d.database;
+        $('database').replaceChildren(table(['', ''], [['File', db.path], ['Journal mode', db.journal_mode + (db.journal_mode.toLowerCase() === 'wal' ? '' : '  (not WAL: expect lock problems; keep the project on the Linux filesystem)')],
+            ['Schema version', db.schema_version], ['Size', db.size_mb + ' MB'], ['WAL file', db.wal_mb === null ? 'none' : db.wal_mb + ' MB'], ['Process ID', d.pid], ['Time (UTC)', d.time]]));
+        $('connections').replaceChildren(table(['Opened at', 'Thread', 'Open for', 'State'], d.database_connections.map((c) => {
+            const badge = el('span', 'badge ' + (c.writing ? 'bg-warning text-dark' : 'bg-secondary'), c.writing ? 'writing' : 'idle'); return [c.caller, c.thread, secs(c.age_seconds), badge]; })));
+        const box = el('div');
+        d.threads.forEach((t) => {
+            const block = el('div', 'mb-3'); block.append(el('div', 'fw-bold', t.thread));
+            const pre = el('pre', 'mb-0 text-body-secondary', t.stack.join('\n') + '\n  >> waiting in: ' + t.waiting_in); block.append(pre); box.append(block);
+        });
+        if (!d.threads.length) box.append(el('div', 'text-body-secondary', 'No background work is running.'));
+        $('threads').replaceChildren(box);
+        $('raw').textContent = JSON.stringify(d, null, 2);
+    }
+
+    async function load() {
+        try { render(await (await fetch('/api/diagnostics')).json()); }
+        catch (e) { $('raw').textContent = 'Could not load diagnostics: ' + e; }
+    }
+    load();
+    setInterval(() => { if ($('autoRefresh').checked && !document.hidden) load(); }, 3000);
+    $('copyBtn').addEventListener('click', () => navigator.clipboard.writeText($('raw').textContent));
+})();
+</script>
+{% endblock %}
