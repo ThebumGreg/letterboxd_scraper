@@ -92,29 +92,33 @@ over ADB first, which worked on that TV. Without ADB the app tries an Intent lin
 checks that the app really came to the front; a TV-side rejection is logged and reported instead of being
 treated as success. Set `"adb": true` if app launching fails.
 
-### Roku: playing without the Jellyfin app's remote control
+### Roku: how a movie gets started
 
-The Jellyfin Roku app may not accept play commands (Settings ▸ Sessions shows `remote control: no`). You do not have to
-configure anything: a Roku is in **auto** mode by default. The first play tries the Jellyfin app, and if its session reports it
-cannot be remote controlled the movie is streamed instead and that is remembered (in `prefs.json`), so later plays stream
-immediately. Settings ▸ Jellyfin says which way a device plays and has a button to try the Jellyfin app again. To skip the
-trial, set `"play": "url"` on the Roku (or `"play": "session"` to never stream). In stream mode the app skips the Jellyfin app and its session entirely: it wakes the Roku, then hands it
-a stream URL through **Play on Roku**, the same ECP call the Roku phone app casts through. Jellyfin direct-plays
-files the Roku understands (MP4/MKV with H.264 or HEVC video and AAC, AC3, E-AC3 or MP3 audio) and otherwise sends an
-HLS transcode (H.264 + AAC). The log shows which and why. Roku's own media-player status then drives Now playing, and
-the remote's ⏯ ⏪ ⏩ keys control it.
+**The official Jellyfin Roku app cannot be controlled through Jellyfin sessions, by design.** Its source registers
+`SupportedCommands: []` and `SupportsMediaControl: false` and has no handler for server commands, so Settings shows its
+session as `remote control: no` and play commands never reach it. What it does support is a **deep link**, which it acts on
+at once. So a Roku plays like this (`"play": "auto"`, the default):
 
-What you give up: Jellyfin is not told about the playback (no resume point or watched mark), there is no queue (Play now
-only), and the TV fetches the stream itself, so the URL contains your API key. It is masked in every log but visible to
-anything on your network that can see the Roku's traffic. `stream_base` (optional) is the address the *Roku* should use to
-reach Jellyfin, if that differs from `JELLYFIN_URL`; `stream_mode` is `auto` (default), `direct` or `hls`.
-Settings ▸ Jellyfin has a **Play via** menu to try either path without editing the config.
+1. **Deep link.** The app is launched with `contentId` and `mediaType` (or, if it is already on screen, sent them as an input
+   event). It starts playing inside the real Jellyfin app, so Jellyfin sees the session and records progress and watched
+   state. Works for movies, episodes, series, seasons, collections and music; a series link starts the series. The app
+   always starts from the beginning (it ignores a resume point), and there is no queue (Play now only). Success is confirmed
+   from Jellyfin's session list.
+2. **Stream URL**, only if the deep link *request* fails (for example the Roku answers with an error). The Roku streams
+   from Jellyfin through the "Play on Roku" system channel, the ECP call the Roku phone app casts through. Direct play for
+   files the Roku understands (MP4/MKV with H.264 or HEVC video and AAC, AC3, E-AC3 or MP3 audio), otherwise an HLS
+   transcode. Jellyfin is not told about this playback (no resume or watched mark), and the URL contains your API key (masked
+   in every log, but visible to the Roku). `stream_base` is the address the *Roku* should use to reach Jellyfin if it differs
+   from `JELLYFIN_URL`; `stream_mode` is `auto`, `direct` or `hls`.
+
+A link that was sent but not confirmed (app still loading, or not signed in) is reported as such and is **not** followed by
+a stream, so two playbacks never compete. Settings ▸ Jellyfin has a **Play via** menu (device setting, Jellyfin session,
+deep link, stream URL) to try each route, and `"play": "deeplink"`, `"url"` or `"session"` in `devices.json` pins one.
 
 **About DLNA.** The "Roku Media Player" channel is a DLNA *client*: it browses a DLNA server (Jellyfin's DLNA plugin can be
 one) and you pick titles with the Roku remote, so nothing can tell it what to play. Pushing to a Roku as a DLNA renderer
-depends on the model and firmware, and finding renderers uses multicast, which does not cross WSL2's NAT. Jellyfin's own
-"Play To" does list DLNA renderers it finds as sessions; if your Roku shows up that way it appears under Settings ▸
-Sessions and the normal session route controls it.
+depends on the model and firmware, and finding renderers uses multicast, which does not cross WSL2's NAT. The deep link is
+more direct and reports to Jellyfin.
 
 ### Waking and sleeping a TV
 

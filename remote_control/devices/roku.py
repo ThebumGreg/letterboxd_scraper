@@ -12,6 +12,8 @@ import requests
 
 from . import Driver, DeviceError, register
 
+# What the official Jellyfin Roku app accepts as a deep link (read from its source: source/MainEventHandlers.bs)
+DEEPLINK_TYPES = {"movie", "episode", "recording", "video", "audio", "audiobook", "musicalbum", "musicartist", "series", "season", "boxset"}
 PLAY_ON_ROKU = "15985"   # the Roku system channel that plays a video from a URL (what the Roku phone app casts through)
 SECRET = re.compile(r"(api_key(?:=|%3D))[^&%]+", re.I)
 KEY_RE = re.compile(r"^[A-Za-z0-9_%]{1,40}$")
@@ -24,7 +26,7 @@ class RokuDriver(Driver):
     type = "roku"
     log_kind = "roku"
     label = "Roku / Roku TV (ECP)"
-    capabilities = frozenset({"keys", "apps", "text", "power_on", "power_off", "launch", "icons", "url_play"})
+    capabilities = frozenset({"keys", "apps", "text", "power_on", "power_off", "launch", "icons", "url_play", "deeplink"})
     keymap = {
         "home": "Home", "back": "Back",
         "up": "Up", "down": "Down", "left": "Left", "right": "Right", "ok": "Select",
@@ -41,6 +43,7 @@ class RokuDriver(Driver):
         ("Power toggle", "Power"), ("Find remote", "FindRemote"),
     )
     default_session_rule = {"client": "Roku"}
+    deeplink_types = frozenset(DEEPLINK_TYPES)
     default_wake = ("key", "wol")
     probe_ports = {8060: "ECP"}
 
@@ -122,6 +125,18 @@ class RokuDriver(Driver):
         return {"state": {"play": "playing", "pause": "paused", "buffer": "buffering", "startup": "starting"}.get(state, state),
                 "title": ours, "positionMs": ms("position"), "durationMs": ms("duration"), "source": "Roku media player"}
 
+    def deeplink(self, app_id, media_type, content_id, series_id=None, running=False):
+        """Ask the Jellyfin app to play an item. The app acts on it at once, from the start (no resume point).
+
+        A running app receives it as an input event (ECP /input); otherwise it is launched with the link."""
+        params = {"contentId": content_id, "mediaType": media_type}
+        if series_id:
+            params["seriesID"] = series_id
+        if running:
+            self._ecp("POST", "/input", action=f"deep link {media_type}", params=params)
+            return "sent to the running Jellyfin app"
+        return self.launch(app_id, params)
+
     def play_url(self, url, title, fmt="mp4"):
         """Start a video from a URL with the "Play on Roku" channel (no Jellyfin app or session needed)."""
         query = f"t=v&u={quote(url, safe='')}&k=(null)&videoName={quote(title or 'Video', safe='')}&videoFormat={fmt}"
@@ -172,7 +187,7 @@ class RokuDriver(Driver):
     def launch(self, app_id, params=None):
         if not APP_RE.match(app_id):
             raise DeviceError("bad app id")
-        clean = {k: v for k, v in (params or {}).items() if k in ("contentId", "mediaType") and v}
+        clean = {k: v for k, v in (params or {}).items() if k in ("contentId", "mediaType", "seriesID", "collectionType") and v}
         shown = f"POST /launch/{app_id}" + (f" params={clean}" if clean else "")
         t0 = time.perf_counter()
         ms = lambda: (time.perf_counter() - t0) * 1000

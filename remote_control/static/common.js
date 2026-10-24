@@ -243,6 +243,9 @@ async function watchSearch() {
 function stateHint(d) {
   const st = S.status[d.id];
   if (!st) return 'checking…';
+  if (d.capabilities.includes('deeplink') && ['auto', 'deeplink'].includes(d.playVia))   // opens the Jellyfin app straight onto the movie
+    return !st.online ? `${st.unresponsive ? 'asleep' : 'unreachable'} — will try ${d.wakeMethods.join(', ')}, then open Jellyfin and play`
+      : st.power !== 'on' ? 'standby — will wake it, open Jellyfin and play (starts from the beginning)' : 'will open the Jellyfin app on the movie (starts from the beginning)';
   if (d.playVia === 'auto' && st.online && st.power === 'on')
     return 'will use the Jellyfin app if it accepts remote control, otherwise stream the movie directly';
   if (d.playVia === 'url')   // streams straight from Jellyfin: no Jellyfin app or session involved

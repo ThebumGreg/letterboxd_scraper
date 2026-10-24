@@ -70,6 +70,7 @@ class Driver:
     extra_keys = ()                 # ((label, native key), ...) shown under "More keys"
     default_session_rule = {}       # how this kind of device's Jellyfin client appears in /Sessions
     default_wake = ("key", "wol")   # wake methods fired together when the device is not on
+    deeplink_types = frozenset()    # Jellyfin item types the device's Jellyfin app accepts as a deep link
     probe_ports = {}                # port -> name, for the network probe
 
     def __init__(self, cfg, logbook, options=None):
@@ -91,8 +92,10 @@ class Driver:
     def play_mode(self):
         """session | url | auto. Devices that can stream a URL default to auto: try the Jellyfin app, else stream."""
         configured = self.cfg.get("play")
-        if configured in ("session", "url", "auto"):
+        if configured in ("session", "url", "deeplink", "auto"):
             return configured
+        if "deeplink" in self.capabilities:
+            return "auto"
         if "url_play" in self.capabilities:
             return "url" if self.play_learned == "url" else "auto"
         return "session"
@@ -236,7 +239,7 @@ class Driver:
             "sessionRule": self.session_rule(),
             "sessionOverride": bool(self.session_override),
             "playVia": self.play_mode(),
-            "playLearned": self.play_learned == "url" and not self.cfg.get("play"),
+            "playLearned": self.play_learned == "url" and not self.cfg.get("play") and "deeplink" not in self.capabilities,
             "hasMac": bool(self.mac),
             "sleepMode": self.cfg.get("sleep") or "standby",
             "wakeMethods": self.wake_methods(),

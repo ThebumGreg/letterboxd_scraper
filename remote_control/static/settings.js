@@ -10,7 +10,7 @@ const ALL_KEYS = [['up','▲'],['down','▼'],['left','◀'],['right','▶'],['o
 /* ------------------------------------------------------------------ device tools */
 function renderTools() {
   const d = dev(), el = $('#tools');
-  $('#viaLabel').hidden = !has('url_play');   // only devices that can take a stream URL offer the choice
+  $('#viaLabel').hidden = !(has('url_play') || has('deeplink'));   // only devices with another route offer the choice
   if (!d) { el.innerHTML = '<div class="dim">No device selected</div>'; return; }
   const pairing = has('pairing') ? `<div class="pair" id="pairBox" hidden><b>Pairing required</b>
       <div class="small dim">Press Start, then type the code that appears on the TV.</div>
@@ -93,13 +93,15 @@ function renderSessionTable() {
   const d = dev(), el = $('#sessTable'), line = $('#ruleLine'); if (!el || !d) return;
   line.innerHTML = `<b>${esc(d.name)}</b> looks for a session with ${esc(ruleText(d.sessionRule))} ` +
     (d.sessionOverride ? '(your choice) <button class="small" data-act="sessReset">reset to devices.json</button>' : '(from devices.json, or the default for this kind of device)');
-  const how = {
+  const how = d.playVia === 'auto' && has('deeplink')
+    ? 'a deep link into the Jellyfin app (the official Roku app cannot take session commands), streaming a URL only if the link request fails'
+    : d.playVia === 'deeplink' ? 'a deep link into the Jellyfin app' : {
     url: d.playLearned ? 'streaming a URL <span class="dim">(learned: this device\'s Jellyfin app cannot be remote controlled)</span> <button class="small" data-act="playReset">try the Jellyfin app again</button>'
       : 'streaming a URL <span class="dim">(devices.json)</span>',
     auto: 'the Jellyfin app first, streaming a URL if that app cannot be remote controlled',
     session: 'the Jellyfin app\'s session',
   }[d.playVia];
-  $('#playLine').innerHTML = has('url_play') ? `<b>${esc(d.name)}</b> plays through ${how}.` : '';
+  $('#playLine').innerHTML = (has('url_play') || has('deeplink')) ? `<b>${esc(d.name)}</b> plays through ${how}.` : '';
   el.innerHTML = S.sessions.length ? S.sessions.map(s => `<div class="item"><span class="name"><b>${esc(s.Client)}</b>${s.Version ? ' ' + esc(s.Version) : ''} · ${esc(s.DeviceName)}
       <span class="dim small">· id ${esc(String(s.DeviceId).slice(0, 8))}… · ${esc(s.UserName)} · remote control: ${s.SupportsRemoteControl ? 'yes' : '<span style="color:var(--bad)">no</span>'}</span>
       ${s.deviceId ? `<span class="chip">→ ${esc(devName(s.deviceId))}</span>` : ''}</span>

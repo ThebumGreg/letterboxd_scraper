@@ -57,10 +57,10 @@ function renderNow() {
     body = `<div class="np-title">${esc(itemLabel(n))}</div>
       <div class="np-sub">${p.IsPaused ? '⏸ paused' : '▶ playing'} · ${fmt(pos)} / ${fmt(len)}</div>
       <div class="bar"><div style="width:${len ? Math.min(100, pos / len * 100) : 0}%"></div></div>
-      <div class="np-ctl"><button data-act="relseek" data-d="-30" title="Back 30 seconds">−30s</button>
+      ${s.SupportsRemoteControl ? `<div class="np-ctl"><button data-act="relseek" data-d="-30" title="Back 30 seconds">−30s</button>
         <button data-act="playstate" data-cmd="PlayPause">${p.IsPaused ? '▶ Resume' : '⏸ Pause'}</button>
         <button data-act="relseek" data-d="30" title="Forward 30 seconds">+30s</button>
-        <button data-act="playstate" data-cmd="Stop" title="Stop">⏹</button></div>`;
+        <button data-act="playstate" data-cmd="Stop" title="Stop">⏹</button></div>` : ''}`;
   } else if (m) {
     const pos = (m.positionMs || 0) / 1000, len = (m.durationMs || 0) / 1000;
     body = `<div class="np-title">${esc(m.title || (app ? app.name : 'Playing'))}</div>

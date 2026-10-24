@@ -434,6 +434,20 @@ def play_by_url(d, body, prior_steps=()):
     return reply(result["ok"], "\n".join(steps), steps=steps, confirmed=result["confirmed"], via="url")
 
 
+def play_by_deeplink(d, body, fallback):
+    """Send the device's Jellyfin app a deep link. If the request itself fails, optionally stream instead."""
+    if body["playCommand"] != "PlayNow":
+        raise DeviceError("A deep link starts playback straight away; there is no queue")
+    ids, index = body["itemIds"], int(body.get("startIndex") or 0)
+    item_id = ids[index] if index < len(ids) else ids[0]
+    result = orchestrator.play_deeplink(d, jf(), state.logbook, item_id, body.get("startPositionTicks"))
+    if not result["ok"] and result.get("retryable") and fallback:
+        note = "The deep link request failed, so the movie is streamed directly instead"
+        state.logbook.add("system", d.id, "play", response=note, ok=True)
+        return play_by_url(d, body, result["steps"] + [note])
+    return reply(result["ok"], "\n".join(result["steps"]), steps=result["steps"], confirmed=result["confirmed"], via="deeplink")
+
+
 def learn_url_play(d):
     with state.prefs_lock:
         state.prefs["play"][d.id] = "url"
@@ -452,7 +466,13 @@ def api_device_play(dev_id):
     if body.get("playCommand") not in PLAY_COMMANDS or not body.get("itemIds"):
         raise DeviceError("bad playCommand or itemIds")
     mode = body.get("via") or d.play_mode()
-    can_stream = "url_play" in d.capabilities
+    can_stream, can_link = "url_play" in d.capabilities, "deeplink" in d.capabilities
+    if mode == "deeplink" and not can_link:
+        raise DeviceError(f"{d.name} cannot be sent a deep link")
+    if mode == "auto" and can_link:
+        mode = "deeplink+"   # deep link first; stream only if the request itself fails
+    if mode in ("deeplink", "deeplink+"):
+        return play_by_deeplink(d, body, fallback=(mode == "deeplink+" and can_stream))
     if mode == "url" and not can_stream:
         raise DeviceError(f"{d.name} cannot play from a stream URL")
     if mode == "auto" and not can_stream:

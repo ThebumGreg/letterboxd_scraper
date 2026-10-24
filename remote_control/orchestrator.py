@@ -184,6 +184,63 @@ def prepare(driver, jf, logbook, session_timeout=40):
     return {"ok": True, "steps": steps, "session": summarize_session(session)}
 
 
+def _playing_item(jf, driver, item_id):
+    """The device's Jellyfin session is playing this item (or something from this series/season)."""
+    rules = rule_ladder(driver)
+    wanted = _norm(item_id)
+    for s in jf.sessions():   # not filtered by SupportsRemoteControl: a session that ignores commands still reports playback
+        if not any(match_session(r, s) for r in rules):
+            continue
+        n = s.get("NowPlayingItem") or {}
+        if wanted in {_norm(n.get(k)) for k in ("Id", "SeriesId", "SeasonId", "ParentId")}:
+            return n
+    return None
+
+
+def play_deeplink(driver, jf, logbook, item_id, start_ticks=None, timeout=45):
+    """Power the device on and send the Jellyfin app a deep link. -> {"ok", "steps", "confirmed", "retryable"}.
+
+    The app plays inside itself, so Jellyfin sees the session and records progress and watched state.
+    Deep links always start from the beginning. `retryable` means the request itself failed (so a
+    different route may be tried), as opposed to it being sent but not confirmed."""
+    steps = []
+
+    def step(msg, ok=True):
+        steps.append(msg)
+        logbook.add("system", driver.id, "play (deep link)", response=msg, ok=ok)
+
+    def fail(msg, retryable=False):
+        step(msg, False)
+        return {"ok": False, "steps": steps, "confirmed": None, "retryable": retryable}
+
+    st = ensure_on(driver, step)
+    if not st:
+        return {"ok": False, "steps": steps, "confirmed": None, "retryable": False}
+    item = jf.item(item_id)
+    if not item.get("Id"):
+        return fail(f"Jellyfin has no item {item_id}")
+    media_type = str(item.get("Type") or "").lower()
+    if media_type not in driver.deeplink_types:
+        return fail(f'The Jellyfin app cannot be sent a "{item.get("Type")}" by deep link')
+    series_id = item.get("SeriesId") if media_type == "season" else None
+    if media_type == "season" and not series_id:
+        return fail("A season deep link needs its series id, which Jellyfin did not give")
+    try:
+        app = driver.jellyfin_app()
+        how = driver.deeplink(app, media_type, item_id, series_id, running=st.get("app") == app)
+    except DeviceError as e:
+        return fail(str(e), retryable=True)
+    step(f'Asked the Jellyfin app to play "{item.get("Name")}" ({media_type}): {how}')
+    if start_ticks:
+        step("Deep links always start from the beginning; the saved resume point is not used", True)
+    playing = _wait_for(lambda: _playing_item(jf, driver, item_id), timeout, 2)
+    if playing:
+        step(f'Jellyfin reports it playing: {playing.get("Name")}')
+    else:
+        step("The link was sent, but Jellyfin never reported it playing. The app may still be loading, or not be signed in.", False)
+    return {"ok": True, "steps": steps, "confirmed": bool(playing), "retryable": False}
+
+
 def play_url(driver, jf, logbook, item_id, start_ticks=None):
     """Power the device on, then hand it a stream URL. -> {"ok", "steps", "confirmed"}.
 
