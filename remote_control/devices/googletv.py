@@ -175,14 +175,15 @@ class GoogleTVDriver(Driver):
             except DeviceError:
                 pass
 
-    def _call(self, method, arg, action, retry=True, record=True):
+    def _call(self, method, arg, action, retry=True, record=True, count=1):
         """Run one non-blocking remote call on the loop thread (the library is not thread-safe)."""
         self._ensure()
-        request = f"{method}({arg!r})"
+        request = f"{method}({arg!r})" + (f" x{count}" if count > 1 else "")
         t0 = time.perf_counter()
 
         async def go():
-            return getattr(self._remote, method)(arg)
+            for _ in range(count):
+                getattr(self._remote, method)(arg)
         try:
             _Loop.run(go(), 8)
         except DeviceError:
@@ -191,7 +192,7 @@ class GoogleTVDriver(Driver):
             from androidtvremote2 import ConnectionClosed
             if isinstance(e, ConnectionClosed) and retry:
                 self._reset()
-                return self._call(method, arg, action, retry=False, record=record)
+                return self._call(method, arg, action, retry=False, record=record, count=count)
             self.log(action, request, None, False, (time.perf_counter() - t0) * 1000, f"{type(e).__name__}: {e}")
             raise DeviceError(f"{type(e).__name__}: {e}")
         # The protocol gives no acknowledgement, only that the message was queued.
@@ -222,8 +223,8 @@ class GoogleTVDriver(Driver):
     def valid_native_key(self, key):
         return bool(KEY_RE.match(key))
 
-    def send_key(self, native):
-        self._call("send_key_command", native, f"key {native}")
+    def send_key(self, native, count=1):
+        self._call("send_key_command", native, f"key {native}" + (f" x{count}" if count > 1 else ""), count=count)
 
     def power(self, on):
         self._ensure()

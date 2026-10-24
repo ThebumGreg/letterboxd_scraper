@@ -240,8 +240,9 @@ class AndroidTVDriver(Driver):
     def valid_native_key(self, key):
         return bool(KEY_RE.match(key))
 
-    def send_key(self, native):
-        self._adb("shell", "input", "keyevent", native, action=f"key {native}")
+    def send_key(self, native, count=1):
+        # `input keyevent` takes several keycodes, so a burst costs one slow adb call instead of many
+        self._adb("shell", "input", "keyevent", *([native] * count), action=f"key {native}" + (f" x{count}" if count > 1 else ""))
 
     def power(self, on):
         """Wake, or put to standby. (Standby makes ADB unreachable on many TVs; see screensaver().)"""

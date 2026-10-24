@@ -182,7 +182,8 @@ class Driver:
     def valid_native_key(self, key):
         return False
 
-    def send_key(self, native):
+    def send_key(self, native, count=1):
+        """Press a key `count` times (volume hold sends several presses as one command)."""
         raise NotImplementedError
 
     def power(self, on):

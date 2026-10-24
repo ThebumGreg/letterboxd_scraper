@@ -124,6 +124,11 @@ def settings_page():
     return send_from_directory(STATIC, "settings.html")
 
 
+@app.get("/manifest.webmanifest")
+def web_manifest():
+    return send_from_directory(os.path.join(STATIC, "pwa"), "manifest.webmanifest", mimetype="application/manifest+json")
+
+
 def load_prefs():
     try:
         data = json.loads(Path(state.prefs_path).read_text(encoding="utf-8"))
@@ -243,8 +248,9 @@ def api_device_key(dev_id):
         native = d.keymap.get(body.get("key"))
         if not native:
             raise DeviceError(f'{d.name} has no "{body.get("key")}" key')
-    d.send_key(native)
-    return reply(True, native)
+    count = max(1, min(int(body.get("count") or 1), 30))
+    d.send_key(native, count)
+    return reply(True, native if count == 1 else f"{native} x{count}")
 
 
 @app.post("/api/devices/<dev_id>/power")

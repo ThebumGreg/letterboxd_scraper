@@ -29,6 +29,17 @@ remove). Each TV has its own list, shared by every browser that opens the app, a
 `.remote_control/prefs.json` (`--prefs` changes the location). Until you choose, the first four of Jellyfin,
 Netflix, YouTube, Disney+, Prime Video, Hulu, Plex and Max that the TV has are used.
 
+**Volume:** tap Vol +/− for one step, tap repeatedly for one step per tap, or hold for a steady repeat that speeds up
+after about 1.5 s and 3 s (the `+`/`-` keys do the same on a computer). Requests never overlap: steps that pile up
+while one is in flight are sent as a single "×N" press, so a slow device (ADB takes about 1.5 s a call) still lands
+on the right volume. The Log shows these as `key KEYCODE_VOLUME_UP x12`.
+
+**iPhone and iPad:** the layout adapts to the screen. On a phone it is one column with the quick-launch row up top; on
+an iPad (portrait or landscape) the now-playing block, power, quick launch and Watch button sit on the left and the
+full pad on the right, with larger buttons. Controls are at least 44 pt, inputs are 16 px so iOS does not zoom when
+you tap a field, double-tap zoom is off on buttons, and the notch / home-indicator areas are respected. In Safari use
+Share ▸ **Add to Home Screen** to get a full-screen app with its own icon and no browser bar.
+
 ## Using it from a phone
 
 The "Watch a movie…" button asks where to watch: this phone, or any configured TV. To open the page on a phone

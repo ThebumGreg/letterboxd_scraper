@@ -133,8 +133,11 @@ class RokuDriver(Driver):
     def valid_native_key(self, key):
         return bool(KEY_RE.match(key))
 
-    def send_key(self, native):
-        self._ecp("POST", f"/keypress/{native}", action=f"key {native}")
+    def send_key(self, native, count=1):
+        for _ in range(count - 1):
+            self._ecp("POST", f"/keypress/{native}", quiet=True)
+            time.sleep(0.04)
+        self._ecp("POST", f"/keypress/{native}", action=f"key {native}" + (f" x{count}" if count > 1 else ""))
 
     def power(self, on):
         self.send_key("PowerOn" if on else "PowerOff")
