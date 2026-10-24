@@ -10,7 +10,7 @@ pip install -r remote_control/requirements.txt
 export JELLYFIN_URL=http://192.168.128.55:5000
 export JELLYFIN_API_KEY=...
 cp devices.example.json devices.json     # edit hosts / names
-python remote_control_app.py             # http://127.0.0.1:5055
+python remote_control_app.py             # listens on 0.0.0.0:5000 (--host / --port, or REMOTE_HOST / REMOTE_PORT)
 ```
 
 ## The two pages
@@ -46,10 +46,10 @@ The "Watch a movie…" button asks where to watch: this phone, or any configured
 run it where the phone can reach it and set a token, because the page can power devices on and launch apps:
 
 ```bash
-python remote_control_app.py --host 0.0.0.0 --token SOMETHING-LONG --public-url http://192.168.128.55:5000
+python remote_control_app.py --token SOMETHING-LONG --public-url http://192.168.128.55:5000
 ```
 
-then open `http://<this-computer>:5055/?token=SOMETHING-LONG` once on the phone (it remembers the token).
+then open `http://<this-computer>:5000/?token=SOMETHING-LONG` once on the phone (it remembers the token).
 "This phone" opens the movie's page in Jellyfin web (`--public-url`, or `--url` if omitted); tap play there.
 
 ## Starting a movie from any state

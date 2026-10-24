@@ -566,8 +566,9 @@ def main():
                    help="Jellyfin address a phone should open (defaults to --url)")
     p.add_argument("--token", default=os.environ.get("REMOTE_TOKEN", ""),
                    help="require this secret (open /?token=... once per device); use it with --host 0.0.0.0")
-    p.add_argument("--host", default="127.0.0.1")
-    p.add_argument("--port", type=int, default=5055)
+    p.add_argument("--host", default=os.environ.get("REMOTE_HOST", "0.0.0.0"),
+                   help="address to listen on (default 0.0.0.0: reachable from other devices; use 127.0.0.1 for this computer only)")
+    p.add_argument("--port", type=int, default=int(os.environ.get("REMOTE_PORT", 5000)))
     a = p.parse_args()
 
     state.logbook = LogBook(path=a.log_file or None)
