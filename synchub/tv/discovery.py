@@ -206,7 +206,7 @@ def android_identity(host, cert_dir, timeout=4):
 
 
 # ------------------------------------------------------------------ everything together
-def discover(ranges=(), known=None, cert_dir=".remote_control/certs", timeout=3.0, ssdp_target=SSDP_GROUP,
+def discover(ranges=(), known=None, cert_dir="data/tv/certs", timeout=3.0, ssdp_target=SSDP_GROUP,
              ports=(ROKU_PORT, ANDROID_PORT, ADB_PORT)):
     """Run every method. -> {"found": [...], "notes": [...], "ranges": [...]}.
 

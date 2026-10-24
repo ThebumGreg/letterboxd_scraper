@@ -19,7 +19,7 @@ class LogBook:
         if path:
             handler = RotatingFileHandler(path, maxBytes=1_000_000, backupCount=3, encoding="utf-8")
             handler.setFormatter(logging.Formatter("%(message)s"))
-            self._file = logging.getLogger(f"remote_control.file.{id(self)}")
+            self._file = logging.getLogger(f"synchub.tv.file.{id(self)}")
             self._file.setLevel(logging.INFO)
             self._file.propagate = False
             self._file.addHandler(handler)

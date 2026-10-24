@@ -6,7 +6,7 @@ queue. What can be retried, what waits for a person and what has failed is decid
 """
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from synchub import db
 

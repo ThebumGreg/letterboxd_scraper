@@ -1,27 +1,15 @@
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#101418">
-<meta name="color-scheme" content="dark">
-<meta name="format-detection" content="telephone=no">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="SyncHub Remote">
-<link rel="apple-touch-icon" href="/static/pwa/icon-180.png">
-<link rel="icon" type="image/png" sizes="192x192" href="/static/pwa/icon-192.png">
-<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
-<title>SyncHub TVs</title>
-<link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<header>
+{% extends "base.html" %}
+{% block title %}TVs{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='tv/tv.css') }}">{% endblock %}
+
+{% block content %}
+<div class="tvr">
+<div class="tv-head">
   <h1>TVs</h1>
-  <nav id="nav" class="tabs"></nav>
-</header>
+</div>
 <div id="banner" hidden></div>
 <div id="notices"></div>
-<main class="page-narrow">
+<div class="tv-main page-narrow">
   <section id="tvCard">
     <h2>Your TVs <button data-act="tvNew" class="small primary">+ Add manually</button></h2>
     <div id="tvList" class="dim">Loading…</div>
@@ -31,7 +19,7 @@
   <section id="scanCard">
     <h2>Find TVs on your network</h2>
     <div class="small dim">Looks for Roku and Google TV / Android TV devices that are switched on. TVs in deep standby do not answer, so wake them first.</div>
-    <div class="row">
+    <div class="tv-row">
       <label class="small dim grow">Address range to scan
         <input id="scanRanges" placeholder="192.168.1.0/24" aria-label="Address ranges to scan, comma separated"></label>
       <button data-act="tvScan" id="scanBtn" class="primary">Scan network</button>
@@ -39,7 +27,7 @@
     <div id="scanState" class="small dim" role="status"></div>
     <div id="found"></div>
   </section>
-</main>
+</div>
 
 <dialog id="tvForm">
   <form method="dialog" id="tvFormEl" autocomplete="off">
@@ -57,9 +45,13 @@
     <label class="field">When put to sleep
       <select id="fSleep"><option value="standby">Standby</option><option value="screensaver">Screensaver (stays reachable, needs ADB)</option></select></label>
     <div id="tvFormError" class="small" style="color:var(--bad)" role="alert"></div>
-    <div class="row"><button type="button" data-act="tvSave" class="primary" id="tvSaveBtn">Save</button><button type="button" data-act="tvCancel">Cancel</button></div>
+    <div class="tv-row"><button type="button" data-act="tvSave" class="primary" id="tvSaveBtn">Save</button><button type="button" data-act="tvCancel">Cancel</button></div>
   </form>
 </dialog>
-<script src="/static/common.js"></script>
-<script src="/static/tvs.js"></script>
-</body></html>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='tv/common.js') }}"></script>
+<script src="{{ url_for('static', filename='tv/tvs.js') }}"></script>
+{% endblock %}

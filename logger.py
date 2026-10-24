@@ -47,14 +47,3 @@ def setup_logger(name: str = "letterboxd_scraper") -> logging.Logger:
     return logger_inst
 
 logger = setup_logger()
-
-def get_latest_logs(max_chars: int = 12000) -> str:
-    """Safely fetch the latest log entries for the web interface."""
-    if LOG_FILE_PATH.exists():
-        try:
-            with open(LOG_FILE_PATH, "r", encoding="utf-8") as f:
-                return f.read()[-max_chars:]
-        except Exception as e:
-            logger.error(f"Error reading log file: {e}")
-            return f"Error reading log file: {e}"
-    return "Log file initialized; pending execution logs..."

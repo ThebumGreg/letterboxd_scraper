@@ -2,7 +2,6 @@
 import json
 import queue
 import threading
-import time
 import logging
 from datetime import date
 
@@ -379,7 +378,7 @@ def register(app):
         fields = (request.get_json(silent=True) or {}).get("fields", {})
         typed = lambda name: (fields.get(name) or "").strip()
 
-        def pick(url_name, key_name):
+        def pick(url_name):
             return _endpoint(fields, url_name.removesuffix("_url"))
 
         try:
@@ -388,7 +387,7 @@ def register(app):
                 TmdbClient(typed("tmdb_api_key") or None).configuration()
                 return jsonify(ok=True, message="TMDB key accepted.")
             if service in ("jellyfin", "radarr", "sonarr"):
-                url, key, problem = pick(f"{service}_url", f"{service}_api_key")
+                url, key, problem = pick(f"{service}_url")
                 if problem:
                     return jsonify(ok=False, message=problem)
                 if not url or not key:

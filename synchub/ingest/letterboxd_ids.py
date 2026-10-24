@@ -1,7 +1,6 @@
 """Finds the TMDB ID of Letterboxd films from their film pages (Letterboxd publishes it on every page)."""
 import logging
 import re
-import time
 from datetime import datetime, timedelta
 from urllib.parse import quote
 

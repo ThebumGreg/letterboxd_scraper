@@ -76,6 +76,8 @@ def test_every_permission_is_needed_by_something():
     ("api_request_all", "requests"), ("api_refresh", "requests"), ("resolution_center", "resolution"), ("api_resolution_approve", "resolution"),
     ("ddns_page", "ddns"), ("api_ddns_check", "ddns"), ("library_page", "library"), ("api_library_scan", "library"), ("workers_page", "workers"), ("api_worker_create", "workers"),
     ("api_job_log", "workers"), ("api_test_copy", "workers"), ("storage_page", "storage"), ("api_storage_create", "storage"), ("tools", "tools"), ("trigger", "tools"),
+    ("tv_remote_page", "tv"), ("tv_settings_page", "tv"), ("api_tv_device_launch", "tv"), ("api_tv_prefs_apps", "tv"), ("api_tv_jf_sessions", "tv"),
+    ("tv_setup_devices_page", "tv_setup"), ("tv_setup_advanced_page", "tv_setup"), ("api_tv_setup_tvs_add", "tv_setup"), ("api_tv_setup_discovery_scan", "tv_setup"),
     ("export_csv", "tools"), ("api_diagnostics", "tools"), ("logs_page", "logs"), ("api_logs", "logs"), ("jellyfin_events_export", "logs"), ("payloads_page", "payloads"),
     ("api_clear_payload_logs", "payloads"), ("settings_page", "settings"), ("update_settings", "settings"), ("api_webhook_setup", "settings"), ("api_test_connection", "settings"),
     ("save_profile", "access"), ("delete_profile", "access"), ("api_jellyfin_users", "access"), ("access_page", "access"), ("api_access_set_pin", "access"),
@@ -432,7 +434,7 @@ def test_everything_stays_open_when_nobody_changed_anything(browser, v2, conn):
     pid = conn.execute("INSERT INTO profile (name) VALUES ('Dana')").lastrowid
     conn.commit()
     sign_in(browser, pid)
-    for path in ("/", "/search", "/resolution", "/ddns", "/library", "/workers", "/storage", "/tools", "/logs", "/payloads", "/settings", "/access", "/jellyfin-events"):
+    for path in ("/", "/search", "/resolution", "/ddns", "/library", "/workers", "/storage", "/tools", "/logs", "/payloads", "/settings", "/access", "/jellyfin-events", "/tv/remote", "/tv/settings", "/tv/devices", "/tv/advanced"):
         assert browser.get(path).status_code == 200, path
 
 
@@ -453,7 +455,8 @@ def test_the_menu_groups_workers_library_and_storage_and_tools_logs_and_payloads
     sign_in(browser, pid)
     shown = menu(text(browser.get("/")))
     assert shown["links"] == ["Dashboard", "Search", "Resolution Center", "Dynamic DNS", "Settings"]
-    assert shown["dropdowns"] == {"Media": ["Library", "Workers", "Storage"], "System": ["Tools &amp; Operations", "Logs", "Payloads", "Jellyfin events", "Access"]}
+    assert shown["dropdowns"] == {"Media": ["Library", "Workers", "Storage"], "TV": ["Remote", "Settings", "TVs", "Advanced"],
+                                  "System": ["Tools &amp; Operations", "Logs", "Payloads", "Jellyfin events", "Access"]}
 
 
 def test_the_menu_shows_only_what_the_person_may_open(browser, people):
@@ -479,7 +482,7 @@ def test_the_dropdowns_work_on_a_phone_menu(browser, v2, conn):
     conn.commit()
     sign_in(browser, pid)
     page = text(browser.get("/"))
-    assert page.count('data-bs-toggle="dropdown"') == 2 and 'aria-expanded="false"' in page and 'class="collapse navbar-collapse"' in page
+    assert page.count('data-bs-toggle="dropdown"') == 3 and 'aria-expanded="false"' in page and 'class="collapse navbar-collapse"' in page
 
 
 def test_settings_hides_profile_management_from_people_without_access_and_never_prints_a_pin(browser, v2, conn, people):

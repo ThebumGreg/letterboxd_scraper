@@ -14,7 +14,7 @@ function renderTools() {
   if (!d) { el.innerHTML = '<div class="dim">No device selected</div>'; return; }
   const pairing = has('pairing') ? `<div class="pair" id="pairBox" hidden><b>Pairing required</b>
       <div class="small dim">Press Start, then type the code that appears on the TV.</div>
-      <div class="row"><button data-act="pairStart">Start pairing</button><input id="pairCode" placeholder="code on TV" maxlength="8" style="max-width:120px"><button data-act="pairFinish">Finish</button></div></div>` : '';
+      <div class="tv-row"><button data-act="pairStart">Start pairing</button><input id="pairCode" placeholder="code on TV" maxlength="8" style="max-width:120px"><button data-act="pairFinish">Finish</button></div></div>` : '';
   const sleepLabel = d.sleepMode === 'screensaver' ? 'Sleep (screensaver)' : 'Sleep (standby)';
   const power = has('power_on') ? `<div class="rgrid r2"><button data-act="power" data-state="on" class="pwr">⏻ Wake / power on</button><button data-act="power" data-state="off" class="pwr" title="This device's sleep mode is ${esc(d.sleepMode)} (set &quot;sleep&quot; in devices.json)">⏻ ${sleepLabel}</button></div>
     <div class="rgrid r2">${has('screensaver') ? '<button data-act="screensaver" title="Soft sleep: the TV stays reachable and any key wakes it">🖼 Screensaver</button>' : ''}<button data-act="wol" title="Send a Wake-on-LAN magic packet">⚡ Wake-on-LAN</button><button data-act="detectMac" title="Read the device's MAC address (it must be on)">Detect MAC</button><button data-act="probe" title="Which network ports answer right now? Run it on and in standby">Probe network</button>${has('diagnose') ? '<button data-act="diagnose" title="Read power, screensaver and network settings from the TV">Diagnose</button>' : ''}</div>
@@ -26,8 +26,8 @@ function renderTools() {
     ${pairing}${power}
     <h2 style="margin-top:10px">All keys</h2>
     <div class="rgrid r4">${ALL_KEYS.map(([k, label]) => `<button data-act="key" data-key="${k}" ${d.keys[k] ? '' : 'disabled'} title="${k}">${label}</button>`).join('')}</div>
-    ${has('text') ? '<div class="row"><input id="txt" placeholder="Type on the TV"><button data-act="text">Send</button></div>' : ''}
-    <div class="row"><input id="rawKey" placeholder="raw ${d.type === 'roku' ? 'ECP key (e.g. InputHDMI2)' : 'keycode (e.g. KEYCODE_GUIDE)'}"><button data-act="rawkeybox">Send</button>${has('screenshot') ? '<button data-act="shot">Screenshot</button>' : ''}</div>
+    ${has('text') ? '<div class="tv-row"><input id="txt" placeholder="Type on the TV"><button data-act="text">Send</button></div>' : ''}
+    <div class="tv-row"><input id="rawKey" placeholder="raw ${d.type === 'roku' ? 'ECP key (e.g. InputHDMI2)' : 'keycode (e.g. KEYCODE_GUIDE)'}"><button data-act="rawkeybox">Send</button>${has('screenshot') ? '<button data-act="shot">Screenshot</button>' : ''}</div>
     <img id="shot" alt="" hidden style="max-width:100%;margin-top:6px;border-radius:8px">
     ${more}
     <div class="small dim" style="margin-top:8px"><label><input type="checkbox" id="kbd" ${S.keyboard ? 'checked' : ''}> keyboard control on the Remote page (arrows, Enter, Esc, Space, m, +/−)</label></div>
@@ -147,7 +147,7 @@ async function playIds(btn, itemIds, playCommand, startIndex) {
     pollSessions(); pollStatus(dev());
     return r;
   }
-  return jfAct(btn, '/api/jf/play', body);   // an explicit session was chosen
+  return jfAct(btn, '/api/tv/setup/jf/play', body);   // an explicit session was chosen
 }
 function itemRow(i, extra = '') {
   S.items[i.Id] = i;
@@ -160,14 +160,14 @@ function itemRow(i, extra = '') {
     <button data-act="view" data-id="${id}" data-type="${esc(i.Type)}">Details</button></div>`;
 }
 async function search() {
-  const r = await api('GET', '/api/jf/search?q=' + encodeURIComponent($('#q').value));
+  const r = await api('GET', '/api/tv/jf/search?q=' + encodeURIComponent($('#q').value));
   fetchLog();
   if (!Array.isArray(r)) { $('#results').textContent = r.body || 'Search failed'; return; }
   $('#results').innerHTML = r.map(i => `<div>${itemRow(i, i.Type === 'Series' ? `<button data-act="episodes" data-id="${esc(i.Id)}">Episodes</button>` : '')}<div class="eps"></div></div>`).join('') || '<span class="dim">No results</span>';
 }
 async function episodes(btn) {
   const box = btn.closest('div.item').nextElementSibling;
-  const r = await api('GET', '/api/jf/episodes/' + encodeURIComponent(btn.dataset.id));
+  const r = await api('GET', '/api/tv/jf/episodes/' + encodeURIComponent(btn.dataset.id));
   fetchLog();
   if (!Array.isArray(r)) return;
   const ids = r.map(e => e.Id);
@@ -204,7 +204,7 @@ function renderLog() {
 
 /* ------------------------------------------------------------------ actions only this page has */
 Object.assign(ACTIONS, {
-  reload: async () => { await api('POST', '/api/reload'); S.appsLoaded = {}; S.status = {}; await loadConfig(); pollAll(); fetchLog(); },
+  reload: async () => { await api('POST', '/api/tv/setup/reload'); S.appsLoaded = {}; S.status = {}; await loadConfig(); pollAll(); fetchLog(); },
   rawkey: b => sendNative(b, b.dataset.native),
   rawkeybox: b => { const v = $('#rawKey').value.trim(); if (v) sendNative(b, v); },
   screensaver: async b => { await run(b, api('POST', devPath('/screensaver'), {})); pollStatus(dev()); },
@@ -220,11 +220,11 @@ Object.assign(ACTIONS, {
   launchCustom: b => run(b, api('POST', devPath('/launch'), {app: $('#lpApp').value.trim(), params: {contentId: $('#lpContent').value.trim(), mediaType: $('#lpType').value.trim()}})),
   sessUse: async b => {
     const s = S.sessions.find(x => x.Id === b.dataset.id); if (!s) return;
-    const r = await run(b, api('PUT', `/api/prefs/session/${encodeURIComponent(S.devId)}`, {client: s.Client, device: s.DeviceName}));
+    const r = await run(b, api('PUT', `/api/tv/setup/prefs/session/${encodeURIComponent(S.devId)}`, {client: s.Client, device: s.DeviceName}));
     if (r.ok) { await refreshDevices(); pollSessions(); } else alert(r.body || 'Could not save');
   },
-  playReset: async () => { await api('DELETE', `/api/prefs/play/${encodeURIComponent(S.devId)}`); await refreshDevices(); },
-  sessReset: async () => { await api('DELETE', `/api/prefs/session/${encodeURIComponent(S.devId)}`); await refreshDevices(); pollSessions(); },
+  playReset: async () => { await api('DELETE', `/api/tv/setup/prefs/play/${encodeURIComponent(S.devId)}`); await refreshDevices(); },
+  sessReset: async () => { await api('DELETE', `/api/tv/setup/prefs/session/${encodeURIComponent(S.devId)}`); await refreshDevices(); pollSessions(); },
   prepare: async b => {
     if (!S.devId) return;
     $('#prepState').textContent = 'preparing… (see log)';
@@ -232,20 +232,20 @@ Object.assign(ACTIONS, {
     $('#prepState').textContent = r.ok ? 'ready' : lastLine(r.body);
     pollSessions(); pollStatus(dev());
   },
-  seek: b => { const v = $('#seekSec').value; if (v !== '') jfAct(b, '/api/jf/playstate', {command: 'Seek', seekPositionTicks: Math.round(v * TICKS)}); },
+  seek: b => { const v = $('#seekSec').value; if (v !== '') jfAct(b, '/api/tv/jf/playstate', {command: 'Seek', seekPositionTicks: Math.round(v * TICKS)}); },
   search: () => search(),
   episodes: b => episodes(b),
   playids: b => playIds(b, b.dataset.ids ? JSON.parse(b.dataset.ids) : splitIds(), b.dataset.cmd, b.dataset.index === undefined ? undefined : Number(b.dataset.index)),
-  jfcmd: b => jfAct(b, '/api/jf/command', {command: b.dataset.cmd}),
+  jfcmd: b => jfAct(b, '/api/tv/setup/jf/command', {command: b.dataset.cmd}),
   rawcmd: b => {
     let args; const t = $('#rawArgs').value.trim();
     try { args = t ? JSON.parse(t) : undefined; } catch (e) { return alert('Arguments are not valid JSON'); }
-    jfAct(b, '/api/jf/command', {command: $('#rawCmd').value, arguments: args});
+    jfAct(b, '/api/tv/setup/jf/command', {command: $('#rawCmd').value, arguments: args});
   },
-  message: b => jfAct(b, '/api/jf/message', {header: $('#mHead').value, text: $('#mText').value, timeoutMs: $('#mTime').value}),
-  view: b => jfAct(b, '/api/jf/viewing', {itemId: b.dataset.id, itemType: b.dataset.type}),
-  viewform: b => { if ($('#vId').value) jfAct(b, '/api/jf/viewing', {itemId: $('#vId').value, itemType: $('#vType').value}); },
-  logClear: async () => { await api('DELETE', '/api/log'); S.logAll = []; S.logLast = 0; renderLog(); },
+  message: b => jfAct(b, '/api/tv/setup/jf/message', {header: $('#mHead').value, text: $('#mText').value, timeoutMs: $('#mTime').value}),
+  view: b => jfAct(b, '/api/tv/setup/jf/viewing', {itemId: b.dataset.id, itemType: b.dataset.type}),
+  viewform: b => { if ($('#vId').value) jfAct(b, '/api/tv/setup/jf/viewing', {itemId: $('#vId').value, itemType: $('#vType').value}); },
+  logClear: async () => { await api('DELETE', '/api/tv/setup/log'); S.logAll = []; S.logLast = 0; renderLog(); },
 });
 
 Object.assign(Page, {

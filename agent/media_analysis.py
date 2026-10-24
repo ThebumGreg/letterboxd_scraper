@@ -687,10 +687,6 @@ def describe_plan(plan):
     return "; ".join(parts)
 
 
-def describe_keep_tracks(proposal):              # kept for older callers
-    return describe_plan(proposal)
-
-
 def review_reasons_from_flags(audio_result, sub_result, proposals):
     """Turn flags into review reasons according to the flag tiers (info, change, hold): informational
     flags raise nothing; a track-change proposal raises ONE 'tracks' reason; holds raise

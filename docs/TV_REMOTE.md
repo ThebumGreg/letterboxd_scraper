@@ -1,48 +1,51 @@
-# SyncHub Remote (whole-house remote)
+# TV: the SyncHub remote
 
-One web UI to pick a TV, drive it like a remote, launch its apps, see what is playing, and start a movie
-on any TV from whatever state it is in. Every outbound call (ADB, Android TV Remote, Roku ECP, Wake-on-LAN,
-Jellyfin) is shown in the Log panel with request, response, status and timing, and written to
-`remote_control.log` as JSON lines.
+The **TV** menu in SyncHub drives your TVs like a remote, launches their apps, shows what is playing and starts a movie
+on any TV from whatever state it is in. Every outbound call (ADB, Android TV Remote, Roku ECP, Wake-on-LAN, Jellyfin) is
+shown in the Log on **TV ▸ Advanced** with request, response, status and timing, and written to `tv/tv.log` in SyncHub's
+data folder as JSON lines.
 
-```bash
-pip install -r remote_control/requirements.txt
-export JELLYFIN_URL=http://192.168.128.55:5000
-export JELLYFIN_API_KEY=...
-python remote_control_app.py             # listens on 0.0.0.0:5000 (--host / --port, or REMOTE_HOST / REMOTE_PORT)
-```
+There is nothing to start separately: the TV pages are part of SyncHub (`python -m synchub.web`) and use the Jellyfin
+address and API key from **Settings**. Open **TV ▸ TVs** and press *Scan network* to add your TVs.
 
-Then open the **TVs** page and press *Scan network* to add your TVs. `devices.json` (copy `devices.example.json`) is
-still supported for hand-written setups and the advanced options below; TVs from both places are shown together.
+Everything the TV pages save is in one folder, `<data folder>/tv/` (`data/tv/` from a checkout, `/data/tv/` in Docker):
+`prefs.json` (TVs added in the app, app choices, session choices), `certs/` (the pairing identity of Google TVs), `tv.log`,
+and an optional hand-written `devices.json` for the options the pages do not edit (see *Config reference*). Set
+`SYNCHUB_TV_DEVICES` to read that file from somewhere else and `ADB_PATH` for an `adb` binary that is not on the path.
+
+**Access.** Two permissions (Access page): **TV remote** opens Remote and Settings, **TV setup** opens TVs and Advanced
+(adding and removing TVs, probes, pairing, raw Jellyfin commands). Anyone may use both until you change it.
+
+**Networking.** The TV pages talk straight to your TVs, so SyncHub must be on the same network as them. Wake-on-LAN
+broadcasts and mDNS discovery do not cross Docker's bridge network or WSL2's NAT (the range scan and unicast calls do).
 
 ## The four pages
 
-**Remote** (`/`) is the everyday page, laid out for a phone: the TV's name and state, a **Now playing** block built
+**TV ▸ Remote** (`/tv/remote`) is the everyday page, laid out for a phone: the TV's name and state, a **Now playing** block built
 into the remote (what is on, with Pause/Resume, ±30 s and Stop when Jellyfin is playing it), Power on / Sleep, a
 **quick-launch row** of up to four apps, Back / Home / Options, the D-pad, rewind / play-pause / fast-forward, volume,
 and the **Watch a movie…** button. On a computer the arrow keys, Enter, Esc, Space, `m` and `+`/`-` drive it too.
 
-**Settings** (`/settings`, the ⚙ button) holds the everyday choices. *Apps on your remote*: pick, per TV, which apps appear
+**TV ▸ Settings** (`/tv/settings`) holds the everyday choices. *Apps on your remote*: pick, per TV, which apps appear
 below the quick-launch row (tap an app to show or hide it; Show all / Hide all). Until you choose, only the quick-launch
 row is shown. *Quick launch*: tap ☆ on an app (or ‹ › ✕ on the strip to reorder or remove), up to four. Each TV has its
-own lists, shared by every browser that opens the app and saved in `.remote_control/prefs.json` (`--prefs` changes the
-location). Until you pin your own, the first four of Jellyfin, Netflix, YouTube, Disney+, Prime Video, Hulu, Plex and
+own lists, shared by every browser that opens the app and saved in `tv/prefs.json`. Until you pin your own, the first four of Jellyfin, Netflix, YouTube, Disney+, Prime Video, Hulu, Plex and
 Max that the TV has are used. A Google TV controlled without ADB cannot list its installed apps, so only common apps are
 offered; enable ADB for it on the TVs page to see everything.
 
-**TVs** (`/tvs`) manages the devices. *Find TVs on your network* looks for Rokus (SSDP) and Google / Android TVs (mDNS,
+**TV ▸ TVs** (`/tv/devices`) manages the devices. *Find TVs on your network* looks for Rokus (SSDP) and Google / Android TVs (mDNS,
 which needs the `zeroconf` package), and also tries the control ports of every address in a range (default: the /24
 around the TVs and Jellyfin server you already have). The range scan is what works under **WSL2, Docker and VMs**, where
 multicast does not reach your network; only private ranges up to a /22 are accepted. Add a found TV with one tap (or
 add one by hand), then press *Start pairing* for a Google TV. Edit or remove TVs saved in the app; TVs from
 `devices.json` are listed but edited in that file. TVs saved in the app live in `prefs.json`.
 
-**Advanced settings** (`/advanced`) is the testing page: every key, text entry, screenshot, wake and sleep tests
+**TV ▸ Advanced** (`/tv/advanced`) is the testing page: every key, text entry, screenshot, wake and sleep tests
 (Wake-on-LAN, screensaver, Probe network, Diagnose, Detect MAC), pairing, the full app list, Jellyfin sessions, library
 search and commands, and the log. Use it to try a new TV model or configuration without cluttering the pages above.
 
 **What's new.** New features announce themselves with a banner at the top of the Remote and Settings pages (one at a
-time, shown once per browser until dismissed); Settings keeps the full list. Add an entry to `remote_control/notices.py`
+time, shown once per browser until dismissed); Settings keeps the full list. Add an entry to `synchub/tv/notices.py`
 when a feature ships.
 
 **Volume:** tap Vol +/− for one step, tap repeatedly for one step per tap, or hold for a steady repeat that speeds up
@@ -58,15 +61,9 @@ Share ▸ **Add to Home Screen** to get a full-screen app with its own icon and 
 
 ## Using it from a phone
 
-The "Watch a movie…" button asks where to watch: this phone, or any configured TV. To open the page on a phone
-run it where the phone can reach it and set a token, because the page can power devices on and launch apps:
-
-```bash
-python remote_control_app.py --token SOMETHING-LONG --public-url http://192.168.128.55:5000
-```
-
-then open `http://<this-computer>:5000/?token=SOMETHING-LONG` once on the phone (it remembers the token).
-"This phone" opens the movie's page in Jellyfin web (`--public-url`, or `--url` if omitted); tap play there.
+The TV pages are laid out for a phone and an iPad: open SyncHub's address on the device (it is behind the same profile and
+PIN rules as the rest of SyncHub). The "Watch a movie…" button asks where to watch: this phone, or any configured TV.
+"This phone" opens the movie's page in Jellyfin web (the Jellyfin address from Settings); tap play there.
 
 ## Starting a movie from any state
 
@@ -130,7 +127,7 @@ at once. So a Roku plays like this (`"play": "auto"`, the default):
    files the Roku understands (MP4/MKV with H.264 or HEVC video and AAC, AC3, E-AC3 or MP3 audio), otherwise an HLS
    transcode. Jellyfin is not told about this playback (no resume or watched mark), and the URL contains your API key (masked
    in every log, but visible to the Roku). `stream_base` is the address the *Roku* should use to reach Jellyfin if it differs
-   from `JELLYFIN_URL`; `stream_mode` is `auto`, `direct` or `hls`.
+   from the Jellyfin address in Settings; `stream_mode` is `auto`, `direct` or `hls`.
 
 A link that was sent but not confirmed (app still loading, or not signed in) is reported as such and is **not** followed by
 a stream, so two playbacks never compete. Advanced ▸ Jellyfin has a **Play via** menu (device setting, Jellyfin session,
@@ -173,13 +170,27 @@ reports it clearly if there is none. The **Screensaver** button does this on dem
 Needs ADB (`androidtv`, or `googletv` with `"adb": true`). Check the TV's own power-saving timers too, since a
 TV can still drop into standby by itself after a while.
 
-**Wake-on-LAN notes:** press **Detect MAC** while the device is on and put the address in `devices.json` as
-`"mac"` (Roku reports its own). Add `"broadcast": "192.168.1.255"` (your subnet's broadcast) if the default
+**Wake-on-LAN notes:** press **Detect MAC** while the device is on and save it (the TVs page does, for TVs added in the app, or put it in `devices.json` as
+`"mac"`) (Roku reports its own). Add `"broadcast": "192.168.1.255"` (your subnet's broadcast) if the default
 broadcast does not reach it. The packet only arrives if this computer is on the same network segment; under
 WSL2's default NAT networking it will not (use `networkingMode=mirrored` in `.wslconfig`, or run the app on
 the host).
 
 ## Config reference
+
+`tv/devices.json` is optional: TVs added on the TVs page need no file. Use it for options the page does not edit, or to
+keep a TV in a file you manage yourself (those are listed on the TVs page but changed only in the file):
+
+```json
+{"devices": [
+  {"id": "front-room", "name": "Front Room Google TV", "type": "googletv", "host": "192.168.1.50",
+   "mac": "AA:BB:CC:DD:EE:FF", "broadcast": "192.168.1.255", "adb": true, "sleep": "screensaver",
+   "wake": ["remote", "adb", "wol", "cast"], "wake_timeout": 45,
+   "jellyfin": {"app": "org.jellyfin.androidtv", "session": {"client": "Android TV"}}},
+  {"id": "roku", "name": "Roku TV", "type": "roku", "host": "192.168.1.60",
+   "jellyfin": {"app": "Jellyfin", "session": {"client": "Jellyfin Roku"}}}
+]}
+```
 
 **How a TV is matched to its Jellyfin session.** Jellyfin reports each app as a session with a `Client` name
 (for example `Jellyfin Roku`, `Jellyfin Android TV`, `Swiftfin tvOS`) and a `DeviceName`. A device's
@@ -198,11 +209,11 @@ address for Wake-on-LAN. `apps`: (googletv without ADB) list of package names to
 
 App icons: the Roku supplies its own. For everything else the app draws the service's logo (bundled, see
 `static/icons/logos/README.md`) on its brand colour, or an initials badge. Vendor/system packages such as `com.tcl.*`
-are hidden behind "show system apps". To override any icon, drop `<package>.png` into `remote_control/static/icons/`.
+are hidden behind "show system apps". To override any icon, drop `<package>.png` into `static/tv/icons/`.
 
 ## Adding another kind of device
 
-Subclass `Driver` in `remote_control/devices/`, set `type`, `keymap` (logical key -> native key),
+Subclass `Driver` in `synchub/tv/devices/`, set `type`, `keymap` (logical key -> native key),
 `capabilities`, implement `status/send_key/power/apps/launch/jellyfin_app` (plus `icon`, `detect_mac`, pairing,
 `status()["media"]` if the device can), decorate with `@register`, and import it at the bottom of
 `devices/__init__.py`. The remote layout, apps, prepare-and-play flow, Watch chooser and log need no UI changes.

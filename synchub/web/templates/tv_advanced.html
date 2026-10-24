@@ -1,57 +1,45 @@
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#101418">
-<meta name="color-scheme" content="dark">
-<meta name="format-detection" content="telephone=no">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="SyncHub Remote">
-<link rel="apple-touch-icon" href="/static/pwa/icon-180.png">
-<link rel="icon" type="image/png" sizes="192x192" href="/static/pwa/icon-192.png">
-<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
-<title>SyncHub Advanced settings</title>
-<link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<header>
+{% extends "base.html" %}
+{% block title %}TV Advanced{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='tv/tv.css') }}">{% endblock %}
+
+{% block content %}
+<div class="tvr">
+<div class="tv-head">
   <h1>Advanced settings</h1>
-  <nav id="nav" class="tabs"></nav>
   <div id="devbar"></div>
   <span class="grow"></span>
   <span id="jfState" class="chip">Jellyfin: ...</span>
   <button data-act="reload" title="Re-read devices.json">Reload devices</button>
-</header>
+</div>
 <div id="banner" hidden></div>
 <div id="notices"></div>
-<p class="intro">Tools for testing TV models and configurations: every key, wake and sleep method, Jellyfin sessions and commands, and the full log. Everyday choices are on <a href="/settings">Settings</a> and <a href="/tvs">TVs</a>.</p>
+<p class="intro">Tools for testing TV models and configurations: every key, wake and sleep method, Jellyfin sessions and commands, and the full log. Everyday choices are on <a href="{{ url_for('tv_settings_page') }}">Settings</a> and <a href="{{ url_for('tv_setup_devices_page') }}">TVs</a>.</p>
 
-<main>
+<div class="tv-main">
   <section id="tools"><div class="dim">Select a device</div></section>
 
-  <div class="col">
+  <div class="tv-col">
     <section id="appsCard"><h2>Apps &amp; quick launch <button data-act="refreshApps" class="small">refresh list</button></h2>
       <div class="small dim">Tap ☆ on an app to put it on the Remote page's quick-launch row (up to 4). Tap an app to launch it.</div>
       <div id="quickStrip" class="qstrip"></div>
       <div id="apps" class="apps dim">Select a device</div>
       <details class="adv"><summary>Launch with content (Roku deep link) or a link</summary>
-        <div class="row"><input id="lpApp" placeholder="app id or link"><input id="lpContent" placeholder="contentId"><input id="lpType" placeholder="mediaType (movie, series, episode...)">
+        <div class="tv-row"><input id="lpApp" placeholder="app id or link"><input id="lpContent" placeholder="contentId"><input id="lpType" placeholder="mediaType (movie, series, episode...)">
           <button data-act="launchCustom">Launch</button></div>
       </details>
     </section>
 
     <section id="nowCard"><h2>Playback test</h2>
       <div id="now" class="dim">Select a device</div>
-      <div class="row" id="transport"></div>
-      <div class="row">
+      <div class="tv-row" id="transport"></div>
+      <div class="tv-row">
         <button data-act="relseek" data-d="-30">-30s</button><button data-act="relseek" data-d="30">+30s</button>
         <input id="seekSec" type="number" min="0" placeholder="seek to (s)" style="max-width:120px"><button data-act="seek">Seek</button>
       </div>
     </section>
 
     <section id="jfCard"><h2>Jellyfin</h2>
-      <div class="row">
+      <div class="tv-row">
         <label class="small dim">Session
           <select id="sessSel"></select></label>
         <button data-act="prepare" id="prepareBtn" title="Power on, open the Jellyfin app, wait for its session">Prepare device</button>
@@ -63,8 +51,8 @@
         <div id="sessTable"></div>
         <div class="small dim">A TV is matched to a session by its app name and device name. If “Prepare device” can't find the session, pick the right one here.</div>
       </details>
-      <div class="row"><input id="q" placeholder="Search movies / shows / episodes"><button data-act="search">Search</button></div>
-      <div class="row small dim">
+      <div class="tv-row"><input id="q" placeholder="Search movies / shows / episodes"><button data-act="search">Search</button></div>
+      <div class="tv-row small dim">
         <label><input type="checkbox" id="prep" checked> Prepare device first</label>
         <label id="viaLabel" hidden>Play via <select id="via"><option value="">device setting</option><option value="session">Jellyfin session</option><option value="deeplink">deep link</option><option value="url">stream URL</option></select></label>
         <input id="optPos" type="number" min="0" placeholder="start (s)" style="max-width:90px">
@@ -75,13 +63,13 @@
       <div id="results"></div>
     </section>
 
-    <details id="jfAdv" class="card"><summary>Jellyfin commands, messages, details</summary>
+    <details id="jfAdv" class="tv-card"><summary>Jellyfin commands, messages, details</summary>
       <div class="small dim">Dashed = not in the session's SupportedCommands (still clickable, to test).</div>
-      <div class="row" id="caps"></div>
-      <div class="row" id="cmds"></div>
-      <div class="row"><select id="rawCmd"></select><input id="rawArgs" placeholder='arguments JSON, e.g. {"Volume":"50"}'><button data-act="rawcmd">Send</button></div>
-      <div class="row"><input id="mHead" placeholder="Header"><input id="mText" placeholder="Text"><input id="mTime" type="number" value="5000" style="max-width:90px"><button data-act="message">Show message</button></div>
-      <div class="row"><input id="vId" placeholder="Item id"><select id="vType"><option>Movie</option><option>Series</option><option>Episode</option></select><button data-act="viewform">Open detail page</button></div>
+      <div class="tv-row" id="caps"></div>
+      <div class="tv-row" id="cmds"></div>
+      <div class="tv-row"><select id="rawCmd"></select><input id="rawArgs" placeholder='arguments JSON, e.g. {"Volume":"50"}'><button data-act="rawcmd">Send</button></div>
+      <div class="tv-row"><input id="mHead" placeholder="Header"><input id="mText" placeholder="Text"><input id="mTime" type="number" value="5000" style="max-width:90px"><button data-act="message">Show message</button></div>
+      <div class="tv-row"><input id="vId" placeholder="Item id"><select id="vType"><option>Movie</option><option>Series</option><option>Episode</option></select><button data-act="viewform">Open detail page</button></div>
     </details>
   </div>
 
@@ -94,12 +82,16 @@
         <input id="fText" placeholder="filter text" style="width:130px">
         <label class="small"><input type="checkbox" id="fPause"> pause</label>
         <button data-act="logClear" class="small">clear</button>
-        <a href="/api/log/download" class="btn small">download</a>
+        <a href="/api/tv/setup/log/download" class="tv-btn small">download</a>
       </span>
     </h2>
     <div id="log"></div>
   </section>
-</main>
-<script src="/static/common.js"></script>
-<script src="/static/advanced.js"></script>
-</body></html>
+</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='tv/common.js') }}"></script>
+<script src="{{ url_for('static', filename='tv/advanced.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}TV Remote{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='tv/tv.css') }}">{% endblock %}
+
+{% block content %}
+<div class="tvr remote-body">
+<div class="topbar">
+  <div id="devbar"></div>
+</div>
+<div id="banner" hidden></div>
+<div id="notices"></div>
+<div class="remote-page">
+  <section id="remote" class="remote-card"><div class="dim">Loading…</div></section>
+</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='tv/common.js') }}"></script>
+<script src="{{ url_for('static', filename='tv/remote.js') }}"></script>
+{% endblock %}

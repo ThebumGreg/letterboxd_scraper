@@ -6,7 +6,7 @@ const KEYS = {home:'Home',back:'Back',options:'✱',play_pause:'⏯',rewind:'⏪
 
 function renderRemote() {
   const d = dev(), el = $('#remote');
-  if (!d) { el.innerHTML = '<div class="dim">No TV added yet. Open <a href="/tvs">TVs</a> to find yours on the network and add it.</div>'; return; }
+  if (!d) { el.innerHTML = '<div class="dim">No TV added yet. Open <a href="/tv/devices">TVs</a> to find yours on the network and add it.</div>'; return; }
   const k = (key, label, cls = '') => `<button data-act="key" data-key="${key}" class="${cls}" ${d.keys[key] ? '' : 'disabled'} title="${key}">${label || KEYS[key]}</button>`;
   const volume = ['vol_down', 'mute', 'vol_up'].some(x => d.keys[x]);
   // Volume buttons are press-and-hold buttons (see "volume" below), so they use data-hold rather than data-act.
@@ -14,7 +14,7 @@ function renderRemote() {
   // On a phone the two groups stack; on a tablet they sit side by side (info and apps left, the pad right)
   el.innerHTML = `
     <div class="r-top"><h3>${esc(d.name)}</h3><div id="rstat" class="small"></div></div>
-    <div id="pairNote" class="pair" hidden>Not paired with this TV yet. Open <a href="/tvs">TVs</a> and use “Start pairing”.</div>
+    <div id="pairNote" class="pair" hidden>Not paired with this TV yet. Open <a href="/tv/devices">TVs</a> and use “Start pairing”.</div>
     <div class="r-info">
       <div id="now" class="np"></div>
       ${has('power_on') ? `<div class="rgrid r2"><button data-act="power" data-state="on" class="pwr">⏻ Power on</button><button data-act="power" data-state="off" class="pwr">☾ Sleep</button></div>` : ''}
@@ -78,7 +78,7 @@ function renderQuick() {
   let html;
   if (list.length) html = list.map(a => `<button data-act="launch" data-app="${esc(a.id)}" class="tile ${a.id === st.app ? 'active' : ''}" title="${esc(a.name)}">${iconHtml(d, a)}<span class="n">${esc(a.name)}</span></button>`).join('');
   else if (S.appsLoading[d.id]) html = '<div class="dim small quick-note">Loading apps…</div>';
-  else html = `<div class="dim small quick-note">${S.appsError[d.id] ? esc(S.appsError[d.id]) : 'No quick-launch apps yet.'} Pick some in <a href="/settings">Settings</a>.</div>`;
+  else html = `<div class="dim small quick-note">${S.appsError[d.id] ? esc(S.appsError[d.id]) : 'No quick-launch apps yet.'} Pick some in <a href="/tv/settings">Settings</a>.</div>`;
   if (el.dataset.sig !== html) { el.dataset.sig = html; el.innerHTML = html; }
 }
 

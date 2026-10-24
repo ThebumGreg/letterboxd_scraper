@@ -53,6 +53,10 @@ The worker side is a small API (`/api/worker/v1/...`, token per worker, document
 - **Export** gives the same CSV report as the original tool.
 - **Approving records a decision and nothing else.** Copying and converting the approved files is the next phase.
 
+## TV remote
+
+**TV** (top bar) controls the TVs and streamers in the house from SyncHub, as a remote that fits a phone or an iPad. **Remote** is the everyday page: what the TV is playing, power and sleep, quick-launch apps, the D-pad, volume (tap or hold) and **Watch a movie**, which wakes the TV from whatever state it is in, opens the Jellyfin app and plays the title. **Settings** chooses which apps each TV's remote shows. **TVs** adds, edits and removes TVs and **finds them on the network** (Roku and Google TV / Android TV), so no file has to be edited. **Advanced** is the testing page: every key, wake and sleep tests, Jellyfin sessions and commands, and the log of every call sent to a TV. Roku, Google TV (Android TV Remote protocol, optionally with ADB) and Android TV (ADB) are supported; opening an app from a screensaver, and playing a new title on a Roku that is already playing one, are handled by going Home first. Access has two permissions for it (TV remote, TV setup). How it works, the supported devices and how to add another kind: [docs/TV_REMOTE.md](docs/TV_REMOTE.md).
+
 ## Search and add
 
 **Search** (top bar) looks a title up on TMDB and can send it straight to Radarr or Sonarr. Type a title, optionally with a year (`Heat 1995`); if a title simply ends in a number-like year (`Blade Runner 2049`) the whole text is searched when the year finds nothing. Results show movies, then shows, with where each already stands (In Library, Queued, Downloading ...). Nothing is saved until you add something.
@@ -64,13 +68,13 @@ The worker side is a small API (`/api/worker/v1/...`, token per worker, document
 
 ## The menu
 
-**Dashboard, Search, Resolution Center, Dynamic DNS** and **Settings** are in the top bar. **Media** is a dropdown with Library, Workers and Storage; **System** is a dropdown with Tools & Operations, Logs, Payloads, Jellyfin events and Access. A person only sees the entries their profile may open (see Access below), and a dropdown with nothing in it is hidden.
+**Dashboard, Search, Resolution Center, Dynamic DNS** and **Settings** are in the top bar. **Media** is a dropdown with Library, Workers and Storage; **TV** is a dropdown with Remote, Settings, TVs and Advanced (see below); **System** is a dropdown with Tools & Operations, Logs, Payloads, Jellyfin events and Access. A person only sees the entries their profile may open (see Access below), and a dropdown with nothing in it is hidden.
 
 ## Who is watching, PINs and permissions
 
 The first visit from a browser shows **Who is watching?**: pick your profile, or "Just looking" to continue as a guest. The choice is remembered on that device for a year, the top bar shows who you are with a **switch** link, and the profile's Jellyfin user is the one the Jellyfin app links open as. With no profiles nothing is asked.
 
-**Access** (System menu) gives each profile an optional **PIN** (4 to 8 digits) and a list of the pages it may open: Dashboard, Search, Requests (the buttons that request or add titles), Resolution Center, Dynamic DNS, Library, Workers, Storage, Tools & Operations, Logs, Payloads, Settings and Access itself. Guests have their own list. Quick picks (Everything, Viewer, Nothing) fill in the boxes.
+**Access** (System menu) gives each profile an optional **PIN** (4 to 8 digits) and a list of the pages it may open: Dashboard, Search, Requests (the buttons that request or add titles), Resolution Center, Dynamic DNS, Library, Workers, Storage, TV remote, TV setup, Tools & Operations, Logs, Payloads, Settings and Access itself. Guests have their own list. Quick picks (Everything, Viewer, Nothing) fill in the boxes.
 
 - **Nothing changes until you use it.** Every profile and every guest can open everything, as before.
 - **A profile with a PIN** asks for it when chosen, then remembers that device for 30 days (changeable on the Access page). Five wrong PINs in a row lock that profile for 30 seconds, doubling each time up to 15 minutes; **Unlock** on the Access page clears it. Changing a PIN, or **Sign out everywhere**, makes every device ask again.
@@ -131,4 +135,4 @@ Tests use a temporary database and never touch the network (a guard fails any te
 
 ## Layout
 
-The code is in `synchub/`: `db.py` + `migrations/` (schema), `clients/` (Jellyfin, Radarr, Sonarr, TMDB), `ingest/` (one module per source, writing the `src_*` tables), `matching.py` and `episodes.py` (linking), `library/` (the Library's decision logic, scans and duplicate search), `storage.py` and `jobs.py` (shares and worker jobs), `access.py` (PINs and permissions), `backup.py` (consistent copies, checks and restore of the database), `jellyfin_events.py` (kept Jellyfin events), `ddns.py` and `ddns_check.py` (dynamic DNS and its delay check), `states.py` (statuses), `catalog.py` (what the pages read), `automation.py` (requests and auto-add), `tasks.py` and `scheduler.py` (jobs), `web/` (pages, templates and API). `config.py`, `logger.py` and `settings_validation.py` at the top level are shared helpers; `static/` holds the CSS, JavaScript and cached posters.
+The code is in `synchub/`: `db.py` + `migrations/` (schema), `clients/` (Jellyfin, Radarr, Sonarr, TMDB), `ingest/` (one module per source, writing the `src_*` tables), `matching.py` and `episodes.py` (linking), `library/` (the Library's decision logic, scans and duplicate search), `storage.py` and `jobs.py` (shares and worker jobs), `access.py` (PINs and permissions), `backup.py` (consistent copies, checks and restore of the database), `jellyfin_events.py` (kept Jellyfin events), `ddns.py` and `ddns_check.py` (dynamic DNS and its delay check), `states.py` (statuses), `catalog.py` (what the pages read), `automation.py` (requests and auto-add), `tasks.py` and `scheduler.py` (jobs), `tv/` (the TV remote: device drivers for Roku and Google / Android TV, discovery, wake and play logic), `web/` (pages, templates and API; `web/tv.py` is the TV menu). `config.py`, `logger.py` and `settings_validation.py` at the top level are shared helpers; `static/` holds the CSS, JavaScript and cached posters.

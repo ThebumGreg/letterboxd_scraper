@@ -5,7 +5,7 @@ const T = {tvs: [], found: [], editing: null, scanning: false};
 const TYPE_NAME = {googletv: 'Google TV', androidtv: 'Android TV', roku: 'Roku'};
 
 async function loadTvs() {
-  const r = await api('GET', '/api/tvs');
+  const r = await api('GET', '/api/tv/setup/tvs');
   T.tvs = r.tvs || [];
   const files = T.tvs.filter(t => !t.managed).length;
   $('#tvFileNote').textContent = files ? `${files} ${files === 1 ? 'TV comes' : 'TVs come'} from ${String(r.configPath).split(/[\\/]/).pop()} and can only be edited there; the rest are saved in the app.` : '';
@@ -25,8 +25,8 @@ function renderTvs() {
       <div class="tvhead"><b>${esc(t.name)}</b><span class="chip">${esc(t.managed ? 'saved in the app' : 'devices.json')}</span><span class="grow"></span><span class="small" data-stat>${statText(t.id)}</span></div>
       <div class="small dim">${meta}</div>
       ${t.type === 'googletv' ? `<div class="pair" data-pair hidden><b>Pairing required</b> <span class="small dim">Press Start, then type the code that appears on the TV.</span>
-        <div class="row"><button data-act="tvPairStart" data-id="${esc(t.id)}">Start pairing</button><input data-code placeholder="code on TV" maxlength="8" style="max-width:130px" aria-label="Pairing code"><button data-act="tvPairFinish" data-id="${esc(t.id)}">Finish</button></div></div>` : ''}
-      <div class="row">
+        <div class="tv-row"><button data-act="tvPairStart" data-id="${esc(t.id)}">Start pairing</button><input data-code placeholder="code on TV" maxlength="8" style="max-width:130px" aria-label="Pairing code"><button data-act="tvPairFinish" data-id="${esc(t.id)}">Finish</button></div></div>` : ''}
+      <div class="tv-row">
         ${t.managed ? `<button data-act="tvEdit" data-id="${esc(t.id)}">Edit</button><button data-act="tvRemove" data-id="${esc(t.id)}">Remove</button>` : '<span class="small dim">Set in devices.json</span>'}
         <button data-act="tvMac" data-id="${esc(t.id)}" title="Read the MAC address (the TV must be on)">${t.mac ? 'Re-detect MAC' : 'Detect MAC'}</button>
       </div></div>`;
@@ -68,7 +68,7 @@ function formKind() {
 async function saveForm(btn) {
   const body = {name: $('#fName').value, type: $('#fType').value, host: $('#fHost').value.trim(), mac: $('#fMac').value.trim(),
     adb: $('#fAdb').checked, sleep: $('#fSleep').value};
-  const r = await run(btn, T.editing ? api('PUT', `/api/tvs/${encodeURIComponent(T.editing)}`, body) : api('POST', '/api/tvs', body));
+  const r = await run(btn, T.editing ? api('PUT', `/api/tv/setup/tvs/${encodeURIComponent(T.editing)}`, body) : api('POST', '/api/tv/setup/tvs', body));
   if (!r.ok) { $('#tvFormError').textContent = r.body || 'Could not save'; return; }
   $('#tvForm').close();
   const added = !T.editing;
@@ -85,7 +85,7 @@ async function refreshAll() {
 
 /* ---- scanning */
 async function prefillRanges() {
-  const r = await api('GET', '/api/discovery/ranges');
+  const r = await api('GET', '/api/tv/setup/discovery/ranges');
   if (!$('#scanRanges').value && Array.isArray(r.ranges)) $('#scanRanges').value = r.ranges.join(', ');
 }
 function renderFound() {
@@ -104,7 +104,7 @@ async function scan(btn) {
   $('#scanState').textContent = 'Scanning… this takes up to 10 seconds.';
   $('#found').innerHTML = '';
   const ranges = $('#scanRanges').value.split(/[\s,]+/).filter(Boolean);
-  const r = await api('POST', '/api/discovery/scan', {ranges});
+  const r = await api('POST', '/api/tv/setup/discovery/scan', {ranges});
   T.scanning = false; btn.disabled = false;
   fetchLog();
   if (!r.ok) { $('#scanState').innerHTML = `<span style="color:var(--bad)">${esc(r.body || 'Scan failed')}</span>`; return; }
@@ -121,7 +121,7 @@ Object.assign(ACTIONS, {
   tvRemove: async b => {
     const t = T.tvs.find(x => x.id === b.dataset.id);
     if (!confirm(`Remove ${t.name}? Its saved app choices go too.`)) return;
-    await run(b, api('DELETE', `/api/tvs/${encodeURIComponent(t.id)}`));
+    await run(b, api('DELETE', `/api/tv/setup/tvs/${encodeURIComponent(t.id)}`));
     refreshAll();
   },
   tvScan: b => scan(b),
@@ -133,7 +133,7 @@ Object.assign(ACTIONS, {
     const t = T.tvs.find(x => x.id === b.dataset.id);
     const r = await run(b, api('POST', devPath('/detect-mac', t.id), {}));
     if (!r.ok) return alert(r.body || 'Could not read the MAC address');
-    if (t.managed) { await api('PUT', `/api/tvs/${encodeURIComponent(t.id)}`, {...t, mac: r.mac}); refreshAll(); }
+    if (t.managed) { await api('PUT', `/api/tv/setup/tvs/${encodeURIComponent(t.id)}`, {...t, mac: r.mac}); refreshAll(); }
     else alert(`${r.mac}\nAdd "mac": "${r.mac}" to ${t.id} in devices.json to keep it.`);
   },
   tvPairStart: b => run(b, api('POST', devPath('/pair/start', b.dataset.id), {})),

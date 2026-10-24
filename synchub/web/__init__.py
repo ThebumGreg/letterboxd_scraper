@@ -18,6 +18,7 @@ PIN_COOKIE = "synchub_pin"              # signed proof that this profile's PIN w
 NAV = (
     ("index", "Dashboard"), ("search_page", "Search"), ("resolution_center", "Resolution Center"), ("ddns_page", "Dynamic DNS"),
     ("Media", (("library_page", "Library"), ("workers_page", "Workers"), ("storage_page", "Storage"))),
+    ("TV", (("tv_remote_page", "Remote"), ("tv_settings_page", "Settings"), ("tv_setup_devices_page", "TVs"), ("tv_setup_advanced_page", "Advanced"))),
     ("System", (("tools", "Tools & Operations"), ("logs_page", "Logs"), ("payloads_page", "Payloads"), ("jellyfin_events_page", "Jellyfin events"), ("access_page", "Access"))),
     ("settings_page", "Settings"),
 )
@@ -155,8 +156,8 @@ def create_app(start_scheduler=False, csrf=True):
                     menu.append({"label": first, "children": children})
         return {"jellyfin_app": config, "current_profile": profile, "has_profiles": getattr(g, "has_profiles", False), "can": can, "menu": menu}
 
-    from synchub.web import admin, api, fleet, library, pages, security, shares, worker_api
-    for module in (pages, api, admin, fleet, library, shares, security, worker_api):
+    from synchub.web import admin, api, fleet, library, pages, security, shares, tv, worker_api
+    for module in (pages, api, admin, fleet, library, shares, security, tv, worker_api):
         module.register(app)
     if csrf:
         csrf.exempt(app.view_functions["api_webhook"])

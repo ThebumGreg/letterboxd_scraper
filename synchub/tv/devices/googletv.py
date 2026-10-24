@@ -88,7 +88,7 @@ class GoogleTVDriver(Driver):
 
     def __init__(self, cfg, logbook, options=None):
         super().__init__(cfg, logbook, options)
-        certdir = Path(self.options.get("cert_dir") or ".remote_control/certs")
+        certdir = Path(self.options.get("cert_dir") or "data/tv/certs")
         certdir.mkdir(parents=True, exist_ok=True)
         # One client identity shared by every TV; each TV remembers it after pairing.
         self.certfile = str(certdir / "client-cert.pem")

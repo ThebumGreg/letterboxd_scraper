@@ -1,5 +1,5 @@
 'use strict';
-/* Shared by every page (Remote /, Settings /settings, TVs /tvs, Advanced /advanced): state, polling, icons, app
+/* Shared by every page (/tv/remote, /tv/settings, /tv/devices, /tv/advanced): state, polling, icons, app
    preferences, the "Watch a movie…" dialog, notices and the log. Pages plug in through Page hooks. */
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -32,7 +32,9 @@ const has = cap => (dev()?.capabilities || []).includes(cap);
 /* ------------------------------------------------------------------ api */
 async function api(method, path, body) {
   try {
-    const r = await fetch(path, {method, headers: body === undefined ? {} : {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)});
+    const token = document.querySelector('meta[name="csrf-token"]')?.content;
+    const headers = {...(body === undefined ? {} : {'Content-Type': 'application/json'}), ...(token ? {'X-CSRFToken': token} : {})};
+    const r = await fetch(path, {method, headers, body: body === undefined ? undefined : JSON.stringify(body)});
     return await r.json();
   } catch (e) { return {ok: false, status: 0, body: String(e)}; }
 }
@@ -48,7 +50,9 @@ async function run(btn, promise) {
   fetchLog();
   return res;
 }
-const devPath = (p, id = S.devId) => `/api/devices/${encodeURIComponent(id)}${p}`;
+// Everyday device calls are /api/tv/devices/..; probes, pairing, screenshots and the like need the TV setup permission
+const SETUP_PATH = /^\/(sleep|screensaver|probe|diagnose|wol|detect-mac|pair|connect|screenshot|prepare)/;
+const devPath = (p, id = S.devId) => `/api/tv/${SETUP_PATH.test(p) ? 'setup/' : ''}devices/${encodeURIComponent(id)}${p}`;
 const lastLine = t => String(t || 'failed').split('\n').filter(Boolean).pop();
 const fmt = t => { t = Math.round(t); const h = Math.floor(t/3600), m = Math.floor(t%3600/60), s = t%60; return (h ? h + ':' + String(m).padStart(2,'0') : m) + ':' + String(s).padStart(2,'0'); };
 const itemLabel = i => i.Type === 'Episode' ? `${i.SeriesName} S${i.Season}E${i.Episode} - ${i.Name}` : i.Name + (i.Year ? ` (${i.Year})` : '');
@@ -73,13 +77,13 @@ function badge(name, brand) {
 }
 function iconHtml(d, app) {
   if (!app || !app.id) return badge(app && app.name || '?').outerHTML;
-  const override = S.iconFiles.find(f => f.replace(/\.[^.]+$/, '') === app.id);   // a file you dropped into static/icons/
-  if (override) return `<img class="ico" src="/static/icons/${encodeURIComponent(override)}" alt="">`;
+  const override = S.iconFiles.find(f => f.replace(/\.[^.]+$/, '') === app.id);   // a file you dropped into static/tv/icons/
+  if (override) return `<img class="ico" src="/static/tv/icons/${encodeURIComponent(override)}" alt="">`;
   const key = `${d.id}:${app.id}`;
   if (d.capabilities.includes('icons') && !S.badIcons.has(key))                     // the device's own icon (Roku)
     return `<img class="ico" src="${esc(devPath('/icon/' + encodeURIComponent(app.id), d.id))}" data-bad="${esc(key)}" data-fallback="${esc(app.name)}" alt="">`;
   const brand = brandOf(app);
-  if (brand && brand.logo) return `<span class="ico logo" style="--bg:${brand.color};--m:url(/static/icons/logos/${brand.logo}.svg)"></span>`;
+  if (brand && brand.logo) return `<span class="ico logo" style="--bg:${brand.color};--m:url(/static/tv/logos/${brand.logo}.svg)"></span>`;
   return badge(app.name, brand).outerHTML;
 }
 document.addEventListener('error', e => {   // a device icon that failed: remember it so it is never requested again
@@ -89,7 +93,7 @@ document.addEventListener('error', e => {   // a device icon that failed: rememb
 
 /* ------------------------------------------------------------------ devices */
 async function loadConfig() {
-  const [c, p] = await Promise.all([api('GET', '/api/config'), api('GET', '/api/prefs')]);
+  const [c, p] = await Promise.all([api('GET', '/api/tv/config'), api('GET', '/api/tv/prefs')]);
   S.devices = c.devices || [];
   S.publicUrl = c.jellyfinPublicUrl || '';
   S.iconFiles = c.iconFiles || [];
@@ -104,7 +108,7 @@ async function loadConfig() {
 }
 // Re-read the device list (its session rules change when one is chosen on the Advanced page)
 async function refreshDevices() {
-  const c = await api('GET', '/api/config');
+  const c = await api('GET', '/api/tv/config');
   if (c.devices) S.devices = c.devices;
   hook('onSessions');
 }
@@ -131,7 +135,7 @@ function selectDevice(id, force) {
   renderDevBar(); hook('onSelect'); loadApps();
 }
 async function pollStatus(d) {
-  S.status[d.id] = await api('GET', `/api/devices/${encodeURIComponent(d.id)}/status?poll=1`);
+  S.status[d.id] = await api('GET', `/api/tv/devices/${encodeURIComponent(d.id)}/status?poll=1`);
   renderDevBar(); hook('onStatus', d);
 }
 const pollAll = () => Promise.all(S.devices.map(pollStatus));
@@ -162,24 +166,24 @@ const quickSaved = d => !!S.prefs.quick[d.id];
 const quickApps = d => S.prefs.quick[d.id] || defaultQuick(d);
 async function setQuick(d, apps) {
   S.prefs.quick[d.id] = apps.slice(0, S.quickMax); hook('onPrefs');
-  const r = await api('PUT', `/api/prefs/quick/${encodeURIComponent(d.id)}`, {apps: S.prefs.quick[d.id]});
+  const r = await api('PUT', `/api/tv/prefs/quick/${encodeURIComponent(d.id)}`, {apps: S.prefs.quick[d.id]});
   if (!r.ok) alert(r.body || 'Could not save');
 }
 async function resetQuick(d) {
   delete S.prefs.quick[d.id]; hook('onPrefs');
-  await api('DELETE', `/api/prefs/quick/${encodeURIComponent(d.id)}`);
+  await api('DELETE', `/api/tv/prefs/quick/${encodeURIComponent(d.id)}`);
 }
 
 // Apps shown on the remote beyond the quick-launch row (chosen on the Settings page; none until chosen)
 const visibleApps = d => S.prefs.apps[d.id] || [];
 async function setVisible(d, apps) {
   S.prefs.apps[d.id] = apps; hook('onPrefs');
-  const r = await api('PUT', `/api/prefs/apps/${encodeURIComponent(d.id)}`, {apps});
+  const r = await api('PUT', `/api/tv/prefs/apps/${encodeURIComponent(d.id)}`, {apps});
   if (!r.ok) alert(r.body || 'Could not save');
 }
 async function resetVisible(d) {
   delete S.prefs.apps[d.id]; hook('onPrefs');
-  await api('DELETE', `/api/prefs/apps/${encodeURIComponent(d.id)}`);
+  await api('DELETE', `/api/tv/prefs/apps/${encodeURIComponent(d.id)}`);
 }
 function renderQuickStrip() {
   const d = dev(), el = $('#quickStrip'); if (!d || !el) return;
@@ -193,16 +197,11 @@ function renderQuickStrip() {
       : '<div class="dim small">Nothing pinned yet.</div>');
 }
 
-/* ------------------------------------------------------------------ nav + what's-new notices */
-const NAV = [['/', 'Remote'], ['/settings', 'Settings'], ['/tvs', 'TVs'], ['/advanced', 'Advanced']];
-function renderNav() {
-  const el = $('#nav'); if (!el) return;
-  el.innerHTML = NAV.map(([href, label]) => `<a href="${href}" ${location.pathname === href ? 'class="on" aria-current="page"' : ''}>${label}</a>`).join('');
-}
+/* ------------------------------------------------------------------ what's-new notices */
 function seenNotices() { try { return JSON.parse(localStorage.getItem('seenNotices') || '[]'); } catch (_) { return []; } }
 function markSeen(id) { try { localStorage.setItem('seenNotices', JSON.stringify([...new Set([...seenNotices(), id])])); } catch (_) {} }
 async function loadNotices() {
-  const r = await api('GET', '/api/notices');
+  const r = await api('GET', '/api/tv/notices');
   S.notices = r.notices || [];
   S.notices.filter(n => n.href === location.pathname).forEach(n => markSeen(n.id));   // you are already looking at it
   renderNotices(); hook('onNotices');
@@ -211,7 +210,7 @@ function renderNotices() {   // one at a time, so a notice never pushes the remo
   const el = $('#notices'); if (!el) return;
   const seen = seenNotices(), unseen = S.notices.filter(n => !seen.includes(n.id)), n = unseen[0];
   el.innerHTML = !n ? '' : `<div class="notice" role="status"><div class="ntext"><b>${esc(n.title)}</b>${unseen.length > 1 ? ` <span class="dim small">(${unseen.length - 1} more)</span>` : ''}<div class="small">${esc(n.body)}</div></div>
-    <div class="nbtns">${n.href ? `<a class="btn primary" href="${esc(n.href)}" data-notice="${esc(n.id)}">${esc(n.action || 'Open')}</a>` : ''}<button data-act="dismissNotice" data-id="${esc(n.id)}">Dismiss</button></div></div>`;
+    <div class="nbtns">${n.href ? `<a class="tv-btn primary" href="${esc(n.href)}" data-notice="${esc(n.id)}">${esc(n.action || 'Open')}</a>` : ''}<button data-act="dismissNotice" data-id="${esc(n.id)}">Dismiss</button></div></div>`;
 }
 document.addEventListener('click', e => { const a = e.target.closest('[data-notice]'); if (a) markSeen(a.dataset.notice); });
 
@@ -221,7 +220,7 @@ function activeSession() {
   return sessionFor(S.devId);
 }
 async function pollSessions() {
-  const r = await api('GET', '/api/jf/sessions');
+  const r = await api('GET', '/api/tv/jf/sessions');
   const ok = Array.isArray(r), chip = $('#jfState');
   if (chip) { chip.textContent = ok ? `Jellyfin: ${r.length} session(s)` : 'Jellyfin: unreachable'; chip.style.color = ok ? '' : 'var(--bad)'; }
   if (!ok) return;
@@ -247,7 +246,7 @@ function jfAct(btn, path, body) {
 const WATCH_HTML = `<dialog id="watch">
   <div class="dlg-head"><b id="wTitle">Watch a movie</b><button data-act="watchClose" class="small">✕</button></div>
   <div id="wSearch">
-    <div class="row"><input id="wq" placeholder="Search for a movie…"><button data-act="wsearch">Search</button></div>
+    <div class="tv-row"><input id="wq" placeholder="Search for a movie…"><button data-act="wsearch">Search</button></div>
     <div id="wResults"></div>
   </div>
   <div id="wChoose" hidden>
@@ -260,10 +259,10 @@ const WATCH_HTML = `<dialog id="watch">
   <div id="wProgress" hidden>
     <div id="wSteps" class="steps"></div>
     <div id="wResult"></div>
-    <div class="row"><button data-act="watchAgain">Choose another place</button><button data-act="watchClose">Close</button></div>
+    <div class="tv-row"><button data-act="watchAgain">Choose another place</button><button data-act="watchClose">Close</button></div>
   </div>
 </dialog>`;
-document.body.insertAdjacentHTML('beforeend', WATCH_HTML);
+($('.tvr') || document.body).insertAdjacentHTML('beforeend', WATCH_HTML);
 $('#wq').onkeydown = e => { if (e.key === 'Enter') watchSearch(); };
 
 function openWatch(item) {
@@ -279,7 +278,7 @@ function showWatchStep(id) {
   if (id === 'wSearch') $('#wq').focus();
 }
 async function watchSearch() {
-  const r = await api('GET', '/api/jf/search?q=' + encodeURIComponent($('#wq').value));
+  const r = await api('GET', '/api/tv/jf/search?q=' + encodeURIComponent($('#wq').value));
   if (!Array.isArray(r)) { $('#wResults').textContent = r.body || 'Search failed'; return; }
   const found = r.filter(i => i.Type !== 'Series');
   found.forEach(i => S.items[i.Id] = i);
@@ -352,8 +351,8 @@ const ACTIONS = {
   key: b => sendKey(b, b.dataset.key),
   power: async b => { await run(b, api('POST', devPath('/power'), {state: b.dataset.state})); pollStatus(dev()); },
   launch: async b => { await run(b, api('POST', devPath('/launch'), {app: b.dataset.app})); setTimeout(() => pollStatus(dev()), 1500); },
-  playstate: b => jfAct(b, '/api/jf/playstate', {command: b.dataset.cmd}),
-  relseek: b => { const s = needSession(); if (s) jfAct(b, '/api/jf/playstate', {command: 'Seek', seekPositionTicks: Math.max(0, Math.round(((s.PlayState.PositionTicks || 0) / TICKS + Number(b.dataset.d)) * TICKS))}); },
+  playstate: b => jfAct(b, '/api/tv/jf/playstate', {command: b.dataset.cmd}),
+  relseek: b => { const s = needSession(); if (s) jfAct(b, '/api/tv/jf/playstate', {command: 'Seek', seekPositionTicks: Math.max(0, Math.round(((s.PlayState.PositionTicks || 0) / TICKS + Number(b.dataset.d)) * TICKS))}); },
   watch: () => openWatch(null),
   watchClose: () => $('#watch').close(),
   wsearch: () => watchSearch(),
@@ -385,7 +384,7 @@ document.addEventListener('click', e => {
 /* ------------------------------------------------------------------ log (kept on every page; drawn where there is a #log) */
 async function fetchLog() {
   if ($('#fPause')?.checked) return;
-  const r = await api('GET', '/api/log?since=' + S.logLast);
+  const r = await api('GET', '/api/tv/log?since=' + S.logLast);
   if (r.build) { if (!S.build) S.build = r.build; else if (S.build !== r.build) return location.reload(); }   // server was updated
   if (!r.entries || !r.entries.length) return;
   S.logLast = r.last;
@@ -395,7 +394,7 @@ async function fetchLog() {
 
 /* ------------------------------------------------------------------ start */
 async function startApp() {
-  renderNav(); loadNotices();
+  loadNotices();
   await loadConfig();
   pollAll(); pollSessions(); fetchLog();
   setInterval(pollAll, 5000);

@@ -1,5 +1,0 @@
-flask>=3.0.3
-requests>=2.31.0
-androidtvremote2>=0.3.2
-pychromecast>=14.0.0
-zeroconf>=0.130.0   # optional: finds Google TVs by mDNS on the TVs page
