@@ -13,6 +13,22 @@ cp devices.example.json devices.json     # edit hosts / names
 python remote_control_app.py             # http://127.0.0.1:5055
 ```
 
+## The two pages
+
+**Remote** (`/`) is the everyday page, laid out for a phone: the TV's name and state, a **Now playing** block built
+into the remote (what is on, with Pause/Resume, ±30 s and Stop when Jellyfin is playing it), Power on / Sleep, a
+**quick-launch row** of up to four apps, Back / Home / Options, the D-pad, rewind / play-pause / fast-forward, volume,
+and the **Watch a movie…** button. On a computer the arrow keys, Enter, Esc, Space, `m` and `+`/`-` drive it too.
+
+**Settings & testing** (`/settings`, the ⚙ button) holds everything else: every key, text entry, screenshot, wake and
+sleep tests (Wake-on-LAN, screensaver, Probe network, Diagnose, Detect MAC), pairing, the full app list, Jellyfin
+sessions, library search and commands, and the log.
+
+**Choosing quick-launch apps:** on Settings, tap ☆ on an app (or ‹ › ✕ on the quick-launch strip to reorder or
+remove). Each TV has its own list, shared by every browser that opens the app, and saved in
+`.remote_control/prefs.json` (`--prefs` changes the location). Until you choose, the first four of Jellyfin,
+Netflix, YouTube, Disney+, Prime Video, Hulu, Plex and Max that the TV has are used.
+
 ## Using it from a phone
 
 The "Watch a movie…" button asks where to watch: this phone, or any configured TV. To open the page on a phone

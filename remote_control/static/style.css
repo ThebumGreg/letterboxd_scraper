@@ -106,3 +106,40 @@ dialog::backdrop{background:rgba(0,0,0,.65)}
 .ico.logo{position:relative}
 .ico.logo::after{content:"";width:62%;height:62%;background:#fff;-webkit-mask:var(--m) center/contain no-repeat;mask:var(--m) center/contain no-repeat}
 .ico.logo{background:var(--bg)}
+
+/* ---------------------------------------------------------------- Remote page */
+.topbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line)}
+.topbar .gear{margin-left:auto}
+.remote-page{display:block;max-width:440px;margin:12px auto;padding:0 12px}
+.remote-page .remote-card{max-width:none}
+.r-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.r-top h3{margin:0;font-size:16px;text-align:left}
+.remote-page .rgrid button{padding:12px 4px;font-size:15px}
+.remote-page .dpad{grid-template-columns:repeat(3,76px);grid-template-rows:repeat(3,64px)}
+.watchbtn{width:100%;margin-top:12px;padding:13px;border-radius:14px;font-size:15px}
+
+/* now playing, built into the remote */
+.np{background:#12171c;border:1px solid var(--line);border-radius:16px;padding:10px;margin:10px 0}
+.np .ico{width:36px;height:36px;font-size:13px;border-radius:9px}
+.np .np-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.np-who{min-width:0}
+.np-ctl{display:flex;gap:6px;margin-top:8px}.np-ctl button{flex:1;padding:8px 4px}
+
+/* quick launch */
+.quick{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:10px 0}
+.tile{display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 4px;border-radius:12px;font-size:11px;line-height:1.2;text-align:center}
+.tile .ico{width:44px;height:44px}
+.tile .n{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tile.active{border-color:var(--ok);background:#1d3b25}
+.quick-note{grid-column:1/-1;text-align:center;padding:8px 0}
+.quick-note a,.pair a{color:var(--acc)}
+
+/* ---------------------------------------------------------------- Settings page */
+.rgrid.r4{grid-template-columns:repeat(4,1fr)}
+.tilebox{position:relative}.tilebox .tile{width:100%}
+.pin{position:absolute;top:1px;right:1px;border:0;background:transparent;font-size:16px;padding:0 5px;color:var(--dim);line-height:1.2}
+.pin.on{color:#f5c518}
+.qstrip{margin:8px 0}
+.qrow{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.qchip{display:inline-flex;align-items:center;gap:6px;background:var(--key);border:1px solid var(--line);border-radius:10px;padding:3px 6px}
+.qchip .ico{width:24px;height:24px;font-size:10px;border-radius:6px}

@@ -4,6 +4,8 @@ import hmac
 import json
 import os
 import re
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -29,7 +31,12 @@ BUILD = _build_id()
 app = Flask(__name__, static_folder=STATIC, static_url_path="/static")
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 state = SimpleNamespace(logbook=LogBook(), jf=None, devices={}, config_path=None, config_error=None,
-                        options={}, last_status={}, token="", public_url="", icons={})
+                        options={}, last_status={}, token="", public_url="", icons={},
+                        prefs={"quick": {}}, prefs_path=None, prefs_lock=threading.Lock(), apps_cache={})
+
+APPS_TTL = 600           # seconds an installed-app list is reused
+QUICK_MAX = 4            # apps pinned to a remote
+APP_ID_RE = re.compile(r"^[\w.\-]{1,120}$")
 
 
 def reply(ok, body, status=None, **extra):
@@ -99,6 +106,7 @@ def reload_devices():
         except Exception as e:  # a failing disconnect must not block the reload
             state.logbook.add("system", old.id, "close", ok=False, response=str(e))
     state.icons.clear()
+    state.apps_cache.clear()
     state.devices, state.config_error = load_devices(state.config_path, state.logbook, state.options)
     state.last_status.clear()
     state.logbook.add("system", None, "config", ok=state.config_error is None,
@@ -109,6 +117,58 @@ def reload_devices():
 @app.get("/")
 def index():
     return send_from_directory(STATIC, "index.html")
+
+
+@app.get("/settings")
+def settings_page():
+    return send_from_directory(STATIC, "settings.html")
+
+
+def load_prefs():
+    try:
+        data = json.loads(Path(state.prefs_path).read_text(encoding="utf-8"))
+        state.prefs = {"quick": {k: v for k, v in (data.get("quick") or {}).items() if isinstance(v, list)}}
+    except (OSError, ValueError, TypeError, AttributeError):
+        state.prefs = {"quick": {}}
+
+
+def save_prefs():
+    path = Path(state.prefs_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state.prefs, indent=2), encoding="utf-8")
+    os.replace(tmp, path)   # a crash mid-write must not lose the saved choices
+
+
+@app.get("/api/prefs")
+def api_prefs():
+    return jsonify(prefs=state.prefs, quickMax=QUICK_MAX)
+
+
+@app.put("/api/prefs/quick/<dev_id>")
+def api_prefs_quick(dev_id):
+    device(dev_id)
+    apps = json_body().get("apps")
+    if not isinstance(apps, list) or len(apps) > QUICK_MAX:
+        raise DeviceError(f"choose up to {QUICK_MAX} apps")
+    clean = []
+    for a in apps:
+        if not isinstance(a, dict) or not APP_ID_RE.match(str(a.get("id", ""))):
+            raise DeviceError("bad app id")
+        if a["id"] not in [c["id"] for c in clean]:
+            clean.append({"id": a["id"], "name": str(a.get("name") or a["id"])[:60]})
+    with state.prefs_lock:
+        state.prefs["quick"][dev_id] = clean
+        save_prefs()
+    return reply(True, f"saved {len(clean)} quick-launch app(s)", apps=clean)
+
+
+@app.delete("/api/prefs/quick/<dev_id>")
+def api_prefs_quick_reset(dev_id):
+    with state.prefs_lock:
+        state.prefs["quick"].pop(dev_id, None)
+        save_prefs()
+    return reply(True, "reset to the defaults")
 
 
 @app.get("/favicon.ico")
@@ -267,7 +327,14 @@ def api_device_text(dev_id):
 
 @app.get("/api/devices/<dev_id>/apps")
 def api_device_apps(dev_id):
-    return jsonify(device(dev_id).apps())
+    """Installed apps. Listing them can be slow (ADB), so the result is reused for a while."""
+    d = device(dev_id)
+    cached = state.apps_cache.get(dev_id)
+    if cached and time.time() - cached[0] < APPS_TTL and request.args.get("refresh") != "1":
+        return jsonify(cached[1])
+    apps = d.apps()
+    state.apps_cache[dev_id] = (time.time(), apps)
+    return jsonify(apps)
 
 
 @app.post("/api/devices/<dev_id>/launch")
@@ -444,6 +511,8 @@ def main():
                    help="also write every log entry here as JSON lines ('' to disable)")
     p.add_argument("--cert-dir", default=os.environ.get("REMOTE_CERT_DIR", str(root / ".remote_control" / "certs")),
                    help="where the Remote-protocol client certificate (from pairing) is kept")
+    p.add_argument("--prefs", default=os.environ.get("REMOTE_PREFS", str(root / ".remote_control" / "prefs.json")),
+                   help="where choices made in the UI (quick-launch apps) are saved")
     p.add_argument("--public-url", default=os.environ.get("JELLYFIN_PUBLIC_URL", ""),
                    help="Jellyfin address a phone should open (defaults to --url)")
     p.add_argument("--token", default=os.environ.get("REMOTE_TOKEN", ""),
@@ -455,6 +524,8 @@ def main():
     state.logbook = LogBook(path=a.log_file or None)
     state.options = {"adb": a.adb, "cert_dir": a.cert_dir}
     state.token, state.public_url = a.token, a.public_url.rstrip("/")
+    state.prefs_path = a.prefs
+    load_prefs()
     if a.host not in ("127.0.0.1", "localhost", "::1") and not a.token:
         warning = ("Listening beyond this computer with no --token: anyone on your network can control "
                    "these devices. Add --token SECRET.")

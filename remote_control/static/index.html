@@ -1,102 +1,17 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Whole-House Remote</title>
+<title>Remote</title>
 <link rel="stylesheet" href="/static/style.css">
-</head><body>
-<header>
-  <h1>Whole-House Remote</h1>
+</head><body class="remote-body">
+<header class="topbar">
   <div id="devbar"></div>
-  <span class="grow"></span>
-  <button class="primary" data-act="watch">🎬 Watch a movie…</button>
-  <span id="jfState" class="chip">Jellyfin: ...</span>
-  <button data-act="reload" title="Re-read devices.json">Reload devices</button>
+  <a class="btn gear" href="/settings" title="Settings and testing">⚙ Settings</a>
 </header>
 <div id="banner" hidden></div>
-
-<main>
-  <section id="remote" class="remote-card"><div class="dim">Select a device</div></section>
-
-  <div class="col">
-    <section id="nowCard"><h2>Now playing</h2>
-      <div id="now" class="dim">Select a device</div>
-      <div class="row" id="transport"></div>
-      <div class="row">
-        <button data-act="relseek" data-d="-30">-30s</button><button data-act="relseek" data-d="30">+30s</button>
-        <input id="seekSec" type="number" min="0" placeholder="seek to (s)" style="max-width:120px"><button data-act="seek">Seek</button>
-      </div>
-    </section>
-
-    <section id="appsCard"><h2>Apps <button data-act="refreshApps" class="small">refresh</button></h2>
-      <div id="apps" class="apps dim">Select a device</div>
-      <details class="adv"><summary>Launch with content (Roku deep link) or a link</summary>
-        <div class="row"><input id="lpApp" placeholder="app id or link"><input id="lpContent" placeholder="contentId"><input id="lpType" placeholder="mediaType (movie, series, episode...)">
-          <button data-act="launchCustom">Launch</button></div>
-      </details>
-    </section>
-
-    <section id="jfCard"><h2>Jellyfin</h2>
-      <div class="row">
-        <label class="small dim">Session
-          <select id="sessSel"></select></label>
-        <button data-act="prepare" id="prepareBtn" title="Power on, open the Jellyfin app, wait for its session">Prepare device</button>
-        <span id="prepState" class="small dim"></span>
-      </div>
-      <div class="row"><input id="q" placeholder="Search movies / shows / episodes"><button data-act="search">Search</button></div>
-      <div class="row small dim">
-        <label><input type="checkbox" id="prep" checked> Prepare device first</label>
-        <input id="optPos" type="number" min="0" placeholder="start (s)" style="max-width:90px">
-        <input id="optAud" type="number" min="0" placeholder="audio idx" style="max-width:90px">
-        <input id="optSub" type="number" min="-1" placeholder="sub idx" style="max-width:90px">
-        <input id="ids" placeholder="or item id(s)"><button data-act="playids" data-cmd="PlayNow">Now</button>
-      </div>
-      <div id="results"></div>
-    </section>
-
-    <details id="jfAdv" class="card"><summary>Jellyfin commands, messages, details</summary>
-      <div class="small dim">Dashed = not in the session's SupportedCommands (still clickable, to test).</div>
-      <div class="row" id="caps"></div>
-      <div class="row" id="cmds"></div>
-      <div class="row"><select id="rawCmd"></select><input id="rawArgs" placeholder='arguments JSON, e.g. {"Volume":"50"}'><button data-act="rawcmd">Send</button></div>
-      <div class="row"><input id="mHead" placeholder="Header"><input id="mText" placeholder="Text"><input id="mTime" type="number" value="5000" style="max-width:90px"><button data-act="message">Show message</button></div>
-      <div class="row"><input id="vId" placeholder="Item id"><select id="vType"><option>Movie</option><option>Series</option><option>Episode</option></select><button data-act="viewform">Open detail page</button></div>
-    </details>
-  </div>
-
-  <section id="logCard" class="wide">
-    <h2>Log
-      <span class="logtools">
-        <select id="fDevice"><option value="">all devices</option></select>
-        <select id="fKind"><option value="">all sources</option></select>
-        <label class="small"><input type="checkbox" id="fErr"> errors only</label>
-        <input id="fText" placeholder="filter text" style="width:130px">
-        <label class="small"><input type="checkbox" id="fPause"> pause</label>
-        <button data-act="logClear" class="small">clear</button>
-        <a href="/api/log/download" class="btn small">download</a>
-      </span>
-    </h2>
-    <div id="log"></div>
-  </section>
+<main class="remote-page">
+  <section id="remote" class="remote-card"><div class="dim">Loading…</div></section>
 </main>
-
-<dialog id="watch">
-  <div class="dlg-head"><b id="wTitle">Watch a movie</b><button data-act="watchClose" class="small">✕</button></div>
-  <div id="wSearch">
-    <div class="row"><input id="wq" placeholder="Search for a movie…"><button data-act="wsearch">Search</button></div>
-    <div id="wResults"></div>
-  </div>
-  <div id="wChoose" hidden>
-    <div id="wItem"></div>
-    <label class="small" id="wResumeRow" hidden><input type="checkbox" id="wResume" checked> Resume at <span id="wResumeAt"></span></label>
-    <div class="dim small" style="margin:8px 0 4px">Where do you want to watch?</div>
-    <div id="wTargets"></div>
-    <button data-act="watchBack" class="small" id="wBackSearch">← pick a different movie</button>
-  </div>
-  <div id="wProgress" hidden>
-    <div id="wSteps" class="steps"></div>
-    <div id="wResult"></div>
-    <div class="row"><button data-act="watchAgain">Choose another place</button><button data-act="watchClose">Close</button></div>
-  </div>
-</dialog>
-<script src="/static/app.js"></script>
+<script src="/static/common.js"></script>
+<script src="/static/remote.js"></script>
 </body></html>
