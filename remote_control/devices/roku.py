@@ -22,7 +22,7 @@ class RokuDriver(Driver):
     type = "roku"
     log_kind = "roku"
     label = "Roku / Roku TV (ECP)"
-    capabilities = frozenset({"keys", "apps", "text", "power_on", "power_off", "launch"})
+    capabilities = frozenset({"keys", "apps", "text", "power_on", "power_off", "launch", "icons"})
     keymap = {
         "home": "Home", "back": "Back",
         "up": "Up", "down": "Down", "left": "Left", "right": "Right", "ok": "Select",
@@ -91,15 +91,42 @@ class RokuDriver(Driver):
             app_id, name = app.get("id") or "home", (app.text or "").strip()
         else:
             app_id = name = None
-        if mode is not None and not self.mac:
+        if not self.mac:
             self.mac = info.findtext("wifi-mac") or info.findtext("ethernet-mac")
-        return {
-            "online": True,
-            "power": {"PowerOn": "on", "Headless": "on", "Ready": "standby", "DisplayOff": "standby"}.get(mode, mode),
-            "app": app_id,
-            "appName": name,
+        power = {"PowerOn": "on", "Headless": "on", "Ready": "standby", "DisplayOff": "standby"}.get(mode, mode)
+        out = {
+            "online": True, "power": power, "app": app_id, "appName": name,
             "detail": {k: info.findtext(k) for k in ("friendly-device-name", "model-name", "software-version", "is-tv", "power-mode")},
         }
+        if power == "on" and app_id not in (None, "home", "screensaver"):
+            out["media"] = self._media(quiet)
+        return out
+
+    def _media(self, quiet):
+        """Playback state from the active channel (apps vary in how much they report)."""
+        try:
+            player = self._xml(self._ecp("GET", "/query/media-player", action="media-player", quiet=True).text)
+        except DeviceError:
+            return None
+        state = player.get("state")
+        if state in (None, "none", "close"):
+            return None
+        ms = lambda tag: int(m.group(1)) if (m := re.match(r"\s*(\d+)", player.findtext(tag) or "")) else None
+        return {"state": {"play": "playing", "pause": "paused", "buffer": "buffering", "startup": "starting"}.get(state, state),
+                "title": None, "positionMs": ms("position"), "durationMs": ms("duration"), "source": "Roku media player"}
+
+    def detect_mac(self):
+        self.status(quiet=True)
+        if not self.mac:
+            raise DeviceError("The Roku did not report a MAC address")
+        self.log("detect mac", "", None, True, None, self.mac)
+        return self.mac
+
+    def icon(self, app_id):
+        if not APP_RE.match(app_id):
+            raise DeviceError("bad app id")
+        r = self._ecp("GET", f"/query/icon/{app_id}", quiet=True)
+        return r.content, r.headers.get("Content-Type", "image/png")
 
     def valid_native_key(self, key):
         return bool(KEY_RE.match(key))

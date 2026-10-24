@@ -3,9 +3,11 @@
     {
       "id": "front-room",
       "name": "Front Room Google TV",
-      "type": "androidtv",
+      "type": "googletv",
       "host": "192.168.1.50",
       "mac": "AA:BB:CC:DD:EE:FF",
+      "broadcast": "192.168.1.255",
+      "adb": false,
       "jellyfin": {
         "app": "org.jellyfin.androidtv",
         "session": { "client": "Android TV" }

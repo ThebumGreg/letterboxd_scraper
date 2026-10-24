@@ -9,11 +9,15 @@ const TRANSPORT = ['Pause','Unpause','PlayPause','Stop','PreviousTrack','NextTra
 const KEY_LABELS = {home:'Home',back:'Back',options:'✱ Options',info:'Info',search:'Search',play_pause:'⏯',stop:'⏹',rewind:'⏪',ff:'⏩',prev:'⏮',next:'⏭',replay:'↺ Replay',
   vol_up:'Vol +',vol_down:'Vol −',mute:'Mute',ch_up:'Ch +',ch_down:'Ch −',backspace:'⌫',enter:'Enter'};
 const KEYBOARD = {ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',Enter:'ok',Escape:'back',Backspace:'back',Home:'home',' ':'play_pause',m:'mute','+':'vol_up','=':'vol_up','-':'vol_down'};
+// Brand colours for the fallback icon badge (a real icon file or the device's own icon wins when available)
+const BRANDS = [['jellyfin','#00a4dc'],['netflix','#e50914'],['youtube','#ff0000'],['disney','#113ccf'],['prime','#00a8e1'],['hulu','#1ce783','#000'],
+  ['max','#5822b4'],['plex','#e5a00d','#000'],['spotify','#1db954','#000'],['apple','#555'],['peacock','#222'],['paramount','#0064ff'],['home','#4a5a6a'],['roku','#6c1d99']];
 
 const S = {
-  devices: [], devId: localStorage.getItem('devId') || '', status: {}, apps: {}, appsLoaded: {},
-  sessions: [], sessSel: 'auto', logAll: [], logLast: 0, keyboard: localStorage.getItem('kbd') === '1', sig: '',
+  devices: [], devId: localStorage.getItem('devId') || '', status: {}, apps: {}, appsLoaded: {}, publicUrl: '',
+  sessions: [], sessSel: 'auto', logAll: [], logLast: 0, keyboard: localStorage.getItem('kbd') === '1', sig: '', items: {},
 };
+const W = {item: null, devId: null};
 const dev = () => S.devices.find(d => d.id === S.devId);
 const has = cap => (dev()?.capabilities || []).includes(cap);
 
@@ -30,30 +34,61 @@ async function run(btn, promise) {
   const res = await promise;
   if (btn) {
     btn.classList.remove('busy');
-    const cls = res && res.ok ? 'ok' : 'bad';
+    const cls = res && res.ok && res.confirmed !== false ? 'ok' : 'bad';
     btn.classList.add(cls); setTimeout(() => btn.classList.remove(cls), 600);
   }
   fetchLog();
   return res;
 }
-const devPath = p => `/api/devices/${encodeURIComponent(S.devId)}${p}`;
+const devPath = (p, id = S.devId) => `/api/devices/${encodeURIComponent(id)}${p}`;
+const lastLine = t => String(t || 'failed').split('\n').filter(Boolean).pop();
+
+/* ------------------------------------------------------------------ icons */
+function badge(name) {
+  const key = String(name || '?').toLowerCase();
+  const brand = BRANDS.find(b => key.includes(b[0]));
+  let hue = 0; for (const c of key) hue = (hue * 31 + c.charCodeAt(0)) % 360;
+  const el = document.createElement('span');
+  el.className = 'ico';
+  el.style.background = brand ? brand[1] : `hsl(${hue} 45% 38%)`;
+  if (brand && brand[2]) el.style.color = brand[2];
+  el.textContent = String(name || '?').replace(/[^A-Za-z0-9+]/g, ' ').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+  return el;
+}
+function iconHtml(d, app) {
+  const src = d && (d.capabilities.includes('icons') ? devPath('/icon/' + encodeURIComponent(app.id), d.id) : `/static/icons/${encodeURIComponent(app.id)}.png`);
+  return `<img class="ico" src="${esc(src)}" data-fallback="${esc(app.name)}" alt="">`;
+}
+document.addEventListener('error', e => {
+  const i = e.target;
+  if (i.tagName === 'IMG' && i.classList.contains('ico')) i.replaceWith(badge(i.dataset.fallback));
+}, true);
 
 /* ------------------------------------------------------------------ devices */
 async function loadConfig() {
   const c = await api('GET', '/api/config');
   S.devices = c.devices || [];
+  S.publicUrl = c.jellyfinPublicUrl || '';
   if (!dev()) S.devId = S.devices[0]?.id || '';
   const banner = $('#banner');
   banner.hidden = !c.configError;
   banner.textContent = c.configError || '';
   $('#fDevice').innerHTML = '<option value="">all devices</option>' + S.devices.map(d => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('');
-  renderDevBar(); renderRemote(); selectDevice(S.devId, true);
+  renderDevBar(); selectDevice(S.devId, true);
+}
+function sessionFor(id) { return S.sessions.find(s => s.deviceId === id); }
+function playingTitle(id) {
+  if (S.status[id] && !S.status[id].online) return null;   // a lingering Jellyfin session says nothing about an offline TV
+  const s = sessionFor(id), n = s && s.NowPlaying;
+  if (n) return {title: itemLabel(n), paused: s.PlayState?.IsPaused};
+  const m = S.status[id]?.media;
+  return m ? {title: m.title || (S.status[id].appName || 'media'), paused: m.state === 'paused'} : null;
 }
 function renderDevBar() {
   $('#devbar').innerHTML = S.devices.map(d => {
-    const st = S.status[d.id];
+    const st = S.status[d.id], pl = playingTitle(d.id);
     const cls = !st ? '' : !st.online ? 'offline' : st.power || '';
-    const sub = !st ? '…' : !st.online ? 'offline' : [st.power, st.appName].filter(Boolean).join(' · ');
+    const sub = !st ? '…' : !st.online ? 'offline' : [st.power, pl ? (pl.paused ? '⏸ ' : '▶ ') + pl.title : st.appName].filter(Boolean).join(' · ');
     return `<div class="dev ${d.id === S.devId ? 'sel' : ''}" data-act="selectdev" data-id="${esc(d.id)}"><span class="dot ${cls}"></span><div>${esc(d.name)}<div class="sub">${esc(sub)}</div></div></div>`;
   }).join('') || '<span class="dim small">No devices configured</span>';
 }
@@ -63,10 +98,9 @@ function selectDevice(id, force) {
   renderDevBar(); renderRemote(); renderSessions(); loadApps();
 }
 async function pollStatus(d) {
-  const st = await api('GET', `/api/devices/${encodeURIComponent(d.id)}/status?poll=1`);
-  S.status[d.id] = st;
+  S.status[d.id] = await api('GET', `/api/devices/${encodeURIComponent(d.id)}/status?poll=1`);
   renderDevBar();
-  if (d.id === S.devId) renderRemoteStatus();
+  if (d.id === S.devId) { renderRemoteStatus(); renderNow(); }
 }
 const pollAll = () => Promise.all(S.devices.map(pollStatus));
 
@@ -74,16 +108,21 @@ const pollAll = () => Promise.all(S.devices.map(pollStatus));
 function renderRemote() {
   const d = dev(), el = $('#remote');
   if (!d) { el.innerHTML = '<div class="dim">No device selected</div>'; return; }
-  const k = (key, cls = '') => `<button data-act="key" data-key="${key}" class="${cls}" ${d.keys[key] ? '' : 'disabled'} title="${key}">${KEY_LABELS[key] || key}</button>`;
+  const k = key => `<button data-act="key" data-key="${key}" ${d.keys[key] ? '' : 'disabled'} title="${key}">${KEY_LABELS[key] || key}</button>`;
   const dp = (key, label, cls = '') => `<button data-act="key" data-key="${key}" class="${cls}" ${d.keys[key] ? '' : 'disabled'} title="${key}">${label}</button>`;
-  const power = has('power_on') ? `<div class="rgrid r2"><button data-act="power" data-state="on" class="pwr">⏻ Power on</button><button data-act="power" data-state="off" class="pwr">⏻ Power off</button></div>` : '';
+  const pairing = has('pairing') ? `<div class="pair" id="pairBox" hidden><b>Pairing required</b>
+      <div class="small dim">Press Start, then type the code that appears on the TV.</div>
+      <div class="row"><button data-act="pairStart">Start pairing</button><input id="pairCode" placeholder="code on TV" maxlength="8" style="max-width:120px"><button data-act="pairFinish">Finish</button></div></div>` : '';
+  const power = has('power_on') ? `<div class="rgrid r2"><button data-act="power" data-state="on" class="pwr">⏻ Power on</button><button data-act="power" data-state="off" class="pwr">⏻ Power off</button></div>
+    <div class="rgrid r2"><button data-act="wol" title="Send a Wake-on-LAN magic packet">⚡ Wake-on-LAN</button><button data-act="detectMac" title="Read the device's MAC address (it must be on)">Detect MAC</button></div>
+    <div class="small dim" id="macLine" style="text-align:center"></div>` : '';
   const more = d.extraKeys.length ? `<details class="adv"><summary>More keys</summary><div class="rgrid r2">${d.extraKeys.map(x => `<button data-act="rawkey" data-native="${esc(x.key)}" title="${esc(x.key)}">${esc(x.label)}</button>`).join('')}</div></details>` : '';
   const text = has('text') ? `<div class="row"><input id="txt" placeholder="Type on the TV"><button data-act="text">Send</button></div>` : '';
-  const shot = has('screenshot') ? `<button data-act="shot">Screenshot</button><img id="shot" alt="" hidden style="max-width:100%;margin-top:6px;border-radius:8px">` : '';
+  const shot = has('screenshot') ? `<button data-act="shot">Screenshot</button>` : '';
   el.innerHTML = `
     <h3>${esc(d.name)}</h3>
     <div class="rstat small dim" id="rstat"></div>
-    ${power}
+    ${pairing}${power}
     <div class="rgrid r3">${k('back')}${k('home')}${k('options')}</div>
     <div class="dpad">
       <span></span>${dp('up','▲')}<span></span>
@@ -97,6 +136,7 @@ function renderRemote() {
     <div class="rgrid r2">${k('ch_down')}${k('ch_up')}</div>
     ${text}
     <div class="row"><input id="rawKey" placeholder="raw ${d.type === 'roku' ? 'ECP key (e.g. InputHDMI2)' : 'keycode (e.g. KEYCODE_GUIDE)'}"><button data-act="rawkeybox">Send</button>${shot}</div>
+    <img id="shot" alt="" hidden style="max-width:100%;margin-top:6px;border-radius:8px">
     ${more}
     <div class="kbd small dim"><label><input type="checkbox" id="kbd" ${S.keyboard ? 'checked' : ''}> keyboard control (arrows, Enter, Esc, Space, m, +/−)</label></div>
     <div class="small dim" style="text-align:center;margin-top:6px">${esc(d.typeLabel)} · ${esc(d.host)}</div>`;
@@ -107,13 +147,16 @@ function renderRemoteStatus() {
   const st = S.status[S.devId], el = $('#rstat');
   if (!el) return;
   el.innerHTML = !st ? '…' : st.online
-    ? `<span class="chip">${esc(st.power)}</span><span class="chip">${esc(st.appName || st.app || 'unknown app')}</span>`
+    ? `<span class="chip">${esc(st.power)}</span><span class="chip">${esc(st.appName || st.app || 'unknown app')}</span>` +
+      (st.volume ? `<span class="chip">vol ${esc(st.volume.level)}/${esc(st.volume.max)}${st.volume.muted ? ' muted' : ''}</span>` : '')
     : `<span class="chip" style="color:var(--bad)">offline</span> ${esc(st.error || '')}`;
+  const pair = $('#pairBox'); if (pair) pair.hidden = !(st && st.needsPairing);
+  const mac = $('#macLine'); if (mac) mac.textContent = st && st.mac ? `MAC ${st.mac}` : 'MAC unknown (press Detect MAC while the device is on)';
 }
 const sendKey = (btn, key) => run(btn, api('POST', devPath('/key'), {key}));
 const sendNative = (btn, native) => run(btn, api('POST', devPath('/key'), {native}));
 document.addEventListener('keydown', e => {
-  if (!S.keyboard || !S.devId || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (!S.keyboard || !S.devId || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey || $('#watch').open) return;
   const key = KEYBOARD[e.key];
   if (!key) return;
   e.preventDefault();
@@ -132,16 +175,17 @@ async function loadApps(force) {
   S.apps[d.id] = r; S.appsLoaded[d.id] = true; renderApps();
 }
 function renderApps() {
-  const list = S.apps[S.devId] || [], st = S.status[S.devId] || {};
-  const btn = a => `<button data-act="launch" data-app="${esc(a.id)}" class="${a.id === st.app ? 'active' : ''}" title="${esc(a.id)}">${esc(a.name)}</button>`;
+  const d = dev(); if (!d) return;
+  const list = S.apps[d.id] || [], st = S.status[d.id] || {};
+  const tile = a => `<button data-act="launch" data-app="${esc(a.id)}" class="tile ${a.id === st.app ? 'active' : ''}" title="${esc(a.id)}">${iconHtml(d, a)}<span class="n">${esc(a.name)}</span></button>`;
   const apps = list.filter(a => a.type !== 'tvin'), inputs = list.filter(a => a.type === 'tvin');
-  $('#apps').innerHTML = (apps.map(btn).join('') + (inputs.length ? '<div class="grp">TV inputs</div>' + inputs.map(btn).join('') : '')) || '<span class="dim">No apps found</span>';
+  $('#apps').innerHTML = (apps.map(tile).join('') + (inputs.length ? '<div class="grp small dim">TV inputs</div>' + inputs.map(tile).join('') : '')) || '<span class="dim">No apps found</span>';
 }
 
-/* ------------------------------------------------------------------ jellyfin sessions */
+/* ------------------------------------------------------------------ jellyfin sessions + now playing */
 function activeSession() {
   if (S.sessSel !== 'auto') return S.sessions.find(s => s.Id === S.sessSel);
-  return S.sessions.find(s => s.deviceId === S.devId);
+  return sessionFor(S.devId);
 }
 async function pollSessions() {
   const r = await api('GET', '/api/jf/sessions');
@@ -149,33 +193,56 @@ async function pollSessions() {
   $('#jfState').textContent = ok ? `Jellyfin: ${r.length} session(s)` : 'Jellyfin: unreachable';
   $('#jfState').style.color = ok ? '' : 'var(--bad)';
   if (!ok) return;
-  S.sessions = r; renderSessions();
+  S.sessions = r; renderSessions(); renderDevBar();
 }
 function renderSessions() {
   const sig = S.sessions.map(s => s.Id + s.Client + s.DeviceName + s.deviceId).join('|') + '#' + S.sessSel + '#' + S.devId;
   if (sig !== S.sig) {
     S.sig = sig;
-    const mine = S.sessions.find(s => s.deviceId === S.devId);
+    const mine = sessionFor(S.devId);
     $('#sessSel').innerHTML = `<option value="auto">Auto: ${mine ? esc(mine.Client + ' / ' + mine.DeviceName) : 'none matched for ' + esc(dev()?.name || 'device')}</option>` +
       S.sessions.map(s => `<option value="${esc(s.Id)}" title="DeviceId ${esc(s.DeviceId)}">${esc(s.Client)} - ${esc(s.DeviceName)} (${esc(s.UserName)})</option>`).join('');
     $('#sessSel').value = S.sessSel;
   }
-  renderNowPlaying();
+  renderNow(); renderCaps();
 }
 const fmt = t => { t = Math.round(t); const h = Math.floor(t/3600), m = Math.floor(t%3600/60), s = t%60; return (h ? h + ':' + String(m).padStart(2,'0') : m) + ':' + String(s).padStart(2,'0'); };
 const itemLabel = i => i.Type === 'Episode' ? `${i.SeriesName} S${i.Season}E${i.Episode} - ${i.Name}` : i.Name + (i.Year ? ` (${i.Year})` : '');
-function renderNowPlaying() {
+function renderCaps() {
   const s = activeSession(), sup = s ? s.SupportedCommands : [];
   $('#caps').innerHTML = s ? `<span class="chip">RemoteControl: ${s.SupportsRemoteControl}</span>` + sup.map(c => `<span class="chip">${esc(c)}</span>`).join('') : '<span class="dim small">No session</span>';
   document.querySelectorAll('#cmds button').forEach(b => b.classList.toggle('unsup', !sup.includes(b.dataset.cmd)));
   document.querySelectorAll('#transport button').forEach(b => b.classList.toggle('unsup', !sup.includes('PlayState')));
-  if (!s) { $('#np').innerHTML = '<span class="dim">No Jellyfin session for this device. Press “Prepare device”, or open the Jellyfin app.</span>'; return; }
-  const n = s.NowPlaying, p = s.PlayState || {};
-  if (!n) { $('#np').innerHTML = `<span class="dim">${esc(s.Client)} / ${esc(s.DeviceName)}: nothing playing</span>`; return; }
-  const pos = (p.PositionTicks || 0) / TICKS, len = (n.RunTimeTicks || 0) / TICKS;
-  $('#np').innerHTML = `<b>${esc(itemLabel(n))}</b> ${p.IsPaused ? '(paused)' : ''}
-    <div class="bar"><div style="width:${len ? Math.min(100, pos/len*100) : 0}%"></div></div>
-    <div class="small dim">${fmt(pos)} / ${fmt(len)} · volume ${esc(p.VolumeLevel)} ${p.IsMuted ? '(muted)' : ''} · audio ${esc(p.AudioStreamIndex)} · subs ${esc(p.SubtitleStreamIndex)} · ${esc(p.PlayMethod)}</div>`;
+}
+function renderNow() {
+  const d = dev(), st = S.status[S.devId], s = activeSession(), el = $('#now');
+  if (!d) { el.textContent = 'Select a device'; return; }
+  const app = st && st.online ? ((S.apps[d.id] || []).find(a => a.id === st.app) || {id: st.app, name: st.appName || st.app || 'Unknown'}) : null;
+  const head = app ? `<div class="np-head">${iconHtml(d, app)}<div><div class="np-app">${esc(app.name)}</div>
+      <div><span class="chip">${esc(st.power)}</span>${st.volume ? `<span class="chip">vol ${esc(st.volume.level)}/${esc(st.volume.max)}${st.volume.muted ? ' muted' : ''}</span>` : ''}</div></div></div>`
+    : `<div class="np-head"><div><div class="np-app">${esc(d.name)}</div><div class="np-sub">${st ? (st.online ? '' : 'offline — ' + esc(st.error || 'not reachable')) : 'checking…'}</div></div></div>`;
+  const offline = st && !st.online;
+  const n = !offline && s && s.NowPlaying, p = (s && s.PlayState) || {}, m = st && st.media;
+  let body;
+  if (n) {
+    const pos = (p.PositionTicks || 0) / TICKS, len = (n.RunTimeTicks || 0) / TICKS;
+    body = `<div class="np-title">${esc(itemLabel(n))}</div>
+      <div class="np-sub">${[p.IsPaused ? '⏸ paused' : '▶ playing', `via Jellyfin (${s.Client})`,
+        p.VolumeLevel != null && `volume ${p.VolumeLevel}${p.IsMuted ? ' (muted)' : ''}`,
+        p.AudioStreamIndex != null && `audio ${p.AudioStreamIndex}`, p.SubtitleStreamIndex != null && `subs ${p.SubtitleStreamIndex}`,
+        p.PlayMethod].filter(Boolean).map(esc).join(' · ')}</div>
+      <div class="bar"><div style="width:${len ? Math.min(100, pos/len*100) : 0}%"></div></div>
+      <div class="small dim">${fmt(pos)} / ${fmt(len)}</div>`;
+  } else if (m) {
+    const pos = (m.positionMs || 0) / 1000, len = (m.durationMs || 0) / 1000;
+    body = `<div class="np-title">${esc(m.title || (app ? app.name : 'Playing'))}</div>
+      <div class="np-sub">${m.state === 'paused' ? '⏸ paused' : m.state === 'playing' ? '▶ playing' : esc(m.state)} · ${esc(m.source)}${m.title ? '' : ' (this app does not report a title)'}</div>
+      ${len ? `<div class="bar"><div style="width:${Math.min(100, pos/len*100)}%"></div></div><div class="small dim">${fmt(pos)} / ${fmt(len)}</div>` : (m.positionMs != null ? `<div class="small dim">at ${fmt(pos)}</div>` : '')}`;
+  } else {
+    body = `<div class="np-sub">${st && st.online ? (s ? `Jellyfin session ready (${esc(s.Client)} / ${esc(s.DeviceName)}): nothing playing` : 'Nothing playing, and no Jellyfin session for this device') : ''}</div>`;
+  }
+  el.className = '';
+  el.innerHTML = head + body;
 }
 function needSession() {
   const s = activeSession();
@@ -198,15 +265,17 @@ async function playIds(btn, itemIds, playCommand, startIndex) {
   if (S.devId && S.sessSel === 'auto') {
     $('#prepState').textContent = $('#prep').checked ? 'preparing…' : '';
     const r = await run(btn, api('POST', devPath('/play'), {...body, prepare: $('#prep').checked}));
-    $('#prepState').textContent = r.ok ? 'playing' : (r.body || 'failed').split('\n').pop();
+    $('#prepState').textContent = !r.ok ? lastLine(r.body) : r.confirmed === false ? 'accepted, but not playing' : r.confirmed ? 'playing' : 'sent';
     pollSessions(); pollStatus(dev());
     return r;
   }
   return jfAct(btn, '/api/jf/play', body);   // an explicit session was chosen
 }
 function itemRow(i, extra = '') {
+  S.items[i.Id] = i;
   const id = esc(i.Id);
   return `<div class="item"><span class="name">${esc(itemLabel(i))} <span class="dim small">${esc(i.Type)}</span></span>${extra}
+    ${i.Type === 'Series' ? '' : `<button data-act="watchItem" data-id="${id}" class="primary">Watch…</button>`}
     <button data-act="playids" data-ids='["${id}"]' data-cmd="PlayNow">Now</button>
     <button data-act="playids" data-ids='["${id}"]' data-cmd="PlayNext">Next</button>
     <button data-act="playids" data-ids='["${id}"]' data-cmd="PlayLast">Last</button>
@@ -227,6 +296,77 @@ async function episodes(btn) {
   box.innerHTML = r.map((e, n) => itemRow(e, `<button data-act="playids" data-ids='${esc(JSON.stringify(ids))}' data-cmd="PlayNow" data-index="${n}">Play from here</button>`)).join('');
 }
 
+/* ------------------------------------------------------------------ "Watch a movie…" */
+function openWatch(item) {
+  const dlg = $('#watch');
+  if (!dlg.open) dlg.showModal();
+  if (item) chooseTarget(item); else showWatchStep('wSearch');
+  // hints describe what will happen from each TV's current state, so make sure that state is fresh
+  pollAll().then(() => { if (W.item && !$('#wChoose').hidden) chooseTarget(W.item); });
+}
+function showWatchStep(id) {
+  ['wSearch', 'wChoose', 'wProgress'].forEach(x => $('#' + x).hidden = x !== id);
+  $('#wTitle').textContent = id === 'wSearch' ? 'Watch a movie' : id === 'wChoose' ? 'Where to watch?' : 'Starting playback';
+  if (id === 'wSearch') $('#wq').focus();
+}
+async function watchSearch() {
+  const r = await api('GET', '/api/jf/search?q=' + encodeURIComponent($('#wq').value));
+  if (!Array.isArray(r)) { $('#wResults').textContent = r.body || 'Search failed'; return; }
+  const found = r.filter(i => i.Type !== 'Series');
+  found.forEach(i => S.items[i.Id] = i);
+  $('#wResults').innerHTML = found.map(i => `<div class="item"><span class="name">${esc(itemLabel(i))} <span class="dim small">${esc(i.Type)}</span></span><button data-act="watchItem" data-id="${esc(i.Id)}" class="primary">Select</button></div>`).join('') || '<span class="dim">No movies found</span>';
+}
+function stateHint(d) {
+  const st = S.status[d.id];
+  if (!st) return 'checking…';
+  const mac = st.mac || d.hasMac;
+  if (!st.online) return st.needsPairing ? 'needs pairing first' : mac ? 'unreachable — will try Wake-on-LAN, then open Jellyfin and play' : 'unreachable — no MAC known for Wake-on-LAN';
+  if (st.power !== 'on') return `${st.power} — will power on, open Jellyfin and play`;
+  if (/jellyfin/i.test(st.appName || '')) return 'in Jellyfin — will start playing right away';
+  return `on, in ${st.appName || 'another app'} — will switch to Jellyfin and play`;
+}
+function chooseTarget(item) {
+  W.item = item;
+  $('#wItem').innerHTML = `<div class="np-title">${esc(itemLabel(item))}</div>`;
+  const resume = item.ResumeTicks > 0;
+  $('#wResumeRow').hidden = !resume;
+  if (resume) $('#wResumeAt').textContent = fmt(item.ResumeTicks / TICKS);
+  $('#wTargets').innerHTML = `<button class="target" data-act="watchPhone"><span class="ico badge-phone">📱</span><div><div class="t-name">This phone</div><div class="t-sub">opens the movie in Jellyfin (web) on this device</div></div></button>` +
+    S.devices.map(d => {
+      const st = S.status[d.id], cls = !st ? '' : !st.online ? 'offline' : st.power || '';
+      return `<button class="target" data-act="watchOn" data-dev="${esc(d.id)}"><span class="dot ${cls}"></span><div><div class="t-name">${esc(d.name)}</div><div class="t-sub">${esc(stateHint(d))}</div></div></button>`;
+    }).join('');
+  $('#wBackSearch').hidden = !$('#wResults').innerHTML;
+  showWatchStep('wChoose');
+}
+async function watchOn(devId) {
+  const d = S.devices.find(x => x.id === devId), item = W.item;
+  W.devId = devId;
+  showWatchStep('wProgress');
+  $('#wResult').innerHTML = '';
+  $('#wSteps').innerHTML = `<div>Starting ${esc(itemLabel(item))} on ${esc(d.name)}…</div>`;
+  const startId = S.logLast;
+  const timer = setInterval(() => {   // live progress from the server log while the request is running
+    const lines = S.logAll.filter(e => e.id > startId && e.device === devId && e.kind === 'system').map(e => `<div class="${e.ok === false ? 'bad' : ''}">${esc(e.response || e.action)}</div>`);
+    if (lines.length) $('#wSteps').innerHTML = lines.join('');
+  }, 700);
+  const resume = !$('#wResumeRow').hidden && $('#wResume').checked;
+  const r = await api('POST', devPath('/play', devId), {itemIds: [item.Id], playCommand: 'PlayNow', prepare: true,
+    startPositionTicks: resume ? item.ResumeTicks : undefined});
+  clearInterval(timer);
+  fetchLog(); pollSessions(); pollStatus(d);
+  $('#wSteps').innerHTML = (r.steps || [lastLine(r.body)]).map(x => `<div>${esc(x)}</div>`).join('');
+  $('#wResult').innerHTML = r.ok && r.confirmed ? `<div class="wres good">✓ Now playing on ${esc(d.name)}</div>`
+    : r.ok ? `<div class="wres warn">⚠ ${esc(d.name)} accepted the command, but Jellyfin never reported it playing. The app may not support remote play; see the log.</div>`
+    : `<div class="wres fail">✗ ${esc(lastLine(r.body))}</div>`;
+  if (r.ok) { S.devId = devId; localStorage.setItem('devId', devId); renderDevBar(); renderRemote(); renderApps(); }
+}
+function watchPhone() {
+  const base = (S.publicUrl || '').replace(/\/$/, '');
+  if (!base) return alert('Jellyfin is not configured.');
+  window.open(`${base}/web/index.html#/details?id=${encodeURIComponent(W.item.Id)}`, '_blank', 'noopener');
+}
+
 /* ------------------------------------------------------------------ click dispatch */
 const ACTIONS = {
   selectdev: (b) => selectDevice(b.dataset.id),
@@ -234,9 +374,13 @@ const ACTIONS = {
   key: (b) => sendKey(b, b.dataset.key),
   rawkey: (b) => sendNative(b, b.dataset.native),
   rawkeybox: (b) => { const v = $('#rawKey').value.trim(); if (v) sendNative(b, v); },
-  power: async (b) => { await run(b, api('POST', devPath('/power'), {state: b.dataset.state})); setTimeout(() => pollStatus(dev()), 1500); },
+  power: async (b) => { await run(b, api('POST', devPath('/power'), {state: b.dataset.state})); pollStatus(dev()); },
+  wol: async (b) => { await run(b, api('POST', devPath('/wol'), {})); setTimeout(() => pollStatus(dev()), 4000); },
+  detectMac: async (b) => { await run(b, api('POST', devPath('/detect-mac'), {})); pollStatus(dev()); },
+  pairStart: (b) => run(b, api('POST', devPath('/pair/start'), {})),
+  pairFinish: async (b) => { const r = await run(b, api('POST', devPath('/pair/finish'), {code: $('#pairCode').value})); if (r.ok) { $('#pairCode').value = ''; pollStatus(dev()); } },
   text: (b) => run(b, api('POST', devPath('/text'), {text: $('#txt').value})),
-  shot: (b) => { const i = $('#shot'); i.hidden = false; i.onerror = () => { i.hidden = true; fetchLog(); }; i.onload = fetchLog; i.src = devPath('/screenshot') + '?t=' + Date.now(); },
+  shot: () => { const i = $('#shot'); i.hidden = false; i.onerror = () => { i.hidden = true; fetchLog(); }; i.onload = fetchLog; i.src = devPath('/screenshot') + '?t=' + Date.now(); },
   refreshApps: () => loadApps(true),
   launch: async (b) => { await run(b, api('POST', devPath('/launch'), {app: b.dataset.app})); setTimeout(() => pollStatus(dev()), 1500); },
   launchCustom: (b) => run(b, api('POST', devPath('/launch'), {app: $('#lpApp').value.trim(), params: {contentId: $('#lpContent').value.trim(), mediaType: $('#lpType').value.trim()}})),
@@ -244,7 +388,7 @@ const ACTIONS = {
     if (!S.devId) return;
     $('#prepState').textContent = 'preparing… (see log)';
     const r = await run(b, api('POST', devPath('/prepare'), {}));
-    $('#prepState').textContent = r.ok ? 'ready' : (r.body || 'failed').split('\n').pop();
+    $('#prepState').textContent = r.ok ? 'ready' : lastLine(r.body);
     pollSessions(); pollStatus(dev());
   },
   playstate: (b) => jfAct(b, '/api/jf/playstate', {command: b.dataset.cmd}),
@@ -263,6 +407,14 @@ const ACTIONS = {
   view: (b) => jfAct(b, '/api/jf/viewing', {itemId: b.dataset.id, itemType: b.dataset.type}),
   viewform: (b) => { if ($('#vId').value) jfAct(b, '/api/jf/viewing', {itemId: $('#vId').value, itemType: $('#vType').value}); },
   logClear: async () => { await api('DELETE', '/api/log'); S.logAll = []; S.logLast = 0; renderLog(); },
+  watch: () => openWatch(null),
+  watchClose: () => $('#watch').close(),
+  wsearch: () => watchSearch(),
+  watchItem: (b) => openWatch(S.items[b.dataset.id]),
+  watchBack: () => showWatchStep('wSearch'),
+  watchAgain: () => chooseTarget(W.item),
+  watchOn: (b) => watchOn(b.dataset.dev),
+  watchPhone: () => watchPhone(),
 };
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-act]');
@@ -296,10 +448,10 @@ function renderLog() {
   const rows = S.logAll.filter(logMatches).slice(-400).reverse().map(e => {
     const unit = e.kind === 'adb' ? 'exit' : 'HTTP';
     const st = e.status == null ? '' : `<span class="st ${e.ok ? 'good' : 'badc'}">${unit} ${e.status}</span>`;
-    const okMark = e.status == null ? `<span class="${e.ok === false ? 'st badc' : ''}">${esc((e.response || '').split('\n')[0].slice(0, 160))}</span>` : '';
+    const inline = e.status == null ? `<span class="${e.ok === false ? 'st badc' : ''}">${esc((e.response || '').split('\n')[0].slice(0, 160))}</span>` : '';
     return `<details ${e.ok === false ? 'open' : ''}><summary><span class="dim">${esc(e.ts)}</span>
       <span class="tag ${esc(e.kind)}">${esc(e.kind)}</span><span class="dim">${esc(devName(e.device))}</span>
-      <b>${esc(e.action)}</b>${st}${okMark}<span class="dim">${e.ms == null ? '' : e.ms + ' ms'}</span></summary>
+      <b>${esc(e.action)}</b>${st}${inline}<span class="dim">${e.ms == null ? '' : e.ms + ' ms'}</span></summary>
       <pre>${esc(e.request)}${e.request && e.response ? '\n→ ' : ''}${esc(e.response)}</pre></details>`;
   });
   $('#log').innerHTML = rows.join('') || '<div class="dim" style="padding:6px">No log entries yet</div>';
@@ -313,13 +465,14 @@ $('#rawCmd').onchange = () => { $('#rawArgs').value = TEMPLATES[$('#rawCmd').val
 $('#rawCmd').onchange();
 $('#sessSel').onchange = e => { S.sessSel = e.target.value; S.sig = ''; renderSessions(); };
 $('#q').onkeydown = e => { if (e.key === 'Enter') search(); };
+$('#wq').onkeydown = e => { if (e.key === 'Enter') watchSearch(); };
 ['fDevice', 'fKind', 'fErr', 'fText'].forEach(id => $('#' + id).addEventListener('input', renderLog));
 $('#fPause').addEventListener('change', fetchLog);
 
 (async () => {
   await loadConfig();
   pollAll(); pollSessions(); fetchLog();
-  setInterval(pollAll, 8000);
+  setInterval(pollAll, 5000);
   setInterval(pollSessions, 3000);
   setInterval(fetchLog, 1000);
 })();

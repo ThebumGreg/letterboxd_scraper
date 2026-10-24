@@ -28,6 +28,46 @@ FRIENDLY = {
 }
 
 
+PLAYBACK_STATES = {1: "stopped", 2: "paused", 3: "playing", 4: "fast-forwarding", 5: "rewinding", 6: "buffering"}
+MAC_RE = re.compile(r"\b([0-9a-f]{2}(?::[0-9a-f]{2}){5})\b", re.I)
+
+
+def parse_media_session(text, prefer_package=None):
+    """Best-effort read of `dumpsys media_session`: -> {state, title, package, positionMs} or None.
+
+    Picks the active session that is playing or buffering, then paused, preferring the
+    focused app. Output differs between Android versions, so unknown shapes give None.
+    """
+    sessions, cur = [], None
+    for line in text.splitlines():
+        if re.match(r"^\s*\S.*\(userId=\d+\)\s*$", line):
+            cur = {}
+            sessions.append(cur)
+        elif cur is not None:
+            m = re.search(r"\bpackage=(\S+)", line)
+            if m and "package" not in cur:
+                cur["package"] = m.group(1)
+            m = re.match(r"^\s*active=(true|false)", line)
+            if m:
+                cur["active"] = m.group(1) == "true"
+            m = re.search(r"state=PlaybackState \{state=(\d+), position=(-?\d+)", line)
+            if m:
+                cur["state"], cur["position"] = int(m.group(1)), int(m.group(2))
+            m = re.search(r"metadata:.*?description=(.*)$", line)
+            if m:
+                parts = [p.strip() for p in m.group(1).split(", ") if p.strip() and p.strip() != "null"]
+                cur["title"] = " - ".join(parts[:2]) or None
+    live = [s for s in sessions if s.get("active") and s.get("state") in PLAYBACK_STATES]
+    if not live:
+        return None
+    rank = lambda s: ({3: 0, 6: 0, 4: 0, 5: 0, 2: 1, 1: 2}[s["state"]], 0 if s.get("package") == prefer_package else 1)
+    best = min(live, key=rank)
+    if best["state"] == 1:
+        return None
+    return {"state": PLAYBACK_STATES[best["state"]], "title": best.get("title"), "package": best.get("package"),
+            "positionMs": best.get("position"), "source": "media session"}
+
+
 @register
 class AndroidTVDriver(Driver):
     type = "androidtv"
@@ -57,6 +97,7 @@ class AndroidTVDriver(Driver):
         super().__init__(cfg, logbook, options)
         self.target = f"{self.host}:{int(cfg.get('port', 5555))}"
         self.adb_path = self.options.get("adb", "adb")
+        self._media = (0.0, None)
 
     # --- adb plumbing -------------------------------------------------------------------
     def _adb(self, *args, action=None, quiet=False, timeout=15, raw=False, scoped=True, _retry=True):
@@ -110,12 +151,37 @@ class AndroidTVDriver(Driver):
         focus = re.search(r"mCurrentFocus=.*?([A-Za-z][\w]*(?:\.\w+)+)/", out)
         wakefulness = wake.group(1) if wake else None
         pkg = focus.group(1) if focus else None
-        return {
-            "online": True,
-            "power": {"Awake": "on", "Asleep": "off", "Dozing": "off", "Dreaming": "dreaming"}.get(wakefulness, wakefulness),
-            "app": pkg,
-            "appName": FRIENDLY.get(pkg, pkg),
-        }
+        power = {"Awake": "on", "Asleep": "off", "Dozing": "off", "Dreaming": "dreaming"}.get(wakefulness, wakefulness)
+        out = {"online": True, "power": power, "app": pkg, "appName": FRIENDLY.get(pkg, pkg)}
+        if power == "on":
+            out["media"] = self.media(pkg)
+        return out
+
+    def media(self, prefer_package=None):
+        """What is playing, from the Android media session (cached for a few seconds)."""
+        now = time.time()
+        if now - self._media[0] < 8:
+            return self._media[1]
+        try:
+            text = self._adb("shell", "dumpsys", "media_session", action="media session", quiet=True, timeout=10)
+            value = parse_media_session(text, prefer_package)
+        except DeviceError:
+            value = None
+        self._media = (now, value)
+        return value
+
+    def detect_mac(self):
+        for iface in ("wlan0", "eth0"):
+            try:
+                out = self._adb("shell", "cat", f"/sys/class/net/{iface}/address", action=f"read {iface} MAC")
+            except DeviceError:
+                continue
+            m = MAC_RE.search(out)
+            if m and m.group(1) != "00:00:00:00:00:00":
+                self.mac = m.group(1).upper()
+                self.log("detect mac", "", None, True, None, f"{iface}: {self.mac}")
+                return self.mac
+        raise DeviceError("Could not read a MAC address over ADB")
 
     def valid_native_key(self, key):
         return bool(KEY_RE.match(key))

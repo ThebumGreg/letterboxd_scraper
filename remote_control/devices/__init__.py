@@ -9,6 +9,7 @@ in devices.json with a matching "type".
 import json
 import re
 import socket
+import time
 from pathlib import Path
 
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -34,14 +35,28 @@ def register(cls):
     return cls
 
 
-def wake_on_lan(mac):
+def wake_on_lan(mac, broadcast=None, host=None, repeat=3):
+    """Send a magic packet to every plausible address. -> {"targets": [...], "errors": [...]}"""
     clean = re.sub(r"[^0-9A-Fa-f]", "", mac or "")
     if len(clean) != 12:
         raise DeviceError(f"bad MAC address: {mac!r}")
     packet = bytes.fromhex("FF" * 6 + clean * 16)
+    targets = [("255.255.255.255", 9), ("255.255.255.255", 7)]
+    if broadcast:
+        targets.append((broadcast, 9))
+    if host:
+        targets.append((host, 9))   # some TVs answer a unicast magic packet while their ARP entry is warm
+    targets = list(dict.fromkeys(targets))
+    errors = []
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        s.sendto(packet, ("255.255.255.255", 9))
+        for _ in range(repeat):
+            for target in targets:
+                try:
+                    s.sendto(packet, target)
+                except OSError as e:
+                    errors.append(f"{target[0]}:{target[1]} {e}")
+    return {"targets": [f"{h}:{p}" for h, p in targets], "errors": sorted(set(errors))}
 
 
 class Driver:
@@ -69,6 +84,27 @@ class Driver:
     def session_rule(self):
         return self.jellyfin.get("session") or self.default_session_rule
 
+    def wol(self):
+        """Send Wake-on-LAN for this device (needs its MAC)."""
+        if not self.mac:
+            raise DeviceError(f'No MAC address known for {self.name}. Add "mac" to devices.json, '
+                              "or press Detect MAC while the device is on.")
+        t0 = time.perf_counter()
+        info = wake_on_lan(self.mac, self.cfg.get("broadcast"), self.host)
+        ok = len(info["errors"]) < len(info["targets"])
+        self.logbook.add("network", self.id, "wake-on-lan", f"magic packet for {self.mac} to {', '.join(info['targets'])}",
+                         None, ok, (time.perf_counter() - t0) * 1000,
+                         "sent" + (f"; errors: {'; '.join(info['errors'])}" if info["errors"] else ""))
+        if not ok:
+            raise DeviceError("could not send the magic packet: " + "; ".join(info["errors"]))
+        return info
+
+    def detect_mac(self):
+        raise DeviceError("MAC detection is not supported by this device type")
+
+    def close(self):
+        """Release connections (called when the device list is reloaded)."""
+
     # --- interface drivers implement -------------------------------------------------
     def status(self, quiet=False):
         """-> {"online": bool, "power": on|standby|off|dreaming|None, "app": id, "appName": str, "error": str}"""
@@ -95,6 +131,10 @@ class Driver:
 
     def screenshot(self):
         raise DeviceError("screenshots are not supported by this device")
+
+    def icon(self, app_id):
+        """-> (bytes, mimetype) or raise DeviceError."""
+        raise DeviceError("app icons are not provided by this device")
 
     def jellyfin_app(self):
         """Id of the app to launch when we need the Jellyfin client."""
@@ -150,4 +190,4 @@ def load_devices(path, logbook, options):
     return devices, None
 
 
-from . import androidtv, roku  # noqa: E402,F401  (registers the built-in drivers)
+from . import androidtv, googletv, roku  # noqa: E402,F401  (registers the built-in drivers)

@@ -69,3 +69,35 @@ details>summary{cursor:pointer;color:var(--dim)}
 .tag{padding:0 6px;border-radius:4px;font-size:11px;background:#2b3744}
 .tag.adb{background:#2a4a32}.tag.roku{background:#4a2f5a}.tag.jellyfin{background:#27426b}.tag.system{background:#4a4a2a}
 .st.good{color:var(--ok)}.st.badc{color:var(--bad)}
+
+/* primary button, dialog */
+button.primary{background:#1f4f8a;border-color:var(--acc);font-weight:600}
+dialog{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:14px;padding:16px;width:min(560px,calc(100% - 24px))}
+dialog::backdrop{background:rgba(0,0,0,.65)}
+.dlg-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:15px}
+.target{display:flex;gap:10px;align-items:center;width:100%;text-align:left;margin:6px 0;padding:10px 12px;border-radius:10px}
+.target .dot{width:10px;height:10px;border-radius:50%;background:#555;flex:none}
+.target .dot.on{background:var(--ok)}.target .dot.standby,.target .dot.dreaming{background:var(--warn)}.target .dot.offline{background:var(--bad)}
+.target .t-name{font-weight:600}.target .t-sub{font-size:12px;color:var(--dim)}
+.steps{font:12px/1.5 ui-monospace,monospace;min-height:60px;margin:8px 0;color:var(--dim)}
+.steps div::before{content:"• "}
+.steps .bad{color:var(--bad)}
+.wres{padding:10px;border-radius:8px;margin:8px 0}
+.wres.good{background:#1d3b25;border:1px solid var(--ok)}.wres.warn{background:#41331a;border:1px solid var(--warn)}.wres.fail{background:#41201f;border:1px solid var(--bad)}
+
+/* now playing */
+.np-head{display:flex;gap:12px;align-items:center;margin-bottom:6px}
+.np-app{font-weight:600}.np-title{font-size:17px;font-weight:600;margin:4px 0}
+.np-sub{color:var(--dim);font-size:12px}
+.ico{width:44px;height:44px;border-radius:10px;object-fit:contain;background:#0e1216;flex:none;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;color:#fff}
+
+/* app tiles */
+.apps{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:8px}
+.apps .tile{display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 4px;border-radius:12px;font-size:11px;line-height:1.2;text-align:center}
+.apps .tile .ico{width:48px;height:48px}
+.apps .tile span.n{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.apps .grp{grid-column:1/-1}
+
+/* pairing */
+.pair{background:#41331a;border:1px solid var(--warn);border-radius:12px;padding:10px;margin-bottom:8px}
+.pair[hidden]{display:none}

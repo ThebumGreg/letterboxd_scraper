@@ -1,12 +1,13 @@
 """Flask routes for the whole-house remote."""
 import argparse
+import hmac
+import json
 import os
 import re
-import time
 from pathlib import Path
 from types import SimpleNamespace
 
-from flask import Flask, Response, jsonify, request, send_from_directory
+from flask import Flask, Response, g, jsonify, request, send_from_directory
 
 from . import orchestrator
 from .devices import DeviceError, load_devices
@@ -21,7 +22,7 @@ PLAY_COMMANDS = {"PlayNow", "PlayNext", "PlayLast", "PlayInstantMix", "PlayShuff
 app = Flask(__name__, static_folder=STATIC, static_url_path="/static")
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 state = SimpleNamespace(logbook=LogBook(), jf=None, devices={}, config_path=None, config_error=None,
-                        options={}, last_status={})
+                        options={}, last_status={}, token="", public_url="", icons={})
 
 
 def reply(ok, body, status=None, **extra):
@@ -63,7 +64,34 @@ def known_error(e):
     return reply(False, str(e)), 502
 
 
+@app.before_request
+def check_token():
+    """Optional shared secret, for when the app is reachable from other devices on the network."""
+    if not state.token:
+        return None
+    supplied = request.args.get("token", "")
+    if supplied and hmac.compare_digest(supplied, state.token):
+        g.set_cookie = True
+        return None
+    if hmac.compare_digest(request.cookies.get("rc_token", ""), state.token):
+        return None
+    return Response("Access token required. Open /?token=<your token> once from this device.", 401)
+
+
+@app.after_request
+def remember_token(resp):
+    if getattr(g, "set_cookie", False):
+        resp.set_cookie("rc_token", state.token, httponly=True, samesite="Strict", max_age=60 * 60 * 24 * 365)
+    return resp
+
+
 def reload_devices():
+    for old in state.devices.values():
+        try:
+            old.close()
+        except Exception as e:  # a failing disconnect must not block the reload
+            state.logbook.add("system", old.id, "close", ok=False, response=str(e))
+    state.icons.clear()
     state.devices, state.config_error = load_devices(state.config_path, state.logbook, state.options)
     state.last_status.clear()
     state.logbook.add("system", None, "config", ok=state.config_error is None,
@@ -84,6 +112,7 @@ def favicon():
 @app.get("/api/config")
 def api_config():
     return jsonify(jellyfinUrl=state.jf.url if state.jf else None,
+                   jellyfinPublicUrl=(state.public_url or (state.jf.url if state.jf else None)),
                    configPath=str(state.config_path), configError=state.config_error,
                    devices=[d.describe() for d in state.devices.values()])
 
@@ -108,7 +137,6 @@ def api_log_clear():
 
 @app.get("/api/log/download")
 def api_log_download():
-    import json
     lines = "\n".join(json.dumps(e) for e in state.logbook.dump())
     return Response(lines + "\n", mimetype="text/plain",
                     headers={"Content-Disposition": "attachment; filename=remote-control-log.jsonl"})
@@ -120,6 +148,7 @@ def api_device_status(dev_id):
     d = device(dev_id)
     poll = request.args.get("poll") == "1"
     st = d.status(quiet=poll)
+    st["mac"] = d.mac
     key = (st["online"], st.get("power"), st.get("app"))
     if poll:
         if state.last_status.get(dev_id) != key:
@@ -151,9 +180,54 @@ def api_device_key(dev_id):
 
 @app.post("/api/devices/<dev_id>/power")
 def api_device_power(dev_id):
-    on = json_body().get("state") == "on"
-    device(dev_id).power(on)
-    return reply(True, "on" if on else "off")
+    d = device(dev_id)
+    if json_body().get("state") == "on":
+        result = orchestrator.power_on(d, state.logbook)
+        return reply(result["ok"], "\n".join(result["steps"]), steps=result["steps"])
+    d.power(False)
+    return reply(True, "off")
+
+
+@app.post("/api/devices/<dev_id>/wol")
+def api_device_wol(dev_id):
+    info = device(dev_id).wol()
+    return reply(True, "magic packet sent to " + ", ".join(info["targets"]))
+
+
+@app.post("/api/devices/<dev_id>/detect-mac")
+def api_device_detect_mac(dev_id):
+    d = device(dev_id)
+    mac = d.detect_mac()
+    return reply(True, f'{mac} - add "mac": "{mac}" to {d.id} in devices.json to keep it', mac=mac)
+
+
+@app.post("/api/devices/<dev_id>/pair/start")
+def api_device_pair_start(dev_id):
+    d = device(dev_id)
+    if not hasattr(d, "pair_start"):
+        raise DeviceError(f"{d.name} does not need pairing")
+    return reply(True, d.pair_start())
+
+
+@app.post("/api/devices/<dev_id>/pair/finish")
+def api_device_pair_finish(dev_id):
+    d = device(dev_id)
+    if not hasattr(d, "pair_finish"):
+        raise DeviceError(f"{d.name} does not need pairing")
+    return reply(True, d.pair_finish(str(json_body().get("code", ""))))
+
+
+@app.get("/api/devices/<dev_id>/icon/<app_id>")
+def api_device_icon(dev_id, app_id):
+    d = device(dev_id)
+    key = (dev_id, app_id)
+    if key not in state.icons:
+        try:
+            state.icons[key] = d.icon(app_id)
+        except DeviceError:
+            return "", 404
+    data, mime = state.icons[key]
+    return Response(data, mimetype=mime, headers={"Cache-Control": "max-age=86400"})
 
 
 @app.post("/api/devices/<dev_id>/text")
@@ -225,7 +299,15 @@ def api_device_play(dev_id):
         session = summarize_session(found[0])
     r = jf().play(session["Id"], play_params(body))
     steps.append(f'{body["playCommand"]} -> HTTP {r.status_code}')
-    return reply(r.ok, "\n".join(steps), r.status_code, steps=steps, sessionId=session["Id"])
+    confirmed = None
+    if r.ok and body["playCommand"] == "PlayNow":
+        ids = body["itemIds"]
+        index = int(body.get("startIndex") or 0)
+        confirmed, title, secs = orchestrator.confirm_playing(jf(), session["Id"], ids[index] if index < len(ids) else ids[0])
+        steps.append(f"Playback confirmed: {title} (after {secs}s)" if confirmed else
+                     f"The command was accepted but the session never reported the item playing within {secs}s")
+        state.logbook.add("system", dev_id, "play", response=steps[-1], ok=confirmed)
+    return reply(r.ok, "\n".join(steps), r.status_code, steps=steps, sessionId=session["Id"], confirmed=confirmed)
 
 
 # ------------------------------------------------------------------ jellyfin
@@ -331,12 +413,24 @@ def main():
                    help="shortcut: use one Google TV at this address when no device file exists")
     p.add_argument("--log-file", default=os.environ.get("REMOTE_LOG", "remote_control.log"),
                    help="also write every log entry here as JSON lines ('' to disable)")
+    p.add_argument("--cert-dir", default=os.environ.get("REMOTE_CERT_DIR", str(root / ".remote_control" / "certs")),
+                   help="where the Remote-protocol client certificate (from pairing) is kept")
+    p.add_argument("--public-url", default=os.environ.get("JELLYFIN_PUBLIC_URL", ""),
+                   help="Jellyfin address a phone should open (defaults to --url)")
+    p.add_argument("--token", default=os.environ.get("REMOTE_TOKEN", ""),
+                   help="require this secret (open /?token=... once per device); use it with --host 0.0.0.0")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=5055)
     a = p.parse_args()
 
     state.logbook = LogBook(path=a.log_file or None)
-    state.options = {"adb": a.adb}
+    state.options = {"adb": a.adb, "cert_dir": a.cert_dir}
+    state.token, state.public_url = a.token, a.public_url.rstrip("/")
+    if a.host not in ("127.0.0.1", "localhost", "::1") and not a.token:
+        warning = ("Listening beyond this computer with no --token: anyone on your network can control "
+                   "these devices. Add --token SECRET.")
+        print("WARNING:", warning)
+        state.logbook.add("system", None, "security", ok=False, response=warning)
     state.config_path = Path(a.config)
     if a.url and a.api_key:
         state.jf = JellyfinClient(a.url, a.api_key, state.logbook, a.user_id)
@@ -344,7 +438,6 @@ def main():
         state.logbook.add("system", None, "config", ok=False,
                           response="Jellyfin not configured; device remotes work, playback panels will not.")
     if not state.config_path.exists() and a.adb_host:
-        import json
         import tempfile
         tmp = Path(tempfile.mkdtemp()) / "devices.json"
         tmp.write_text(json.dumps({"devices": [{"id": "tv", "name": "Google TV", "type": "androidtv", "host": a.adb_host}]}))

@@ -34,6 +34,7 @@ def summarize_item(i):
         "Season": i.get("ParentIndexNumber"),
         "Episode": i.get("IndexNumber"),
         "RunTimeTicks": i.get("RunTimeTicks"),
+        "ResumeTicks": (i.get("UserData") or {}).get("PlaybackPositionTicks"),
     }
 
 
