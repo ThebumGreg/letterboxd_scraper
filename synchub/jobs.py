@@ -69,6 +69,22 @@ def row(r):
     return job
 
 
+# What a person sees for a job, from its status and the stage its worker reported. `code` is also the Dashboard state while a title is being handled.
+LIFECYCLE = {"queued": ("queued", "Queued"), "claimed": ("assigned", "Assigned to a worker"), "copy_in": ("transferring", "Transferring to worker"),
+             "analyze": ("working", "Working"), "plan": ("working", "Working"), "preview": ("working", "Working"), "scan": ("working", "Working"),
+             "encode": ("converting", "Converting"), "verify": ("transferring_library", "Transferring to library"), "copy_out": ("transferring_library", "Transferring to library"),
+             "publish": ("transferring_library", "Transferring to library"), "done": ("completed", "Completed")}
+LIFECYCLE_STATUS = {"needs_review": ("needs_you", "Needs you"), "failed": ("failed", "Failed"), "cancelled": ("cancelled", "Cancelled"), "skipped": ("cancelled", "Skipped"),
+                    "done": ("completed", "Completed"), "queued": ("queued", "Queued")}
+
+
+def lifecycle(job):
+    """(code, label) of where a job is: queued, assigned, transferring, working, converting, transferring to the library, completed, needs you, failed or cancelled."""
+    if job["status"] in LIFECYCLE_STATUS:
+        return LIFECYCLE_STATUS[job["status"]]
+    return LIFECYCLE.get(job.get("stage") or "claimed", LIFECYCLE["claimed"])
+
+
 def get(conn, job_id):
     r = conn.execute("SELECT * FROM job WHERE id = ?", (job_id,)).fetchone()
     return row(r) if r else None
@@ -120,9 +136,17 @@ def roots_ready(worker, job):
 
 def can_run(worker, job):
     """Whether the worker's agent knows how to do the job's operation. An agent that does not list its operations is trusted."""
-    ops = worker["capabilities"].get("ops") if isinstance(worker.get("capabilities"), dict) else None
+    caps = worker["capabilities"] if isinstance(worker.get("capabilities"), dict) else {}
+    ops = caps.get("ops")
     op = job["plan"].get("op") if isinstance(job.get("plan"), dict) else None
-    return not (isinstance(ops, list) and op and op not in ops)
+    if isinstance(ops, list) and op and op not in ops:
+        return False
+    needs = job["plan"].get("needs") if isinstance(job.get("plan"), dict) else None
+    if isinstance(needs, list) and needs and isinstance(ops, list):
+        # a plan that relies on a newer agent (a conversion profile) or an encoder only goes to a worker that says it has it, never to one that would ignore it
+        have = set(caps.get("features") or []) | set(caps.get("encoders") or [])
+        return set(needs) <= have
+    return True
 
 
 def claim(conn, worker, free_slots, free_bytes=None, now=None):

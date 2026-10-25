@@ -22,6 +22,9 @@ DEFAULTS = {
     "library_integrity_mode": "tail", "library_tail_seconds": "30",
     # downloads Radarr/Sonarr import: off, review (a person approves each one), auto (high-confidence plans run on their own); the original is kept on the worker this long
     "download_pipeline": "off", "originals_retention_days": "30",
+    # conversion profile used when none is chosen for a file; the source file is deleted this many days after a verified migration (0 = never);
+    # what Radarr/Sonarr are told about the move (none, update_location, unmonitor, remove) and when (right after the copy, or only when the source is deleted)
+    "library_default_profile": "1", "source_delete_after_days": "0", "arr_after_migration": "none", "arr_apply_when": "after_copy",
     "library_exclude_folders": "@eaDir\n#recycle\n.Recycle.Bin\n$RECYCLE.BIN\nSystem Volume Information\nlost+found\n.Trash-*",
 }
 

@@ -8,8 +8,8 @@ from functools import wraps
 
 from flask import Response, g, jsonify, request
 
-from synchub import downloads, db, jobs, storage, workers
-from synchub.library import migrate, scan
+from synchub import downloads, db, jobs, pipeline_events, states, storage, tasks, workers
+from synchub.library import cleanup, migrate, scan
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,17 @@ def _body():
 
 def _text(value, limit=2000):
     return None if value is None else str(value)[:limit]
+
+
+def _dashboard(job_ids):
+    """Moves the Dashboard stage of each job's title along. Own connection: call it after the request's transaction has ended."""
+    ids = set()
+    with db.connection() as conn:
+        for job_id in job_ids:
+            changed = pipeline_events.update_for_job(conn, job_id)
+            ids |= states.media_ids_for(conn, changed) if changed else set()
+    if ids:
+        tasks.notify_states_changed(ids)
 
 
 def register(app):
@@ -99,15 +110,24 @@ def register(app):
             resume = jobs.resume_for(conn, worker["id"], data["active"]) if isinstance(data.get("active"), list) else []
             release = jobs.release_for(conn, data["holding"]) if isinstance(data.get("holding"), list) else []
             free_bytes = data.get("free_bytes")
+            cleanup.sweep(conn)                                                  # sources whose waiting time is over get their deletion job before this claim
             claimed = jobs.claim(conn, worker, data.get("free_slots") or 0, free_bytes if isinstance(free_bytes, (int, float)) else None)
             downloads.process(conn)
             finished = migrate.sync_active(conn) + downloads.sync_active(conn)
+            cleanup.sync_active(conn)
             for job in claimed:
                 logger.info(f"[jobs] job {job['id']} ({job['kind']}: {job['title']}) went to {worker['name']}, attempt {job['attempt']}")
             response = jsonify(ok=True, jobs=claimed, resume=resume, release=release, cancel=jobs.cancels_for(conn, worker["id"]), cleanup=jobs.cleanups_for(conn, worker["id"]),
                            log_requests=jobs.log_requests_for(conn, worker["id"]), worker_log=bool(worker["log_requested"]), roots_hash=storage.roots_hash(conn), paused=bool(worker["paused"]), draining=bool(worker["draining"]),
                            poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS)
         downloads.rescan_due()
+        with db.connection() as conn:
+            stale = pipeline_events.close_stale(conn)
+            stale_ids = states.media_ids_for(conn, stale) if stale else set()
+        if stale_ids:
+            tasks.notify_states_changed(stale_ids)
+        _dashboard([j["id"] for j in claimed])
+        cleanup.arr_due()
         if finished:
             migrate.tell_jellyfin(finished)
         return response
@@ -118,6 +138,7 @@ def register(app):
         with db.connection() as conn:
             got = jobs.progress(conn, job_id, g.worker["id"], stage=data.get("stage"), progress=data.get("progress"), fps=data.get("fps"),
                                 speed=data.get("speed"), eta_seconds=data.get("eta_seconds"), message=data.get("message"))
+        _dashboard([job_id])
         return jsonify(ok=True, **got)
 
     @route("/jobs/<int:job_id>/complete", "complete")
@@ -126,8 +147,11 @@ def register(app):
         with db.connection() as conn:
             jobs.complete(conn, job_id, g.worker["id"], data.get("result"), command=_text(data.get("command"), 8000))
             arrived = migrate.sync(conn, job_id) or downloads.sync(conn, job_id)
+            cleanup.sync(conn, job_id)
         logger.info(f"[jobs] job {job_id} completed by {g.worker['name']}")
+        _dashboard([job_id])
         downloads.rescan_due()
+        cleanup.arr_due()
         if arrived:
             migrate.tell_jellyfin()
         return jsonify(ok=True)
@@ -142,6 +166,8 @@ def register(app):
                                 command=_text(data.get("command"), 8000), keep_state=data.get("keep_state") is not False)
             migrate.sync(conn, job_id)
             downloads.sync(conn, job_id)
+            cleanup.sync(conn, job_id)
+        _dashboard([job_id])
         logger.warning(f"[jobs] job {job_id} failed on {g.worker['name']} ({data.get('error_class')}): {_text(data.get('message'), 300)} -> {outcome}")
         return jsonify(ok=True, outcome=outcome)
 
@@ -153,6 +179,8 @@ def register(app):
                               data.get("detail"), keep_state=data.get("keep_state") is not False)
             migrate.sync(conn, job_id)
             downloads.sync(conn, job_id)
+            cleanup.sync(conn, job_id)
+        _dashboard([job_id])
         logger.info(f"[jobs] job {job_id} is waiting for review: {_text(data.get('reason'), 200)}")
         return jsonify(ok=True)
 

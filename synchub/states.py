@@ -71,12 +71,18 @@ def sync_queue_events(conn, now=None, touched=None):
 
 # ---------------------------------------------------------------- state computation
 def _best_events(conn, ranks):
-    best = {}
-    for e in conn.execute("SELECT target_type, target_id, state_code, progress FROM processing_event WHERE ended_at IS NULL"):
+    """{(type, id): (state, progress)}: the strongest open event of each title. A worker's job on a title (provider synchub_job) always wins, even over
+    In Library, so a file being converted shows its stage; it is marked in `jobs` (see _decide)."""
+    best, jobs = {}, set()
+    for e in conn.execute("SELECT target_type, target_id, state_code, progress, provider FROM processing_event WHERE ended_at IS NULL"):
         key = (e["target_type"], e["target_id"])
-        if key not in best or ranks[e["state_code"]] > ranks[best[key][0]]:
+        if e["provider"] == "synchub_job":
+            if key not in jobs or ranks[e["state_code"]] > ranks[best[key][0]]:
+                best[key] = (e["state_code"], e["progress"])
+            jobs.add(key)
+        elif key not in jobs and (key not in best or ranks[e["state_code"]] > ranks[best[key][0]]):
             best[key] = (e["state_code"], e["progress"])
-    return best
+    return best, jobs
 
 
 def media_ids_for(conn, targets):
@@ -106,7 +112,7 @@ def compute(conn, now=None, only=None, changed=None):
     given, is filled with the targets whose state or progress actually changed."""
     now = now or db.now()
     ranks = {r["code"]: r["rank"] for r in conn.execute("SELECT code, rank FROM state_def")}
-    events = _best_events(conn, ranks)
+    events, job_events = _best_events(conn, ranks)
     results = []
     movie_filter, movie_params = _only_clause(only, "movie", "m.id")
     episode_filter, episode_params = _only_clause(only, "episode", "e.id")
@@ -121,7 +127,7 @@ def compute(conn, now=None, only=None, changed=None):
                   WHERE l.source = 'radarr' AND l.entity_type = 'media' AND l.entity_id = m.id AND r.removed_at IS NULL) AS monitored
         FROM media m WHERE m.kind = 'movie' {movie_filter}""", movie_params).fetchall()
     for r in movies:
-        results.append(("movie", r["id"], _decide(r, events.get(("movie", r["id"])), ranks)))
+        results.append(("movie", r["id"], _decide(r, events.get(("movie", r["id"])), ranks, ("movie", r["id"]) in job_events)))
 
     episodes = conn.execute(f"""
         SELECT e.id,
@@ -133,7 +139,7 @@ def compute(conn, now=None, only=None, changed=None):
                   WHERE l.source = 'sonarr_episode' AND l.entity_type = 'episode' AND l.entity_id = e.id AND s.removed_at IS NULL) AS monitored
         FROM episode e WHERE 1 = 1 {episode_filter}""", episode_params).fetchall()
     for r in episodes:
-        results.append(("episode", r["id"], _decide(r, events.get(("episode", r["id"])), ranks)))
+        results.append(("episode", r["id"], _decide(r, events.get(("episode", r["id"])), ranks, ("episode", r["id"]) in job_events)))
 
     changed_count = 0
     before = {(r["target_type"], r["target_id"]): r["state_code"] for r in conn.execute("SELECT target_type, target_id, state_code FROM item_state")}
@@ -150,7 +156,9 @@ def compute(conn, now=None, only=None, changed=None):
                 changed.add((target_type, target_id))
             old = before.get((target_type, target_id))
             if code == "in_library" and old is not None and old != "in_library":
-                arrived.append((target_type, target_id))
+                from synchub import pipeline_events
+                if not pipeline_events.refreshed_recently(conn, (target_type, target_id)):          # a converted file coming back is not a new arrival
+                    arrived.append((target_type, target_id))
     if arrived:
         from synchub.notifications import arrivals
         try:
@@ -160,7 +168,9 @@ def compute(conn, now=None, only=None, changed=None):
     return {"movies": len(movies), "episodes": len(episodes), "changed": changed_count}
 
 
-def _decide(row, event, ranks):
+def _decide(row, event, ranks, job_event=False):
+    if job_event and event:
+        return event
     candidates = []
     if row["in_library"]:
         candidates.append(("in_library", None))
