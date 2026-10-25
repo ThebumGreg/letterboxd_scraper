@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from flask import Response, jsonify, redirect, render_template, request, url_for
 
 from synchub import db, downloads, jobs, settings, storage
-from synchub.library import cleanup, findings, migrate, profiles, recommend as rc, report, scan, store
+from synchub.library import cleanup, findings, migrate, profiles, recommend as rc, report, scan, size_policy, store
 from synchub.library import vocab as v
 from settings_validation import validate_setting
 
@@ -75,7 +75,7 @@ def overview(conn):
     migration = migrate.queue_summary(conn)
     return {"cfg": cfg, "groups": groups, "total": len(rows), "shares": shares_summary(conn, cfg), "runs": runs, "active": any(r["active"] for r in runs) or bool(migration["queued"] or migration["running"]) or bool(downloads.summary(conn)["working"]), "options": options,
             "roots": [r["name"] for r in storage.list_all(conn)], "migration": migration,
-            "downloads": downloads.recent(conn, 15), "download_summary": downloads.summary(conn), "originals_days": downloads.retention_days(conn), "lookups": {"confidence": CONFIDENCE_FLOORS},
+            "downloads": downloads.recent(conn, 15), "download_summary": downloads.summary(conn), "originals_days": downloads.retention_days(conn), "size": size_policy.load(conn), "lookups": {"confidence": CONFIDENCE_FLOORS},
             "profiles": profiles.all_profiles(conn), "default_profile_id": profiles.default(conn)["id"], "cleanup": cleanup.summary(conn), "attention": migrate.attention(conn),
             "profile_options": {"codecs": profiles.VIDEO_CODECS, "presets": profiles.PRESETS, "subtitles": profiles.SUBTITLE_LABELS}}
 
@@ -312,6 +312,7 @@ def register(app):
     def api_library_settings():
         data = request.get_json(silent=True) or {}
         keys = ("library_destination_root", "library_tv_folder", "library_movie_folder", "library_integrity_mode", "library_tail_seconds", "library_exclude_folders", "download_pipeline", "originals_retention_days",
+                "size_policy", "movie_max_gb", "movie_target_gb", "size_crf", "dolby_vision_profile_5", "dolby_vision_profile_7_8",
                 "library_default_profile", "source_delete_after_days", "arr_after_migration", "arr_apply_when")
         cleaned, errors = {}, []
         for key in keys:

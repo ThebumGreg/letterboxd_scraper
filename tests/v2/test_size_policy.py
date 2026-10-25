@@ -186,3 +186,38 @@ def test_video_facts_read_hdr_dolby_vision_and_bitrate_from_ffprobe():
     sdr = ma.video_facts(stream(color_transfer="bt709", pix_fmt="yuv420p", field_order="tt", bit_rate=None))
     assert sdr["hdr"] == "sdr" and sdr["bit_depth"] == 8 and sdr["interlaced"] is True and sdr["video_kbps"] is None
     assert ma.video_facts(stream(color_transfer="arib-std-b67"))["hdr"] == "hlg"
+
+
+def test_the_settings_can_be_saved_from_the_library_page_and_are_validated(app, client):
+    saved = client.post("/api/library/settings", json={"size_policy": "1", "movie_max_gb": "40", "movie_target_gb": "30", "size_crf": "20", "dolby_vision_profile_5": "hdr10", "dolby_vision_profile_7_8": "review"})
+    assert saved.get_json()["ok"] is True
+    loaded = sp.load()
+    assert (loaded.on, loaded.movie_max_gb, loaded.movie_target_gb, loaded.crf, loaded.dv_profile_5, loaded.dv_profile_7_8) == (True, 40.0, 30.0, 20, "hdr10", "review")
+    assert client.post("/api/library/settings", json={"size_crf": "5"}).get_json()["ok"] is False
+    assert client.post("/api/library/settings", json={"dolby_vision_profile_5": "yes"}).get_json()["ok"] is False
+    page = client.get("/library").get_data(as_text=True)
+    assert "Compress movies that are too big" in page and 'id="setMaxGb" value="40"' in page
+
+
+def test_a_download_of_a_big_film_is_compressed_automatically_when_the_policy_and_the_pipeline_are_on(conn):
+    from synchub import downloads
+    storage.create(conn, {"name": "media", "protocol": "local", "share": "/mnt/media", "mount_point": "/mnt/media", "radarr_path": "/movies"})
+    for key, value in (("download_pipeline", "auto"), ("size_policy", "1")):
+        settings.set_value(key, value, conn=conn)
+    payload = {"eventType": "Download", "movie": {"id": 7, "title": "Heat", "folderPath": "/movies/Heat (1995)"},
+               "movieFile": {"path": "/movies/Heat (1995)/Heat.1995.mkv", "size": 45 * GIB}}
+    (made,) = downloads.record_event(conn, "radarr", "Download", payload)
+    downloads.process(conn)
+    record_id = add(conn, root="media", rel="Heat (1995)/Heat.1995.mkv", name="Heat (1995).mkv", size=45 * GIB, action="copy_rename")
+    conn.execute("UPDATE library_file SET duration_seconds = 7200, media_type = 'Movie/Unknown' WHERE id = ?", (record_id,))
+    run = downloads.get(conn, made)["scan_run_id"]
+    for job in conn.execute("SELECT id FROM job WHERE ref_type = ?", ("library_run:" + run,)).fetchall():
+        conn.execute("UPDATE job SET status = 'done' WHERE id = ?", (job["id"],))
+    conn.commit()
+    downloads.process(conn)
+    conn.commit()
+    row = downloads.get(conn, made)
+    assert row["status"] == "queued", row["message"]
+    job = jobs.get(conn, row["job_id"])
+    assert job["plan"]["replace"] is True and job["plan"]["profile"]["video_codec"] == "hevc" and job["plan"]["size_policy"]["target_gb"] == 25
+    assert job["dest_rel"] == "Heat (1995)/Heat.1995.mkv" and job["plan"]["change"]["video"]["action"] == "transcode"
