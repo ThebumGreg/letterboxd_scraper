@@ -68,6 +68,14 @@ class RadarrClient(_Arr):
         """Asks Radarr to look at the movie's folder again, so it notices the file was replaced."""
         return self._send("RescanMovie", "POST", "/api/v3/command", {"name": "RescanMovie", "movieId": int(movie_id)})
 
+    def update_movie(self, movie_id, body, move_files=False):
+        """Saves a movie as given (a new folder, monitored or not). Radarr only changes its record; with move_files false no file is moved."""
+        return self._send("UpdateMovie", "PUT", f"/api/v3/movie/{int(movie_id)}?moveFiles={'true' if move_files else 'false'}", body)
+
+    def delete_movie(self, movie_id, delete_files=False):
+        """Stops Radarr tracking the movie. Files are only deleted if asked, and they are not by default."""
+        return self._send("DeleteMovie", "DELETE", f"/api/v3/movie/{int(movie_id)}?deleteFiles={'true' if delete_files else 'false'}&addImportExclusion=false", ok=(200, 202, 204))
+
     def lookup(self, tmdb_id):
         results = self._get("LookupMovie", "/api/v3/movie/lookup", params={"term": f"tmdb:{tmdb_id}"})
         return results[0] if results else None
@@ -112,8 +120,10 @@ class SonarrClient(_Arr):
                    "addOptions": {"searchForMissingEpisodes": bool(search), "ignoreEpisodesWithFiles": True}}
         return self._send("AddSeries", "POST", "/api/v3/series", payload)
 
-    def update_series(self, sonarr_id, payload):
-        return self._send("UpdateSeries", "PUT", f"/api/v3/series/{sonarr_id}", payload)
+    def update_series(self, sonarr_id, payload, move_files=None):
+        """Saves a series as given. `move_files` False changes the folder in Sonarr's record without moving anything."""
+        query = "" if move_files is None else f"?moveFiles={'true' if move_files else 'false'}"
+        return self._send("UpdateSeries", "PUT", f"/api/v3/series/{sonarr_id}{query}", payload)
 
     def monitor_episodes(self, episode_ids, monitored=True):
         return self._send("MonitorEpisodes", "PUT", "/api/v3/episode/monitor", {"episodeIds": [int(i) for i in episode_ids], "monitored": bool(monitored)})

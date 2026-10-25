@@ -157,7 +157,7 @@ def dashboard_stats(rows):
     return {
         "total": len(rows), "movies": len(movies), "shows": len(shows),
         "in_library": sum(r["state"] == "in_library" for r in rows),
-        "in_flight": sum(r["state"] in ("downloading", "downloaded", "transferring", "encoding") for r in rows),
+        "in_flight": sum(r["state"] in ("downloading", "downloaded", "transferring", "working", "encoding", "transferring_library") for r in rows),
         "queued": sum(r["state"] == "queued" for r in rows),
         "missing": sum(r["state"] == "missing" for r in rows),
         "partial": sum(r["state"] == "partial" for r in rows),

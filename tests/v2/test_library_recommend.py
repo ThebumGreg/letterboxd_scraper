@@ -201,7 +201,7 @@ def test_bulk_approval_never_includes_low_confidence_and_honours_the_floor(conn)
 
 def test_bulk_approval_can_be_narrowed_to_one_share_or_one_search(conn):
     a = add(conn, root="tfiles", rel="Show A/a.mkv", name="A (2000).mkv")
-    b = add(conn, root="media", rel="Other/b.mkv", name="B (2000).mkv")
+    b = add(conn, root="archive", rel="Other/b.mkv", name="B (2000).mkv")
     assert [r["id"] for r, _ in rc.bulk_candidates(conn, "ready", root="tfiles", cfg=CFG)] == [a]
     assert [r["id"] for r, _ in rc.bulk_candidates(conn, "ready", match="other/", cfg=CFG)] == [b]
 
