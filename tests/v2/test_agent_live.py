@@ -654,3 +654,115 @@ def test_approving_a_file_gets_it_converted_by_the_worker_and_the_library_record
     dest = rig.roots["media"] / "Movies/Heat (1995)/Heat (1995).mkv"
     assert dest.exists() and rec["migration_destination_path"] == "media:Movies/Heat (1995)/Heat (1995).mkv" and rec["migration_verification_status"] == "verified"
     assert migrate.queue_summary(conn)["completed"] == 1 and told == [1]
+
+
+# ---------------------------------------------------------------- replacing a download in place (real ffmpeg)
+def queue_replace(rig, rel, change, size, mtime, dst=None, days=30, duration=2.0):
+    with rig.db.connection() as conn:
+        return jobs.create(conn, "download", title="Replace", source=("media", rel), dest=("media", dst or rel), pinned_worker_id=rig.worker_id,
+                           plan={"op": "convert", "replace": True, "change": change, "duration": duration, "source_size": size, "source_mtime": mtime, "originals_retention_days": days})
+
+
+KEEP_FIRST_AUDIO = {"op": "keep_tracks", "container": "matroska", "keep_audio": [1], "remove_audio": [{"index": 2, "language": "ita", "title": ""}], "keep_subtitle": [], "remove_subtitle": [],
+                    "default_audio": 1, "video": {"action": "copy"}, "audio_convert": {}}
+
+
+@needs_ffmpeg
+def test_a_download_is_replaced_in_place_under_the_same_name_and_the_original_is_kept(rig):
+    source = rig.roots["media"] / "Movies/Heat (1995)/Heat.1995.mkv"
+    make_avi(source)
+    original_hash, stat = sha(source), source.stat()
+    os.utime(source, (stat.st_atime, 1_600_000_000))
+    job_id = queue_replace(rig, "Movies/Heat (1995)/Heat.1995.mkv", KEEP_FIRST_AUDIO, stat.st_size, 1_600_000_000.0)
+    instance = rig.start()
+    job = wait(lambda: (j := rig.job(job_id))["status"] in ("done", "failed", "needs_review") and j, timeout=60, what="the replacement")
+    assert job["status"] == "done", job["error"]
+    kinds = [s["codec_type"] for s in probe(source)["streams"]]
+    assert kinds.count("audio") == 1 and sha(source) == job["result"]["sha256"] != original_hash
+    assert int(source.stat().st_mtime) == 1_600_000_000                                       # "date added" is not disturbed
+    assert not list(source.parent.glob("*partial*")) and [p.name for p in source.parent.iterdir()] == [source.name]
+    kept = [(folder, meta) for folder, meta in instance.originals()]
+    assert len(kept) == 1 and sha(Path(kept[0][0]) / source.name) == original_hash
+    assert kept[0][1]["rel"] == "Movies/Heat (1995)/Heat.1995.mkv" and kept[0][1]["retention_days"] == 30 and kept[0][1]["sha256"] == original_hash
+    assert job["result"]["replaced"] is True and job["result"]["kept_original"] is True
+    assert instance.originals_held() == (1, stat.st_size)
+
+
+@needs_ffmpeg
+def test_a_new_container_replaces_the_old_file_with_the_same_base_name(rig):
+    source = rig.roots["media"] / "Movies/Heat (1995)/Heat.1995.avi"
+    make_avi(source)
+    stat = source.stat()
+    change = {**KEEP_FIRST_AUDIO, "op": "convert", "target_extension": ".mkv", "video": {"action": "copy", "from": "mpeg4", "codec": "h264"}}
+    job_id = queue_replace(rig, "Movies/Heat (1995)/Heat.1995.avi", change, stat.st_size, stat.st_mtime, dst="Movies/Heat (1995)/Heat.1995.mkv")
+    rig.start()
+    job = wait(lambda: (j := rig.job(job_id))["status"] in ("done", "failed", "needs_review") and j, timeout=60, what="the replacement")
+    assert job["status"] == "done", job["error"]
+    assert sorted(p.name for p in source.parent.iterdir()) == ["Heat.1995.mkv"] and job["result"]["path_changed"] is True
+
+
+@needs_ffmpeg
+def test_with_retention_zero_the_original_is_not_kept(rig):
+    source = rig.roots["media"] / "Movies/Heat (1995)/Heat.1995.mkv"
+    make_avi(source)
+    stat = source.stat()
+    job_id = queue_replace(rig, "Movies/Heat (1995)/Heat.1995.mkv", KEEP_FIRST_AUDIO, stat.st_size, stat.st_mtime, days=0)
+    instance = rig.start()
+    job = wait(lambda: (j := rig.job(job_id))["status"] in ("done", "failed", "needs_review") and j, timeout=60, what="the replacement")
+    assert job["status"] == "done" and job["result"]["kept_original"] is False and instance.originals_held() == (0, 0)
+
+
+@needs_ffmpeg
+def test_a_file_that_is_not_the_one_analysed_is_not_replaced(rig):
+    source = rig.roots["media"] / "Movies/Heat (1995)/Heat.1995.mkv"
+    make_avi(source)
+    before = sha(source)
+    stat = source.stat()
+    job_id = queue_replace(rig, "Movies/Heat (1995)/Heat.1995.mkv", KEEP_FIRST_AUDIO, stat.st_size + 5, stat.st_mtime)
+    rig.start()
+    job = wait(lambda: rig.job(job_id)["error_class"] == "source_changed" and rig.job(job_id), timeout=60, what="the refusal")
+    assert "not the file SyncHub analysed" in job["error"] and sha(source) == before
+
+
+def test_kept_originals_are_removed_only_after_their_retention(rig):
+    instance = rig.start()
+    for name, expires in (("1-aaaa", agent.iso(agent.utcnow() - agent.timedelta(days=1))), ("2-bbbb", agent.iso(agent.utcnow() + agent.timedelta(days=5)))):
+        folder = Path(instance.cfg.originals_dir) / name
+        folder.mkdir(parents=True)
+        (folder / "x.mkv").write_bytes(b"x")
+        (folder / "meta.json").write_text(json.dumps({"rel": "x.mkv", "size": 1, "expires_at": expires, "retention_days": 30}))
+    assert instance.sweep_originals() == 1
+    assert [p.name for p in Path(instance.cfg.originals_dir).iterdir()] == ["2-bbbb"]
+
+
+@needs_ffmpeg
+def test_a_radarr_import_is_scanned_converted_in_place_and_radarr_is_asked_to_rescan(rig, client, conn, monkeypatch):
+    """The whole path: webhook -> the worker scans the folder -> SyncHub asks -> approve -> the worker replaces the file -> Radarr and Jellyfin are told."""
+    from synchub import downloads, settings
+    from synchub.library import migrate
+    import synchub.clients.arr as arr
+    rescans, told = [], []
+    monkeypatch.setattr(migrate, "tell_jellyfin", lambda count=1: told.append(count) or True)
+    monkeypatch.setattr(arr, "RadarrClient", type("R", (), {"rescan_movie": lambda self, movie_id: rescans.append(movie_id)}))
+    conn.execute("UPDATE storage_root SET radarr_path = '/movies' WHERE name = 'media'")
+    settings.set_value("download_pipeline", "review", conn=conn)
+    conn.commit()
+    make_avi(rig.roots["media"] / "Heat (1995)/Heat.1995.mkv")
+    payload = {"eventType": "Download", "movie": {"id": 9, "title": "Heat", "folderPath": "/movies/Heat (1995)"},
+               "movieFile": {"path": "/movies/Heat (1995)/Heat.1995.mkv", "size": (rig.roots["media"] / "Heat (1995)/Heat.1995.mkv").stat().st_size}}
+    assert client.post("/api/webhook/radarr", json=payload).status_code == 200
+    rig.start()
+
+    def row():
+        conn.commit()
+        return conn.execute("SELECT * FROM download_import ORDER BY id DESC LIMIT 1").fetchone()
+
+    wait(lambda: row()["status"] in ("awaiting_approval", "nothing_to_do", "blocked", "failed"), timeout=60, what="the scan and the decision")
+    assert row()["status"] == "awaiting_approval", row()["message"]
+    assert client.post(f"/api/downloads/{row()['id']}/approve").get_json()["ok"] is True
+    wait(lambda: row()["status"] in ("replaced", "failed", "blocked") and row()["rescan_status"] != "due", timeout=90, what="the replacement")
+    final = row()
+    assert final["status"] == "replaced", final["message"]
+    assert final["rescan_status"] == "done" and rescans == [9] and told
+    data = probe(rig.roots["media"] / "Heat (1995)/Heat.1995.mkv")          # it was an AVI under an .mkv name; now it is a real Matroska file
+    assert "matroska" in data["format"]["format_name"] and final["result_json"]

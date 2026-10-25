@@ -7,7 +7,7 @@ from datetime import date
 
 from flask import Response, g, jsonify, request
 
-from synchub import automation, catalog, db, jellyfin_events, matching, ratings, search, settings, states, tasks, watch, webhooks
+from synchub import automation, catalog, db, downloads, jellyfin_events, matching, ratings, search, settings, states, tasks, watch, webhooks
 from synchub.automation import RequestError
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.arr import RadarrClient, SonarrClient
@@ -146,6 +146,11 @@ def register(app):
                 tasks.refresh_soon(f"{service}_queue", lambda: tasks.poll_queue(service, force=True))
             else:
                 tasks.refresh_soon(service, tasks.with_reconcile(tasks.sync_radarr if service == "radarr" else tasks.sync_sonarr))
+            try:
+                with db.connection() as conn:
+                    downloads.record_event(conn, service, event, payload)
+            except Exception as exc:
+                logger.warning(f"Could not note the {service} {event} import for the download pipeline: {exc}")
             if event in ("Grab", "Download"):
                 movie, series = payload.get("movie") or {}, payload.get("series") or {}
                 announcer.announce(sse(json.dumps({"service": service, "event": event, "tmdb_id": movie.get("tmdbId"), "tvdb_id": series.get("tvdbId"),

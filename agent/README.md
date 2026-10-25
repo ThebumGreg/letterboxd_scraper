@@ -39,6 +39,18 @@ Options: `--mode native` (python3, ffmpeg and a systemd service instead of Docke
 
 To update a worker later: run the same script again. It needs no arguments the second time (the address and token are read from the `.env` it wrote).
 
+### Updating a worker with a hand-made setup
+
+If you set the worker up yourself (your own `/etc/fstab` lines, a customised `docker-compose.yml`, bind-mounted host paths), do **not** run `setup-worker.sh` again: it rewrites `/etc/fstab` and the compose file. Use `update-worker.sh` instead. It only pulls the latest code, copies the agent files into the folder your compose file builds from, and runs `docker compose up -d --build`. It never touches `/etc/fstab`, the compose file, `.env` or your mounts.
+
+```
+git clone https://github.com/ThebumGreg/letterboxd_scraper.git ~/letterboxd_scraper   # once
+sudo ~/letterboxd_scraper/agent/update-worker.sh --dir /opt/synchub-worker --dry-run  # look first
+sudo ~/letterboxd_scraper/agent/update-worker.sh --dir /opt/synchub-worker
+```
+
+Options: `--dir` (the folder with the worker's compose file, default `/opt/synchub-worker`), `--branch`, `--no-pull`, `--dry-run`. The agent code is baked into the image, so a plain `docker compose restart` does not update it; this script rebuilds.
+
 ## Install on Ubuntu with Docker, by hand
 
 1. On the worker PC:
@@ -86,7 +98,7 @@ A file in INI style (`--config`, or `./synchub-agent.ini`, or `/etc/synchub-agen
 | `[synchub] token` | `SYNCHUB_TOKEN` | required | The worker's token (shown once on the Workers page) |
 | `[synchub] name` | `SYNCHUB_NAME` | | Informational; SyncHub names a worker by its token |
 | `[synchub] use_proxy` | `SYNCHUB_USE_PROXY` | `no` | Use the system HTTP proxy to reach SyncHub (normally wrong on a LAN) |
-| `[worker] work_dir` | `SYNCHUB_WORK` | `./work` (`/work` in Docker) | Job folders, logs; use a big local disk |
+| `[worker] work_dir` | `SYNCHUB_WORK` | `./work` (`/work` in Docker) | Job folders, logs and `originals/` (files replaced in place, kept for the retention SyncHub sets); use a big local disk |
 | `[worker] slots` | `SYNCHUB_SLOTS` | `1` | Jobs at once (SyncHub's own limit for the worker also applies) |
 | `[worker] scan_threads` | `SYNCHUB_SCAN_THREADS` | `2` | Files a scan analyses at the same time (each is a short ffprobe and ffmpeg run; most of the time is the share) |
 | `[worker] scan_batch` | `SYNCHUB_SCAN_BATCH` | `25` | How many analysed files are reported to SyncHub at a time, so an interrupted scan loses at most this many |

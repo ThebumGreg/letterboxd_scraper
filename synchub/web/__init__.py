@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 PROFILE_COOKIE = "synchub_profile"      # a profile's ID, or "0" for "just looking": who is using this device
 PROFILE_COOKIE_DAYS = 365
+TOKEN_COOKIE = "synchub_token"          # signed proof that the site's access token was entered on this device (only when SYNCHUB_ACCESS_TOKEN is set)
 PIN_COOKIE = "synchub_pin"              # signed proof that this profile's PIN was entered on this device (only for a profile that has one)
 
 # The main menu. An (endpoint, label) is a link; a (label, [items]) is a dropdown, whose items are links or (None, heading) group titles.
@@ -52,7 +53,7 @@ def title_allowed(conn, media_id):
 def safe_next(target):
     """Where to go after choosing: a path on this site only (never another site)."""
     target = (target or "").strip()
-    if target.startswith("/") and not target.startswith(("//", "/\\", "/who")):
+    if target.startswith("/") and not target.startswith(("//", "/\\", "/who", "/login")):
         return target
     return "/"
 
@@ -110,6 +111,13 @@ def create_app(start_scheduler=False, csrf=True):
         and refuses what the person's permissions do not allow."""
         g.profile, g.has_profiles, g.permissions, g.pin_profile, g.max_rating = None, False, None, None, None
         endpoint = request.endpoint
+        if access.access_token() and endpoint is not None and not access.token_exempt(endpoint):
+            header = request.headers.get("Authorization", "")
+            bearer = header[7:].strip() if header[:7].lower() == "bearer " else ""
+            if not (access.token_matches(bearer) or access.token_proof_valid(app.secret_key, request.cookies.get(TOKEN_COOKIE), 365)):
+                if request.path.startswith("/api/") or request.method != "GET":
+                    return jsonify(ok=False, message="Enter the access token first.", login=url_for("login")), 401
+                return redirect(url_for("login", next=request.full_path.rstrip("?")))
         if endpoint is None or endpoint in ("static", "poster"):
             return None
         if access.required(endpoint) == access.PUBLIC and endpoint != "who":

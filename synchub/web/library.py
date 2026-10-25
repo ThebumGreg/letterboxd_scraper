@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from flask import Response, jsonify, redirect, render_template, request, url_for
 
-from synchub import db, jobs, settings, storage
+from synchub import db, downloads, jobs, settings, storage
 from synchub.library import findings, migrate, recommend as rc, report, scan, store
 from synchub.library import vocab as v
 from settings_validation import validate_setting
@@ -73,8 +73,9 @@ def overview(conn):
         run["when"] = (run["created_at"] or "")[:16]
     options = scan_options_for_page(conn)
     migration = migrate.queue_summary(conn)
-    return {"cfg": cfg, "groups": groups, "total": len(rows), "shares": shares_summary(conn, cfg), "runs": runs, "active": any(r["active"] for r in runs) or bool(migration["queued"] or migration["running"]), "options": options,
-            "roots": [r["name"] for r in storage.list_all(conn)], "migration": migration, "lookups": {"confidence": CONFIDENCE_FLOORS}}
+    return {"cfg": cfg, "groups": groups, "total": len(rows), "shares": shares_summary(conn, cfg), "runs": runs, "active": any(r["active"] for r in runs) or bool(migration["queued"] or migration["running"]) or bool(downloads.summary(conn)["working"]), "options": options,
+            "roots": [r["name"] for r in storage.list_all(conn)], "migration": migration,
+            "downloads": downloads.recent(conn, 15), "download_summary": downloads.summary(conn), "originals_days": downloads.retention_days(conn), "lookups": {"confidence": CONFIDENCE_FLOORS}}
 
 
 def scan_options_for_page(conn):
@@ -274,7 +275,7 @@ def register(app):
     @app.route("/api/library/settings", methods=["POST"])
     def api_library_settings():
         data = request.get_json(silent=True) or {}
-        keys = ("library_destination_root", "library_tv_folder", "library_movie_folder", "library_integrity_mode", "library_tail_seconds", "library_exclude_folders")
+        keys = ("library_destination_root", "library_tv_folder", "library_movie_folder", "library_integrity_mode", "library_tail_seconds", "library_exclude_folders", "download_pipeline", "originals_retention_days")
         cleaned, errors = {}, []
         for key in keys:
             if key in data:
@@ -290,6 +291,28 @@ def register(app):
             if cleaned:
                 findings.refresh(conn, scan.config(conn))                   # a different destination or layout changes what is "in place"
         return jsonify(ok=True, message="Saved.")
+
+    # ---- files Radarr/Sonarr imported (the download pipeline)
+    @app.route("/api/downloads/<int:intake_id>/<action>", methods=["POST"])
+    def api_library_download_action(intake_id, action):
+        if action not in ("approve", "skip", "retry", "rescan"):
+            return _fail("Unknown action.", 404)
+        try:
+            with db.connection() as conn:
+                who = _who(conn)
+                if action == "approve":
+                    downloads.approve(conn, intake_id, who)
+                elif action == "skip":
+                    downloads.skip(conn, intake_id, who)
+                elif action == "retry":
+                    downloads.retry(conn, intake_id)
+                else:
+                    downloads.ask_rescan_again(conn, intake_id)
+        except ValueError as exc:
+            return _fail(str(exc))
+        if action == "rescan":
+            downloads.rescan_due()
+        return jsonify(ok=True, message={"approve": "Queued for a worker.", "skip": "Left as it is.", "retry": "Looking at it again.", "rescan": "Asked to rescan."}[action])
 
     # ---- the report
     @app.route("/library/export.csv")

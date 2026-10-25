@@ -13,12 +13,12 @@ _INT_RANGES = {
     "radarr_min_user_count": (1, 1000), "sonarr_min_user_count": (1, 1000),
     "radarr_quality_profile_id": (1, 1_000_000), "sonarr_quality_profile_id": (1, 1_000_000),
     "payload_retention_limit": (1, 100_000), "metadata_refresh_hours": (1, 8760), "queue_poll_seconds": (0, 3600),
-    "library_tail_seconds": (5, 600), "jellyfin_events_keep_days": (0, 36500), "notify_history_keep_days": (0, 36500), "ddns_interval_minutes": (1, 60), "access_session_days": (1, 365), "backup_keep": (0, 365),
+    "library_tail_seconds": (5, 600), "jellyfin_events_keep_days": (0, 36500), "notify_history_keep_days": (0, 36500), "ddns_interval_minutes": (1, 60), "access_session_days": (1, 365), "backup_keep": (0, 365), "originals_retention_days": (0, 3650),
 }
 _FLOAT_KEYS = {"request_delay_min", "request_delay_max", "user_delay_min", "user_delay_max"}
 _URL_KEYS = {"jellyfin_url", "radarr_url", "sonarr_url", "synchub_url"}
 _PATH_KEYS = {"radarr_root_folder", "sonarr_root_folder"}
-_CHOICES = {"tv_metadata_provider": {"tmdb", "sonarr"}, "library_integrity_mode": {"metadata", "tail", "full"}}
+_CHOICES = {"tv_metadata_provider": {"tmdb", "sonarr"}, "library_integrity_mode": {"metadata", "tail", "full"}, "download_pipeline": {"off", "review", "auto"}}
 _FOLDER_NAME_KEYS = {"library_tv_folder", "library_movie_folder"}
 
 # The Servarr dropdowns submit this text if loading their options never finished.
@@ -28,6 +28,10 @@ _PLACEHOLDER = "Loading..."
 def validate_setting(key, value):
     """Returns (ok, cleaned_value_or_error_message) for a submitted setting."""
     value = (value or "").strip()
+
+    if key == "notify_admin_profiles":
+        parts = [p.strip() for p in value.split(",") if p.strip()]
+        return (True, ",".join(parts)) if all(p.isdigit() for p in parts) else (False, "Choose administrators from the list.")
 
     if key in _SWITCH_KEYS:
         return (True, value) if value in ("0", "1") else (False, f"{key} must be 0 or 1.")

@@ -307,12 +307,23 @@ def _close_attempt(conn, job_id, outcome, error_class=None, error=None, command=
                  (now or db.now(), outcome, error_class, None if error is None else str(error)[:2000], command, None if log_tail is None else str(log_tail)[-8000:], job_id))
 
 
+def _tell(conn, event_type, job_id, now, **extra):
+    """Raises a notification about a job. Never raises: telling people must not break the queue."""
+    from synchub.notifications import emit
+    r = conn.execute("SELECT kind, title, source_rel, dest_rel FROM job WHERE id = ?", (job_id,)).fetchone()
+    if r is None:
+        return
+    name = r["title"] or r["dest_rel"] or r["source_rel"] or f"{r['kind']} job {job_id}"
+    emit.notify(conn, event_type, f"job:{job_id}:{event_type}:{now}", {"job_id": job_id, "title": name, **extra}, now=now)
+
+
 def complete(conn, job_id, worker_id, result=None, command=None, now=None):
     _owned(conn, job_id, worker_id)
     now = now or db.now()
     _close_attempt(conn, job_id, "done", command=command, now=now)
     conn.execute("UPDATE job SET status = 'done', stage = 'done', progress = 1.0, eta_seconds = 0, result = ?, lease_until = NULL, error_class = NULL, error = NULL, "
                  "review_reason = NULL, finished_at = ?, updated_at = ? WHERE id = ?", (_dump(result if isinstance(result, dict) else {}), now, now, job_id))
+    _tell(conn, "job_done", job_id, now)
 
 
 def _requeue(conn, job, now, holder=None, back_off=None, message=None):
@@ -362,6 +373,10 @@ def fail(conn, job_id, worker_id, error_class, message, retryable=None, log_tail
     else:
         conn.execute("UPDATE job SET status = 'failed', lease_until = NULL, finished_at = ?, updated_at = ?, message = ? WHERE id = ?",
                      (now, now, str(message)[:300], job_id))
+    if outcome == "failed":
+        _tell(conn, "job_failed", job_id, now, error=str(message)[:300])
+    elif outcome == "review":
+        _tell(conn, "job_review", job_id, now, reason=str(message)[:300])
     return {"retry": "queued", "review": "needs_review", "failed": "failed"}[outcome]
 
 
@@ -372,6 +387,7 @@ def needs_review(conn, job_id, worker_id, reason, detail=None, keep_state=True, 
     _close_attempt(conn, job_id, "needs_review", error=reason, now=now)
     _to_review(conn, {"id": job_id}, reason, detail if isinstance(detail, dict) else {}, worker_id if keep_state else None, now)
     conn.execute("UPDATE job SET message = 'Waiting for your decision.' WHERE id = ?", (job_id,))
+    _tell(conn, "job_review", job_id, now, reason=str(reason)[:300])
 
 
 # ---------------------------------------------------------------- what people do
@@ -447,6 +463,7 @@ def _lost(conn, job, now, why):
     else:
         conn.execute("UPDATE job SET status = 'failed', lease_until = NULL, error_class = 'worker_lost', error = ?, finished_at = ?, updated_at = ?, message = ? WHERE id = ?",
                      (why, now, now, why, job["id"]))
+        _tell(conn, "job_failed", job["id"], now, error=why)
 
 
 def reap(conn, now=None):

@@ -108,6 +108,36 @@ def register(app):
                 error = "Could not reach TMDB."
         return render_template("search.html", query=query, kind=kind, results=results, error=error)
 
+    @app.route("/login", methods=["GET", "POST"])
+    def login():
+        """The site's access token (SYNCHUB_ACCESS_TOKEN): asked once per device, then remembered. With no token set there is nothing to ask."""
+        from flask import current_app
+        from synchub import access
+        from synchub.web import TOKEN_COOKIE, safe_next
+        destination = safe_next(request.values.get("next"))
+        if not access.access_token():
+            return redirect(destination)
+        error, status = None, 200
+        if request.method == "POST":
+            wait = access.login_wait(request.remote_addr)
+            if wait:
+                error, status = f"Too many wrong tries. Wait {wait} seconds.", 429
+            elif access.token_matches(request.form.get("token", "").strip()):
+                response = redirect(destination)
+                response.set_cookie(TOKEN_COOKIE, access.issue_token_proof(current_app.secret_key), max_age=365 * 86400, samesite="Lax", httponly=True)
+                return response
+            else:
+                access.login_failed(request.remote_addr)
+                error, status = "That is not the access token.", 401
+        return render_template("login.html", destination=destination, error=error), status
+
+    @app.route("/logout", methods=["POST"])
+    def logout():
+        from synchub.web import TOKEN_COOKIE
+        response = redirect(url_for("login"))
+        response.delete_cookie(TOKEN_COOKIE)
+        return response
+
     @app.route("/who", methods=["GET", "POST"])
     def who():
         """'Who is watching?': pick a profile, or carry on as a guest. A profile with a PIN asks for it; either choice is remembered on this device."""
