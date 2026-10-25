@@ -273,7 +273,8 @@ def test_approving_from_the_page_records_the_profile_that_did_it(client, conn):
     assert r.get_json() == {"ok": True, "message": "Approved."}
     rec = rec_of(conn, record_id)
     assert (rec["approval_status"], rec["approval_decided_by"]) == ("approved", "Alice")
-    assert [e["actor"] for e in store.events_for(conn, record_id)] == ["user"] and store.events_for(conn, record_id)[0]["detail"]["by"] == "Alice"
+    events = store.events_for(conn, record_id)          # newest first: the job it queued, then the decision
+    assert [e["event_type"] for e in events] == ["migration_queued", "approval_approved"] and {e["detail"]["by"] for e in events} == {"Alice"}
     guest = add(conn, rel="g.mkv", name="G (2000).mkv")
     client.set_cookie("synchub_profile", "0")
     post(client, f"/api/library/record/{guest}/approve")

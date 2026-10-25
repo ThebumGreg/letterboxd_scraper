@@ -9,7 +9,7 @@ from functools import wraps
 from flask import Response, g, jsonify, request
 
 from synchub import db, jobs, storage, workers
-from synchub.library import scan
+from synchub.library import migrate, scan
 
 logger = logging.getLogger(__name__)
 
@@ -100,11 +100,15 @@ def register(app):
             release = jobs.release_for(conn, data["holding"]) if isinstance(data.get("holding"), list) else []
             free_bytes = data.get("free_bytes")
             claimed = jobs.claim(conn, worker, data.get("free_slots") or 0, free_bytes if isinstance(free_bytes, (int, float)) else None)
+            finished = migrate.sync_active(conn)
             for job in claimed:
                 logger.info(f"[jobs] job {job['id']} ({job['kind']}: {job['title']}) went to {worker['name']}, attempt {job['attempt']}")
-            return jsonify(ok=True, jobs=claimed, resume=resume, release=release, cancel=jobs.cancels_for(conn, worker["id"]), cleanup=jobs.cleanups_for(conn, worker["id"]),
+            response = jsonify(ok=True, jobs=claimed, resume=resume, release=release, cancel=jobs.cancels_for(conn, worker["id"]), cleanup=jobs.cleanups_for(conn, worker["id"]),
                            log_requests=jobs.log_requests_for(conn, worker["id"]), worker_log=bool(worker["log_requested"]), roots_hash=storage.roots_hash(conn), paused=bool(worker["paused"]), draining=bool(worker["draining"]),
                            poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS)
+        if finished:
+            migrate.tell_jellyfin(finished)
+        return response
 
     @route("/jobs/<int:job_id>/progress", "progress")
     def job_progress(job_id):
@@ -119,7 +123,10 @@ def register(app):
         data = _body()
         with db.connection() as conn:
             jobs.complete(conn, job_id, g.worker["id"], data.get("result"), command=_text(data.get("command"), 8000))
+            arrived = migrate.sync(conn, job_id)
         logger.info(f"[jobs] job {job_id} completed by {g.worker['name']}")
+        if arrived:
+            migrate.tell_jellyfin()
         return jsonify(ok=True)
 
     @route("/jobs/<int:job_id>/fail", "fail")
@@ -130,6 +137,7 @@ def register(app):
             outcome = jobs.fail(conn, job_id, g.worker["id"], data.get("error_class"), _text(data.get("message")) or "The worker gave no reason.",
                                 retryable=retryable if isinstance(retryable, bool) else None, log_tail=_text(data.get("log_tail"), 8000),
                                 command=_text(data.get("command"), 8000), keep_state=data.get("keep_state") is not False)
+            migrate.sync(conn, job_id)
         logger.warning(f"[jobs] job {job_id} failed on {g.worker['name']} ({data.get('error_class')}): {_text(data.get('message'), 300)} -> {outcome}")
         return jsonify(ok=True, outcome=outcome)
 
@@ -139,6 +147,7 @@ def register(app):
         with db.connection() as conn:
             jobs.needs_review(conn, job_id, g.worker["id"], _text(data.get("reason")) or "The worker is not sure what to do.",
                               data.get("detail"), keep_state=data.get("keep_state") is not False)
+            migrate.sync(conn, job_id)
         logger.info(f"[jobs] job {job_id} is waiting for review: {_text(data.get('reason'), 200)}")
         return jsonify(ok=True)
 

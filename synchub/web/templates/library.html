@@ -109,6 +109,12 @@
         if (data.ok) setTimeout(() => location.reload(), 600);
     });
     document.addEventListener('click', async (e) => {
+        if (e.target.closest('[data-queue-approved]')) {
+            const data = await libraryPost('/api/library/queue-approved');
+            librarySay(data.message || (data.ok ? 'Queued.' : 'Failed.'), data.ok);
+            refresh();
+            return;
+        }
         const cancel = e.target.closest('[data-cancel-run]');
         if (!cancel) return;
         if (cancel.dataset.confirm && !confirm(cancel.dataset.confirm)) return;

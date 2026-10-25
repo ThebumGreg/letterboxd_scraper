@@ -22,7 +22,7 @@ import dataclasses
 import json
 from typing import List, Optional
 
-from synchub.library import findings, layout as media_layout, store
+from synchub.library import findings, layout as media_layout, migrate, store
 from synchub.library import vocab as db
 from synchub.library.vocab import LibraryConfig
 
@@ -361,14 +361,15 @@ def apply_recommendation(conn, record_id, by, name=None, keep_streams=None, note
         store.set_approval(conn, record_id, db.APPROVAL_REJECTED, by, note="duplicate: skipped")
         return "rejected"
     if r.kind == "keep_duplicate":
-        return _keep_duplicate(conn, rec, r, by, name, keep_streams, note)
+        return _keep_duplicate(conn, rec, r, by, name, keep_streams, note, cfg)
     store.set_approval(conn, record_id, db.APPROVAL_APPROVED, by, action=r.action, name=name, note=note,
                     mark_reviewed=rec["review_status"] == db.REVIEW_MANUAL,
                     accept_track_changes=r.accept_tracks, keep_streams=keep_streams)
+    migrate.queue(conn, record_id, cfg, by)
     return "approved"
 
 
-def _keep_duplicate(conn, rec, r, by, name, keep_streams, note):
+def _keep_duplicate(conn, rec, r, by, name, keep_streams, note, cfg):
     siblings = [dict(s) for s in conn.execute(
         "SELECT * FROM library_file WHERE duplicate_group=? AND id != ?", (rec["duplicate_group"], rec["id"]))]
     busy = [s["id"] for s in siblings if s["migration_status"] in (db.MIGRATION_IN_PROGRESS, db.MIGRATION_COMPLETED)]
@@ -383,6 +384,7 @@ def _keep_duplicate(conn, rec, r, by, name, keep_streams, note):
     for sibling in siblings:
         if sibling["approval_status"] != db.APPROVAL_REJECTED:
             store.set_approval(conn, sibling["id"], db.APPROVAL_REJECTED, by, note=f"duplicate of {rec['id']}")
+    migrate.queue(conn, rec["id"], cfg, by)
     return f"kept; skipped {len(siblings)} duplicate(s)"
 
 
@@ -395,6 +397,7 @@ def approve_after_testing(conn, record_id, by, note, action=db.ACTION_COPY_RENAM
         raise ValueError("please write a short note about what you tested")
     store.set_approval(conn, record_id, db.APPROVAL_APPROVED, by, action=rec.get("base_action") or action,
                     note=f"tested by hand: {note.strip()}", mark_reviewed=True)
+    migrate.queue(conn, record_id, cfg or LibraryConfig(), by)
     return "approved"
 
 

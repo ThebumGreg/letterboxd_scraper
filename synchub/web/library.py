@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from flask import Response, jsonify, redirect, render_template, request, url_for
 
 from synchub import db, jobs, settings, storage
-from synchub.library import findings, recommend as rc, report, scan, store
+from synchub.library import findings, migrate, recommend as rc, report, scan, store
 from synchub.library import vocab as v
 from settings_validation import validate_setting
 
@@ -72,8 +72,9 @@ def overview(conn):
         run["percent"] = None if run["progress"] is None else round(run["progress"] * 100)
         run["when"] = (run["created_at"] or "")[:16]
     options = scan_options_for_page(conn)
-    return {"cfg": cfg, "groups": groups, "total": len(rows), "shares": shares_summary(conn, cfg), "runs": runs, "active": any(r["active"] for r in runs), "options": options,
-            "roots": [r["name"] for r in storage.list_all(conn)], "lookups": {"confidence": CONFIDENCE_FLOORS}}
+    migration = migrate.queue_summary(conn)
+    return {"cfg": cfg, "groups": groups, "total": len(rows), "shares": shares_summary(conn, cfg), "runs": runs, "active": any(r["active"] for r in runs) or bool(migration["queued"] or migration["running"]), "options": options,
+            "roots": [r["name"] for r in storage.list_all(conn)], "migration": migration, "lookups": {"confidence": CONFIDENCE_FLOORS}}
 
 
 def scan_options_for_page(conn):
@@ -222,6 +223,17 @@ def register(app):
             return _fail(str(exc))
         left = f" {len(skipped)} left for you: {skipped[0][1]}." if skipped else ""
         return jsonify(ok=True, done=done, skipped=len(skipped), message=f"Approved {done} file{'s' if done != 1 else ''}.{left}")
+
+    @app.route("/api/library/queue-approved", methods=["POST"])
+    def api_library_queue_approved():
+        """Queues the files that were approved but have no job (approved before approvals queued work, or a job that was cancelled)."""
+        try:
+            with db.connection() as conn:
+                queued, skipped = migrate.queue_approved(conn, scan.config(conn), _who(conn))
+        except (ValueError, v.LibraryError) as exc:
+            return _fail(str(exc))
+        left = f" {len(skipped)} could not be queued: {skipped[0][1]}." if skipped else ""
+        return jsonify(ok=True, queued=queued, skipped=len(skipped), message=f"Queued {queued} file{'s' if queued != 1 else ''} for a worker.{left}")
 
     # ---- scans, duplicates, settings
     @app.route("/api/library/scan", methods=["POST"])

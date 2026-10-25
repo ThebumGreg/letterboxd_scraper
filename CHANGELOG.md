@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+Approved Library files are now processed: approving queues a job, a worker converts the file and brings it into the destination share, and Jellyfin is told.
+
+**Library processing**
+- **Approving queues a job.** Approving a file (one by one, in bulk or after testing) creates a `library` job: source share and path, destination share and path (the Movies / TV Shows layout) and the approved plan. The next free worker that has both shares ready takes it; if every worker is busy it waits in the queue. Rejecting or undoing takes a waiting job back; a file that changed on disk withdraws its waiting job along with the approval.
+- **Migration queue panel** on the Library page: how many files are in the queue, running, waiting for a decision, failed and completed. Files approved before this release show a **Queue them now** button.
+- **Completed means done.** A file's migration status moves to *in progress* when a worker takes it and to *completed* only after the converted file has been copied into the destination share and verified. A failed or held job shows as failed or manual review and follows retries, skips and cancels from the Workers page.
+- **Agent `convert` operation**: copies the source in, runs ffmpeg for the approved plan (lossless remux to MKV, H.264 re-encode, audio to AAC, tracks removed, English default), checks the result (video present, planned track counts, duration within 0.5 %, clean decode at the end), then copies it out with the usual verification. The source is never changed.
+- **Jellyfin** is asked to scan its libraries each time a file arrives (`POST /Library/Refresh`). Best effort: if Jellyfin is unreachable the file is still in place and Jellyfin finds it on its next scheduled scan.
+
 Worker setup, worker logs and a Worker Status tab.
 
 **Workers**

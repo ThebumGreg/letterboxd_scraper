@@ -29,6 +29,11 @@ class JellyfinClient:
         res = check(http.request("jellyfin", "GetUsers", "GET", f"{self.url}/Users", headers=self.headers), "Jellyfin", "user list")
         return res.json()
 
+    def refresh_library(self):
+        """Asks Jellyfin to scan its libraries now, so files just copied into a library folder appear. Returns at once; Jellyfin scans in the background."""
+        res = http.request("jellyfin", "RefreshLibrary", "POST", f"{self.url}/Library/Refresh", headers=self.headers, timeout=15)
+        check(res, "Jellyfin", "library refresh")
+
     def plugins(self):
         return check(http.request("jellyfin", "GetPlugins", "GET", f"{self.url}/Plugins", headers=self.headers), "Jellyfin", "plugin list").json()
 

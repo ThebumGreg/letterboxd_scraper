@@ -5,6 +5,25 @@
     {% else %}Choose a share below and press <em>Start scan</em>. A worker on the <a href="{{ url_for('workers_page') }}">Workers</a> page does the looking; this page fills as files are analysed.{% endif %}</div>
 {% endif %}
 
+<div class="panel p-3 mb-4" id="migrationQueue">
+    <div class="d-flex flex-wrap align-items-center gap-3">
+        <h5 class="mb-0">Migration queue</h5>
+        <span class="badge bg-secondary" title="Approved and waiting for a free worker">{{ migration.queued }} in queue</span>
+        <span class="badge bg-primary" title="A worker is converting or copying these now">{{ migration.running }} running</span>
+        {% if migration.waiting %}<span class="badge bg-warning text-dark" title="Held for a decision on the Workers page">{{ migration.waiting }} waiting for you</span>{% endif %}
+        {% if migration.failed %}<span class="badge bg-danger">{{ migration.failed }} failed</span>{% endif %}
+        <span class="badge bg-success" title="Converted, copied into the destination share and verified">{{ migration.completed }} completed</span>
+        <a class="ms-auto small" href="{{ url_for('workers_page') }}">Workers and jobs</a>
+    </div>
+    <p class="small text-body-secondary mb-0 mt-2">Approving a file queues it; the next free worker converts it if needed, brings it into the destination share and only then is it counted as completed. Jellyfin is asked to scan after each one arrives.</p>
+    {% if migration.unqueued %}
+    <div class="alert alert-warning mt-3 mb-0 d-flex flex-wrap align-items-center gap-2">
+        <span>{{ migration.unqueued }} approved file{{ '' if migration.unqueued == 1 else 's' }} {{ 'has' if migration.unqueued == 1 else 'have' }} no job yet.</span>
+        <button type="button" class="btn btn-sm btn-primary" data-queue-approved>Queue them now</button>
+    </div>
+    {% endif %}
+</div>
+
 <div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3 mb-4" id="queueCards">
     {% for g in groups %}
     <div class="col">
