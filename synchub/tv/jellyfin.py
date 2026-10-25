@@ -160,19 +160,27 @@ class JellyfinClient:
             self.user_id = (admin or users[0])["Id"]
         return self.user_id
 
-    def search(self, q):
+    def search(self, q, user_id=None):
         r = self.request("GET", "/Items", params={
-            "userId": self.lookup_user_id(), "searchTerm": q, "recursive": "true",
+            "userId": user_id or self.lookup_user_id(), "searchTerm": q, "recursive": "true",
             "includeItemTypes": "Movie,Series,Episode", "limit": 25, "fields": "ProductionYear,OfficialRating,ProviderIds"})
         return [summarize_item(i) for i in r.json().get("Items", [])]
 
-    def episodes(self, series_id):
-        r = self.request("GET", f"/Shows/{series_id}/Episodes", params={"userId": self.lookup_user_id()})
+    def episodes(self, series_id, user_id=None):
+        r = self.request("GET", f"/Shows/{series_id}/Episodes", params={"userId": user_id or self.lookup_user_id()})
         return [summarize_item(i) for i in r.json().get("Items", [])]
 
     def item(self, item_id):
         r = self.request("GET", f"/Items/{item_id}", params={"userId": self.lookup_user_id()})
         return r.json() if r.ok else {}
+
+    def user_data(self, item_id, user_id):
+        """This user's own data for an item (UserData: where they stopped, whether they finished it), {} when Jellyfin has none."""
+        r = self.request("GET", "/Items", params={"userId": user_id, "ids": item_id, "enableUserData": "true"})
+        if not r.ok:
+            raise JellyfinError(f"GET /Items returned HTTP {r.status_code}")
+        items = r.json().get("Items", [])
+        return (items[0].get("UserData") or {}) if items else {}
 
     def next_up(self, series_id, user_id=None):
         """The episode of a show this user should watch next (the first one if they have not started it), or None."""

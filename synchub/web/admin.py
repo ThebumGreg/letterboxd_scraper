@@ -18,6 +18,7 @@ from synchub.web import current_limit
 TRIGGERS = {
     "jellyfin_movies": (tasks.with_reconcile(tasks.sync_jellyfin_movies), "Jellyfin movie sync started."),
     "jellyfin_tv": (tasks.with_reconcile(tasks.sync_jellyfin_tv), "Jellyfin TV sync started."),
+    "watch": (tasks.sync_watch_state, "Watch history sync started."),
     "radarr": (tasks.with_reconcile(tasks.sync_radarr), "Radarr sync started."),
     "sonarr": (tasks.with_reconcile(tasks.sync_sonarr), "Sonarr sync started."),
     "letterboxd": (tasks.with_reconcile(tasks.scrape_letterboxd), "Letterboxd scrape started."),

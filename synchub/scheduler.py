@@ -51,7 +51,7 @@ def _scrape_job():
 
 JOBS = (
     ("job_scrape", "scraper_interval_hours", 24, _scrape_job),
-    ("job_jellyfin", "jellyfin_interval_hours", 6, tasks.with_reconcile(tasks.sync_jellyfin_movies, tasks.sync_jellyfin_tv)),
+    ("job_jellyfin", "jellyfin_interval_hours", 6, tasks.with_reconcile(tasks.sync_jellyfin_movies, tasks.sync_jellyfin_tv, tasks.sync_watch_state)),
     ("job_radarr", "radarr_interval_hours", 6, tasks.with_reconcile(tasks.sync_radarr)),
     ("job_sonarr", "sonarr_interval_hours", 6, tasks.with_reconcile(tasks.sync_sonarr)),
 )

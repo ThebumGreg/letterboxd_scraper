@@ -23,7 +23,7 @@ const S = {
   sessions: [], sessSel: 'auto', items: {}, iconFiles: [], badIcons: new Set(),
   prefs: {quick: {}, apps: {}}, quickMax: 4, notices: [], logAll: [], logLast: 0, build: null,
 };
-const W = {item: null, devId: null};
+const W = {item: null, devId: null, startOver: false};   // startOver: the link that opened this page said to begin at the start
 const Page = {};   // hooks a page can set: onStart, onSelect, onStatus, onSessions, onApps, onPrefs, onLog (Page.noApps skips listing apps)
 const hook = (name, ...args) => Page[name] && Page[name](...args);
 const dev = () => S.devices.find(d => d.id === S.devId);
@@ -285,6 +285,7 @@ $('#wq').onkeydown = e => { if (e.key === 'Enter') watchSearch(); };
 $('#watch').addEventListener('click', e => { if (e.target === e.currentTarget && W.done === 'good') e.currentTarget.close(); });   // a tap outside closes it, but only once playback started
 
 function openWatch(item) {
+  W.startOver = false;                    // the search dialog has its own "Resume at" choice
   const dlg = $('#watch');
   if (!dlg.open) dlg.showModal();
   if (item) chooseTarget(item); else showWatchStep('wSearch');
@@ -309,7 +310,7 @@ function stateHint(d) {
   if (!st) return 'checking…';
   if (d.capabilities.includes('deeplink') && ['auto', 'deeplink'].includes(d.playVia))   // opens the Jellyfin app straight onto the movie
     return !st.online ? `${st.unresponsive ? 'asleep' : 'unreachable'} — will try ${d.wakeMethods.join(', ')}, then open Jellyfin and play`
-      : st.power !== 'on' ? 'standby — will wake it, open Jellyfin and play (starts from the beginning)' : 'will open the Jellyfin app on the movie (starts from the beginning)';
+      : st.power !== 'on' ? 'standby — will wake it, open Jellyfin and play (a deep link starts from the beginning unless the app can be moved)' : 'will open the Jellyfin app on the movie (starts from the beginning unless the app can be moved)';
   if (d.playVia === 'auto' && st.online && st.power === 'on')
     return 'will use the Jellyfin app if it accepts remote control, otherwise stream the movie directly';
   if (d.playVia === 'url')   // streams straight from Jellyfin: no Jellyfin app or session involved
@@ -346,9 +347,11 @@ async function watchOn(devId) {
     const lines = S.logAll.filter(e => e.id > startId && e.device === devId && e.kind === 'system').map(e => `<div class="${e.ok === false ? 'bad' : ''}">${esc(e.response || e.action)}</div>`);
     if (lines.length) $('#wSteps').innerHTML = lines.join('');
   }, 700);
-  const resume = !$('#wResumeRow').hidden && $('#wResume').checked;
+  // Where to start: the dialog's own "Resume at" box decides when it is showing; a link that said start=0 starts over; otherwise the server
+  // picks up where this profile's Jellyfin user left off (sending 0 means the beginning, sending nothing means "wherever they stopped").
+  const offered = !$('#wResumeRow').hidden, resume = offered && $('#wResume').checked;
   const r = await api('POST', devPath('/play', devId), {itemIds: [item.Id], playCommand: 'PlayNow', prepare: true,
-    startPositionTicks: resume ? item.ResumeTicks : undefined});
+    startPositionTicks: resume ? item.ResumeTicks : (offered || W.startOver) ? 0 : undefined});
   clearInterval(timer);
   fetchLog(); pollSessions(); pollStatus(d);
   $('#wSteps').innerHTML = (r.steps || [lastLine(r.body)]).map(x => `<div>${esc(x)}</div>`).join('');

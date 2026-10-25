@@ -14,6 +14,10 @@ class FakeJellyfin:
     def item(self, item_id):
         return self.items.get(item_id, {})
 
+    def user_data(self, item_id, user_id):
+        self.asked.append(("user_data", item_id, user_id))
+        return {}                                          # nobody has started anything here (test_tv_resume has the viewers who have)
+
     def next_up(self, series_id, user_id=None):
         self.asked.append(("next_up", series_id, user_id))
         return self._next
@@ -85,7 +89,7 @@ def test_the_profile_chosen_on_the_who_is_watching_page_decides_whose_next_up_it
     jf = FakeJellyfin({"show1": SHOW}, next_up=EPISODE)
     monkeypatch.setattr(tv, "jf", lambda: jf)
     answer = play(browser, "show1")
-    assert jf.asked == [("next_up", "show1", "aaa111")] and "for Alice" in answer["steps"][0]
+    assert jf.asked == [("next_up", "show1", "aaa111"), ("user_data", "ep7", "aaa111")] and "for Alice" in answer["steps"][0]
 
 
 def test_a_show_that_is_all_watched_starts_again_from_its_first_episode(browser, tv, monkeypatch):

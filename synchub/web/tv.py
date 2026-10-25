@@ -5,18 +5,20 @@ talks to /api/tv/... . Endpoint names matter: access.RULES gives every `tv_setup
 `tv_*` / `api_tv_*` endpoint the TV permission.
 """
 import json
+import logging
 from pathlib import Path
 
 from flask import Response, g, jsonify, redirect, render_template, request, url_for
 
 from config import BASE_DIR
-from synchub import ratings
+from synchub import db, ratings, watch
 from synchub.tv import discovery, orchestrator, runtime
 from synchub.tv.devices import DeviceError
 from synchub.tv.jellyfin import JellyfinError, is_stale, item_label, match_session, summarize_session
 from synchub.tv.notices import NOTICES
 from synchub.web import current_limit
 
+logger = logging.getLogger(__name__)
 TV_STATIC = BASE_DIR / "static" / "tv"
 PLAYSTATE_COMMANDS = {"Stop", "Pause", "Unpause", "NextTrack", "PreviousTrack", "Seek", "Rewind", "FastForward", "PlayPause"}
 PLAY_COMMANDS = {"PlayNow", "PlayNext", "PlayLast", "PlayInstantMix", "PlayShuffle"}
@@ -433,26 +435,62 @@ def register(app):
         label = " - ".join(x for x in (f"S{season}E{number}" if season is not None and number is not None else None, episode.get("Name")) if x)
         return f'"{item.get("Name")}" is a show: playing {how}{" for " + who if who else ""}: {label or episode["Id"]}'
 
+    def resume_point(r, jellyfin_user_id, item_id):
+        """Where this viewer stopped in an item, in ticks (0: nowhere). Jellyfin is asked now, which is the freshest; if it cannot be reached, what
+        SyncHub last copied from it is used."""
+        try:
+            return watch.resume_ticks(r.jf().user_data(item_id, jellyfin_user_id))
+        except Exception as exc:                          # not being able to find the place must never stop the title from playing
+            logger.warning(f"Could not ask Jellyfin where {jellyfin_user_id} stopped in {item_id} ({exc.__class__.__name__}); using the copy SyncHub has")
+            with db.connection() as conn:
+                row = conn.execute("SELECT position_ticks FROM src_jellyfin_userdata WHERE jellyfin_user_id = ? AND item_id = ? AND removed_at IS NULL",
+                                   (watch.user_of({"jellyfin_user_id": jellyfin_user_id}), watch.norm(item_id))).fetchone()
+            return int(row["position_ticks"]) if row else 0
+
+    def resolve_resume(r, body):
+        """Playing a title picks up where the person using this page left off (their Jellyfin user, set on People), unless the request already
+        says where to start: a number starts exactly there and 0 starts over. Sets body["startPositionTicks"] and returns a sentence saying so,
+        or None when there is nothing to pick up (a guest, a profile without a Jellyfin user, nothing started)."""
+        if body.get("startPositionTicks") is not None or body["playCommand"] != "PlayNow":
+            return None
+        profile = getattr(g, "profile", None) or {}
+        if not watch.user_of(profile):
+            return None
+        ids, index = body["itemIds"], int(body.get("startIndex") or 0)
+        ticks = resume_point(r, profile["jellyfin_user_id"], ids[index] if index < len(ids) else ids[0])
+        if ticks <= 0:
+            return None
+        body["startPositionTicks"] = ticks
+        return f"Picking up where {profile.get('name') or 'they'} left off, at {watch.fmt_ticks(ticks)}"
+
     @app.post("/api/tv/devices/<dev_id>/play")
     def api_tv_device_play(dev_id):
         """Optionally prepare the device, then play. Via the device's Jellyfin session, a deep link, or (for devices that can) a stream URL.
 
         In auto mode a Roku uses its deep link and a Google TV its Jellyfin session; if a session reports it cannot be remote controlled,
-        the movie is streamed instead and that is remembered so the next play skips straight to streaming. A show is played from its next episode."""
+        the movie is streamed instead and that is remembered so the next play skips straight to streaming. A show is played from its next episode.
+        Where playback starts: from where the viewer stopped (see resolve_resume), unless the request gives `startPositionTicks`: 0 starts over."""
         r = rt()
         d = r.device(dev_id)
         body = json_body()
         if body.get("playCommand") not in PLAY_COMMANDS or not body.get("itemIds"):
             raise DeviceError("bad playCommand or itemIds")
         require_items_allowed(r.jf(), body["itemIds"])
-        note = resolve_series(r, body)
+        asked = body.get("startPositionTicks")
+        notes = []
+        if note := resolve_series(r, body):
+            notes.append(note)
+            body["startPositionTicks"] = 0 if asked == 0 else None        # a position given for a show means nothing: the episode has its own
+        if resumed := resolve_resume(r, body):
+            notes.append(resumed)
         response = play_dispatch(r, d, body)
-        if not note:
+        if not notes:
             return response
         payload = response.get_json()
-        r.logbook.add("system", d.id, "play", response=note, ok=True)
-        payload["steps"] = [note] + list(payload.get("steps") or [])
-        payload["body"] = note + "\n" + str(payload.get("body") or "")
+        for note in notes:
+            r.logbook.add("system", d.id, "play", response=note, ok=True)
+        payload["steps"] = notes + list(payload.get("steps") or [])
+        payload["body"] = "\n".join(notes) + "\n" + str(payload.get("body") or "")
         return jsonify(payload)
 
     def play_dispatch(r, d, body):
@@ -591,10 +629,14 @@ def register(app):
             if not valid_id(item_id) or not ratings.permitted(jf_rank(jf, jf.item(item_id) or {}, cache), limit):
                 raise DeviceError("That title is not available for your profile.")
 
+    def viewer():
+        """The Jellyfin user of the profile chosen on this device, or None (a guest): whose watch data the lists below show."""
+        return (getattr(g, "profile", None) or {}).get("jellyfin_user_id") or None
+
     @app.get("/api/tv/jf/search")
     def api_tv_jf_search():
         jf = rt().jf()
-        found, limit = jf.search(request.args.get("q", "").strip()), current_limit()
+        found, limit = jf.search(request.args.get("q", "").strip(), viewer()), current_limit()
         if limit is not None:
             cache = {}
             found = [i for i in found if ratings.permitted(jf_rank(jf, i, cache), limit)]
@@ -606,7 +648,7 @@ def register(app):
             raise JellyfinError("bad id")
         jf = rt().jf()
         require_items_allowed(jf, [series_id])
-        return jsonify(jf.episodes(series_id))
+        return jsonify(jf.episodes(series_id, viewer()))
 
     def session_id(body):
         sid = body.get("sessionId")

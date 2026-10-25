@@ -4,7 +4,8 @@
 
 {# Dashboard stat card. Pass f_type and/or f_status to make it a clickable filter preset. #}
 {# The Watch now button. watch.js turns this into a menu (This device / each TV); the plain link inside is what shows without it. #}
-{% macro watch_now(link, item_id, title, size='lg') %}<span data-watch-now data-link="{{ link }}" data-item="{{ item_id }}" data-title="{{ title }}" data-size="{{ size }}"><a href="{{ link }}" class="btn btn-success{% if size != 'lg' %} btn-sm{% endif %}" data-jellyfin-item="{{ item_id }}" target="_blank" rel="noopener noreferrer">Watch now</a></span>{% endmacro %}
+{# `resume`: where this person stopped ("at 42:10"), when they are part-way through it; the button then reads Resume and a TV picks up from there. #}
+{% macro watch_now(link, item_id, title, size='lg', resume=none) %}<span data-watch-now data-link="{{ link }}" data-item="{{ item_id }}" data-title="{{ title }}" data-size="{{ size }}"{% if resume %} data-resume="{{ resume }}"{% endif %}><a href="{{ link }}" class="btn btn-success{% if size != 'lg' %} btn-sm{% endif %}" data-jellyfin-item="{{ item_id }}" target="_blank" rel="noopener noreferrer">Watch now</a></span>{% endmacro %}
 
 {% macro stat_card(label, value, color, f_type=none, f_status=none, text=none) %}
 {% set clickable = f_type is not none or f_status is not none %}
@@ -75,6 +76,12 @@
     <label class="form-check-label {{ label_class }}" for="{{ name }}">{{ label }}</label>
 </div>
 {% endmacro %}
+
+{# Watched / In progress / Not watched, for one movie or episode as watch.describe() gives it. #}
+{% macro watch_badge(w) %}<span class="badge {{ {'watched': 'bg-success', 'in_progress': 'bg-info text-dark'}.get(w.state, 'bg-secondary') }}" data-watch-state="{{ w.state }}">{{ w.state_label }}</span>{% endmacro %}
+
+{# Shown where there is nothing to show because the profile has no Jellyfin user: the way to fix it. #}
+{% macro watch_unlinked(progress) %}<div class="small text-body-secondary" id="watchUnlinked"><i class="bi bi-person-badge" aria-hidden="true"></i> To see {{ progress.name }}'s watch progress here, set their Jellyfin user{% if can('access') %} on <a href="{{ url_for('people_page') }}" class="text-decoration-none">People</a>{% endif %}.</div>{% endmacro %}
 
 {# Settings: Add/Edit profile modal. Fields are filled by editProfile() from the row's data attributes. #}
 {% macro profile_modal(save_url) %}
