@@ -10,6 +10,7 @@ from synchub.clients.arr import RadarrClient, SonarrClient
 from synchub.clients.jellyfin import JellyfinClient
 from synchub.clients.tmdb import TmdbClient
 from synchub.ingest import jellyfin as jf_ingest
+from synchub.ingest import jellyfin_userdata as userdata_ingest
 from synchub.ingest import letterboxd as lb_ingest
 from synchub.ingest import letterboxd_ids
 from synchub.ingest import radarr as radarr_ingest
@@ -135,6 +136,71 @@ def sync_jellyfin_movies():
 
 def sync_jellyfin_tv():
     return run("jellyfin_tv", "Syncing Jellyfin TV", lambda report: _jellyfin("tv", "Jellyfin TV", report))
+
+
+def sync_watch_state():
+    """Copies what each active profile's Jellyfin user has watched, and where they stopped, so the title pages can show it."""
+    def work(report):
+        if settings.get("disable_jellyfin_connection") == "1":
+            return "Jellyfin integration is disabled in Settings."
+        client = JellyfinClient()
+        with db.connection() as conn:
+            people = [(r["name"], r["jellyfin_user_id"]) for r in conn.execute("SELECT name, jellyfin_user_id FROM profile WHERE is_active = 1 AND jellyfin_user_id IS NOT NULL ORDER BY name")]
+        if not people:
+            return "No active profile has a Jellyfin user."
+        seen, problems = 0, []
+        for number, (name, user_id) in enumerate(people, 1):
+            report(f"Reading what {name} has watched ({number} of {len(people)})...", force=True)
+            try:
+                with db.connection() as conn:
+                    seen += userdata_ingest.sync_user(conn, client, user_id)["seen"]
+            except Exception as exc:
+                logger.warning(f"Could not read {name}'s watch history from Jellyfin: {exc}")
+                problems.append(f"{name}: {exc}")
+        if problems and len(problems) == len(people):
+            raise RuntimeError("Could not read anyone's watch history. " + "; ".join(problems))
+        return f"Watch history: {seen} item(s) for {len(people) - len(problems)} profile(s)." + (f" Failed: {'; '.join(problems)}." if problems else "")
+    return run("watch_state", "Reading watch history", work)
+
+
+WATCH_SETTLE_SECONDS = 2.0        # Jellyfin saves where someone stopped a moment around the time it announces they stopped
+WATCH_EVENT_MIN_SECONDS = 20      # a user's data is saved on every progress report; one look at it per item in this long is enough
+_WATCH_LAST = {}
+
+
+def refresh_watch_item(jellyfin_user_id, item_id, settle=None):
+    """Re-reads one item for one user (right after they stopped playing it)."""
+    time.sleep(WATCH_SETTLE_SECONDS if settle is None else settle)
+    try:
+        client = JellyfinClient()
+        with db.connection() as conn:
+            userdata_ingest.refresh_item(conn, client, jellyfin_user_id, item_id)
+    except ConfigError:
+        return
+    except Exception as exc:
+        logger.warning(f"Could not refresh watch data for an item of Jellyfin user {jellyfin_user_id}: {exc}")
+
+
+def watch_event(event, payload, now=None):
+    """A Jellyfin webhook event. When someone with a profile stopped playing a movie or an episode (or their data for it changed), their
+    record of it is read again, in the background. Returns True if a refresh was started."""
+    if event not in ("PlaybackStop", "UserDataSaved"):
+        return False
+    from synchub import jellyfin_events
+    fields = jellyfin_events.extract(payload)
+    user, item = userdata_ingest.norm(fields.get("user_id")), userdata_ingest.norm(fields.get("item_id"))
+    if not user or not item or (fields.get("item_type") or "").lower() not in ("movie", "episode"):
+        return False
+    with db.connection() as conn:
+        known = conn.execute("SELECT 1 FROM profile WHERE is_active = 1 AND lower(replace(jellyfin_user_id, '-', '')) = ?", (user,)).fetchone()
+    if not known:
+        return False
+    if event == "UserDataSaved":                         # saved on every progress report: do not read it again each time
+        now = time.monotonic() if now is None else now
+        if now - _WATCH_LAST.get((user, item), -WATCH_EVENT_MIN_SECONDS) < WATCH_EVENT_MIN_SECONDS:
+            return False
+        _WATCH_LAST[(user, item)] = now
+    return refresh_soon(f"watch:{user}:{item}", lambda: refresh_watch_item(user, item))
 
 
 def _link_now():
@@ -429,7 +495,7 @@ def run_all():
     """The full sequence, one step after another. A failing step is recorded and the rest still run."""
     def work(report):
         # Reconcile before Radarr/Sonarr so their auto-add rules see wanted titles already linked, and again afterwards.
-        steps = (sync_jellyfin_movies, sync_jellyfin_tv, scrape_letterboxd, scrape_serializd, resolve_letterboxd_ids, reconcile,
+        steps = (sync_jellyfin_movies, sync_jellyfin_tv, sync_watch_state, scrape_letterboxd, scrape_serializd, resolve_letterboxd_ids, reconcile,
                  sync_radarr, sync_sonarr, reconcile)
         for number, step in enumerate(steps, 1):
             report(f"Step {number} of {len(steps)}: {step.__name__.replace('_', ' ')}", force=True)
@@ -441,7 +507,7 @@ def run_all():
 
 
 # ---------------------------------------------------------------- helpers for the web layer
-TASK_NAMES = ("jellyfin_movies", "jellyfin_tv", "radarr", "sonarr", "scraper_letterboxd", "scraper_serializd", "id_resolver", "reconcile", "posters", "all")
+TASK_NAMES = ("jellyfin_movies", "jellyfin_tv", "watch_state", "radarr", "sonarr", "scraper_letterboxd", "scraper_serializd", "id_resolver", "reconcile", "posters", "all")
 
 
 def all_statuses():

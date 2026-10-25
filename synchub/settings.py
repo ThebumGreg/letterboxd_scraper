@@ -3,7 +3,7 @@ from config import DEFAULT_REQUEST_DELAY_RANGE, DEFAULT_USER_DELAY_RANGE
 from settings_validation import validate_setting
 from synchub import db
 
-SECRET_FIELDS = ("tmdb_api_key", "jellyfin_api_key", "radarr_api_key", "sonarr_api_key", "apprise_urls", "dynu_api_key")
+SECRET_FIELDS = ("tmdb_api_key", "jellyfin_api_key", "radarr_api_key", "sonarr_api_key", "apprise_urls", "dynu_api_key", "pushover_app_token")
 
 DEFAULTS = {
     "scraper_interval_hours": "24", "radarr_interval_hours": "6", "sonarr_interval_hours": "6", "jellyfin_interval_hours": "6",
@@ -15,7 +15,7 @@ DEFAULTS = {
     "radarr_min_user_count": "1", "radarr_quality_profile_id": "1", "radarr_root_folder": "/movies",
     "sonarr_enable_queue_addition": "0", "sonarr_dry_run": "0",
     "sonarr_min_user_count": "1", "sonarr_quality_profile_id": "1", "sonarr_root_folder": "/tv",
-    "enable_notifications": "0", "payload_logging_enabled": "0", "payload_retention_limit": "500",
+    "enable_notifications": "0", "notify_history_keep_days": "90", "payload_logging_enabled": "0", "payload_retention_limit": "500",
     "log_service_jellyfin": "0", "log_service_radarr": "0", "log_service_sonarr": "0", "log_service_tmdb": "0", "log_service_dynu": "0",
     # the Library: the one share everything is brought into, how it is laid out, and how scans look at files
     "library_destination_root": "media", "library_tv_folder": "TV Shows", "library_movie_folder": "Movies",

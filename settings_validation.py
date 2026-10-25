@@ -13,7 +13,7 @@ _INT_RANGES = {
     "radarr_min_user_count": (1, 1000), "sonarr_min_user_count": (1, 1000),
     "radarr_quality_profile_id": (1, 1_000_000), "sonarr_quality_profile_id": (1, 1_000_000),
     "payload_retention_limit": (1, 100_000), "metadata_refresh_hours": (1, 8760), "queue_poll_seconds": (0, 3600),
-    "library_tail_seconds": (5, 600), "jellyfin_events_keep_days": (0, 36500), "ddns_interval_minutes": (1, 60), "access_session_days": (1, 365), "backup_keep": (0, 365),
+    "library_tail_seconds": (5, 600), "jellyfin_events_keep_days": (0, 36500), "notify_history_keep_days": (0, 36500), "ddns_interval_minutes": (1, 60), "access_session_days": (1, 365), "backup_keep": (0, 365),
 }
 _FLOAT_KEYS = {"request_delay_min", "request_delay_max", "user_delay_min", "user_delay_max"}
 _URL_KEYS = {"jellyfin_url", "radarr_url", "sonarr_url", "synchub_url"}

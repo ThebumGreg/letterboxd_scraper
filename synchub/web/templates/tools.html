@@ -36,6 +36,7 @@
 <div class="row row-cols-1 row-cols-md-2 g-4 mb-4">
     {{ task_card('jellyfin_movies', 'Jellyfin movies', 'Reads your movie library from Jellyfin.', task_statuses.get('jellyfin_movies'), url_for('trigger', name='jellyfin_movies'), 'Sync movies now') }}
     {{ task_card('jellyfin_tv', 'Jellyfin TV', 'Reads shows, seasons and episodes from Jellyfin.', task_statuses.get('jellyfin_tv'), url_for('trigger', name='jellyfin_tv'), 'Sync TV now') }}
+    {{ task_card('watch_state', 'Watch history', 'Reads what each profile has watched, and where they stopped, from Jellyfin.', task_statuses.get('watch_state'), url_for('trigger', name='watch'), 'Read watch history now') }}
     {{ task_card('radarr', 'Radarr', 'Reads the library and download queue. Adds wanted movies when automatic adding is on in Settings.', task_statuses.get('radarr'), url_for('trigger', name='radarr'), 'Sync Radarr now') }}
     {{ task_card('sonarr', 'Sonarr', 'Reads series, episodes and the download queue. Adds wanted shows when automatic adding is on in Settings.', task_statuses.get('sonarr'), url_for('trigger', name='sonarr'), 'Sync Sonarr now') }}
     {{ task_card('scraper_letterboxd', 'Letterboxd', 'Reads watchlists and watched films of active profiles. Items removed from a list are kept.', task_statuses.get('scraper_letterboxd'), url_for('trigger', name='letterboxd'), 'Scrape Letterboxd now') }}

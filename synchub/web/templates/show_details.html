@@ -1,6 +1,6 @@
 <!-- synchub/web/templates/show_details.html -->
 {% extends "base.html" %}
-{% from "_macros.html" import rating_facts, state_badge, watch_now with context %}
+{% from "_macros.html" import rating_facts, state_badge, watch_now, watch_unlinked with context %}
 
 {% block title %}{{ show.title }} - Details{% endblock %}
 
@@ -61,6 +61,29 @@
             </div>
             {% endif %}
 
+            {% set mine = progress.status if progress and progress.linked and progress.status and progress.status.total else none %}
+            {% set go = mine.continue if mine else none %}
+            {% if progress %}
+            <div class="mb-3" style="max-width: 480px;" id="watchProgress">
+                {% if not progress.linked %}{{ watch_unlinked(progress) }}
+                {% elif mine %}
+                <div class="d-flex justify-content-between small mb-1">
+                    <span>You have watched {{ mine.watched }} of {{ mine.total }} episode{{ '' if mine.total == 1 else 's' }} in the library</span>
+                    <span class="text-muted">{{ mine.percent }}%</span>
+                </div>
+                <div class="progress" style="height: 6px; background: #2c3440;" role="progressbar" aria-label="Episodes you have watched" aria-valuenow="{{ mine.percent }}" aria-valuemin="0" aria-valuemax="100">
+                    <div class="progress-bar bg-info" style="width: {{ mine.percent }}%"></div>
+                </div>
+                {% if go %}
+                <div class="small mt-2" id="watchContinue">{% if go.kind == 'resume' %}<strong>Continue with</strong> {{ go.code }}{% if go.title %} &ldquo;{{ go.title }}&rdquo;{% endif %}, at {{ go.position_label }}{% if go.percent %} ({{ go.percent }}%){% endif %}{% else %}<strong>Next up:</strong> {{ go.code }}{% if go.title %} &ldquo;{{ go.title }}&rdquo;{% endif %}{% endif %}</div>
+                {% elif mine.state == 'caught_up' %}
+                <div class="small mt-2" id="watchContinue"><strong>You are all caught up</strong> with what is in the library.</div>
+                {% endif %}
+                {% if mine.last %}<div class="small text-body-secondary">Last watched {{ mine.last.code }}{% if mine.last.date_label %} on {{ mine.last.date_label }}{% endif %}</div>{% endif %}
+                {% endif %}
+            </div>
+            {% endif %}
+
             <div class="d-flex flex-wrap align-items-center gap-2 pt-1">
                 {% if totals.counts.get('missing') %}
                 <span {% if not show.tvdb_id %}class="d-inline-block" tabindex="0" data-bs-toggle="tooltip" title="Sonarr needs a TVDB ID for this show. Try 'Refresh details'."{% endif %}>
@@ -70,7 +93,7 @@
                 </span>
                 {% endif %}
                 {% if show.jellyfin_link %}
-                    {{ watch_now(show.jellyfin_link, show.jellyfin_item_id, show.title) }}
+                    {{ watch_now(show.jellyfin_link, show.jellyfin_item_id, show.title, resume=(go.code ~ ' at ' ~ go.position_label) if go and go.kind == 'resume' else none) }}
                 {% endif %}
                 <button type="button" class="btn btn-outline-secondary" id="refreshBtn"><i class="bi bi-arrow-repeat"></i> Refresh details</button>
             </div>
@@ -171,15 +194,20 @@
             const badge = `<span class="badge bg-${esc(ep.state_color)}${dark}"><i class="bi ${esc(ep.state_icon || '')}"></i> ${esc(ep.state_label)}${pct}</span>`;
             const rowClass = ep.state === 'in_library' ? 'sd-ep-ok' : (ep.state === 'missing' ? 'sd-ep-missing' : 'sd-ep-queued');
             const note = ep.numbering_status === 'mapped' ? `<div class="small text-warning">Sonarr numbers this S${esc(ep.tvdb_season_number)}E${esc(ep.tvdb_episode_number)}</div>` : '';
+            const w = ep.watch;           // what the person using this page has watched of it (nothing for a guest or a profile without a Jellyfin user)
+            const mine = !w || w.state === 'unwatched' ? '' : w.state === 'watched'
+                ? `<div class="small mt-1" data-watch-state="watched"><span class="badge bg-success">Watched</span>${w.last_played_label ? ` <span class="text-muted">${esc(w.last_played_label)}</span>` : ''}</div>`
+                : `<div class="small mt-1" data-watch-state="in_progress"><span class="badge bg-info text-dark">${esc(w.state_label)}</span> <span class="text-muted">${esc(w.position_label)}${w.runtime_label ? ' of ' + esc(w.runtime_label) : ''}${w.percent ? ' (' + esc(w.percent) + '%)' : ''}</span></div>`;
+            const resume = w && w.state === 'in_progress' && w.resume_label ? ` data-resume="at ${esc(w.resume_label)}"` : '';
             return `<tr class="${rowClass}">
                 <td class="text-center fw-bold text-muted">${esc(ep.episode_number)}</td>
                 <td class="sd-ep-title-cell">
                     <div class="fw-semibold text-truncate" title="${esc(ep.title)}">${esc(ep.title || 'Episode ' + ep.episode_number)}</div>
-                    ${ep.air_date ? `<div class="small text-muted">${esc(ep.air_date)}</div>` : ''}${note}
+                    ${ep.air_date ? `<div class="small text-muted">${esc(ep.air_date)}</div>` : ''}${note}${mine}
                     ${ep.overview ? `<div class="small text-secondary sd-ep-overview mt-1" title="${esc(ep.overview)}">${esc(ep.overview)}</div>` : ''}
                 </td>
                 <td>${badge}</td>
-                <td class="text-end text-nowrap">${ep.can_request ? `<button class="btn btn-sm btn-outline-primary py-0 px-3" data-request-episode="${esc(ep.id)}" {% if not show.tvdb_id %}disabled{% endif %}>Request</button>` : ''}${ep.jellyfin_link ? `<span data-watch-now data-link="${esc(ep.jellyfin_link)}" data-item="${esc(ep.jellyfin_item_id)}" data-title="${esc(ep.title || 'episode ' + ep.episode_number)}" data-size="ep"><a class="btn btn-sm btn-success py-0 px-3" href="${esc(ep.jellyfin_link)}" data-jellyfin-item="${esc(ep.jellyfin_item_id)}" target="_blank" rel="noopener noreferrer">Watch now</a></span>` : ''}</td>
+                <td class="text-end text-nowrap">${ep.can_request ? `<button class="btn btn-sm btn-outline-primary py-0 px-3" data-request-episode="${esc(ep.id)}" {% if not show.tvdb_id %}disabled{% endif %}>Request</button>` : ''}${ep.jellyfin_link ? `<span data-watch-now data-link="${esc(ep.jellyfin_link)}" data-item="${esc(ep.jellyfin_item_id)}" data-title="${esc(ep.title || 'episode ' + ep.episode_number)}" data-size="ep"${resume}><a class="btn btn-sm btn-success py-0 px-3" href="${esc(ep.jellyfin_link)}" data-jellyfin-item="${esc(ep.jellyfin_item_id)}" target="_blank" rel="noopener noreferrer">Watch now</a></span>` : ''}</td>
             </tr>`;
         }).join('');
         container.innerHTML = `<div class="table-responsive"><table class="table table-hover mb-0 align-middle sd-table">

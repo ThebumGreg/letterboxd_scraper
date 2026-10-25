@@ -423,15 +423,18 @@ class FakeJf:
     def __init__(self):
         self.played = []
 
-    def search(self, q):
+    def search(self, q, user_id=None):
         from synchub.tv.jellyfin import summarize_item
         return [summarize_item(i) for i in self.ITEMS.values()]
 
     def item(self, item_id):
         return self.ITEMS.get(item_id, {})
 
-    def episodes(self, series_id):
+    def episodes(self, series_id, user_id=None):
         return [{"Id": "ep"}]
+
+    def user_data(self, item_id, user_id):
+        return {}
 
     def sessions(self, quiet=True):
         return [{"Id": "s1", "Client": "Jellyfin Roku", "DeviceName": "Bed Room Roku", "SupportsRemoteControl": True, "LastActivityDate": "2026-10-25T10:00:00Z",

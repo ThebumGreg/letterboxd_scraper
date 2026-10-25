@@ -102,6 +102,7 @@ function startFromLink() {
   const d = S.devices.find(x => x.id === q.get('tv'));
   if (!d) return alert('That TV is not in SyncHub any more.');
   W.item = {Id: play, Name: q.get('title') || 'this title', Type: 'Movie'};
+  W.startOver = q.get('start') === '0';
   $('#watch').showModal();
   watchOn(d.id);
 }

@@ -121,7 +121,7 @@ def test_sonarr_reports_each_series(v2):
 
 
 def test_run_all_reports_which_step_it_is_on(v2, monkeypatch):
-    steps = ["sync_jellyfin_movies", "sync_jellyfin_tv", "scrape_letterboxd", "scrape_serializd", "resolve_letterboxd_ids", "reconcile", "sync_radarr", "sync_sonarr", "reconcile"]
+    steps = ["sync_jellyfin_movies", "sync_jellyfin_tv", "sync_watch_state", "scrape_letterboxd", "scrape_serializd", "resolve_letterboxd_ids", "reconcile", "sync_radarr", "sync_sonarr", "reconcile"]
     for name in set(steps):
         stub = lambda: None
         stub.__name__ = name                       # the real steps are named functions; the message is built from the name
@@ -130,7 +130,7 @@ def test_run_all_reports_which_step_it_is_on(v2, monkeypatch):
     real = tasks.update_message
     monkeypatch.setattr(tasks, "update_message", lambda task, message: (seen.append(message), real(task, message)))
     tasks.run_all()
-    assert "Step 1 of 9: sync jellyfin movies" in seen and "Step 9 of 9: reconcile" in seen
+    assert "Step 1 of 10: sync jellyfin movies" in seen and "Step 3 of 10: sync watch state" in seen and "Step 10 of 10: reconcile" in seen
 
 
 # ---------------------------------------------------------------- lock reporting and the guard

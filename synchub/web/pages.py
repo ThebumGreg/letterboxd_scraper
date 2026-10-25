@@ -2,17 +2,31 @@
 import logging
 import os
 
-from flask import abort, flash, jsonify, redirect, render_template, request, send_file, send_from_directory, url_for
+from flask import abort, flash, g, jsonify, redirect, render_template, request, send_file, send_from_directory, url_for
 
 from config import BASE_DIR
-from synchub import backup, catalog, db, ddns, posters, profiles, ratings, search, settings, states, tasks, webhooks
+from synchub import backup, catalog, db, ddns, posters, profiles, ratings, search, settings, states, tasks, watch, webhooks
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.tmdb import TmdbClient
+from synchub.notifications import dispatch
 from synchub.web import current_limit, title_allowed
 
 logger = logging.getLogger(__name__)
 
 STATUS_ORDER = ("missing", "queued", "downloading", "downloaded", "transferring", "encoding", "in_library", "partial")
+
+
+def _progress(conn, kind, media_id):
+    """What the person using this page has watched of a title, for the page: None for a guest (no one to say it about), {'linked': False}
+    for a profile whose Jellyfin user is not set (People), else {'linked': True, 'status': watch.movie_status / show_status}."""
+    profile = getattr(g, "profile", None)
+    if not profile:
+        return None
+    user = watch.user_of(profile)
+    if not user:
+        return {"linked": False, "name": profile["name"]}
+    status = watch.movie_status(conn, user, media_id) if kind == "movie" else watch.show_status(conn, user, media_id)
+    return {"linked": True, "name": profile["name"], "status": status}
 
 
 def register(app):
@@ -35,7 +49,8 @@ def register(app):
                 return redirect(url_for("index"))
             state = states.movie_state(conn, media_id)
             defs = states.definitions(conn)
-        return render_template("movie_details.html", movie=movie, state=state, state_info=defs.get(state["state"], defs["missing"]))
+            progress = _progress(conn, "movie", media_id)
+        return render_template("movie_details.html", movie=movie, state=state, state_info=defs.get(state["state"], defs["missing"]), progress=progress)
 
     @app.route("/show/<int:media_id>")
     def show_details(media_id):
@@ -47,7 +62,8 @@ def register(app):
             summary = states.show_summary(conn, media_id)
             defs = states.definitions(conn)
             defs["partial"] = {"code": "partial", "label": "Partial", "color": "warning", "icon": "bi-pie-chart"}
-        return render_template("show_details.html", show=show, summary=summary, defs=defs)
+            progress = _progress(conn, "show", media_id)
+        return render_template("show_details.html", show=show, summary=summary, defs=defs, progress=progress)
 
     @app.route("/healthz")
     def healthz():
@@ -158,7 +174,7 @@ def register(app):
         values = {**settings.DEFAULTS, **settings.get_all()}
         in_docker = os.getenv("SYNCHUB_IN_DOCKER") == "1"
         return render_template("settings.html", settings=values, profiles=profile_list, webhook_status=webhooks.status_for_all(), suggested_synchub_url=request.host_url.rstrip("/"),
-                               local_addresses=backup.addresses_on_this_machine(values) if in_docker else [], last_backup=backup.latest())
+                               local_addresses=backup.addresses_on_this_machine(values) if in_docker else [], last_backup=backup.latest(), notify=dispatch.state())
 
     @app.route("/payloads")
     def payloads_page():

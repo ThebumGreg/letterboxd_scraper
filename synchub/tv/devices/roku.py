@@ -126,7 +126,7 @@ class RokuDriver(Driver):
                 "title": ours, "positionMs": ms("position"), "durationMs": ms("duration"), "source": "Roku media player"}
 
     def deeplink(self, app_id, media_type, content_id, series_id=None, running=False):
-        """Ask the Jellyfin app to play an item. The app acts on it at once, from the start (no resume point).
+        """Ask the Jellyfin app to play an item. The app acts on it at once, from the start (no resume point; the orchestrator moves it to a saved one afterwards).
 
         If the app is already on screen (often mid-playback), the Roku is sent Home first so the app starts
         fresh with the link; handing a new item to an app that is busy playing is what fails."""

@@ -69,3 +69,26 @@ class JellyfinClient:
             total = body.get("TotalRecordCount")
             if not items or len(items) < page_size or (total is not None and start >= total):
                 break
+
+    def iter_user_data(self, user_id, filters, page_size=500):
+        """Yields every movie and episode this Jellyfin user has played (`filters` "IsPlayed") or is part-way through ("IsResumable"), each with
+        their own data (UserData: position, played, play count, last played), most recently played first. Raises on any HTTP error."""
+        start = 0
+        while True:
+            params = {"UserId": user_id, "IncludeItemTypes": "Movie,Episode", "Recursive": "true", "Filters": filters, "SortBy": "DatePlayed",
+                      "SortOrder": "Descending", "EnableUserData": "true", "StartIndex": start, "Limit": page_size}
+            res = check(http.request("jellyfin", "WatchHistory", "GET", f"{self.url}/Items", headers=self.headers, params=params, timeout=60), "Jellyfin", "watch history")
+            body = res.json()
+            items = body.get("Items") or []
+            yield from items
+            start += page_size
+            total = body.get("TotalRecordCount")
+            if not items or len(items) < page_size or (total is not None and start >= total):
+                break
+
+    def user_item(self, user_id, item_id):
+        """One item with this user's data, or None when Jellyfin has no such item."""
+        res = http.request("jellyfin", "WatchItem", "GET", f"{self.url}/Items", headers=self.headers,
+                           params={"UserId": user_id, "Ids": item_id, "EnableUserData": "true"}, timeout=15)
+        items = check(res, "Jellyfin", "item lookup").json().get("Items") or []
+        return items[0] if items else None

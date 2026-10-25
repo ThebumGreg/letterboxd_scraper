@@ -9,7 +9,23 @@ Worker setup, worker logs and a Worker Status tab.
 - **Logs button** on the Workers page: fetches the tail of a worker's own log (`worker.jsonl` and its rotated files) into SyncHub, with a level filter, search, copy and download. Worker API: the poll answer carries `worker_log`, and the agent answers with `POST /api/worker/v1/log`.
 - **Worker Status tab**: per worker, the CPU (model, cores, threads, instruction sets, use, load), memory, graphics cards, system, ffmpeg and ffprobe, hardware decoders, VMAF, and a table of encoders that says which **work** (a test frame was encoded), which are built into ffmpeg but **failed** (usually no GPU or driver) and which are not tested. The agent also tests SVT-AV1 and the AV1 hardware encoders now.
 - Agent 0.4.0. An older agent still works; the new tab says its hardware has not been reported, and the Logs button needs 0.4.0.
-- Database migration 011 (worker logs).
+- Database migration 013 (worker logs).
+
+## 1.1.1
+
+Where each person is in what they watch, with TVs that pick up from there, and the groundwork for notifications (Pushover). The database upgrades itself on start (migrations 011 and 012) and saves a copy first; going back to an older image afterwards is not supported, so restore a backup if you ever need to (docs/DEPLOY.md, section 6).
+
+**Watch progress and resuming**
+- Each profile's Jellyfin watch data (what they have watched, and where they stopped) is copied from Jellyfin: a **Watch history** task (with the Jellyfin sync and in *Run all*) and a re-read of one item right after a playback stop event. Database migration 012.
+- Movie and show pages show **Your progress**: status, position and percentage, last watched, how many times; for a show, how many episodes watched, what to continue with and what was watched last. Each episode in a season shows its own status.
+- **Watch now** says **Resume** (at 42:10, or S2E4 at 12:30) and a TV picks up where the person using the page left off; the menu has **Start from the beginning**. Before, a title always started from the beginning, a show dropped the position of the episode they were in, and the search dialog's *Resume at* showed the Jellyfin administrator's position instead of the viewer's.
+- A deep link (Roku) cannot be moved to a position because the official app accepts no remote commands; the progress box says so instead of claiming it. A direct stream cannot start part-way either (a transcoded one can); both say so.
+
+**Notifications: the foundation** (see docs/DESIGN_NOTIFICATIONS.md; nothing is sent about requests or episodes yet)
+- A **Notifications** page and permission: each person adds a Pushover user key (checked with Pushover, which also lists their devices), sends a test, switches a method off or removes it, and sees a history of what was sent. Keys are masked, never sent back to a browser and blanked from the log viewer; a profile without a PIN cannot change them once any profile has one. Profiles that have a saved page list need **Notifications** added on People (guests do not get it).
+- Settings, Connections, Notifications: the Pushover application token (with a *Test token* that shows the month's remaining allowance), the master switch, the Apprise address (now for administrator alerts) and how long the history is kept.
+- A delivery layer that more methods can be added to as one file each: an outbox that sends from a scheduler job (so `SYNCHUB_SCHEDULER=0` silences it), retries temporary failures, never repeats a refusal, switches off a recipient Pushover says is invalid, and holds Pushover when its monthly allowance is used up or its token is rejected.
+- Database migration 011 (delivery methods, events, the outbox and history). The old single Apprise notifier is gone.
 
 ## 1.1.0
 

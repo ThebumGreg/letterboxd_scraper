@@ -36,7 +36,7 @@ GitHub builds the image for you. Every push to `main` runs the tests and then pu
 
 ```
 ghcr.io/thebumgreg/synchub:latest      the newest main (what Unraid's "apply update" follows)
-ghcr.io/thebumgreg/synchub:1.1.0       the newest build of release 1.1.0 (the number in synchub/__init__.py; see docs/RELEASING.md)
+ghcr.io/thebumgreg/synchub:1.1.1       the newest build of release 1.1.1 (the number in synchub/__init__.py; see docs/RELEASING.md)
 ghcr.io/thebumgreg/synchub:sha-abc1234 one exact commit
 ```
 
@@ -105,7 +105,7 @@ If you have no data worth keeping, skip this section: the app creates an empty d
    - *Network type*: **Custom: br0** with a fixed IP if you want the TV remote's automatic discovery and Wake-on-LAN (they need to be on your LAN, see "The TV remote in Docker" below), otherwise leave **Bridge**.
    - Press **Apply**. Unraid pulls `ghcr.io/thebumgreg/synchub:latest` and starts it. Open the WebUI from the container's menu; `docker ps` shows `(healthy)` within about a minute.
 3. **Updates, from the GUI.** Docker tab, **Check for Updates**. A SyncHub row that says *update ready* has a newer `latest` on GitHub: click it and **apply update**. Unraid pulls the new image and replaces the container (the data is in `/data`, so nothing is lost; a database from an older version is upgraded on start and a copy is saved first). For hands-off updates install the *Auto Update Applications* plugin (from Community Applications) and switch SyncHub on there.
-4. **Pin a version, or go back.** Edit the container and change *Repository* to `ghcr.io/thebumgreg/synchub:1.1.0`: it then only changes when you change it. Back to `:latest` to follow main again. Going back to an older image after the database was upgraded is not supported: restore a backup from before (section 6).
+4. **Pin a version, or go back.** Edit the container and change *Repository* to `ghcr.io/thebumgreg/synchub:1.1.1`: it then only changes when you change it. Back to `:latest` to follow main again. Going back to an older image after the database was upgraded is not supported: restore a backup from before (section 6).
 
 Run **one** copy of the app. The scheduler runs inside it; a second copy against the same `/data` would run every job twice.
 

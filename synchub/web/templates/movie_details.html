@@ -1,6 +1,6 @@
 <!-- synchub/web/templates/movie_details.html -->
 {% extends "base.html" %}
-{% from "_macros.html" import rating_facts, state_badge, watch_now with context %}
+{% from "_macros.html" import rating_facts, state_badge, watch_now, watch_badge, watch_unlinked with context %}
 
 {% block title %}{{ movie.title }} - Details{% endblock %}
 
@@ -43,12 +43,32 @@
             </p>
             {% endif %}
 
+            {% set mine = progress.status if progress and progress.linked else none %}
+            {% if progress %}
+            <div class="mb-1" id="watchProgress">
+                {% if not progress.linked %}{{ watch_unlinked(progress) }}
+                {% elif mine %}
+                <div class="small text-muted mb-1">Your progress</div>
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                    {{ watch_badge(mine) }}
+                    {% if mine.state == 'in_progress' %}<span>{{ mine.position_label }}{% if mine.runtime_label %} of {{ mine.runtime_label }}{% endif %}{% if mine.percent %} ({{ mine.percent }}%){% endif %}</span>{% endif %}
+                    {% if mine.last_played_label %}<span class="text-body-secondary">Last watched {{ mine.last_played_label }}{% if mine.play_count > 1 %} · watched {{ mine.play_count }} times{% endif %}</span>{% endif %}
+                </div>
+                {% if mine.state == 'in_progress' and mine.percent %}
+                <div class="progress mt-2" style="height: 6px; max-width: 360px; background: #2c3440;" role="progressbar" aria-label="How far you have watched" aria-valuenow="{{ mine.percent }}" aria-valuemin="0" aria-valuemax="100">
+                    <div class="progress-bar bg-info" style="width: {{ mine.percent }}%"></div>
+                </div>
+                {% endif %}
+                {% endif %}
+            </div>
+            {% endif %}
+
             <div class="mt-4 d-flex flex-wrap gap-2">
                 {% if state.state == 'missing' and not movie.in_radarr and movie.tmdb_id %}
                     <button type="button" class="btn btn-outline-info" id="requestMovieBtn"><i class="bi bi-cloud-download"></i> Request in Radarr</button>
                 {% endif %}
                 {% if movie.jellyfin_link and state.state == 'in_library' %}
-                    {{ watch_now(movie.jellyfin_link, movie.jellyfin_item_id, movie.title) }}
+                    {{ watch_now(movie.jellyfin_link, movie.jellyfin_item_id, movie.title, resume=('at ' ~ mine.resume_label) if mine and mine.state == 'in_progress' else none) }}
                 {% endif %}
                 <button type="button" class="btn btn-outline-secondary" id="refreshBtn"><i class="bi bi-arrow-repeat"></i> Refresh details</button>
             </div>
