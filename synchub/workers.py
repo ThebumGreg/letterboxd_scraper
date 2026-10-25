@@ -14,6 +14,8 @@ PROTOCOL = 1                  # bumped when the worker API changes incompatibly;
 ONLINE_SECONDS = 60           # a worker that has not polled for this long shows as offline
 MAX_SLOTS = 16
 MAX_STATUS_BYTES = 8192
+MAX_CAPABILITIES_BYTES = 32768   # what an agent says about itself once (the hardware details make this larger than a status summary)
+MAX_LOG_CHARS = 1_000_000        # the tail of a worker's own log that is kept
 
 
 class WorkerError(Exception):
@@ -181,9 +183,13 @@ def register(conn, worker_id, info, now=None):
         raise ProtocolError(f"This SyncHub speaks worker protocol {PROTOCOL}; the agent sent {info.get('protocol')!r}. Update the agent.")
     capabilities = info.get("capabilities") if isinstance(info.get("capabilities"), dict) else {}
     capabilities["agent_slots"] = info.get("slots")
+    text = json.dumps(capabilities)
+    if len(text) > MAX_CAPABILITIES_BYTES:                  # cutting the text would leave invalid JSON; drop the bulky part instead
+        capabilities.pop("host", None)
+        text = json.dumps(capabilities)[:MAX_CAPABILITIES_BYTES]
     conn.execute("UPDATE worker SET protocol = ?, version = ?, os = ?, hostname = ?, capabilities = ?, last_seen = ? WHERE id = ?",
                  (PROTOCOL, str(info.get("version") or "")[:40], str(info.get("os") or "")[:80], str(info.get("hostname") or "")[:80],
-                  json.dumps(capabilities)[:MAX_STATUS_BYTES], now or db.now(), worker_id))
+                  text, now or db.now(), worker_id))
 
 
 def touch(conn, worker_id, status=None, now=None):
@@ -194,3 +200,26 @@ def touch(conn, worker_id, status=None, now=None):
             conn.execute("UPDATE worker SET last_seen = ?, status = ? WHERE id = ?", (now or db.now(), text, worker_id))
             return
     conn.execute("UPDATE worker SET last_seen = ? WHERE id = ?", (now or db.now(), worker_id))
+
+
+# ---------------------------------------------------------------- the worker's own log ("Get logs")
+def request_log(conn, worker_id):
+    """Asks a worker for the tail of its own log. It answers with its next poll."""
+    if conn.execute("UPDATE worker SET log_requested = 1 WHERE id = ? AND revoked_at IS NULL", (worker_id,)).rowcount != 1:
+        raise WorkerError("That worker no longer exists." if get(conn, worker_id) is None else "That worker's token is revoked, so it cannot answer. Make a new token first.")
+
+
+def store_log(conn, worker_id, text, truncated=False, now=None):
+    """Keeps the log a worker uploaded (the latest only) and closes the request."""
+    text = str(text if text is not None else "")
+    if len(text) > MAX_LOG_CHARS:
+        text, truncated = "[earlier lines left out]\n" + text[-MAX_LOG_CHARS:], True
+    conn.execute("INSERT INTO worker_log (worker_id, received_at, truncated, content) VALUES (?, ?, ?, ?) "
+                 "ON CONFLICT(worker_id) DO UPDATE SET received_at = excluded.received_at, truncated = excluded.truncated, content = excluded.content",
+                 (worker_id, now or db.now(), 1 if truncated else 0, text))
+    conn.execute("UPDATE worker SET log_requested = 0 WHERE id = ?", (worker_id,))
+
+
+def stored_log(conn, worker_id):
+    r = conn.execute("SELECT * FROM worker_log WHERE worker_id = ?", (worker_id,)).fetchone()
+    return dict(r) if r else None

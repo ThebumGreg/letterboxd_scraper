@@ -12,6 +12,96 @@ def _gb(value):
     return f"{value / 1024 ** 3:,.1f} GB" if isinstance(value, (int, float)) else None
 
 
+def _duration(seconds):
+    if not isinstance(seconds, (int, float)) or seconds < 0:
+        return None
+    minutes = int(seconds // 60)
+    if minutes >= 1440:
+        return f"{minutes // 1440} d {minutes % 1440 // 60} h"
+    if minutes >= 60:
+        return f"{minutes // 60} h {minutes % 60} min"
+    return f"{max(minutes, 1)} min"
+
+
+def _text(value, limit=200):
+    return str(value).strip()[:limit] if value not in (None, "") else None
+
+
+def _items(value, limit=40):
+    """A list the agent sent, or an empty one when it sent something else: a report is trusted to be a report, never to be well formed."""
+    return list(value)[:limit] if isinstance(value, (list, tuple)) else []
+
+
+def _whole(value):
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+# The video encoders the Worker Status tab names: ffmpeg name -> (codec, how it encodes). The agent tests the ones it can with a real frame;
+# whatever it reports that is not here is still shown, under its own name.
+ENCODERS = {
+    "libx264": ("H.264", "Software (CPU)"), "libx265": ("HEVC (H.265)", "Software (CPU)"), "libsvtav1": ("AV1", "Software (CPU)"),
+    "libaom-av1": ("AV1", "Software (CPU)"), "librav1e": ("AV1", "Software (CPU)"), "libvpx-vp9": ("VP9", "Software (CPU)"),
+    "h264_nvenc": ("H.264", "NVIDIA NVENC"), "hevc_nvenc": ("HEVC (H.265)", "NVIDIA NVENC"), "av1_nvenc": ("AV1", "NVIDIA NVENC"),
+    "h264_qsv": ("H.264", "Intel Quick Sync"), "hevc_qsv": ("HEVC (H.265)", "Intel Quick Sync"), "av1_qsv": ("AV1", "Intel Quick Sync"),
+    "h264_vaapi": ("H.264", "VAAPI (Intel / AMD GPU)"), "hevc_vaapi": ("HEVC (H.265)", "VAAPI (Intel / AMD GPU)"), "av1_vaapi": ("AV1", "VAAPI (Intel / AMD GPU)"),
+    "h264_amf": ("H.264", "AMD AMF"), "hevc_amf": ("HEVC (H.265)", "AMD AMF"), "av1_amf": ("AV1", "AMD AMF"),
+    "h264_videotoolbox": ("H.264", "Apple VideoToolbox"), "hevc_videotoolbox": ("HEVC (H.265)", "Apple VideoToolbox"),
+}
+
+
+# What the agent tests with a real frame (agent/synchub_agent.py, detect_capabilities).
+TESTED = {"libx265", "libx264", "libsvtav1", "hevc_nvenc", "h264_nvenc", "av1_nvenc", "hevc_qsv", "h264_qsv", "av1_qsv", "hevc_vaapi", "h264_vaapi", "av1_vaapi"}
+
+
+def describe_encoders(working, built):
+    """One row per encoder the worker has: it works (a test frame was encoded), is built into ffmpeg but did not work, or was not tested."""
+    working = [str(e) for e in _items(working)]
+    built = [str(e) for e in _items(built)]
+    rows = []
+    for name in list(dict.fromkeys(working + built)):
+        codec, kind = ENCODERS.get(name, ("-", "-"))
+        if name in working:
+            state, color, note = "works", "success", "Encoded a test frame."
+        elif name in TESTED:
+            state, color, note = "built in, but failed", "warning", "ffmpeg has it but the test frame failed: usually the GPU, its driver or /dev/dri is not available here."
+        else:
+            state, color, note = "built in, not tested", "secondary", "ffmpeg has it; the agent does not test this one."
+        rows.append({"name": name, "codec": codec, "kind": kind, "state": state, "color": color, "note": note})
+    return sorted(rows, key=lambda r: (r["color"] != "success", r["kind"] != "Software (CPU)", r["kind"], r["codec"], r["name"]))
+
+
+def describe_host(w):
+    """What the Worker Status tab shows for one worker: the hardware it reported at registration and the live numbers from its last poll.
+    `known` is False for an agent too old to report the details."""
+    caps, live = w["capabilities"], w["status"]
+    host = caps.get("host") if isinstance(caps.get("host"), dict) else None
+    dynamic = live.get("host") if isinstance(live.get("host"), dict) else {}
+    ffmpeg = host.get("ffmpeg") if host and isinstance(host.get("ffmpeg"), dict) else {}
+    cpu = host.get("cpu") if host and isinstance(host.get("cpu"), dict) else {}
+    threads, cores = _whole(cpu.get("threads")) or _whole(caps.get("cores")), _whole(cpu.get("cores"))
+    load = [x for x in _items(dynamic.get("load"), 3) if isinstance(x, (int, float)) and not isinstance(x, bool)]
+    gpus = []
+    for gpu in _items((host or {}).get("gpus"), 8):
+        if isinstance(gpu, dict) and gpu.get("name"):
+            memory = _whole(gpu.get("memory_mb"))
+            gpus.append({"name": _text(gpu["name"]), "driver": _text(gpu.get("driver"), 40), "memory": f"{memory / 1024:,.1f} GB" if memory else None, "source": _text(gpu.get("source"), 20)})
+    cpu_lines = [f"{cores} cores, {threads} threads" if cores and threads else f"{threads} threads" if threads else None,
+                 f"{cpu['mhz'] / 1000:.2f} GHz" if isinstance(cpu.get("mhz"), (int, float)) and cpu["mhz"] > 0 else None]
+    container = _text((host or {}).get("container"), 20)
+    return {
+        "known": host is not None, "arch": _text((host or {}).get("arch"), 20), "kernel": _text((host or {}).get("kernel"), 60),
+        "cpu_model": _text(cpu.get("model")) or ("unknown" if host else None), "cpu_size": ", ".join(x for x in cpu_lines if x) or None,
+        "cpu_flags": [str(f)[:16] for f in _items(cpu.get("flags"))], "cpu_percent": round(dynamic["cpu_percent"]) if isinstance(dynamic.get("cpu_percent"), (int, float)) else None,
+        "load": " ".join(f"{x:.2f}" for x in load) or None, "memory_total": _gb((host or {}).get("memory_bytes")), "memory_free": _gb(dynamic.get("mem_available_bytes")),
+        "gpus": gpus, "render_devices": [str(d)[:40] for d in _items((host or {}).get("render_devices"), 8)],
+        "container": container, "host_uptime": _duration(dynamic.get("host_uptime_seconds")), "agent_uptime": _duration(live.get("uptime_seconds")),
+        "python": _text(caps.get("python"), 20), "ffmpeg": _text(caps.get("ffmpeg"), 120), "ffprobe": _text(caps.get("ffprobe"), 120),
+        "hwaccels": [str(h)[:24] for h in _items(ffmpeg.get("hwaccels"), 20)], "vmaf": bool(caps.get("vmaf")), "ops": [str(o)[:24] for o in _items(caps.get("ops"), 20)],
+        "encoders": describe_encoders(caps.get("encoders"), ffmpeg.get("encoders_built")), "work_free": _gb(live.get("work_free_bytes")),
+        "slots": caps.get("agent_slots"),
+    }
+
+
 # What a worker reports for a share, and how the page shows it.
 ROOT_STATES = {"ok": ("ready", "success"), "not_mounted": ("not mounted", "danger"), "no_marker": ("no marker file", "danger"),
                "wrong_marker": ("wrong share", "danger"), "read_only": ("read-only", "warning"), "error": ("error", "danger")}
@@ -47,9 +137,9 @@ def describe_worker(w, root_names=()):
         state, color = "Online", "success"
     status = w["status"]
     held = status.get("originals_count")
-    w.update(state=state, state_color=color, encoders=", ".join(str(e) for e in w["capabilities"].get("encoders") or []),
+    w.update(state=state, state_color=color, encoders=", ".join(str(e) for e in _items(w["capabilities"].get("encoders"))),
              free=_gb(status.get("work_free_bytes")), originals=(f"{held} held, {_gb(status.get('originals_bytes')) or '?'}" if held else None),
-             seen=webhooks.ago(w["last_seen"]) if w["last_seen"] else "never", roots=describe_roots(w, root_names))
+             seen=webhooks.ago(w["last_seen"]) if w["last_seen"] else "never", roots=describe_roots(w, root_names), host=describe_host(w))
     return w
 
 
@@ -91,8 +181,9 @@ def snapshot(conn):
 def _setup(conn, name, token=None):
     """The setup files for a worker. Right after a token is made they hold it; afterwards a placeholder, since the token cannot be read again."""
     url = request.host_url.rstrip("/")
-    files = storage.setup_files(name, url, token or "<the token shown when this worker was added>", storage.list_all(conn))
-    return {"url": url, "files": files, "order": list(storage.SETUP_ORDER), "has_token": bool(token), "shares": len(storage.list_all(conn))}
+    shown = token or "<the token shown when this worker was added>"
+    files = {storage.QUICK_SETUP: storage.quick_setup(url, shown), **storage.setup_files(name, url, shown, storage.list_all(conn))}
+    return {"url": url, "files": files, "order": [storage.QUICK_SETUP, *storage.SETUP_ORDER], "has_token": bool(token), "shares": len(storage.list_all(conn))}
 
 
 def _who(conn):
@@ -155,6 +246,11 @@ def register(app):
                 if action in WORKER_ACTIONS:
                     workers.set_flag(conn, worker_id, *WORKER_ACTIONS[action])
                     return jsonify(ok=True, message="Done.")
+                if action == "log":
+                    workers.request_log(conn, worker_id)
+                    online = workers.get(conn, worker_id)["online"]
+                    return jsonify(ok=True, online=online, message="Asked the worker for its log." if online
+                                   else "Asked. The worker is offline, so the log arrives when it is back.")
                 if action == "rotate":
                     token = workers.rotate_token(conn, worker_id)
                     name = workers.get(conn, worker_id)["name"]
@@ -169,6 +265,17 @@ def register(app):
         except workers.WorkerError as exc:
             return _fail(str(exc))
         return _fail("Unknown action.", 404)
+
+    @app.route("/api/workers/<int:worker_id>/log")
+    def api_worker_log(worker_id):
+        with db.connection() as conn:
+            worker = workers.get(conn, worker_id)
+            if worker is None:
+                return _fail("That worker no longer exists.", 404)
+            log = workers.stored_log(conn, worker_id)
+        if log:
+            log["received"] = webhooks.ago(log["received_at"])
+        return jsonify(ok=True, log=log, pending=bool(worker["log_requested"]), name=worker["name"], online=worker["online"], version=worker["version"])
 
     @app.route("/api/workers/<int:worker_id>/setup")
     def api_worker_setup(worker_id):

@@ -4,6 +4,11 @@ The agent runs on a worker PC. It asks SyncHub for jobs over HTTP, does them, an
 
 What it does today: **verified copies** between your shares (SyncHub's *Test copy* button), **library scans** (it lists the video files on a share, looks at the ones SyncHub does not know yet or that changed with ffprobe and ffmpeg, and reports what it found) and **duplicate searches** (it reads files of the same size to see whether they are the same). Encoding jobs arrive in a later phase; the agent already detects ffmpeg and the encoders that work.
 
+## What it tells SyncHub
+
+- **Its own log, on request.** The Workers page's **Logs** button asks the agent for the tail of `worker.jsonl` (and its rotated files, newest last, at most about 1 MB); the agent sends it with its next poll, a few seconds later. The page can filter by level and search it, and the log can be copied or downloaded. Only the latest one is kept.
+- **The machine.** At start the agent reads the CPU (model, cores, threads, the instruction sets that matter for encoding), memory, graphics cards (`nvidia-smi`, `lspci`, `/dev/dri`), whether it runs in a container, what ffmpeg and ffprobe it found, ffmpeg's hardware decoders and which encoders are built in. It then tests each of the main ones (x264, x265, SVT-AV1 and the NVENC, Quick Sync and VAAPI ones) by encoding a test frame, so SyncHub can tell an encoder that **works** from one that is built into ffmpeg but **failed** (usually no GPU, driver or `/dev/dri` in the container). With every poll it sends the figures that change: CPU use, load, free memory, how long the PC has been up. All of it is on the Workers page's **Worker Status** tab. A GPU inside the Docker image needs the device passed in (`devices: ["/dev/dri:/dev/dri"]`) and the matching ffmpeg driver packages; the tab shows what the agent can actually see.
+
 ## What it promises
 
 - **Nothing is overwritten.** A copy goes to `<name>.synchub-partial` and is renamed only when it has been read back and its SHA-256 matches the source. An existing, different file at the destination fails the job.
@@ -12,7 +17,29 @@ What it does today: **verified copies** between your shares (SyncHub's *Test cop
 - **An unmounted share is never written to.** Each share has a `.synchub-root` marker file holding its name. The agent only uses a share whose marker matches, so an empty folder from a failed mount, or `Media` mounted where `TFiles` belongs, is refused. A hung mount (stale NFS handle, dead SMB server) is reported as "not responding" instead of freezing the agent.
 - **Nothing is deleted before it is verified.** Local files are removed only after SyncHub has the result; a failed job's folder is kept (14 days by default) with its log, and SyncHub's **Fetch full log** button asks the agent for it.
 
-## Install on Ubuntu with Docker (recommended)
+## Install with one script (Ubuntu or Debian, recommended)
+
+`setup-worker.sh` does everything below for you, and does it again, safely, whenever you run it later:
+
+```
+git clone https://github.com/ThebumGreg/letterboxd_scraper.git && cd letterboxd_scraper
+sudo ./agent/setup-worker.sh --url http://192.168.1.20:5001 --token sw_...
+```
+
+The address is SyncHub's, as this PC reaches it (not `localhost`); the token is the one SyncHub's *Add worker* dialog shows once (that dialog's first tab, `setup-worker.sh`, holds this exact command). The script:
+
+1. **Installs what is missing**: `git`, `curl`, Docker with Compose, and `cifs-utils` / `nfs-common` when SyncHub's shares need them.
+2. **Asks SyncHub for this worker's settings and shares** with the token, so the shares you defined on the Storage page are the ones that get mounted. A wrong token or address stops it here, before anything on the PC is changed.
+3. **Pulls the latest code from GitHub** (`git pull --ff-only` in the checkout it was started from, or a fresh clone in `/opt/synchub-worker/repo`). A checkout with local changes is used as it is, with a warning. A private repository needs `export GITHUB_TOKEN=...` (read access to Contents) and `sudo -E`.
+4. **Updates the shared file systems**: one marked block in `/etc/fstab` (a timestamped backup is kept; your own lines are never touched; a mount point you already have a line for is skipped with a warning), and the Unraid login in `/etc/synchub-smb.cred` (mode 600, never in `.env` or `fstab`). It then creates the mount folders and mounts the shares.
+5. **Creates `.env`** (mode 600) and `docker-compose.yml` in `/opt/synchub-worker`, builds the image and starts the worker. The compose file bind-mounts the PC's mounts with `rslave`, so a share that mounts late at boot, or is remounted, shows up inside the container.
+6. **Marks the shares** (`--init-roots`, only when every share is really mounted) and runs `--check`.
+
+Options: `--mode native` (python3, ffmpeg and a systemd service instead of Docker), `--dir`, `--work-dir` (a big local disk), `--branch`, `--repo`, `--smb-user` / `--smb-password` (or `SMB_USER` / `SMB_PASSWORD`, or it asks), `--no-mounts` (shares already mounted), `--no-init-roots`, `--no-start`, and `--dry-run` (prints what it would do; still asks SyncHub, which proves the address and token). `--help` lists them all. Exit status: 0 done, 1 failed, 3 done with something to look at (the summary says what).
+
+To update a worker later: run the same script again. It needs no arguments the second time (the address and token are read from the `.env` it wrote).
+
+## Install on Ubuntu with Docker, by hand
 
 1. On the worker PC:
 
@@ -43,11 +70,11 @@ What it does today: **verified copies** between your shares (SyncHub's *Test cop
 
    The Workers page now shows the worker online with each share "ready". Use **Test copy** to prove the path from end to end with a small file.
 
-Useful afterwards: `docker compose logs -f` (live), `work/logs/worker.jsonl` (JSON lines, rotated 10 MB x 5), `work/jobs/<id>-xxxxxxxx/job.log` (one job's log), `docker compose restart` (safe at any moment: jobs resume).
+Useful afterwards: **SyncHub's Workers page** (the **Logs** button fetches this worker's log from SyncHub, and the **Worker Status** tab shows its CPU, memory, graphics card and which encoders work), `docker compose logs -f` (live), `work/logs/worker.jsonl` (JSON lines, rotated 10 MB x 5), `work/jobs/<id>-xxxxxxxx/job.log` (one job's log), `docker compose restart` (safe at any moment: jobs resume).
 
 ## Install without Docker
 
-Copy `synchub-agent.ini` (from SyncHub's dialog) to `/etc/synchub-agent.ini`, mount the shares with the `fstab` lines from the same dialog, and use `synchub-agent.service` (see the comments at its top). `python3 synchub_agent.py --check` and `--init-roots` work the same way.
+`sudo ./agent/setup-worker.sh --mode native ...` does all of this (system user, `/opt/synchub-agent`, `/etc/synchub-agent.ini`, the systemd service, the fstab lines). By hand: copy `synchub-agent.ini` (from SyncHub's dialog) to `/etc/synchub-agent.ini`, mount the shares with the `fstab` lines from the same dialog, and use `synchub-agent.service` (see the comments at its top). `python3 synchub_agent.py --check` and `--init-roots` work the same way.
 
 ## Settings
 

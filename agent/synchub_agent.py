@@ -24,6 +24,7 @@ import os
 import platform
 import random
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -41,7 +42,7 @@ try:
 except ImportError:                        # pragma: no cover - exercised by tests that remove the module
     media_analysis = None
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
 OPS = ["copy"]                     # the operations (plan.op) every agent can do; scan and hash are added when the analysis module is there
@@ -349,6 +350,31 @@ class JobLog:
 
 
 # ============================================================================ SyncHub API
+def read_log_tail(logs_dir, limit=900_000, name="worker.jsonl"):
+    """The end of the agent's log across its rotated files (worker.jsonl.1 is older than worker.jsonl): at most `limit` bytes of whole lines,
+    and whether older lines were left out."""
+    paths = [os.path.join(logs_dir, name)] + [os.path.join(logs_dir, f"{name}.{i}") for i in range(1, 100)]
+    pieces, room, cut = [], limit, False
+    for path in paths:
+        try:
+            with open(path, "rb") as handle:
+                size = handle.seek(0, os.SEEK_END)
+                start = max(0, size - room)
+                handle.seek(start)
+                data = handle.read()
+        except OSError:
+            continue
+        if start > 0:
+            data = data.partition(b"\n")[2]                                 # the first line is cut in half
+            cut = True
+        pieces.append(data)
+        room -= len(data)
+        if cut or room <= 0:
+            break
+    text = b"".join(reversed(pieces)).decode("utf-8", errors="replace")
+    return text, cut
+
+
 class ApiError(Exception):
     def __init__(self, status, message, body=None):
         super().__init__(f"{status}: {message}")
@@ -540,18 +566,26 @@ def run_quiet(command, timeout=20):
         return None, ""
 
 
+# The video encoders worth knowing about, in the order SyncHub's Worker Status tab lists them. The agent tests the first group with a real frame;
+# the rest are only reported as built into ffmpeg.
+TESTED_ENCODERS = ("libx265", "libx264", "libsvtav1", "hevc_nvenc", "h264_nvenc", "av1_nvenc", "hevc_qsv", "h264_qsv", "av1_qsv", "hevc_vaapi", "h264_vaapi", "av1_vaapi")
+OTHER_ENCODERS = ("libaom-av1", "librav1e", "libvpx-vp9", "hevc_amf", "h264_amf", "av1_amf", "hevc_videotoolbox", "h264_videotoolbox")
+
+
 def detect_capabilities(cfg):
-    """What this PC can do: ffmpeg and the encoders that really work (one test frame each), cores, space and the operations the agent knows."""
+    """What this PC can do: ffmpeg and the encoders that really work (one test frame each), cores, space and the operations the agent knows,
+    and (under "host") the hardware details the Worker Status tab shows."""
     caps = {"ops": list(OPS), "cores": os.cpu_count(), "ffmpeg": None, "ffprobe": None, "encoders": [], "vmaf": False, "python": platform.python_version(),
             "analysis": media_analysis.LOGIC_VERSION if media_analysis else None}
     if media_analysis:
         caps["ops"].append("hash")
+    caps["host"] = host_info()
     code, out = run_quiet([cfg.ffmpeg, "-hide_banner", "-version"])
     if code == 0:
         caps["ffmpeg"] = out.splitlines()[0] if out else "ffmpeg"
         code, listing = run_quiet([cfg.ffmpeg, "-hide_banner", "-encoders"])
         have = set(re.findall(r"^\s*V\S*\s+(\S+)", listing, re.M)) if code == 0 else set()
-        for name in ("libx265", "libx264", "hevc_nvenc", "h264_nvenc", "hevc_qsv", "h264_qsv", "hevc_vaapi", "h264_vaapi"):
+        for name in TESTED_ENCODERS:
             if name not in have:
                 continue
             command = [cfg.ffmpeg, "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=10"]
@@ -560,6 +594,9 @@ def detect_capabilities(cfg):
             code, _ = run_quiet(command + ["-frames:v", "5", "-c:v", name, "-f", "null", "-"], timeout=30)
             if code == 0:
                 caps["encoders"].append(name)
+        code, hwaccels = run_quiet([cfg.ffmpeg, "-hide_banner", "-hwaccels"])
+        caps["host"]["ffmpeg"] = {"encoders_built": [n for n in TESTED_ENCODERS + OTHER_ENCODERS if n in have],
+                                  "hwaccels": [line.strip() for line in hwaccels.splitlines() if line.strip() and not line.startswith("Hardware")][:20] if code == 0 else []}
         code, filters = run_quiet([cfg.ffmpeg, "-hide_banner", "-filters"])
         caps["vmaf"] = code == 0 and "libvmaf" in filters
     code, out = run_quiet([cfg.ffprobe, "-version"])
@@ -579,6 +616,143 @@ def os_name():
     except OSError:
         pass
     return f"{platform.system()} {platform.release()}"
+
+
+# ============================================================================ the host (SyncHub's Worker Status tab)
+CPU_FLAGS = ("sse4_2", "avx", "avx2", "fma", "aes", "avx512f", "avx512bw", "avx512vl", "avx512_vnni", "neon", "asimd", "sve")     # the ones that matter to software encoders
+
+
+def read_file(path, limit=2_000_000):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            return handle.read(limit)
+    except OSError:
+        return ""
+
+
+def cpu_details():
+    """The processor: model, cores, threads, the fastest clock it reports and the instruction sets worth knowing. Nothing here may raise."""
+    try:
+        threads = len(os.sched_getaffinity(0))                         # the cores this process may really use (a container can be limited)
+    except (AttributeError, OSError):
+        threads = os.cpu_count()
+    cpu = {"model": None, "threads": threads, "cores": None, "mhz": None, "flags": []}
+    text = read_file("/proc/cpuinfo")
+    packages, cores, mhz, per_package, names = set(), set(), [], None, {}
+    for line in text.splitlines():
+        key, _, value = line.partition(":")
+        key, value = key.strip().lower(), value.strip()
+        if key in ("model name", "hardware", "cpu model", "model") and value and key not in names and not (key == "model" and value.isdigit()):
+            names[key] = value                                          # x86 has a numeric "model" too; it is not a name
+        elif key == "physical id":
+            packages.add(value)
+        elif key == "core id" and packages:
+            cores.add((sorted(packages)[-1] if packages else "0", value))
+        elif key == "cpu cores" and value.isdigit():
+            per_package = int(value)
+        elif key == "cpu mhz":
+            try:
+                mhz.append(float(value))
+            except ValueError:
+                pass
+        elif key in ("flags", "features") and not cpu["flags"]:
+            have = set(value.split())
+            cpu["flags"] = [f for f in CPU_FLAGS if f in have]
+    cpu["model"] = next((names[k] for k in ("model name", "hardware", "cpu model", "model") if k in names), None)
+    cpu["cores"] = per_package * max(len(packages), 1) if per_package else (len(cores) or None)
+    cpu["mhz"] = round(max(mhz)) if mhz else None
+    if not cpu["model"]:
+        code, out = run_quiet(["lscpu"], timeout=5)
+        match = re.search(r"^Model name:\s*(.+)$", out, re.M) if code == 0 else None
+        cpu["model"] = match.group(1).strip() if match else (platform.processor() or None)
+    if cpu["cores"] and threads and cpu["cores"] > threads:
+        cpu["cores"] = threads
+    return cpu
+
+
+def memory_bytes(field="MemTotal"):
+    match = re.search(rf"^{field}:\s+(\d+)\s+kB", read_file("/proc/meminfo"), re.M)
+    return int(match.group(1)) * 1024 if match else None
+
+
+def gpu_details():
+    """Graphics cards this process can see: NVIDIA ones from nvidia-smi (with driver and memory), others from lspci. A container sees only what was passed in."""
+    gpus = []
+    code, out = run_quiet(["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader,nounits"], timeout=10)
+    if code == 0:
+        for line in out.splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) == 3 and parts[0]:
+                gpus.append({"name": parts[0][:80], "driver": parts[1][:30], "memory_mb": int(parts[2]) if parts[2].isdigit() else None, "source": "nvidia-smi"})
+    code, out = run_quiet(["lspci", "-mm"], timeout=10)
+    if code == 0:
+        for line in out.splitlines():
+            try:
+                fields = shlex.split(line)
+            except ValueError:
+                continue
+            if len(fields) >= 4 and any(k in fields[1] for k in ("VGA", "3D controller", "Display controller")):
+                vendor, device = fields[2], fields[3]
+                if gpus and "nvidia" in vendor.lower() and any(g["source"] == "nvidia-smi" for g in gpus):
+                    continue                                          # nvidia-smi already told us, with more detail
+                gpus.append({"name": f"{vendor} {device}"[:80], "driver": None, "memory_mb": None, "source": "lspci"})
+    return gpus[:8]
+
+
+def container_kind():
+    if os.path.exists("/.dockerenv"):
+        return "docker"
+    marks = read_file("/proc/1/cgroup", 20000)
+    for kind in ("docker", "kubepods", "lxc", "containerd", "podman"):
+        if kind in marks:
+            return kind
+    return None
+
+
+def host_info():
+    """The static hardware details sent once at registration. Any one detail that cannot be read is left out; this never raises."""
+    try:
+        try:
+            render = sorted(n for n in os.listdir("/dev/dri") if n.startswith("renderD"))
+        except OSError:
+            render = []
+        return {"arch": platform.machine(), "kernel": platform.release(), "cpu": cpu_details(), "memory_bytes": memory_bytes(), "gpus": gpu_details(),
+                "render_devices": render, "container": container_kind()}
+    except Exception:                                                  # noqa: B902  (a detail we cannot read must not stop the agent starting)
+        return {}
+
+
+def cpu_times():
+    """(busy+idle, idle) jiffies since boot, from /proc/stat; None where there is no /proc/stat."""
+    parts = read_file("/proc/stat", 4096).split("\n", 1)[0].split()
+    if len(parts) < 5 or parts[0] != "cpu":
+        return None
+    try:
+        values = [int(v) for v in parts[1:9]]
+    except ValueError:
+        return None
+    return sum(values), values[3] + (values[4] if len(values) > 4 else 0)
+
+
+def live_host_stats(previous):
+    """The numbers that change: load, how busy the CPU was since `previous`, free memory and how long the PC has been up. Returns (stats, sample)."""
+    stats, sample = {}, cpu_times()
+    try:
+        stats["load"] = [round(x, 2) for x in os.getloadavg()]
+    except (AttributeError, OSError):
+        pass
+    if sample and previous and sample[0] > previous[0]:
+        stats["cpu_percent"] = round(100.0 * (1 - (sample[1] - previous[1]) / (sample[0] - previous[0])), 1)
+    available = memory_bytes("MemAvailable")
+    if available is not None:
+        stats["mem_available_bytes"] = available
+    up = read_file("/proc/uptime", 200).split()
+    if up:
+        try:
+            stats["host_uptime_seconds"] = int(float(up[0]))
+        except ValueError:
+            pass
+    return stats, sample
 
 
 # ============================================================================ per-job state on disk
@@ -1277,6 +1451,7 @@ class Agent:
         self.capabilities = None
         self.started = time.monotonic()
         self.poll_seconds, self.registered, self.roots_hash = 5.0, False, None
+        self._cpu_sample = None
         self._last_sweep, self._backoff, self._warned = 0.0, 0.0, {}
 
     # ---- called by runners
@@ -1298,7 +1473,8 @@ class Agent:
     def register(self):
         if self.capabilities is None:
             self.capabilities = detect_capabilities(self.cfg)
-            self.log.info("Capabilities", **{k: v for k, v in self.capabilities.items() if k != "ops"})
+            cpu = (self.capabilities.get("host") or {}).get("cpu") or {}
+            self.log.info("Capabilities", cpu=cpu.get("model"), **{k: v for k, v in self.capabilities.items() if k not in ("ops", "host")})
         body = {"protocol": PROTOCOL, "version": __version__, "os": os_name(), "hostname": self.cfg.hostname, "slots": self.cfg.slots, "capabilities": self.capabilities}
         answer = self.api.post("/register", body)
         self.poll_seconds = max(self.MIN_POLL, float(answer.get("poll_seconds") or 5))
@@ -1312,7 +1488,8 @@ class Agent:
         with self.lock:
             jobs = [{"id": i, "stage": s, "progress": p} for i, (s, p) in sorted(self.progress.items())][:10]
         roots = {name: {"ok": r["ok"], "state": r["state"], "message": (r["message"] or "")[:200], "free_bytes": r["free_bytes"]} for name, r in self.monitor.snapshot().items()}
-        return {"version": __version__, "uptime_seconds": int(time.monotonic() - self.started), "work_free_bytes": self.work_free(), "roots": roots, "jobs": jobs}
+        host, self._cpu_sample = live_host_stats(self._cpu_sample)
+        return {"version": __version__, "uptime_seconds": int(time.monotonic() - self.started), "work_free_bytes": self.work_free(), "roots": roots, "jobs": jobs, "host": host}
 
     def work_free(self):
         try:
@@ -1336,6 +1513,8 @@ class Agent:
             self.cleanup(job_id)
         for job_id in answer.get("log_requests") or []:
             self.upload_log(job_id)
+        if answer.get("worker_log"):
+            self.upload_worker_log()
         if not self.stopping.is_set():
             for job in (answer.get("resume") or []) + (answer.get("jobs") or []):
                 self.start(job)
@@ -1403,6 +1582,17 @@ class Agent:
             self.log.warning(f"SyncHub did not accept the log of job {job_id}: {exc}")
         except Unreachable as exc:
             self.log.warning(f"Could not upload the log of job {job_id}: {exc}")
+
+    def upload_worker_log(self):
+        """The Workers page's Get logs button: send the tail of this agent's own log (worker.jsonl and its rotated files)."""
+        text, truncated = read_log_tail(self.cfg.logs_dir)
+        self.log.info("Uploading the worker log as SyncHub asked", bytes=len(text))
+        try:
+            self.api.post("/log", {"text": text or "(the log file is empty or cannot be read)", "truncated": truncated})
+        except ApiError as exc:
+            self.log.warning(f"SyncHub did not accept the worker log: {exc}")
+        except Unreachable as exc:
+            self.log.warning(f"Could not upload the worker log: {exc}")
 
     # ---- reports that must not be lost
     def deliver(self, job_id, folder):

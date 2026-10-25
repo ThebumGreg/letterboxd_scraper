@@ -1,8 +1,9 @@
-<!-- The workers and jobs tables: rendered with the page and swapped in every few seconds. Which tab is open is kept by the page's script. -->
+<!-- The workers, jobs and Worker Status tabs: rendered with the page and swapped in every few seconds. Which tab is open is kept by the page's script. -->
 {% set waiting = jobs|selectattr('status', 'equalto', 'needs_review')|list|length %}
 <ul class="nav nav-tabs mb-4" id="fleetTabs" role="tablist">
     <li class="nav-item" role="presentation"><button type="button" class="nav-link active" data-pane="workers" role="tab" aria-selected="true">Workers <span class="badge bg-secondary">{{ workers|length }}</span></button></li>
     <li class="nav-item" role="presentation"><button type="button" class="nav-link" data-pane="jobs" role="tab" aria-selected="false">Jobs <span class="badge bg-secondary">{{ jobs|length }}</span>{% if waiting %} <span class="badge bg-warning text-dark" title="Jobs waiting for your decision">{{ waiting }} waiting for you</span>{% endif %}</button></li>
+    <li class="nav-item" role="presentation"><button type="button" class="nav-link" data-pane="status" role="tab" aria-selected="false">Worker Status</button></li>
 </ul>
 
 <div data-fleet-pane="workers" role="tabpanel">
@@ -39,6 +40,7 @@
                     <td class="small">{{ w.seen }}</td>
                     <td class="pe-4 text-end text-nowrap">
                         {% if not w.revoked and w.enabled %}
+                        <button type="button" class="btn btn-sm btn-outline-info" data-worker-logs="{{ w.id }}" data-name="{{ w.name }}" title="Fetch the worker's own log to troubleshoot it"><i class="bi bi-card-text" aria-hidden="true"></i> Logs</button>
                         <button type="button" class="btn btn-sm btn-outline-secondary" data-worker-action="{{ 'resume' if w.paused else 'pause' }}" data-id="{{ w.id }}">{{ 'Resume' if w.paused else 'Pause' }}</button>
                         <button type="button" class="btn btn-sm btn-outline-secondary" data-worker-action="{{ 'undrain' if w.draining else 'drain' }}" data-id="{{ w.id }}"
                                 title="A draining worker finishes its jobs and takes no more">{{ 'Stop draining' if w.draining else 'Drain' }}</button>
@@ -117,4 +119,96 @@
         </table>
     </div>
 </div>
+</div>
+
+<div data-fleet-pane="status" role="tabpanel" hidden>
+<h4 class="mb-3">Worker Status <small class="text-muted">the machine behind each worker and what it can encode</small></h4>
+{% for w in workers %}
+{% set h = w.host %}
+<div class="panel mb-4{% if not w.online %} opacity-75{% endif %}" data-status-worker="{{ w.id }}">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+        <div>
+            <h5 class="mb-1">{{ w.name }} <span class="badge bg-{{ w.state_color }}{% if w.state_color in ['info', 'warning'] %} text-dark{% endif %} fs-6">{{ w.state }}</span></h5>
+            <div class="small text-body-secondary">{{ w.hostname or 'not connected yet' }}{% if w.os %} &middot; {{ w.os }}{% endif %}{% if w.version %} &middot; agent {{ w.version }}{% endif %} &middot; seen {{ w.seen }}{% if not w.online and h.known %} (the figures below are from then){% endif %}</div>
+        </div>
+        {% if not w.revoked and w.enabled %}<button type="button" class="btn btn-sm btn-outline-info" data-worker-logs="{{ w.id }}" data-name="{{ w.name }}"><i class="bi bi-card-text" aria-hidden="true"></i> Logs</button>{% endif %}
+    </div>
+    {% if not h.known %}
+    <div class="alert alert-secondary mb-0 small">
+        {% if not w.last_seen %}This worker has not connected yet, so there is nothing to show.
+        {% else %}This worker's agent{% if w.version %} ({{ w.version }}){% endif %} has not reported its hardware. Run <code>sudo ./agent/setup-worker.sh</code> on it again to update the agent, or update the <code>agent</code> folder and restart it.{% endif %}
+        {% if w.encoders %}<div class="mt-2">Encoders that work: {{ w.encoders }}</div>{% endif %}
+    </div>
+    {% else %}
+    <div class="row g-4">
+        <div class="col-md-6 col-xl-3">
+            <h6 class="text-uppercase small text-body-secondary">Processor</h6>
+            <div class="fw-semibold">{{ h.cpu_model }}</div>
+            <dl class="row small mb-0">
+                {% if h.cpu_size %}<dt class="col-5 fw-normal text-body-secondary">Size</dt><dd class="col-7">{{ h.cpu_size }}</dd>{% endif %}
+                {% if h.arch %}<dt class="col-5 fw-normal text-body-secondary">Architecture</dt><dd class="col-7">{{ h.arch }}</dd>{% endif %}
+                {% if h.cpu_percent is not none %}<dt class="col-5 fw-normal text-body-secondary">In use</dt><dd class="col-7">{{ h.cpu_percent }}%</dd>{% endif %}
+                {% if h.load %}<dt class="col-5 fw-normal text-body-secondary" title="1, 5 and 15 minute load average">Load</dt><dd class="col-7">{{ h.load }}</dd>{% endif %}
+            </dl>
+            {% if h.cpu_flags %}<div class="mt-2" title="Instruction sets that software encoders (x264, x265, SVT-AV1) use to go faster">{% for f in h.cpu_flags %}<span class="badge bg-secondary me-1">{{ f }}</span>{% endfor %}</div>{% endif %}
+        </div>
+        <div class="col-md-6 col-xl-3">
+            <h6 class="text-uppercase small text-body-secondary">Memory, space and time</h6>
+            <dl class="row small mb-0">
+                <dt class="col-5 fw-normal text-body-secondary">Memory</dt><dd class="col-7">{{ h.memory_total or '-' }}{% if h.memory_free %} <span class="text-body-secondary">({{ h.memory_free }} free)</span>{% endif %}</dd>
+                <dt class="col-5 fw-normal text-body-secondary">Work folder</dt><dd class="col-7">{{ (h.work_free ~ ' free') if h.work_free else '-' }}</dd>
+                {% if h.host_uptime %}<dt class="col-5 fw-normal text-body-secondary">PC up for</dt><dd class="col-7">{{ h.host_uptime }}</dd>{% endif %}
+                {% if h.agent_uptime %}<dt class="col-5 fw-normal text-body-secondary">Agent up for</dt><dd class="col-7">{{ h.agent_uptime }}</dd>{% endif %}
+                <dt class="col-5 fw-normal text-body-secondary">Job slots</dt><dd class="col-7">{{ w.running }} of {{ w.slots }} in use</dd>
+            </dl>
+        </div>
+        <div class="col-md-6 col-xl-3">
+            <h6 class="text-uppercase small text-body-secondary">Graphics</h6>
+            {% for g in h.gpus %}
+            <div class="small mb-1"><span class="fw-semibold">{{ g.name }}</span>{% if g.memory %} &middot; {{ g.memory }}{% endif %}{% if g.driver %} &middot; driver {{ g.driver }}{% endif %}</div>
+            {% else %}
+            <div class="small text-body-secondary">No graphics card is visible to the agent.{% if h.container %} It runs in a {{ h.container }} container, which sees a GPU only if one is passed in.{% endif %}</div>
+            {% endfor %}
+            {% if h.render_devices %}<div class="small text-body-secondary mt-1" title="/dev/dri: what VAAPI and Quick Sync encode through">Render devices: {{ h.render_devices|join(', ') }}</div>{% endif %}
+        </div>
+        <div class="col-md-6 col-xl-3">
+            <h6 class="text-uppercase small text-body-secondary">System</h6>
+            <dl class="row small mb-0">
+                {% if w.os %}<dt class="col-5 fw-normal text-body-secondary">OS</dt><dd class="col-7">{{ w.os }}</dd>{% endif %}
+                {% if h.kernel %}<dt class="col-5 fw-normal text-body-secondary">Kernel</dt><dd class="col-7">{{ h.kernel }}</dd>{% endif %}
+                <dt class="col-5 fw-normal text-body-secondary">Runs in</dt><dd class="col-7">{{ (h.container ~ ' container') if h.container else 'the PC itself' }}</dd>
+                {% if h.python %}<dt class="col-5 fw-normal text-body-secondary">Python</dt><dd class="col-7">{{ h.python }}</dd>{% endif %}
+                <dt class="col-5 fw-normal text-body-secondary">Can do</dt><dd class="col-7">{{ h.ops|join(', ') or '-' }}</dd>
+            </dl>
+        </div>
+    </div>
+    <hr>
+    <h6 class="text-uppercase small text-body-secondary">Encoding</h6>
+    {% if h.ffmpeg %}
+    <div class="small mb-2">{{ h.ffmpeg }}{% if h.ffprobe %}<br>{{ h.ffprobe }}{% endif %}</div>
+    <div class="small mb-3">
+        <span class="text-body-secondary">Quality scoring (VMAF):</span> {% if h.vmaf %}<span class="badge bg-success">available</span>{% else %}<span class="badge bg-secondary">not in this ffmpeg</span>{% endif %}
+        {% if h.hwaccels %}<span class="text-body-secondary ms-3" title="What ffmpeg can use to decode on hardware">Hardware decoding:</span> {% for a in h.hwaccels %}<span class="badge bg-secondary me-1">{{ a }}</span>{% endfor %}{% endif %}
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+            <thead><tr><th>Encoder</th><th>Codec</th><th>Type</th><th>State</th></tr></thead>
+            <tbody>
+                {% for e in h.encoders %}
+                <tr><td><code>{{ e.name }}</code></td><td>{{ e.codec }}</td><td>{{ e.kind }}</td>
+                    <td><span class="badge bg-{{ e.color }}" title="{{ e.note }}">{{ e.state }}</span></td></tr>
+                {% else %}
+                <tr><td colspan="4" class="text-body-secondary">None of the encoders SyncHub knows is in this ffmpeg.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="alert alert-warning mb-0 small">ffmpeg was not found on this worker, so it cannot scan or encode. Install it (<code>sudo apt install ffmpeg</code>), or use the Docker setup, whose image includes it.</div>
+    {% endif %}
+    {% endif %}
+</div>
+{% else %}
+<div class="panel text-center text-muted py-4">No workers yet. Add one to see its hardware here.</div>
+{% endfor %}
 </div>
