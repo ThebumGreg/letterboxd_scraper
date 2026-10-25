@@ -350,7 +350,7 @@ def test_cancelling_stops_the_copy_removes_the_half_file_and_the_cleanup_clears_
     wait(lambda: rig.job(job_id)["status"] == "cancelled", what="the cancel")
     assert not list((rig.roots["tfiles"] / "out").glob("*"))                          # no half-written file is left on the share
     wait(lambda: not list((rig.work / "jobs").glob(f"{job_id}-*")), what="SyncHub's cleanup request to be carried out")
-    assert rig.job(job_id)["cleanup"] == 0
+    wait(lambda: rig.job(job_id)["cleanup"] == 0, what="the agent to report the cleanup as done")   # reported on a later call than the folder removal
 
 
 def test_a_cancelled_job_waiting_in_the_queue_never_starts(rig):
