@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+**Worker upgrades.** `agent/update-worker.sh --report` prints a worker's current state without changing anything, and `docs/UPGRADE.md` is the step-by-step upgrade guide (SyncHub first, then each worker; report, dry run, update, check, roll back).
+
 **Download pipeline (off by default).** A file Radarr or Sonarr imports can now be checked and, where the rules call for it, replaced in place. Switch it on under Library, Settings, *New Radarr/Sonarr downloads*: *Ask me first* lists each import on the Library page with a **Replace it** button, *Replace when safe* converts files whose plan is plain (tracks removed, lossless remux, English audio confirmed) and still asks about the rest.
 - **Flow.** The import webhook (Radarr `Download`, Sonarr `Download` and `ImportComplete`) leaves a row; a worker scans the file's folder (the Library's analysis and track rules), SyncHub decides, and a `download` job converts the file on the worker and swaps the result in under the same base name (an `.avi` becomes `.mkv` beside it, the old file is removed). The file's modified date is kept so Jellyfin's "date added" does not move. Then Radarr/Sonarr is asked to rescan the title and Jellyfin to scan.
 - **Originals are kept on the worker** in `work/originals/` for *Keep originals (days)* (default 30; 0 drops the original once the replacement is verified), with a `meta.json` saying where each came from. The worker removes them only after that time. The Workers page shows how many are held.
