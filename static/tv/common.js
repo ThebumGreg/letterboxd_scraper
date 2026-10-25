@@ -24,7 +24,7 @@ const S = {
   prefs: {quick: {}, apps: {}}, quickMax: 4, notices: [], logAll: [], logLast: 0, build: null,
 };
 const W = {item: null, devId: null};
-const Page = {};   // hooks a page can set: onSelect, onStatus, onSessions, onApps, onPrefs, onLog (Page.noApps skips listing apps)
+const Page = {};   // hooks a page can set: onStart, onSelect, onStatus, onSessions, onApps, onPrefs, onLog (Page.noApps skips listing apps)
 const hook = (name, ...args) => Page[name] && Page[name](...args);
 const dev = () => S.devices.find(d => d.id === S.devId);
 const has = cap => (dev()?.capabilities || []).includes(cap);
@@ -99,6 +99,8 @@ async function loadConfig() {
   S.iconFiles = c.iconFiles || [];
   S.prefs = {quick: {}, apps: {}, ...(p.prefs || {})};
   S.quickMax = p.quickMax || 4;
+  const wanted = new URLSearchParams(location.search).get('tv');   // a link such as Watch now's opens a particular TV's remote
+  if (wanted && S.devices.some(d => d.id === wanted)) S.devId = wanted;
   if (!dev()) S.devId = S.devices[0]?.id || '';
   const banner = $('#banner');
   if (banner) { banner.hidden = !c.configError; banner.textContent = c.configError || ''; }
@@ -213,6 +215,22 @@ function renderNotices() {   // one at a time, so a notice never pushes the remo
     <div class="nbtns">${n.href ? `<a class="tv-btn primary" href="${esc(n.href)}" data-notice="${esc(n.id)}">${esc(n.action || 'Open')}</a>` : ''}<button data-act="dismissNotice" data-id="${esc(n.id)}">Dismiss</button></div></div>`;
 }
 document.addEventListener('click', e => { const a = e.target.closest('[data-notice]'); if (a) markSeen(a.dataset.notice); });
+
+/* ------------------------------------------------------------------ the playback clock (see clock.js)
+   The position text and bar of a playing item are drawn empty and filled in by tickClocks(), which counts forward in the browser between
+   the server's updates, so they run smoothly instead of jumping at each poll. */
+const clockText = (key, len) => `<span data-clock="text" data-key="${esc(key)}" data-len="${len || 0}"></span>`;
+const clockBar = (key, len) => `<div class="bar"><div data-clock="fill" data-key="${esc(key)}" data-len="${len || 0}" style="width:0"></div></div>`;
+function tickClocks() {
+  document.querySelectorAll('[data-clock]').forEach(el => {
+    const len = Number(el.dataset.len), pos = Clock.position(el.dataset.key);
+    if (el.dataset.clock === 'text') el.textContent = len ? `${fmt(Math.floor(pos))} / ${fmt(len)}` : `at ${fmt(Math.floor(pos))}`;   // whole seconds, rounded down like a player
+    else el.style.width = len ? Math.min(100, pos / len * 100) + '%' : '0';
+  });
+}
+setInterval(tickClocks, 250);
+const clockKey = (devId, id) => `${devId}:${id}`;
+const activeClockKey = () => { const s = activeSession(); return s && s.NowPlaying ? clockKey(S.devId, s.NowPlaying.Id) : null; };
 
 /* ------------------------------------------------------------------ jellyfin sessions + now playing */
 function activeSession() {
@@ -351,8 +369,17 @@ const ACTIONS = {
   key: b => sendKey(b, b.dataset.key),
   power: async b => { await run(b, api('POST', devPath('/power'), {state: b.dataset.state})); pollStatus(dev()); },
   launch: async b => { await run(b, api('POST', devPath('/launch'), {app: b.dataset.app})); setTimeout(() => pollStatus(dev()), 1500); },
-  playstate: b => jfAct(b, '/api/tv/jf/playstate', {command: b.dataset.cmd}),
-  relseek: b => { const s = needSession(); if (s) jfAct(b, '/api/tv/jf/playstate', {command: 'Seek', seekPositionTicks: Math.max(0, Math.round(((s.PlayState.PositionTicks || 0) / TICKS + Number(b.dataset.d)) * TICKS))}); },
+  playstate: b => {
+    const key = activeClockKey(), cmd = b.dataset.cmd;   // pause and resume show at once; the server confirms a moment later
+    if (key && ['PlayPause', 'Pause', 'Unpause'].includes(cmd)) { Clock.setPlaying(key, cmd === 'PlayPause' ? undefined : cmd === 'Unpause'); hook('onSessions'); tickClocks(); }
+    return jfAct(b, '/api/tv/jf/playstate', {command: cmd});
+  },
+  relseek: b => {
+    const s = needSession(); if (!s) return;
+    const key = activeClockKey(), at = key ? Clock.position(key) : (s.PlayState.EstimatedTicks ?? s.PlayState.PositionTicks ?? 0) / TICKS;
+    if (key) { Clock.shift(key, Number(b.dataset.d)); hook('onSessions'); tickClocks(); }
+    jfAct(b, '/api/tv/jf/playstate', {command: 'Seek', seekPositionTicks: Math.max(0, Math.round((at + Number(b.dataset.d)) * TICKS))});
+  },
   watch: () => openWatch(null),
   watchClose: () => $('#watch').close(),
   wsearch: () => watchSearch(),
@@ -396,6 +423,7 @@ async function fetchLog() {
 async function startApp() {
   loadNotices();
   await loadConfig();
+  hook('onStart');
   pollAll(); pollSessions(); fetchLog();
   setInterval(pollAll, 5000);
   setInterval(pollSessions, 3000);

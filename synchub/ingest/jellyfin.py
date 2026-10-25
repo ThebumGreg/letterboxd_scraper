@@ -43,7 +43,8 @@ def sync(conn, client, scope="all", now=None, progress=None):
             "season_number": season_number, "episode_number": item.get("IndexNumber") if kind == "episode" else None,
             "premiere_date": (item.get("PremiereDate") or "")[:10] or None,
             "tmdb_id": _provider(item, "tmdb"), "tvdb_id": _provider(item, "tvdb"), "imdb_id": _provider(item, "imdb"),
-        }, now)
+            "date_created": (item.get("DateCreated") or "")[:19].replace("T", " ") or None,
+        }, now, keep=("date_created",))                # a sync that does not give the date never erases one we have
         seen.append(item["Id"])
 
     types = ", ".join(f"'{TYPE_MAP[t]}'" for t in jf_types)

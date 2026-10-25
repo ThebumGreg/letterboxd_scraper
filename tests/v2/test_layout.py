@@ -174,10 +174,21 @@ def test_the_page_tells_watch_now_whether_the_tvs_may_be_offered(client, v2):
     assert config()["tv"] is False
 
 
-def test_the_tv_list_and_play_calls_watch_now_makes_are_allowed_by_the_tv_permission(client, v2):
+def test_the_tv_list_and_the_play_call_behind_watch_now_are_allowed_by_the_tv_permission(client, v2):
     settings.set_value("access_guest_permissions", "dashboard,tv")
     assert client.get("/api/tv/config").status_code == 200
     assert client.post("/api/tv/devices/nothing/play", json={"itemIds": ["x"], "playCommand": "PlayNow"}).status_code != 403
     settings.set_value("access_guest_permissions", "dashboard")
     assert client.get("/api/tv/config").status_code == 403
     assert client.post("/api/tv/devices/nothing/play", json={"itemIds": ["x"], "playCommand": "PlayNow"}).status_code == 403
+
+
+def test_choosing_a_tv_in_watch_now_opens_that_tvs_remote_which_starts_the_title():
+    from config import BASE_DIR
+    watch = (BASE_DIR / "static/js/watch.js").read_text()
+    assert "/tv/remote?${params}" in watch and "tv: button.dataset.watchTv, play: wrap.dataset.item, title: wrap.dataset.title" in watch
+    assert "/api/tv/devices/${encodeURIComponent(tv.id)}/play" not in watch                    # the remote page makes the call and shows the steps
+    remote = (BASE_DIR / "static/tv/remote.js").read_text()
+    assert "q.get('play')" in remote and "history.replaceState(null, '', location.pathname)" in remote and "onStart: startFromLink" in remote
+    common = (BASE_DIR / "static/tv/common.js").read_text()
+    assert "get('tv')" in common and "hook('onStart')" in common

@@ -54,22 +54,24 @@ function renderNow() {
   if (!st) body = '<div class="np-sub">checking…</div>';
   else if (offline) body = `<div class="np-sub">${st.unresponsive ? 'The TV is asleep and not answering.' : 'The TV is not reachable.'} Power on will try to wake it.</div>`;
   else if (n) {
-    const pos = (p.PositionTicks || 0) / TICKS, len = (n.RunTimeTicks || 0) / TICKS;
+    const len = (n.RunTimeTicks || 0) / TICKS, key = clockKey(d.id, n.Id);
+    const now = Clock.sync(key, (p.EstimatedTicks ?? p.PositionTicks ?? 0) / TICKS, !p.IsPaused, len);   // runs smoothly between updates
     body = `<div class="np-title">${esc(itemLabel(n))}</div>
-      <div class="np-sub">${p.IsPaused ? '⏸ paused' : '▶ playing'} · ${fmt(pos)} / ${fmt(len)}</div>
-      <div class="bar"><div style="width:${len ? Math.min(100, pos / len * 100) : 0}%"></div></div>
+      <div class="np-sub">${now.playing ? '▶ playing' : '⏸ paused'} · ${clockText(key, len)}</div>
+      ${clockBar(key, len)}
       ${s.SupportsRemoteControl ? `<div class="np-ctl"><button data-act="relseek" data-d="-30" title="Back 30 seconds">−30s</button>
-        <button data-act="playstate" data-cmd="PlayPause">${p.IsPaused ? '▶ Resume' : '⏸ Pause'}</button>
+        <button data-act="playstate" data-cmd="PlayPause">${now.playing ? '⏸ Pause' : '▶ Resume'}</button>
         <button data-act="relseek" data-d="30" title="Forward 30 seconds">+30s</button>
         <button data-act="playstate" data-cmd="Stop" title="Stop">⏹</button></div>` : ''}`;
   } else if (m) {
-    const pos = (m.positionMs || 0) / 1000, len = (m.durationMs || 0) / 1000;
+    const len = (m.durationMs || 0) / 1000, key = clockKey(d.id, 'media'), now = Clock.sync(key, (m.positionMs || 0) / 1000, m.state === 'playing', len);
     body = `<div class="np-title">${esc(m.title || (app ? app.name : 'Playing'))}</div>
-      <div class="np-sub">${m.state === 'paused' ? '⏸ paused' : m.state === 'playing' ? '▶ playing' : esc(m.state)}${len ? ` · ${fmt(pos)} / ${fmt(len)}` : m.positionMs != null ? ` · at ${fmt(pos)}` : ''}</div>
-      ${len ? `<div class="bar"><div style="width:${Math.min(100, pos / len * 100)}%"></div></div>` : ''}`;
+      <div class="np-sub">${m.state === 'paused' ? '⏸ paused' : m.state === 'playing' ? '▶ playing' : esc(m.state)}${m.positionMs != null ? ` · ${clockText(key, len)}` : ''}</div>
+      ${len ? clockBar(key, len) : ''}`;
   } else body = '<div class="np-sub">Nothing playing</div>';
   const html = head + body;
   if (el.dataset.sig !== html) { el.dataset.sig = html; el.innerHTML = html; }   // skip no-op redraws so a click is never lost mid-redraw
+  tickClocks();
 }
 
 function renderQuick() {
@@ -92,7 +94,20 @@ function renderApps() {
   if (el.dataset.sig !== html) { el.dataset.sig = html; el.innerHTML = html; }
 }
 
+// A link from Watch now (/tv/remote?tv=<tv>&play=<item>&title=<name>) opens this TV's remote and starts the title with the usual progress box.
+function startFromLink() {
+  const q = new URLSearchParams(location.search), play = q.get('play');
+  if (!play) return;
+  history.replaceState(null, '', location.pathname);   // so a refresh does not start it again
+  const d = S.devices.find(x => x.id === q.get('tv'));
+  if (!d) return alert('That TV is not in SyncHub any more.');
+  W.item = {Id: play, Name: q.get('title') || 'this title', Type: 'Movie'};
+  $('#watch').showModal();
+  watchOn(d.id);
+}
+
 Object.assign(Page, {
+  onStart: startFromLink,
   onSelect: renderRemote,
   onStatus: d => { if (d.id === S.devId) { renderStatus(); renderNow(); renderQuick(); renderApps(); } },
   onSessions: renderNow,

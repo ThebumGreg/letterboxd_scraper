@@ -54,7 +54,8 @@ def announce_rows(media_ids):
         in_library = r["state"] == "in_library"
         payload.append({"id": r["id"], "state": r["state"], "label": r["state_label"], "color": r["state_color"], "icon": r["state_icon"],
                         "progress": r["progress_pct"], "link": r["jellyfin_link"] if in_library else "", "jellyfin_item": r["jellyfin_item_id"],
-                        "summary": f"{r['in_library']} of {r['aired']} episodes" if r["kind"] == "show" and r.get("aired") else ""})
+                        "summary": f"{r['in_library']} of {r['aired']} episodes" if r["kind"] == "show" and r.get("aired") else "",
+                        "added": r["date_added"] or "", "added_label": r["date_added_label"] or ""})
     announcer.announce(sse(json.dumps({"event": "rows", "rows": payload})))
 
 

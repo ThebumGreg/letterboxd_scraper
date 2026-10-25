@@ -5,6 +5,7 @@
 {% block title %}Dashboard{% endblock %}
 
 {% block content %}
+<div id="tvNow" class="mb-3" hidden aria-live="polite"></div>
 <div class="row g-3 mb-3">
     {{ stat_card('Movies', stats.movies, 'secondary', 'movie', '', 'text-body') }}
     {{ stat_card('TV Shows', stats.shows, 'secondary', 'show', '', 'text-body') }}
@@ -52,6 +53,7 @@
             <option value="users-desc">Most Requested</option>
             <option value="title-asc">Title (A-Z)</option>
             <option value="year-desc">Release Year (Newest)</option>
+            <option value="added-desc">Date Added</option>
         </select>
         <div class="btn-group flex-shrink-0" role="group" aria-label="View mode">
             <button type="button" class="btn btn-outline-secondary active" id="btnListView" title="List view" aria-label="List view" aria-pressed="true"><i class="bi bi-list-ul" aria-hidden="true"></i></button>
@@ -92,6 +94,7 @@
                 data-added-by="{{ r.wanted_by|join(', ') }}" data-user-count="{{ r.user_count }}"
                 data-link="{{ r.jellyfin_link if r.state == 'in_library' and r.jellyfin_link else '' }}"
                 data-jellyfin-item="{{ r.jellyfin_item_id or '' }}"
+                data-added="{{ r.date_added or '' }}" data-added-label="{{ r.date_added_label or '' }}"
                 data-summary="{% if r.kind == 'show' and r.aired %}{{ r.in_library }} of {{ r.aired }} episodes{% endif %}">
                 <td><img src="{{ r.poster }}" alt="" width="45" height="65" class="rounded poster poster-thumb" loading="lazy"></td>
                 <td>
@@ -100,8 +103,9 @@
                         {% if r.year %}<span class="badge bg-secondary ms-1 fw-normal">{{ r.year }}</span>{% endif %}
                     </div>
                     {% if r.kind == 'show' and r.aired %}
-                        <small class="text-body-secondary">{{ r.in_library }} of {{ r.aired }} episodes ({{ r.percent }}%)</small>
+                        <small class="text-body-secondary d-block">{{ r.in_library }} of {{ r.aired }} episodes ({{ r.percent }}%)</small>
                     {% endif %}
+                    {% if r.date_added_label %}<small class="text-body-secondary d-block" data-added-text>Added {{ r.date_added_label }}</small>{% endif %}
                 </td>
                 <td><span class="badge {{ 'badge-tv' if r.kind == 'show' else 'badge-movie' }}">{{ 'TV' if r.kind == 'show' else 'MOVIE' }}</span></td>
                 <td class="d-none d-md-table-cell text-truncate" style="max-width: 200px;" title="{{ r.wanted_by|join(', ') }}">{{ r.wanted_by|join(', ') }}</td>
@@ -141,4 +145,5 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tv-now.js') }}"></script>
 {% endblock %}

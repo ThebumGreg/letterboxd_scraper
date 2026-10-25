@@ -10,7 +10,6 @@
     try { cfg = JSON.parse(configEl.textContent); } catch (e) { /* no config: plain links */ }
 
     const BUTTON = { lg: "btn btn-success", row: "btn btn-sm btn-success", card: "btn btn-sm btn-success w-100 p-1 py-0", ep: "btn btn-sm btn-success py-0 px-3" };
-    const csrf = () => document.querySelector('meta[name="csrf-token"]')?.content || "";
     const make = (tag, className, text) => { const n = document.createElement(tag); if (className) n.className = className; if (text != null) n.textContent = text; return n; };
     const icon = (name) => { const i = make("i", `bi bi-${name} me-1`); i.setAttribute("aria-hidden", "true"); return i; };
 
@@ -101,50 +100,10 @@
         slot.replaceWith(...rows);
     }
 
-    // ---- messages
-    let box = null;
-    function say(kind, text, sticky) {
-        if (!box) {
-            box = make("div", "toast-container position-fixed bottom-0 end-0 p-3");
-            box.setAttribute("aria-live", "polite");
-            document.body.appendChild(box);
-        }
-        const toast = make("div", `toast show align-items-center text-bg-${kind} border-0 mb-2`);
-        toast.setAttribute("role", kind === "danger" ? "alert" : "status");
-        const row = make("div", "d-flex");
-        const body = make("div", "toast-body", text);
-        const close = make("button", "btn-close btn-close-white me-2 m-auto");
-        close.type = "button";
-        close.setAttribute("aria-label", "Close");
-        close.addEventListener("click", () => toast.remove());
-        row.append(body, close);
-        toast.appendChild(row);
-        box.appendChild(toast);
-        if (!sticky) setTimeout(() => toast.remove(), 9000);
-        return { set(nextKind, nextText, stay) { toast.className = `toast show align-items-center text-bg-${nextKind} border-0 mb-2`; body.textContent = nextText; if (!stay) setTimeout(() => toast.remove(), 9000); } };
-    }
-
-    async function playOn(wrap, button) {
-        const tv = { id: button.dataset.watchTv, name: button.dataset.tvName };
-        const title = wrap.dataset.title;
-        const toast = say("secondary", `Starting “${title}” on ${tv.name}... A sleeping TV can take up to a minute.`, true);
-        button.disabled = true;
-        try {
-            const res = await fetch(`/api/tv/devices/${encodeURIComponent(tv.id)}/play`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", Accept: "application/json", ...(csrf() ? { "X-CSRFToken": csrf() } : {}) },
-                body: JSON.stringify({ itemIds: [wrap.dataset.item], playCommand: "PlayNow", prepare: true }),
-            });
-            const data = await res.json().catch(() => ({}));
-            const last = String(data.body || data.message || `HTTP ${res.status}`).split("\n").filter(Boolean).pop();
-            if (res.ok && data.ok && data.confirmed) toast.set("success", `Now playing “${title}” on ${tv.name}.`);
-            else if (res.ok && data.ok) toast.set("warning", `${tv.name} accepted the command, but Jellyfin never reported “${title}” playing. Check the TV.`, true);
-            else toast.set("danger", `Could not play on ${tv.name}: ${last}`, true);
-        } catch (e) {
-            toast.set("danger", `Could not reach SyncHub to start ${tv.name}.`, true);
-        } finally {
-            button.disabled = false;
-        }
+    // A TV choice opens that TV's remote, which starts the title there and shows each step (waking a TV can take a minute).
+    function playOn(wrap, button) {
+        const params = new URLSearchParams({ tv: button.dataset.watchTv, play: wrap.dataset.item, title: wrap.dataset.title });
+        window.location.href = `/tv/remote?${params}`;
     }
 
     document.addEventListener("show.bs.dropdown", (e) => {

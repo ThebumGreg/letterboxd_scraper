@@ -108,6 +108,7 @@
 
         if (d.summary) top.appendChild(el("small", "text-success d-block text-truncate fw-bold", d.summary));
         if (d.addedBy) top.appendChild(el("small", "text-body-secondary d-block text-truncate", "Wanted by: " + d.addedBy));
+        if (d.addedLabel) top.appendChild(el("small", "text-body-secondary d-block text-truncate", "Added " + d.addedLabel));
         body.appendChild(top);
 
         const foot = el("div", "mt-2 text-end sse-badge-container");
@@ -125,6 +126,7 @@
     }
 
     const titleCmp = (a, b) => a.dataset.title.localeCompare(b.dataset.title);
+    const addedCmp = (a, b) => (b.dataset.added || "").localeCompare(a.dataset.added || "");     // newest first; titles with no date last
     const yearCmp = (a, b) => (parseInt(b.dataset.year, 10) || 0) - (parseInt(a.dataset.year, 10) || 0);
 
     function render() {
@@ -146,6 +148,7 @@
         visible.sort((a, b) => {
             if (sortSel.value === "title-asc") return titleCmp(a, b);
             if (sortSel.value === "year-desc") return yearCmp(a, b) || titleCmp(a, b);
+            if (sortSel.value === "added-desc") return addedCmp(a, b) || titleCmp(a, b);
             return (parseInt(b.dataset.userCount, 10) - parseInt(a.dataset.userCount, 10)) || titleCmp(a, b);
         });
 
@@ -275,7 +278,13 @@
                 state: u.state, stateLabel: u.label, stateColor: u.color, stateIcon: u.icon || "",
                 progress: u.progress === null || u.progress === undefined ? "" : String(u.progress),
                 link: u.link || "", jellyfinItem: u.jellyfin_item || "", summary: u.summary || "",
+                added: u.added || row.dataset.added || "", addedLabel: u.added_label || row.dataset.addedLabel || "",
             });
+            if (row.dataset.addedLabel) {
+                let note = row.querySelector("[data-added-text]");
+                if (!note) { note = el("small", "text-body-secondary d-block"); note.dataset.addedText = ""; row.querySelectorAll("td")[1]?.appendChild(note); }
+                note.textContent = "Added " + row.dataset.addedLabel;
+            }
             paintStatusCell(row);
             changed = true;
         });

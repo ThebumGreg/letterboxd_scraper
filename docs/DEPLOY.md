@@ -193,7 +193,7 @@ docker rm -f synchub        # the data is in /data, not in the container
 
 A database from an older version is upgraded on start, and a copy of it as it was is saved first (`/data/backups/premigrate-v<N>-....db`). Update the workers the same way: `git pull` or copy the new `agent/` folder, then `docker compose up -d --build` (running jobs resume).
 
-**Backups.** Every night at 03:30 SyncHub saves a consistent copy into `/data/backups/` and keeps the newest 7 (Settings → Automation → *Database backups*; Tools has *Back up now*). These files contain your API keys: keep them as private as the database. For a copy outside Unraid: `docker exec synchub python -m synchub.backup create /data/backups/manual.db`, then copy that file off.
+**Backups.** Every night at 03:30 SyncHub saves a consistent copy into `/data/backups/` and keeps the newest 7 (Settings → Automation → *Database backups*; Tools has *Back up now*). Each copy comes with a `.tv.zip` beside it holding the TV pages' settings (TVs, app choices, Google TV pairing); `restore` puts both back. These files contain your API keys and the Google TV pairing key: keep them as private as the database. For a copy outside Unraid: `docker exec synchub python -m synchub.backup create /data/backups/manual.db`, then copy that file off.
 
 **Restore**
 

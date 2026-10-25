@@ -32,6 +32,7 @@
                 {% if movie.imdb_id %}<div><dt>IMDb</dt><dd><span class="badge bg-secondary">{{ movie.imdb_id }}</span></dd></div>{% endif %}
             </dl>
 
+            {% if movie.date_added_label %}<p class="mb-1"><strong>Added to library:</strong> {{ movie.date_added_label }}</p>{% endif %}
             <p class="mb-1"><strong>Wanted by:</strong>
                 {% for u in movie.wanted_by %}<span class="badge bg-secondary">{{ u }}</span>{% else %}<span class="text-muted">nobody right now</span>{% endfor %}
             </p>

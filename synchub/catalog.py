@@ -1,6 +1,6 @@
 """Read-side queries for the pages: who wants what, the dashboard list, and items that still need a human."""
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
 
 from synchub import settings, states
 
@@ -53,6 +53,24 @@ def jellyfin_item_link(item_id):
     return _jellyfin_link(settings.get("jellyfin_url").rstrip("/"), item_id)
 
 
+def _added_label(value):
+    """'2026-10-21 18:04:11' -> ('2026-10-21', 'Oct 21, 2026'); (None, None) when there is no date."""
+    try:
+        when = datetime.strptime((value or "")[:10], "%Y-%m-%d")
+    except ValueError:
+        return None, None
+    return when.strftime("%Y-%m-%d"), f"{when.strftime('%b')} {when.day}, {when.year}"
+
+
+def _added_dates(conn):
+    """Jellyfin item id -> when it was added to the library. A movie or series has its own date; a show is as new as its newest episode."""
+    own = {r["item_id"]: r["date_created"] for r in conn.execute(
+        "SELECT item_id, date_created FROM src_jellyfin_item WHERE type IN ('movie', 'series') AND removed_at IS NULL AND date_created IS NOT NULL")}
+    newest = {r["series_id"]: r["newest"] for r in conn.execute(
+        "SELECT series_id, MAX(date_created) AS newest FROM src_jellyfin_item WHERE type = 'episode' AND removed_at IS NULL AND date_created IS NOT NULL AND series_id IS NOT NULL GROUP BY series_id")}
+    return {item: max(filter(None, (own.get(item), newest.get(item)))) for item in set(own) | set(newest)}
+
+
 def jellyfin_app_config(conn):
     """What a browser needs to open an item in the Jellyfin iOS app: the server's ID and the Jellyfin users to choose from."""
     users = [{"id": r["jellyfin_user_id"], "name": r["name"]} for r in conn.execute(
@@ -90,6 +108,7 @@ def list_catalog(conn, today=None, only=None):
                           _active_links(conn, "radarr", "src_radarr_movie", "radarr_id"),
                           _active_links(conn, "sonarr", "src_sonarr_series", "sonarr_id"))
     rollups = _show_rollups(conn, today)
+    added = _added_dates(conn)
     movie_states = {r["target_id"]: (r["state_code"], r["progress"]) for r in conn.execute("SELECT * FROM item_state WHERE target_type = 'movie'")}
     episode_counts = {r["media_id"]: r["n"] for r in conn.execute("SELECT media_id, COUNT(*) AS n FROM episode WHERE season_number <> 0 GROUP BY media_id")}
 
@@ -107,6 +126,7 @@ def list_catalog(conn, today=None, only=None):
             extra = {"episodes": episode_counts.get(m["id"], 0), "aired": roll["aired"] if roll else 0,
                      "in_library": roll["in_library"] if roll else 0, "percent": roll["percent"] if roll else 0}
         info = defs.get(state, defs["missing"])
+        date_added, date_added_label = _added_label(added.get(jf.get(m["id"])))
         rows.append({
             "id": m["id"], "kind": m["kind"], "title": m["title"], "year": m["year"], "tmdb_id": m["tmdb_id"], "tvdb_id": m["tvdb_id"],
             "url": f"/{'movie' if m['kind'] == 'movie' else 'show'}/{m['id']}", "poster": f"/poster/{m['id']}",
@@ -116,6 +136,7 @@ def list_catalog(conn, today=None, only=None):
             "in_jellyfin": m["id"] in jf, "in_radarr": m["id"] in radarr, "in_sonarr": m["id"] in sonarr,
             "jellyfin_link": _jellyfin_link(base, jf.get(m["id"])),
             "jellyfin_item_id": jf.get(m["id"]),
+            "date_added": date_added, "date_added_label": date_added_label,
             **extra,
         })
     return rows
@@ -149,6 +170,7 @@ def media_detail(conn, media_id):
     d["in_jellyfin"] = bool(jf)
     d["jellyfin_link"] = _jellyfin_link(base, jf)
     d["jellyfin_item_id"] = jf
+    d["date_added"], d["date_added_label"] = _added_label(_added_dates(conn).get(jf))
     d["in_radarr"] = media_id in _active_links(conn, "radarr", "src_radarr_movie", "radarr_id")
     d["in_sonarr"] = media_id in _active_links(conn, "sonarr", "src_sonarr_series", "sonarr_id")
     return d

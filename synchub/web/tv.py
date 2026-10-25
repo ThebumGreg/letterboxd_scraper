@@ -7,12 +7,12 @@ talks to /api/tv/... . Endpoint names matter: access.RULES gives every `tv_setup
 import json
 from pathlib import Path
 
-from flask import Response, jsonify, redirect, render_template, request, url_for
+from flask import Response, g, jsonify, redirect, render_template, request, url_for
 
 from config import BASE_DIR
 from synchub.tv import discovery, orchestrator, runtime
 from synchub.tv.devices import DeviceError
-from synchub.tv.jellyfin import JellyfinError, match_session, summarize_session
+from synchub.tv.jellyfin import JellyfinError, is_stale, item_label, match_session, summarize_session
 from synchub.tv.notices import NOTICES
 
 TV_STATIC = BASE_DIR / "static" / "tv"
@@ -57,6 +57,18 @@ def play_params(d):
         if d.get(key) not in (None, ""):
             params[key] = d[key]
     return params
+
+
+def session_owners(r, sessions):
+    """{session id: the TV it belongs to}. When several TVs' rules match a session (two Rokus, say), the TV whose rule says the most wins
+    (a rule naming the device beats one naming only the app); a tie goes to the first TV listed."""
+    rules = {d.id: orchestrator.effective_rule(d, sessions) for d in r.devices.values()}
+    said = lambda rule: sum(weight for key, weight in (("client", 1), ("device", 10), ("device_id", 100)) if rule.get(key))
+    owners = {}
+    for s in sessions:
+        matching = [(said(rule), -i, did) for i, (did, rule) in enumerate(rules.items()) if match_session(rule, s)]
+        owners[s["Id"]] = max(matching)[2] if matching else None
+    return owners
 
 
 def register(app):
@@ -396,17 +408,51 @@ def register(app):
         r.update_prefs(lambda p: p["play"].__setitem__(d.id, "url"))
         r.apply_overrides()
 
+    def resolve_series(r, body):
+        """A show is played from the episode its viewer should watch next (Jellyfin's "Next up", or the first episode when everything is seen),
+        for the profile chosen on the Who-is-watching page (else Jellyfin's default user). Changes body["itemIds"] and returns a sentence saying
+        what was chosen, or None when the item is not a show."""
+        ids, index = body["itemIds"], int(body.get("startIndex") or 0)
+        item_id = ids[index] if index < len(ids) else ids[0]
+        jf = r.jf()
+        item = jf.item(item_id)
+        if item.get("Type") != "Series":
+            return None
+        profile = getattr(g, "profile", None) or {}
+        user_id, who = profile.get("jellyfin_user_id") or None, profile.get("name")
+        episode, how = jf.next_up(item_id, user_id), "next up"
+        if not episode:
+            episode, how = jf.first_episode(item_id, user_id), "from the first episode"
+        if not episode:
+            raise DeviceError(f'Jellyfin has no episodes of "{item.get("Name")}" to play.')
+        body["itemIds"], body["startIndex"] = [episode["Id"]], 0
+        body.pop("startPositionTicks", None)
+        season, number = episode.get("ParentIndexNumber"), episode.get("IndexNumber")
+        label = " - ".join(x for x in (f"S{season}E{number}" if season is not None and number is not None else None, episode.get("Name")) if x)
+        return f'"{item.get("Name")}" is a show: playing {how}{" for " + who if who else ""}: {label or episode["Id"]}'
+
     @app.post("/api/tv/devices/<dev_id>/play")
     def api_tv_device_play(dev_id):
         """Optionally prepare the device, then play. Via the device's Jellyfin session, a deep link, or (for devices that can) a stream URL.
 
         In auto mode a Roku uses its deep link and a Google TV its Jellyfin session; if a session reports it cannot be remote controlled,
-        the movie is streamed instead and that is remembered so the next play skips straight to streaming."""
+        the movie is streamed instead and that is remembered so the next play skips straight to streaming. A show is played from its next episode."""
         r = rt()
         d = r.device(dev_id)
         body = json_body()
         if body.get("playCommand") not in PLAY_COMMANDS or not body.get("itemIds"):
             raise DeviceError("bad playCommand or itemIds")
+        note = resolve_series(r, body)
+        response = play_dispatch(r, d, body)
+        if not note:
+            return response
+        payload = response.get_json()
+        r.logbook.add("system", d.id, "play", response=note, ok=True)
+        payload["steps"] = [note] + list(payload.get("steps") or [])
+        payload["body"] = note + "\n" + str(payload.get("body") or "")
+        return jsonify(payload)
+
+    def play_dispatch(r, d, body):
         mode = body.get("via") or d.play_mode()
         can_stream, can_link = "url_play" in d.capabilities, "deeplink" in d.capabilities
         if mode == "deeplink" and not can_link:
@@ -431,7 +477,7 @@ def register(app):
                     note = ("The Jellyfin app on this device cannot be remote controlled, so it is streamed directly instead"
                             if result["reason"] == "not_remote" else
                             "No usable Jellyfin session appeared, so the movie is streamed directly instead")
-                    r.logbook.add("system", dev_id, "play", response=note, ok=True)
+                    r.logbook.add("system", d.id, "play", response=note, ok=True)
                     if result["reason"] == "not_remote":
                         learn_url_play(d)
                     out = play_by_url(d, body, steps + [note])
@@ -456,7 +502,7 @@ def register(app):
             confirmed, title, secs = orchestrator.confirm_playing(jf, session["Id"], ids[index] if index < len(ids) else ids[0])
             steps.append(f"Playback confirmed: {title} (after {secs}s)" if confirmed else
                          f"The command was accepted but the session never reported the item playing within {secs}s")
-            r.logbook.add("system", dev_id, "play", response=steps[-1], ok=confirmed)
+            r.logbook.add("system", d.id, "play", response=steps[-1], ok=confirmed)
         return reply(resp.ok, "\n".join(steps), resp.status_code, steps=steps, sessionId=session["Id"], confirmed=confirmed)
 
     # ------------------------------------------------------------------ Jellyfin
@@ -469,13 +515,32 @@ def register(app):
             r.logbook.poll_failed("jf-sessions", "jellyfin", None, "sessions poll", "GET /Sessions", 0, str(e))
             raise
         r.logbook.poll_ok("jf-sessions", "jellyfin", None, "sessions poll")
-        rules = {d.id: orchestrator.effective_rule(d, raw) for d in r.devices.values()}
+        owners = session_owners(r, raw)
         out = []
         for s in raw:
             summary = summarize_session(s)
-            summary["deviceId"] = next((did for did, rule in rules.items() if match_session(rule, s)), None)
+            summary["deviceId"] = owners[s["Id"]]
             out.append(summary)
         return jsonify(out)
+
+    @app.get("/api/tv/now")
+    def api_tv_now():
+        """What each TV is playing through Jellyfin, for the dashboard strip. One call to Jellyfin and none to the TVs, so it is cheap to poll.
+        Without Jellyfin set up it simply lists nothing."""
+        r = rt()
+        try:
+            raw = r.jf().sessions(quiet=True)
+        except JellyfinError:
+            return jsonify(ok=True, tvs=[])
+        owner = session_owners(r, raw)
+        playing = []
+        for d in r.devices.values():
+            found = [s for s in raw if owner[s["Id"]] == d.id and s.get("NowPlayingItem") and not is_stale(s)]
+            if not found:
+                continue
+            s = max(found, key=lambda x: x.get("LastActivityDate") or "")
+            playing.append({"id": d.id, "name": d.name, "title": item_label(s["NowPlayingItem"]), "paused": bool((s.get("PlayState") or {}).get("IsPaused"))})
+        return jsonify(ok=True, tvs=playing)
 
     @app.get("/api/tv/jf/search")
     def api_tv_jf_search():

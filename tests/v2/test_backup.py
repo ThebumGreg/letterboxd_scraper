@@ -394,3 +394,98 @@ def test_it_runs_as_a_module(v2, folder, tmp_path):
     run = subprocess.run([sys.executable, "-m", "synchub.backup", "list"], cwd=REPO, env=env, capture_output=True, text=True)
     assert run.returncode == 0 and run.stdout == ""
     assert subprocess.run([sys.executable, "-m", "synchub.backup"], cwd=REPO, env=env, capture_output=True, text=True).returncode == 2
+
+
+# ---------------------------------------------------------------- the TV settings travel with a copy
+@pytest.fixture
+def tv_folder(v2):
+    """The TV pages' folder, which sits beside the (test) database: settings, a pairing identity, and a call log that is not worth keeping."""
+    tv = Path(db.DB_FILE).parent / "tv"
+    (tv / "certs").mkdir(parents=True)
+    (tv / "prefs.json").write_text('{"devices": [{"id": "den"}]}')
+    (tv / "devices.json").write_text('{"devices": []}')
+    (tv / "certs" / "client-cert.pem").write_text("CERT")
+    (tv / "certs" / "client-key.pem").write_text("KEY")
+    (tv / "tv.log").write_text("a call log")
+    return tv
+
+
+def test_a_copy_comes_with_the_tv_settings_but_not_the_call_log(v2, folder, tv_folder):
+    copy = backup.create()
+    archive = backup.tv_archive_for(copy)
+    assert archive.name == copy.name[:-3] + ".tv.zip" and archive.parent == copy.parent
+    assert sorted(backup.tv_archive_names(archive)) == ["certs/client-cert.pem", "certs/client-key.pem", "devices.json", "prefs.json"]
+
+
+def test_no_archive_is_made_when_there_are_no_tv_settings_or_for_the_copy_before_an_upgrade(v2, folder, tmp_path):
+    assert not backup.tv_archive_for(backup.create()).exists()
+    (Path(db.DB_FILE).parent / "tv").mkdir()
+    (Path(db.DB_FILE).parent / "tv" / "prefs.json").write_text("{}")
+    assert not backup.tv_archive_for(backup.create(folder / "plain.db", with_tv=False)).exists()
+    assert backup.tv_archive_for(backup.create(folder / "withtv.db")).exists()
+
+
+def test_pruning_removes_the_tv_settings_of_the_copies_it_removes(v2, folder, tv_folder):
+    for stamp in ("20260101-000000", "20260102-000000", "20260103-000000"):
+        backup.create(now=datetime.strptime(stamp, "%Y%m%d-%H%M%S"))
+    assert backup.prune(1) == ["synchub-20260101-000000.db", "synchub-20260102-000000.db"]
+    assert sorted(p.name for p in backup.BACKUP_DIR.glob("*")) == ["synchub-20260103-000000.db", "synchub-20260103-000000.tv.zip"]
+
+
+def test_a_check_says_whether_the_tv_settings_are_there(v2, folder, tv_folder):
+    copy = backup.create()
+    report = backup.check(copy)
+    assert sorted(report["tv_archive"]) == ["certs/client-cert.pem", "certs/client-key.pem", "devices.json", "prefs.json"]
+    assert "also holds: the TV settings (4 file(s)" in backup.describe(report)
+    backup.tv_archive_for(copy).unlink()
+    assert backup.check(copy)["tv_archive"] is None and "no TV settings beside it" in backup.describe(backup.check(copy))
+
+
+def test_a_restore_brings_the_tv_settings_back_and_keeps_the_ones_it_replaces(v2, folder, tv_folder, tmp_path):
+    copy = backup.create()
+    where = tmp_path / "elsewhere" / "synchub.db"
+    other = where.parent / "tv"
+    other.mkdir(parents=True)
+    (other / "prefs.json").write_text("the old settings")
+    backup.restore(copy, dest=where)
+    assert (other / "prefs.json").read_text() == '{"devices": [{"id": "den"}]}' and (other / "certs" / "client-key.pem").read_text() == "KEY"
+    kept = [p for p in where.parent.glob("tv.before-restore-*")]
+    assert len(kept) == 1 and (kept[0] / "prefs.json").read_text() == "the old settings"
+    assert not list(where.parent.glob("tv-restore-*"))                                       # no staging folder left behind
+
+
+def test_a_restore_without_tv_settings_leaves_the_tv_folder_alone(v2, folder, tmp_path):
+    copy = backup.create()
+    where = tmp_path / "elsewhere" / "synchub.db"
+    (where.parent / "tv").mkdir(parents=True)
+    (where.parent / "tv" / "prefs.json").write_text("mine")
+    backup.restore(copy, dest=where)
+    assert (where.parent / "tv" / "prefs.json").read_text() == "mine"
+
+
+def test_an_archive_with_anything_but_tv_settings_is_refused_before_anything_is_changed(v2, folder, tv_folder, tmp_path):
+    import zipfile
+    copy = backup.create()
+    with zipfile.ZipFile(backup.tv_archive_for(copy), "w") as zf:
+        zf.writestr("../evil.txt", "x")
+    where = tmp_path / "elsewhere" / "synchub.db"
+    where.parent.mkdir()
+    where.write_text("the current database")
+    with pytest.raises(backup.BackupError, match="do not belong to the TV settings"):
+        backup.restore(copy, dest=where)
+    assert where.read_text() == "the current database" and not (tmp_path / "evil.txt").exists()
+    backup.tv_archive_for(copy).write_bytes(b"not a zip")
+    with pytest.raises(backup.BackupError, match="not a readable TV settings archive"):
+        backup.restore(copy, dest=where)
+
+
+def test_the_nightly_task_saves_the_tv_settings_too(v2, folder, tv_folder):
+    tasks.backup_database()
+    assert len(list(backup.BACKUP_DIR.glob("synchub-*.tv.zip"))) == 1
+
+
+def test_the_command_line_mentions_the_tv_settings(v2, folder, tv_folder, tmp_path, capsys):
+    assert backup.main(["create", str(tmp_path / "c.db")]) == 0
+    assert "and the TV settings in c.tv.zip" in capsys.readouterr().out
+    assert backup.main(["check", str(tmp_path / "c.db")]) == 0
+    assert "also holds: the TV settings" in capsys.readouterr().out

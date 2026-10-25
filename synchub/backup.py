@@ -1,10 +1,15 @@
 """Consistent copies of the database: for backups, for moving it to another machine, and for checking one before it is used.
 
 A copy is made with SQLite's own backup, so it is whole and correct even while SyncHub is running (copying the file by hand is not: recent changes
-may still be in the -wal file next to it). Every copy is a single self-contained file."""
+may still be in the -wal file next to it). Every database copy is a single self-contained file.
+
+The TV pages keep what they save (TVs added, app choices, Google TV pairing) in a `tv` folder beside the database, not in it. A copy therefore comes
+with a second small file, `<name>.tv.zip`, holding that folder's settings; restoring the copy puts both back."""
 import shutil
 import sqlite3
 import sys
+import tempfile
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -15,6 +20,8 @@ from synchub import db, settings
 PREFIX, PREMIGRATE_PREFIX = "synchub-", "premigrate-"        # daily copies are pruned to the newest few; the copy before an upgrade is kept
 ADDRESS_SETTINGS = ("jellyfin_url", "radarr_url", "sonarr_url", "synchub_url")
 THIS_MACHINE = ("localhost", "127.0.0.1", "::1", "0.0.0.0")
+TV_SUFFIX = ".tv.zip"
+TV_FILES = ("prefs.json", "devices.json")                    # and everything in certs/; the call log is not kept
 COUNTED = (("profiles", "profile"), ("titles", "media"), ("episodes", "episode"), ("workers", "worker"), ("library files", "library_file"))
 
 
@@ -30,8 +37,87 @@ def _stamp(now=None):
     return (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
 
 
-def create(dest=None, source=None, now=None):
-    """Saves a consistent copy and returns its path. Refuses to overwrite, and removes the copy if it does not pass SQLite's integrity check."""
+def tv_dir_for(database):
+    """The TV pages' folder, which sits beside the database."""
+    return Path(database).parent / "tv"
+
+
+def tv_archive_for(copy):
+    """Where the TV settings that go with a database copy are kept: beside it, with the same name."""
+    copy = Path(copy)
+    return copy.with_name(copy.name[:-3] + TV_SUFFIX if copy.name.endswith(".db") else copy.name + TV_SUFFIX)
+
+
+def _tv_members(tv_dir):
+    tv_dir = Path(tv_dir)
+    found = [tv_dir / name for name in TV_FILES if (tv_dir / name).is_file()]
+    found += sorted(p for p in (tv_dir / "certs").glob("*") if p.is_file()) if (tv_dir / "certs").is_dir() else []
+    return found
+
+
+def create_tv_archive(copy, tv_dir):
+    """Saves the TV settings beside a database copy. Returns the archive's path, or None when there is nothing to keep."""
+    members = _tv_members(tv_dir)
+    if not members:
+        return None
+    archive = tv_archive_for(copy)
+    partial = archive.with_name(archive.name + ".partial")
+    with zipfile.ZipFile(partial, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in members:
+            zf.write(path, path.relative_to(tv_dir).as_posix())
+    partial.replace(archive)
+    return archive
+
+
+def tv_archive_names(archive):
+    """The files inside a TV archive, or None when it cannot be read."""
+    try:
+        with zipfile.ZipFile(archive) as zf:
+            return zf.namelist()
+    except (OSError, zipfile.BadZipFile):
+        return None
+
+
+def _safe_tv_name(name):
+    parts = Path(name).parts
+    return bool(parts) and not Path(name).is_absolute() and ".." not in parts and (name in TV_FILES or (parts[0] == "certs" and len(parts) == 2))
+
+
+def check_tv_archive(archive):
+    """The names in a TV archive, or a BackupError when it cannot be read or holds anything but TV settings."""
+    names = tv_archive_names(archive)
+    if names is None:
+        raise BackupError(f"{archive} is not a readable TV settings archive; nothing was changed.")
+    if not all(_safe_tv_name(n) for n in names):
+        raise BackupError(f"{archive} holds files that do not belong to the TV settings; nothing was changed.")
+    return names
+
+
+def restore_tv(archive, tv_dir, now=None):
+    """Puts the TV settings from an archive in place of the TV folder's, keeping the old settings beside it. Returns where they went (or None)."""
+    names = check_tv_archive(archive)
+    tv_dir = Path(tv_dir)
+    tv_dir.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix="tv-restore-", dir=tv_dir.parent))
+    try:
+        with zipfile.ZipFile(archive) as zf:
+            for name in names:
+                target = staging / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(zf.read(name))
+        kept = None
+        if tv_dir.exists():
+            kept = tv_dir.with_name(f"{tv_dir.name}.before-restore-{_stamp(now)}")
+            tv_dir.replace(kept)
+        staging.replace(tv_dir)
+        return kept
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def create(dest=None, source=None, now=None, with_tv=True):
+    """Saves a consistent copy and returns its path. Refuses to overwrite, and removes the copy if it does not pass SQLite's integrity check.
+    The TV settings are saved beside it (see the top of this file) unless with_tv is False."""
     source = Path(source or db.DB_FILE)
     if not source.exists() or source.stat().st_size == 0:
         raise BackupError(f"There is no database at {source} to copy.")
@@ -59,6 +145,8 @@ def create(dest=None, source=None, now=None):
         partial.unlink(missing_ok=True)
         raise BackupError(f"The copy did not pass SQLite's integrity check ({verdict}); nothing was kept.")
     partial.replace(dest)
+    if with_tv:
+        create_tv_archive(dest, tv_dir_for(source))
     return dest
 
 
@@ -78,6 +166,7 @@ def prune(keep=None, directory=None):
     gone = files[:-keep] if len(files) > keep else []
     for path in gone:
         path.unlink(missing_ok=True)
+        tv_archive_for(path).unlink(missing_ok=True)
     return [p.name for p in gone]
 
 
@@ -130,6 +219,8 @@ def check(path):
     finally:
         conn.close()
     wal = path.with_name(path.name + "-wal")
+    archive = tv_archive_for(path)
+    report["tv_archive"] = tv_archive_names(archive) if archive.exists() else None          # None: no TV settings beside it (or unreadable)
     report["wal_beside"] = wal.exists() and wal.stat().st_size > 0
     report["newer_than_app"] = bool(report["schema"] and report["schema"] > report["app_schema"])
     report["local_addresses"] = addresses_on_this_machine(report["settings"])
@@ -146,6 +237,9 @@ def restore(path, dest=None, now=None):
         raise BackupError("That file is a SQLite database but not a SyncHub one (it has no schema version); nothing was changed.")
     if report["newer_than_app"]:
         raise BackupError(f"That database is version {report['schema']} but this SyncHub only knows up to {report['app_schema']}. Update SyncHub first; nothing was changed.")
+    archive = tv_archive_for(path)
+    if archive.exists():
+        check_tv_archive(archive)                                       # before anything is moved: a bad archive must not leave half a restore
     target = Path(dest or db.DB_FILE)
     kept = None
     if target.exists():
@@ -160,6 +254,8 @@ def restore(path, dest=None, now=None):
                 beside.unlink()                                          # nothing to belong to: leftovers must not be read with the new file
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(path, target)
+    if archive.exists():
+        restore_tv(archive, tv_dir_for(target), now)
     return target, kept
 
 
@@ -179,7 +275,7 @@ def copy_before_upgrade(now=None):
         return None
     if not version or version >= latest_version():
         return None
-    return create(Path(BACKUP_DIR) / f"{PREMIGRATE_PREFIX}v{version}-{_stamp(now)}.db", source)
+    return create(Path(BACKUP_DIR) / f"{PREMIGRATE_PREFIX}v{version}-{_stamp(now)}.db", source, with_tv=False)
 
 
 # ---------------------------------------------------------------- command line
@@ -197,6 +293,10 @@ def describe(report):
         lines.append(f"  note: it will be upgraded to version {report['app_schema']} the first time SyncHub opens it (a copy is kept first)")
     if report["newer_than_app"]:
         lines.append("  PROBLEM: this database is newer than this SyncHub. Update SyncHub first.")
+    if report["tv_archive"] is not None:
+        lines.append(f"  also holds: the TV settings ({len(report['tv_archive'])} file(s) in {Path(report['path']).name[:-3]}{TV_SUFFIX}), restored with it")
+    else:
+        lines.append("  no TV settings beside it (TVs, their app choices and Google TV pairing are not in this copy)")
     if report["wal_beside"]:
         lines.append("  WARNING: a non-empty -wal file sits beside it, so some recent changes are not in this file. Use 'create' to make a complete copy instead.")
     for key in report["local_addresses"]:
@@ -214,14 +314,15 @@ def main(argv=None):
     try:
         if command == "create":
             path = create(argv[1] if len(argv) == 2 else None)
-            print(f"Saved {path}  ({_size(path.stat().st_size)})")
+            print(f"Saved {path}  ({_size(path.stat().st_size)})" + (f" and the TV settings in {tv_archive_for(path).name}" if tv_archive_for(path).exists() else ""))
         elif command == "check":
             report = check(argv[1])
             print(describe(report))
             return 0 if report["ok"] else 1
         elif command == "restore":
             target, kept = restore(argv[1])
-            print(f"Restored {argv[1]} as {target}." + (f" The database that was there is kept as {kept}." if kept else ""))
+            print(f"Restored {argv[1]} as {target}." + (f" The database that was there is kept as {kept}." if kept else "")
+                  + (" The TV settings were restored too (the old ones are kept beside the tv folder)." if tv_archive_for(argv[1]).exists() else ""))
         else:
             for path in sorted(Path(BACKUP_DIR).glob("*.db")):
                 print(f"{path.name}  {_size(path.stat().st_size)}  {datetime.fromtimestamp(path.stat().st_mtime):%Y-%m-%d %H:%M}")

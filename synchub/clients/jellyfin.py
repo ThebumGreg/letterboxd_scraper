@@ -56,7 +56,7 @@ class JellyfinClient:
         start = 0
         user_id = self.admin_user_id()
         while True:
-            params = {"IncludeItemTypes": ",".join(types), "Recursive": "true", "Fields": "ProviderIds,ParentId",
+            params = {"IncludeItemTypes": ",".join(types), "Recursive": "true", "Fields": "ProviderIds,ParentId,DateCreated",
                       "StartIndex": start, "Limit": page_size}
             if user_id:
                 params["UserId"] = user_id

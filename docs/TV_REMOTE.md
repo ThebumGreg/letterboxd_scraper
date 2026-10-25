@@ -8,7 +8,7 @@ data folder as JSON lines.
 There is nothing to start separately: the TV pages are part of SyncHub (`python -m synchub.web`) and use the Jellyfin
 address and API key from **Settings ▸ Connections**. Open **System ▸ TVs** and press *Scan network* to add your TVs.
 
-Everything the TV pages save is in one folder, `<data folder>/tv/` (`data/tv/` from a checkout, `/data/tv/` in Docker):
+Everything the TV pages save is in one folder (backed up with the database: each backup has a `.tv.zip` beside it), `<data folder>/tv/` (`data/tv/` from a checkout, `/data/tv/` in Docker):
 `prefs.json` (TVs added in the app, app choices, session choices), `certs/` (the pairing identity of Google TVs), `tv.log`,
 and an optional hand-written `devices.json` for the options the pages do not edit (see *Config reference*). Set
 `SYNCHUB_TV_DEVICES` to read that file from somewhere else and `ADB_PATH` for an `adb` binary that is not on the path.
@@ -24,7 +24,7 @@ broadcasts and mDNS discovery do not cross Docker's bridge network or WSL2's NAT
 **Remote** (`/tv/remote`) is the everyday page, laid out for a phone: the TV's name and state, a **Now playing** block built
 into the remote (what is on, with Pause/Resume, ±30 s and Stop when Jellyfin is playing it), Power on / Sleep, a
 **quick-launch row** of up to four apps, Back / Home / Options, the D-pad, rewind / play-pause / fast-forward, volume,
-and the **Watch a movie…** button. On a computer the arrow keys, Enter, Esc, Space, `m` and `+`/`-` drive it too.
+and the **Watch a movie…** button. The now-playing position and bar run smoothly in the browser between the server's updates (see `static/tv/clock.js`): pause, resume and the ±30 s buttons show at once and the next update corrects any difference. A link such as `/tv/remote?tv=<tv id>&play=<Jellyfin item id>&title=<name>`, which the **Watch now** button on the dashboard and title pages uses, opens that TV's remote and starts the title with the usual progress box. On a computer the arrow keys, Enter, Esc, Space, `m` and `+`/`-` drive it too.
 
 **TV apps** (`/tv/settings`) holds the everyday choices. *Apps on your remote*: pick, per TV, which apps appear
 below the quick-launch row (tap an app to show or hide it; Show all / Hide all). Until you choose, only the quick-launch

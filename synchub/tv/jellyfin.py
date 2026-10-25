@@ -1,6 +1,7 @@
 """Jellyfin Sessions API client. Every call is recorded in the log book."""
 import re
 import time
+from datetime import datetime, timezone
 
 import requests
 
@@ -9,8 +10,49 @@ class JellyfinError(Exception):
     pass
 
 
-def summarize_session(s):
-    now = s.get("NowPlayingItem") or {}
+def _parse_time(text):
+    """A Jellyfin timestamp (ISO, with up to 7 fractional digits and a Z) -> an aware datetime, or None."""
+    if not text:
+        return None
+    text = re.sub(r"(\.\d{1,6})\d*", r"\1", str(text)).replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def estimated_ticks(s, now=None):
+    """Where a playing session is *now*: the position its app last reported plus the time since that report (at most 30 s of it).
+    None when paused, not playing, or the server did not say when the app reported."""
+    play, item = s.get("PlayState") or {}, s.get("NowPlayingItem") or {}
+    seen = _parse_time(s.get("LastPlaybackCheckIn"))
+    if play.get("PositionTicks") is None or play.get("IsPaused") or not item or not seen:
+        return None
+    age = max(0.0, min(((now or datetime.now(timezone.utc)) - seen).total_seconds(), 30.0))
+    estimate = int(play["PositionTicks"] + age * 10_000_000)
+    return min(estimate, item["RunTimeTicks"]) if item.get("RunTimeTicks") else estimate
+
+
+STALE_AFTER = 180      # seconds without a report from a playing app before its session is taken to be a leftover (the TV was switched off mid-title)
+
+
+def is_stale(s, now=None):
+    """A session that still says it is playing, though its app has not reported for a few minutes."""
+    seen = _parse_time(s.get("LastPlaybackCheckIn"))
+    return bool(seen and ((now or datetime.now(timezone.utc)) - seen).total_seconds() > STALE_AFTER)
+
+
+def item_label(i):
+    """What to call a Jellyfin item on screen: "Show S1E2 - Name" for an episode, else "Name (Year)"."""
+    if i.get("Type") == "Episode" and i.get("SeriesName"):
+        return f"{i['SeriesName']} S{i.get('ParentIndexNumber')}E{i.get('IndexNumber')} - {i.get('Name')}"
+    return f"{i.get('Name')}" + (f" ({i['ProductionYear']})" if i.get("ProductionYear") else "")
+
+
+def summarize_session(s, now=None):
+    now_playing = s.get("NowPlayingItem") or {}
+    estimate = estimated_ticks(s, now)
     return {
         "Id": s.get("Id"),
         "Client": s.get("Client"),
@@ -21,8 +63,8 @@ def summarize_session(s):
         "SupportsRemoteControl": s.get("SupportsRemoteControl"),
         "SupportedCommands": s.get("SupportedCommands") or [],
         "LastActivityDate": s.get("LastActivityDate"),
-        "NowPlaying": summarize_item(now) if now else None,
-        "PlayState": s.get("PlayState") or {},
+        "NowPlaying": summarize_item(now_playing) if now_playing else None,
+        "PlayState": {**(s.get("PlayState") or {}), **({"EstimatedTicks": estimate} if estimate is not None else {})},
     }
 
 
@@ -77,8 +119,8 @@ class JellyfinClient:
         return {
             "Accept": "application/json",
             "Authorization": (
-                'MediaBrowser Client="WholeHouseRemote", Device="Web", '
-                f'DeviceId="whole-house-remote-01", Version="1.0.0", Token="{self.key}"'
+                'MediaBrowser Client="SyncHub", Device="TV remote", '
+                f'DeviceId="synchub-tv-remote", Version="1.0.0", Token="{self.key}"'
             ),
         }
 
@@ -128,6 +170,19 @@ class JellyfinClient:
     def item(self, item_id):
         r = self.request("GET", f"/Items/{item_id}", params={"userId": self.lookup_user_id()})
         return r.json() if r.ok else {}
+
+    def next_up(self, series_id, user_id=None):
+        """The episode of a show this user should watch next (the first one if they have not started it), or None."""
+        r = self.request("GET", "/Shows/NextUp", params={"seriesId": series_id, "userId": user_id or self.lookup_user_id(), "limit": 1})
+        items = r.json().get("Items", []) if r.ok else []
+        return items[0] if items else None
+
+    def first_episode(self, series_id, user_id=None):
+        """The first regular episode of a show (specials come last), or None. Used when everything has been watched."""
+        r = self.request("GET", f"/Shows/{series_id}/Episodes", params={"userId": user_id or self.lookup_user_id()})
+        items = r.json().get("Items", []) if r.ok else []
+        regular = [i for i in items if (i.get("ParentIndexNumber") or 0) >= 1]
+        return (regular or items or [None])[0]
 
     def play(self, sid, params):
         return self.request("POST", f"/Sessions/{sid}/Playing", params=params)

@@ -53,9 +53,16 @@ Items marked ★ could not be checked without your hardware or devices, so they 
 - [ ] The menu offers **This device** and each TV, and is not clipped inside the dashboard table.
 - [ ] **This device** on a desktop opens Jellyfin web in a new tab.
 - [ ] ★ **This device** on an iPhone or iPad opens the Swiftfin app on that title.
-- [ ] Choosing a TV shows a dot next to it, then a "Starting..." message, then "Now playing", at the bottom of the screen.
+- [ ] Choosing a TV shows a dot next to it, then takes you to that TV's Remote page, where the "Starting playback" box shows each step and ends in "Now playing". The address no longer has `?play=` in it afterwards (a refresh does not start it again).
 - [ ] A profile without the TV remote permission sees just a plain Watch now link.
-- [ ] ★ **A show** on the Google TV: note what it starts (a Roku starts the series from the beginning).
+- [ ] **A show**: the TV plays the episode to watch next (the progress box says which, and for whom). Check it for a show you have part-watched and one you have not started. ★ Check it on the Google TV too.
+
+## 4b. Date Added, Playing now, timer, backups
+
+- [ ] After one Jellyfin sync (press **Run all** or the Jellyfin buttons on Tools & Operations), the dashboard shows "Added <date>" under each title in your library, and **Date Added** in the sort menu puts the newest first. A show's date is its newest episode's; titles not in the library sort last.
+- [ ] While a TV plays something through Jellyfin, a **Playing now** strip at the top of the dashboard names the TV and title, and **Open remote** goes to that TV.
+- [ ] ★ On the Remote page, the timer and bar run smoothly (no jumps every few seconds) on both the Roku and the Google TV. Pause and resume show at once; the ±30 s buttons move the timer at once.
+- [ ] After a backup (`python -m synchub.backup create`, or the nightly one), a `.tv.zip` sits beside the `.db`. `python -m synchub.backup check` on the `.db` mentions "also holds: the TV settings".
 
 ## 5. Safety while testing a copy
 

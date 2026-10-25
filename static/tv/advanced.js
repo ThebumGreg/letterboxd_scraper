@@ -111,24 +111,28 @@ function renderNowDetail() {
     : `<div class="np-head"><div><div class="np-app">${esc(d.name)}</div><div class="np-sub">${st ? (st.online ? '' : 'offline — ' + esc(st.error || 'not reachable')) : 'checking…'}</div></div></div>`;
   let body;
   if (n) {
-    const pos = (p.PositionTicks || 0) / TICKS, len = (n.RunTimeTicks || 0) / TICKS;
+    const len = (n.RunTimeTicks || 0) / TICKS, key = clockKey(d.id, n.Id);
+    const now = Clock.sync(key, (p.EstimatedTicks ?? p.PositionTicks ?? 0) / TICKS, !p.IsPaused, len);
     body = `<div class="np-title">${esc(itemLabel(n))}</div>
-      <div class="np-sub">${[p.IsPaused ? '⏸ paused' : '▶ playing', `via Jellyfin (${s.Client})`,
+      <div class="np-sub">${[now.playing ? '▶ playing' : '⏸ paused', `via Jellyfin (${s.Client})`,
         p.VolumeLevel != null && `volume ${p.VolumeLevel}${p.IsMuted ? ' (muted)' : ''}`,
         p.AudioStreamIndex != null && `audio ${p.AudioStreamIndex}`, p.SubtitleStreamIndex != null && `subs ${p.SubtitleStreamIndex}`,
         p.PlayMethod].filter(Boolean).map(esc).join(' · ')}</div>
-      <div class="bar"><div style="width:${len ? Math.min(100, pos/len*100) : 0}%"></div></div>
-      <div class="small dim">${fmt(pos)} / ${fmt(len)}</div>`;
+      ${clockBar(key, len)}
+      <div class="small dim">${clockText(key, len)}</div>`;
   } else if (m) {
-    const pos = (m.positionMs || 0) / 1000, len = (m.durationMs || 0) / 1000;
+    const len = (m.durationMs || 0) / 1000, key = clockKey(d.id, 'media');
+    Clock.sync(key, (m.positionMs || 0) / 1000, m.state === 'playing', len);
     body = `<div class="np-title">${esc(m.title || (app ? app.name : 'Playing'))}</div>
       <div class="np-sub">${m.state === 'paused' ? '⏸ paused' : m.state === 'playing' ? '▶ playing' : esc(m.state)} · ${esc(m.source)}${m.title ? '' : ' (this app does not report a title)'}</div>
-      ${len ? `<div class="bar"><div style="width:${Math.min(100, pos/len*100)}%"></div></div><div class="small dim">${fmt(pos)} / ${fmt(len)}</div>` : (m.positionMs != null ? `<div class="small dim">at ${fmt(pos)}</div>` : '')}`;
+      ${len ? clockBar(key, len) : ''}${m.positionMs != null ? `<div class="small dim">${clockText(key, len)}</div>` : ''}`;
   } else {
     body = `<div class="np-sub">${st && st.online ? (s ? `Jellyfin session ready (${esc(s.Client)} / ${esc(s.DeviceName)}): nothing playing` : 'Nothing playing, and no Jellyfin session for this device') : ''}</div>`;
   }
   el.className = '';
-  el.innerHTML = head + body;
+  const html = head + body;
+  if (el.dataset.sig !== html) { el.dataset.sig = html; el.innerHTML = html; }
+  tickClocks();
 }
 
 /* ------------------------------------------------------------------ library / play */
@@ -232,7 +236,11 @@ Object.assign(ACTIONS, {
     $('#prepState').textContent = r.ok ? 'ready' : lastLine(r.body);
     pollSessions(); pollStatus(dev());
   },
-  seek: b => { const v = $('#seekSec').value; if (v !== '') jfAct(b, '/api/tv/jf/playstate', {command: 'Seek', seekPositionTicks: Math.round(v * TICKS)}); },
+  seek: b => {
+    const v = $('#seekSec').value; if (v === '') return;
+    const key = activeClockKey(); if (key) { Clock.seekTo(key, Number(v)); hook('onSessions'); tickClocks(); }
+    jfAct(b, '/api/tv/jf/playstate', {command: 'Seek', seekPositionTicks: Math.round(v * TICKS)});
+  },
   search: () => search(),
   episodes: b => episodes(b),
   playids: b => playIds(b, b.dataset.ids ? JSON.parse(b.dataset.ids) : splitIds(), b.dataset.cmd, b.dataset.index === undefined ? undefined : Number(b.dataset.index)),
