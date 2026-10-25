@@ -123,6 +123,13 @@ over ADB first, which worked on that TV. Without ADB the app tries an Intent lin
 checks that the app really came to the front; a TV-side rejection is logged and reported instead of being
 treated as success. Set `"adb": true` if app launching fails.
 
+**When ADB says `unauthorized`.** The TV has not accepted SyncHub's ADB key. The TVs page then shows "ADB needs authorizing":
+look at the TV for "Allow USB debugging" and tick Always allow. SyncHub reconnects (at most every 20 s) to bring the prompt back,
+restarts the adb server once so it uses the key kept in `/data/tv/adb`, and falls back to the Remote protocol's app links
+while ADB is refused. **Reset ADB key** (TVs page, TV tools) makes a new key and asks again. **Forget pairing** deletes the
+Remote-protocol identity in `/data/tv/certs`; every Google TV shares it, so each needs *Start pairing* again. Removing a TV
+does not touch either key.
+
 ### Roku: how a movie gets started
 
 **The official Jellyfin Roku app cannot be controlled through Jellyfin sessions, by design.** Its source registers

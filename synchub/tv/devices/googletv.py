@@ -217,6 +217,8 @@ class GoogleTVDriver(Driver):
                "needsPairing": self.needs_pairing, "detail": s.get("info")}
         if self.adb and is_on:
             out["media"] = self.adb.media(app)
+        if self.adb and self.adb.adb_auth == "unauthorized":
+            out["adbAuth"] = "unauthorized"
         return out
 
     def _in_screensaver(self, status):
@@ -263,6 +265,9 @@ class GoogleTVDriver(Driver):
                 return "launched via ADB"
             except DeviceError as e:
                 failures.append(f"ADB: {e}")
+                self.log("launch", app_id, None, False, None,
+                         "ADB failed, so trying the Remote protocol's app links instead" + (
+                             " (the TV has not accepted the ADB key)" if self.adb.adb_auth == "unauthorized" else ""))
         links = ([f"intent://#Intent;action=android.intent.action.MAIN;category=android.intent.category.LEANBACK_LAUNCHER;"
                   f"package={app_id};end", f"market://launch?id={app_id}"] if is_package else [app_id])
         for link in links:
@@ -388,6 +393,22 @@ class GoogleTVDriver(Driver):
         self.mac = mac.upper()
         self.log("detect mac", "", None, True, None, f"{name}: {self.mac}")
         return self.mac
+
+    def forget_pairing(self):
+        """Delete this app's pairing identity. Every Google TV shares it, so each one has to be paired again."""
+        self._reset()
+        self._pairing = None
+        for path in (self.certfile, self.keyfile):
+            Path(path).unlink(missing_ok=True)
+        self.needs_pairing = True
+        self.log("forget pairing", "", None, True, None, "pairing identity deleted; press Start pairing on each Google TV")
+        return "Pairing forgotten. Press Start pairing and enter the code the TV shows (other Google TVs need pairing again too)."
+
+    def adb_info(self):
+        return self._need_adb("ADB status").adb_info()
+
+    def adb_reset(self, new_key=True):
+        return self._need_adb("Resetting the ADB key").adb_reset(new_key)
 
     def close(self):
         self._reset()

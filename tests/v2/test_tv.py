@@ -4,6 +4,7 @@ import json
 import re
 import socket
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -419,3 +420,67 @@ def test_a_roku_that_does_not_leave_the_app_is_still_sent_the_link(monkeypatch):
     r.deeplink("2285", "movie", "m2", running=True)
     assert [e[0] for e in r.events] == ["key", "launch"]
     assert any("still on screen" in e["response"] for e in r.logbook.dump())
+
+
+# ---------------------------------------------------------------- ADB authorization and pairing reset
+def fake_adb(tmp_path, authorized_after):
+    """An `adb` that says 'unauthorized' until `connect` has run `authorized_after` times; every call is logged."""
+    script = tmp_path / "adb"
+    log, count = tmp_path / "calls", tmp_path / "connects"
+    script.write_text(f'''#!/bin/sh
+echo "$@" >> {log}
+case "$1" in
+  kill-server) exit 0;;
+  connect) n=$(cat {count} 2>/dev/null || echo 0); echo $((n+1)) > {count}; echo "connected to $2"; exit 0;;
+esac
+n=$(cat {count} 2>/dev/null || echo 0)
+if [ "$n" -ge {authorized_after} ]; then echo ok; exit 0; fi
+echo "adb: device unauthorized." >&2; exit 1
+''')
+    script.chmod(0o755)
+    return script, log
+
+
+def android(tmp_path, adb):
+    from synchub.tv.devices.androidtv import AndroidTVDriver
+    AndroidTVDriver._server_home = None
+    cfg = {"id": "t", "name": "T", "type": "androidtv", "host": "10.0.0.5"}
+    return AndroidTVDriver(cfg, LogBook(), {"adb": str(adb), "adb_home": str(tmp_path / "adbhome")})
+
+
+def test_an_unauthorized_tv_is_asked_again_and_the_warning_is_raised(tmp_path):
+    adb, _ = fake_adb(tmp_path, authorized_after=99)
+    d = android(tmp_path, adb)
+    with pytest.raises(Exception, match="has not accepted"):
+        d._adb("shell", "true")
+    assert d.adb_auth == "unauthorized"
+    assert d._with_auth({})["adbAuth"] == "unauthorized"
+
+
+def test_a_prompt_accepted_after_the_reconnect_lets_the_command_through(tmp_path):
+    adb, log = fake_adb(tmp_path, authorized_after=1)
+    d = android(tmp_path, adb)
+    assert d._adb("shell", "true") == "ok"
+    assert d.adb_auth == "ok"
+    assert "kill-server" in log.read_text().splitlines()[0]                      # the server is restarted once under our key folder
+
+
+def test_resetting_adb_makes_a_new_key_and_connects(tmp_path):
+    adb, log = fake_adb(tmp_path, authorized_after=0)
+    d = android(tmp_path, adb)
+    keys = tmp_path / "adbhome" / ".android"
+    keys.mkdir(parents=True)
+    (keys / "adbkey").write_text("old")
+    (keys / "adbkey.pub").write_text("AAAA old")
+    assert d.adb_info()["fingerprint"]
+    d.adb_reset()
+    assert not (keys / "adbkey").exists() and not (keys / "adbkey.pub").exists()
+    assert any(l.startswith("connect 10.0.0.5:5555") for l in log.read_text().splitlines())
+
+
+def test_forgetting_the_pairing_deletes_the_identity_and_asks_to_pair_again(tmp_path):
+    d = GoogleTVDriver({"id": "g", "name": "G", "type": "googletv", "host": "10.0.0.6"}, LogBook(), {"cert_dir": str(tmp_path / "certs")})
+    for f in (d.certfile, d.keyfile):
+        open(f, "w").write("x")
+    d.forget_pairing()
+    assert not Path(d.certfile).exists() and not Path(d.keyfile).exists() and d.needs_pairing

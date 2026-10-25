@@ -325,6 +325,29 @@ def register(app):
             raise DeviceError(f"{d.name} does not need pairing")
         return reply(True, d.pair_finish(str(json_body().get("code", ""))))
 
+    @app.post("/api/tv/setup/devices/<dev_id>/pair/forget")
+    def api_tv_setup_device_pair_forget(dev_id):
+        d = rt().device(dev_id)
+        if not hasattr(d, "forget_pairing"):
+            raise DeviceError(f"{d.name} does not need pairing")
+        return reply(True, d.forget_pairing())
+
+    @app.post("/api/tv/setup/devices/<dev_id>/adb/reset")
+    def api_tv_setup_device_adb_reset(dev_id):
+        d = rt().device(dev_id)
+        if not hasattr(d, "adb_reset"):
+            raise DeviceError(f"{d.name} does not use ADB")
+        out = d.adb_reset(json_body().get("newKey", True) is not False)
+        return reply(True, f"{out}. Now look at the TV: choose Allow and tick Always allow.")
+
+    @app.get("/api/tv/setup/devices/<dev_id>/adb")
+    def api_tv_setup_device_adb_info(dev_id):
+        d = rt().device(dev_id)
+        if not hasattr(d, "adb_info"):
+            raise DeviceError(f"{d.name} does not use ADB")
+        info = d.adb_info()
+        return reply(True, f"key {info['fingerprint'] or 'not made yet'} · {info['state']}", **info)
+
     @app.post("/api/tv/setup/devices/<dev_id>/connect")
     def api_tv_setup_device_connect(dev_id):
         d = rt().device(dev_id)
