@@ -1,6 +1,7 @@
 """How the pages are organised: Settings in tabs, People (profiles and access together), Workers and Jobs as tabs, the logging
 switches on Settings, and page headings that match the menu."""
 import html as htmllib
+import json
 import re
 
 import pytest
@@ -120,3 +121,63 @@ def test_each_page_is_headed_with_its_menu_name(client, v2, path, heading):
     h2 = htmllib.unescape(re.sub(r"<[^>]+>", "", re.search(r"<h2[^>]*>(.*?)</h2>", page, re.S).group(1))).strip()
     title = htmllib.unescape(re.search(r"<title>(.*?) \| SyncHub</title>", page, re.S).group(1)).strip()
     assert h2 == wanted and title == wanted
+
+
+# ---------------------------------------------------------------- the scheduler switch
+@pytest.mark.parametrize("value, started", [("0", False), (None, True), ("1", True)])
+def test_synchub_scheduler_zero_starts_the_app_without_background_jobs(v2, monkeypatch, value, started):
+    from synchub import scheduler
+    from synchub.web import create_app
+    calls = []
+    monkeypatch.setattr(scheduler, "start", lambda: calls.append("started"))
+    monkeypatch.delenv("SYNCHUB_SCHEDULER", raising=False)
+    if value is not None:
+        monkeypatch.setenv("SYNCHUB_SCHEDULER", value)
+    app = create_app(start_scheduler=True, csrf=False)
+    assert bool(calls) is started and app.config["SCHEDULER_OFF"] is (not started)
+    browser = app.test_client()
+    browser.set_cookie("synchub_profile", "0")
+    assert ("Scheduled jobs are switched off" in text(browser.get("/tools"))) is (not started)
+
+
+# ---------------------------------------------------------------- Watch now
+@pytest.fixture
+def heat(v2, conn):
+    mid = conn.execute("INSERT INTO media (kind, title, tmdb_id, year) VALUES ('movie', 'Heat', '949', 1995)").lastrowid
+    conn.execute("INSERT INTO src_jellyfin_item (item_id, type, first_seen, last_seen) VALUES ('jfheat', 'movie', 'a', 'a')")
+    conn.execute("INSERT INTO link (entity_type, entity_id, source, source_key, method, confidence) VALUES ('media', ?, 'jellyfin', 'jfheat', 'x', 1.0)", (mid,))
+    conn.execute("INSERT INTO item_state (target_type, target_id, state_code) VALUES ('movie', ?, 'in_library')", (mid,))
+    conn.commit()
+    settings.set_value("jellyfin_url", "http://jf:8096")
+    return mid
+
+
+def test_every_place_that_offered_watch_on_jellyfin_now_offers_watch_now(client, heat):
+    from config import BASE_DIR
+    link = "http://jf:8096/web/index.html#/details?id=jfheat"
+    slot = lambda size: f'data-watch-now data-link="{link}" data-item="jfheat" data-title="Heat" data-size="{size}"'
+    assert slot("lg") in text(client.get(f"/movie/{heat}"))
+    assert slot("row") in text(client.get("/"))
+    for page in (f"/movie/{heat}", "/"):
+        assert "Watch on Jellyfin" not in text(client.get(page))
+    for script in ("static/js/dashboard.js", "static/js/watch.js"):
+        assert "Watch on Jellyfin" not in (BASE_DIR / script).read_text()
+    assert "js/watch.js" in text(client.get("/"))
+
+
+def test_the_page_tells_watch_now_whether_the_tvs_may_be_offered(client, v2):
+    config = lambda: json.loads(re.search(r'id="jellyfin-app-config">(.*?)</script>', text(client.get("/")), re.S).group(1))
+    assert config()["tv"] is True and config()["tv_setup"] is True                       # everything is open by default
+    settings.set_value("access_guest_permissions", "dashboard,tv")
+    assert config()["tv"] is True and config()["tv_setup"] is False
+    settings.set_value("access_guest_permissions", "dashboard")
+    assert config()["tv"] is False
+
+
+def test_the_tv_list_and_play_calls_watch_now_makes_are_allowed_by_the_tv_permission(client, v2):
+    settings.set_value("access_guest_permissions", "dashboard,tv")
+    assert client.get("/api/tv/config").status_code == 200
+    assert client.post("/api/tv/devices/nothing/play", json={"itemIds": ["x"], "playCommand": "PlayNow"}).status_code != 403
+    settings.set_value("access_guest_permissions", "dashboard")
+    assert client.get("/api/tv/config").status_code == 403
+    assert client.post("/api/tv/devices/nothing/play", json={"itemIds": ["x"], "playCommand": "PlayNow"}).status_code == 403

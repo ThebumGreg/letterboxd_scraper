@@ -61,7 +61,7 @@ def test_every_api_address_the_scripts_call_exists(app):
     from config import BASE_DIR
     adapter = app.url_map.bind("localhost")
     missing = []
-    for script in (BASE_DIR / "static" / "tv").glob("*.js"):
+    for script in [*(BASE_DIR / "static" / "tv").glob("*.js"), BASE_DIR / "static" / "js" / "watch.js"]:
         for found in re.findall(r"""['`](/api/tv/[^'`?]*)""", script.read_text()):
             if "SETUP_PATH" in found:
                 continue                                           # devPath(): checked by the next test

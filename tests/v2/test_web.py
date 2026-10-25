@@ -58,7 +58,8 @@ def test_pages_carry_what_the_browser_needs_to_open_the_jellyfin_app(client, v2)
         conn.execute("INSERT INTO profile (name, jellyfin_user_id) VALUES ('alice', 'aaa111')")
         conn.execute("INSERT INTO profile (name, letterboxd_username) VALUES ('No Jellyfin', 'nj')")
     page = text(client.get("/"))
-    assert _app_config(page) == {"server_id": "", "users": [{"id": "aaa111", "name": "alice"}, {"id": "bbb222", "name": "Bob"}], "current_user": ""}
+    assert _app_config(page) == {"server_id": "", "users": [{"id": "aaa111", "name": "alice"}, {"id": "bbb222", "name": "Bob"}], "current_user": "",
+                                "tv": True, "tv_setup": True}
     assert 'id="jellyfinUserModal"' not in page                                # no server ID yet (no Jellyfin sync): no chooser
     settings.set_value("jellyfin_server_id", "srv123")
     page = text(client.get("/"))
@@ -123,7 +124,8 @@ def test_episodes_in_the_library_carry_a_watch_link_and_the_others_do_not(client
 
 def test_the_season_page_script_renders_the_watch_button_for_the_app_handler(client, seeded):
     html = text(client.get(f"/show/{seeded}"))
-    assert 'data-jellyfin-item="${esc(ep.jellyfin_item_id)}"' in html and "Watch</a>" in html and 'rel="noopener noreferrer"' in html
+    assert 'data-watch-now' in html and 'data-item="${esc(ep.jellyfin_item_id)}"' in html and 'data-link="${esc(ep.jellyfin_link)}"' in html
+    assert 'data-jellyfin-item="${esc(ep.jellyfin_item_id)}"' in html and "Watch now</a>" in html and 'rel="noopener noreferrer"' in html
 
 
 def test_movie_page_and_wrong_kind_redirects(client, v2, seeded):

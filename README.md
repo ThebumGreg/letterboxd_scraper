@@ -14,6 +14,8 @@ pip install -r requirements.txt     # includes Flask-WTF: forms and buttons are 
 python -m synchub.web
 ```
 
+Set `SYNCHUB_SCHEDULER=0` to start without the background jobs (no syncs, scrapes, DDNS updates or nightly backups run by themselves; the Run buttons on Tools & Operations still work). Use it to try a copy of your live database without a second set of jobs acting on your real services.
+
 Then open http://localhost:5001 and:
 
 1. **Settings, Connections**: enter your TMDB API key (needed for titles, posters and episode lists) and the Jellyfin/Radarr/Sonarr URLs and API keys (use *Test connection*). Then **System, People**: create your profiles. Each Letterboxd, Serializd or Jellyfin identity can belong to only one profile.
@@ -108,12 +110,14 @@ Every event Jellyfin's Webhook plugin sends is stored (**System, Monitor, Jellyf
 
 ## Opening items in the Jellyfin app (iPhone and iPad)
 
-"Watch on Jellyfin" opens the Jellyfin web page everywhere. On an iPhone or iPad it opens the item in the Jellyfin (Swiftfin) app instead, using `swiftfin://<server id>/<user id>/item/<item id>`, and falls back to the web page after about two seconds if the app does not take over.
+**Watch now** is the button wherever a title in your library can be watched (the dashboard list and cards, movie and show pages, and each episode). It opens a small menu: **This device**, and every TV added under System, TVs. **This device** does what the old "Watch on Jellyfin" link did, described below. Choosing a **TV** wakes it if needed, opens Jellyfin on it and starts the title (the same as Watch a movie on the Remote page; a message at the bottom of the screen says when it is playing, or why not). A dot beside each TV shows whether it is on, asleep or not answering. Without the TV remote permission the button is just the This device link. For a show, the TV is asked to play the show itself, and what that starts depends on the TV's Jellyfin app (a Roku starts the series from the beginning).
+
+"This device" opens the Jellyfin web page everywhere. On an iPhone or iPad it opens the item in the Jellyfin (Swiftfin) app instead, using `swiftfin://<server id>/<user id>/item/<item id>`, and falls back to the web page after about two seconds if the app does not take over.
 
 - The **server ID** is read from Jellyfin during a Jellyfin sync, so run **Tools, Sync movies/TV** once after upgrading.
 - The **user** must be a Jellyfin user that is signed in to the app on that device. Give each profile its Jellyfin user in Settings; the profile chosen on the Who-is-watching page then decides. A guest, or a profile without a Jellyfin user, is asked once which Jellyfin user to use (remembered on that device; the link at the bottom of every page changes it).
 - If tapping does nothing useful, check that the user chosen is the one signed in to the app, and that the app is installed.
-- On a show's page every episode that is in the library has its own **Watch** button, which opens that episode in Jellyfin the same way (that page is one tap from Play; no documented Jellyfin link starts playback by itself, so this is as direct as it gets). Seasons are all closed when the page opens; open the ones you want.
+- On a show's page every episode that is in the library has its own **Watch now** button, whose This device choice opens that episode in Jellyfin the same way (that page is one tap from Play; no documented Jellyfin link starts playback by itself, so this is as direct as it gets). Seasons are all closed when the page opens; open the ones you want.
 
 ## Troubleshooting
 

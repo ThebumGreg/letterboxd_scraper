@@ -7,6 +7,12 @@
 {% block content %}
 <h2 class="mb-4">Tools &amp; Operations</h2>
 
+{% if scheduler_off %}
+<div class="alert alert-warning" role="alert" id="schedulerOff">
+    <strong>Scheduled jobs are switched off</strong> (<code>SYNCHUB_SCHEDULER=0</code>). Nothing here runs by itself: no syncs, scrapes, DDNS updates or nightly backups. The buttons below still work when you press them.
+</div>
+{% endif %}
+
 {% set all_task = task_statuses.get('all') %}
 <div class="panel border border-warning p-3 p-md-4 mb-4">
     <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-3 pb-3 border-bottom border-warning border-opacity-25 gap-3">

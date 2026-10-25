@@ -1,6 +1,6 @@
 <!-- synchub/web/templates/show_details.html -->
 {% extends "base.html" %}
-{% from "_macros.html" import state_badge with context %}
+{% from "_macros.html" import state_badge, watch_now with context %}
 
 {% block title %}{{ show.title }} - Details{% endblock %}
 
@@ -68,7 +68,7 @@
                 </span>
                 {% endif %}
                 {% if show.jellyfin_link %}
-                    <a href="{{ show.jellyfin_link }}" class="btn btn-success" data-jellyfin-item="{{ show.jellyfin_item_id }}" target="_blank" rel="noopener noreferrer"><i class="bi bi-play-circle"></i> Watch on Jellyfin</a>
+                    {{ watch_now(show.jellyfin_link, show.jellyfin_item_id, show.title) }}
                 {% endif %}
                 <button type="button" class="btn btn-outline-secondary" id="refreshBtn"><i class="bi bi-arrow-repeat"></i> Refresh details</button>
             </div>
@@ -177,7 +177,7 @@
                     ${ep.overview ? `<div class="small text-secondary sd-ep-overview mt-1" title="${esc(ep.overview)}">${esc(ep.overview)}</div>` : ''}
                 </td>
                 <td>${badge}</td>
-                <td class="text-end text-nowrap">${ep.can_request ? `<button class="btn btn-sm btn-outline-primary py-0 px-3" data-request-episode="${esc(ep.id)}" {% if not show.tvdb_id %}disabled{% endif %}>Request</button>` : ''}${ep.jellyfin_link ? `<a class="btn btn-sm btn-success py-0 px-3" href="${esc(ep.jellyfin_link)}" data-jellyfin-item="${esc(ep.jellyfin_item_id)}" target="_blank" rel="noopener noreferrer" aria-label="Watch ${esc(ep.title || 'episode ' + ep.episode_number)} on Jellyfin"><i class="bi bi-play-fill"></i> Watch</a>` : ''}</td>
+                <td class="text-end text-nowrap">${ep.can_request ? `<button class="btn btn-sm btn-outline-primary py-0 px-3" data-request-episode="${esc(ep.id)}" {% if not show.tvdb_id %}disabled{% endif %}>Request</button>` : ''}${ep.jellyfin_link ? `<span data-watch-now data-link="${esc(ep.jellyfin_link)}" data-item="${esc(ep.jellyfin_item_id)}" data-title="${esc(ep.title || 'episode ' + ep.episode_number)}" data-size="ep"><a class="btn btn-sm btn-success py-0 px-3" href="${esc(ep.jellyfin_link)}" data-jellyfin-item="${esc(ep.jellyfin_item_id)}" target="_blank" rel="noopener noreferrer">Watch now</a></span>` : ''}</td>
             </tr>`;
         }).join('');
         container.innerHTML = `<div class="table-responsive"><table class="table table-hover mb-0 align-middle sd-table">

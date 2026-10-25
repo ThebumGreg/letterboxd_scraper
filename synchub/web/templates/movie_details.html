@@ -1,6 +1,6 @@
 <!-- synchub/web/templates/movie_details.html -->
 {% extends "base.html" %}
-{% from "_macros.html" import state_badge with context %}
+{% from "_macros.html" import state_badge, watch_now with context %}
 
 {% block title %}{{ movie.title }} - Details{% endblock %}
 
@@ -46,7 +46,7 @@
                     <button type="button" class="btn btn-outline-info" id="requestMovieBtn"><i class="bi bi-cloud-download"></i> Request in Radarr</button>
                 {% endif %}
                 {% if movie.jellyfin_link and state.state == 'in_library' %}
-                    <a href="{{ movie.jellyfin_link }}" class="btn btn-success" data-jellyfin-item="{{ movie.jellyfin_item_id }}" target="_blank" rel="noopener noreferrer"><i class="bi bi-play-circle"></i> Watch on Jellyfin</a>
+                    {{ watch_now(movie.jellyfin_link, movie.jellyfin_item_id, movie.title) }}
                 {% endif %}
                 <button type="button" class="btn btn-outline-secondary" id="refreshBtn"><i class="bi bi-arrow-repeat"></i> Refresh details</button>
             </div>

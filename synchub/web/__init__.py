@@ -71,7 +71,8 @@ def _deny(label, status=403, message=None):
 
 
 def create_app(start_scheduler=False, csrf=True):
-    """`csrf=False` is for tests that post without a browser's token; the app is never run without it."""
+    """`csrf=False` is for tests that post without a browser's token; the app is never run without it.
+    `SYNCHUB_SCHEDULER=0` starts the app without its background jobs (for trying a copy of a live database without a second set of syncs, DDNS updates and notifications)."""
     import logger as app_logging      # noqa: F401  (importing it sets up the rotating log file)
     app = Flask(__name__, template_folder=str(Path(__file__).parent / "templates"), static_folder=str(BASE_DIR / "static"))
     if csrf:
@@ -146,6 +147,8 @@ def create_app(start_scheduler=False, csrf=True):
         def can(key):
             return access.allowed(permissions, key)
 
+        config["tv"], config["tv_setup"] = can("tv"), can("tv_setup")     # whether "Watch now" may offer the TVs, and a link to add one
+
         def link(endpoint, label):
             return {"href": url_for(endpoint), "label": label, "endpoint": endpoint} if can(access.required(endpoint)) else None
 
@@ -184,7 +187,10 @@ def create_app(start_scheduler=False, csrf=True):
             if name.startswith("worker_api_"):
                 csrf.exempt(view)                     # agents have no browser session; they send their own token
 
-    if start_scheduler:
+    app.config["SCHEDULER_OFF"] = os.getenv("SYNCHUB_SCHEDULER") == "0"
+    if start_scheduler and app.config["SCHEDULER_OFF"]:
+        logger.warning("SYNCHUB_SCHEDULER=0: the background jobs are switched off. Nothing runs by itself; the Run buttons on Tools & Operations still work.")
+    elif start_scheduler:
         from synchub import scheduler
         scheduler.start()
     return app

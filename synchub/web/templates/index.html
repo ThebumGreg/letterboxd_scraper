@@ -1,6 +1,6 @@
 <!-- synchub/web/templates/index.html -->
 {% extends "base.html" %}
-{% from "_macros.html" import stat_card, state_badge with context %}
+{% from "_macros.html" import stat_card, state_badge, watch_now with context %}
 
 {% block title %}Dashboard{% endblock %}
 
@@ -108,7 +108,7 @@
                 <td><span class="badge bg-primary">{{ r.user_count }}</span></td>
                 <td>
                     {% if r.state == 'in_library' and r.jellyfin_link %}
-                        <a href="{{ r.jellyfin_link }}" class="btn btn-sm btn-success jellyfin-link" data-jellyfin-item="{{ r.jellyfin_item_id }}" target="_blank" rel="noopener noreferrer">Watch on Jellyfin</a>
+                        {{ watch_now(r.jellyfin_link, r.jellyfin_item_id, r.title, 'row') }}
                     {% else %}
                         <span class="sse-badge-container">{{ state_badge(r.state_label, r.state_color, r.state_icon, r.progress_pct if r.state == 'downloading' else none) }}</span>
                     {% endif %}

@@ -147,7 +147,7 @@ def register(app):
 
     @app.route("/tools")
     def tools():
-        return render_template("tools.html", task_statuses=tasks.all_statuses())
+        return render_template("tools.html", task_statuses=tasks.all_statuses(), scheduler_off=app.config.get("SCHEDULER_OFF", False))
 
     @app.route("/settings")
     def settings_page():

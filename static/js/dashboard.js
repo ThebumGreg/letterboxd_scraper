@@ -49,6 +49,23 @@
         } catch (_) { }
     }
 
+    // Where the "Watch now" button goes; watch.js turns it into the menu (This device / each TV). The plain link is what shows without it.
+    function watchSlot(link, item, title, size) {
+        const slot = el("span", size === "card" ? "d-block" : "");
+        slot.dataset.watchNow = "";
+        slot.dataset.link = link;
+        slot.dataset.item = item || "";
+        slot.dataset.title = title || "";
+        slot.dataset.size = size;
+        const a = el("a", "btn btn-sm btn-success" + (size === "card" ? " w-100 p-1 py-0" : ""), "Watch now");
+        a.href = link;
+        a.dataset.jellyfinItem = item || "";
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        slot.appendChild(a);
+        return slot;
+    }
+
     function el(tag, cls, text) {
         const node = document.createElement(tag);
         if (cls) node.className = cls;
@@ -95,12 +112,7 @@
 
         const foot = el("div", "mt-2 text-end sse-badge-container");
         if (d.state === "in_library" && d.link) {
-            const a = el("a", "btn btn-sm btn-success w-100 p-1 py-0 jellyfin-link", "Watch");
-            a.href = d.link;
-            a.dataset.jellyfinItem = d.jellyfinItem || "";
-            a.target = "_blank";
-            a.rel = "noopener noreferrer";
-            foot.appendChild(a);
+            foot.appendChild(watchSlot(d.link, d.jellyfinItem, d.displayTitle || d.title, "card"));
         } else {
             const dark = ["info", "warning"].includes(d.stateColor) ? " text-dark" : "";
             const pct = d.state === "downloading" && d.progress ? " " + d.progress + "%" : "";
@@ -242,12 +254,7 @@
         const d = row.dataset;
         cell.textContent = "";
         if (d.state === "in_library" && d.link) {
-            const a = el("a", "btn btn-sm btn-success jellyfin-link", "Watch on Jellyfin");
-            a.href = d.link;
-            a.dataset.jellyfinItem = d.jellyfinItem || "";
-            a.target = "_blank";
-            a.rel = "noopener noreferrer";
-            cell.appendChild(a);
+            cell.appendChild(watchSlot(d.link, d.jellyfinItem, d.displayTitle, "row"));
             return;
         }
         const holder = el("span", "sse-badge-container");
@@ -300,7 +307,7 @@
                         const existingBadge = badgeCell.querySelector('.sse-badge');
                         if (existingBadge) {
                             existingBadge.innerText = data.queue_status || 'Downloading...';
-                        } else if (!badgeCell.querySelector('.jellyfin-link') && !badgeCell.querySelector('.btn-outline-info')) {
+                        } else if (!badgeCell.querySelector('[data-watch-now]') && !badgeCell.querySelector('.btn-outline-info')) {
                             badgeCell.innerHTML = `<span class="badge bg-info text-dark sse-badge">${data.queue_status || 'Downloading...'}</span>`;
                         }
                     }
