@@ -766,3 +766,56 @@ def test_a_radarr_import_is_scanned_converted_in_place_and_radarr_is_asked_to_re
     assert final["rescan_status"] == "done" and rescans == [9] and told
     data = probe(rig.roots["media"] / "Heat (1995)/Heat.1995.mkv")          # it was an AVI under an .mkv name; now it is a real Matroska file
     assert "matroska" in data["format"]["format_name"] and final["result_json"]
+
+
+# ---------------------------------------------------------------- size policy: capped HEVC and HDR (real ffmpeg)
+def make_hdr(path, seconds=2):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc=duration={seconds}:size=320x240:rate=10", "-f", "lavfi", "-i", f"sine=duration={seconds}",
+                    "-c:v", "libx265", "-pix_fmt", "yuv420p10le", "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
+                    "-x265-params", "log-level=error:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:max-cll=1000,400:"
+                                    "master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,50)", "-c:a", "aac", str(path)], check=True)
+
+
+def queue_compress(rig, src, profile, duration=2.0):
+    change = {"op": "convert", "container": "matroska", "video": {"action": "transcode", "codec": "hevc"}, "audio_convert": {}}
+    with rig.db.connection() as conn:
+        return jobs.create(conn, "library", title="Compress", source=("tfiles", src), dest=("media", "Movies/Heat (1995)/Heat (1995).mkv"), pinned_worker_id=rig.worker_id,
+                           plan={"op": "convert", "change": change, "duration": duration, "profile": profile, "needs": ["profiles"]})
+
+
+@needs_ffmpeg
+def test_a_size_capped_hevc_encode_keeps_hdr10_and_the_mastering_data(rig):
+    make_hdr(rig.roots["tfiles"] / "Old/Heat.mkv")
+    profile = {"video_codec": "hevc", "crf": 24, "preset": "ultrafast", "ten_bit": True, "audio_kbps": 192, "maxrate_kbps": 2000, "bufsize_kbps": 4000, "max_bytes": 5_000_000}
+    job_id = queue_compress(rig, "Old/Heat.mkv", profile)
+    rig.start()
+    job = wait(lambda: (j := rig.job(job_id))["status"] in ("done", "failed", "needs_review") and j, timeout=90, what="the compression")
+    assert job["status"] == "done", job["error"]
+    data = probe(rig.roots["media"] / "Movies/Heat (1995)/Heat (1995).mkv")
+    video = next(s for s in data["streams"] if s["codec_type"] == "video")
+    assert video["codec_name"] == "hevc" and video["pix_fmt"] == "yuv420p10le" and video["color_transfer"] == "smpte2084" and video["color_primaries"] == "bt2020"
+    assert "vbv-maxrate=2000" in job["result"]["command"] and "master-display=G(13250,34500)" in job["result"]["command"] and "max-cll=1000,400" in job["result"]["command"]
+
+
+@needs_ffmpeg
+def test_a_result_over_the_size_limit_is_retried_once_at_lower_quality_then_held_for_a_person(rig):
+    make_avi(rig.roots["tfiles"] / "Old/Heat.avi", audio_tracks=1)
+    profile = {"video_codec": "hevc", "crf": 22, "preset": "ultrafast", "ten_bit": False, "audio_kbps": 192, "max_bytes": 1000}          # impossible on purpose
+    job_id = queue_compress(rig, "Old/Heat.avi", profile)
+    rig.start()
+    job = wait(lambda: rig.job(job_id)["status"] == "needs_review" and rig.job(job_id), timeout=120, what="the job to be held")
+    assert job["error_class"] == "size_target_missed" or "over the" in (job["review_reason"] or job["error"] or "")
+    log = " ".join(line.get("msg", "") for line in rig.joblog(job_id))
+    assert "encoding at quality 24 this time" in log                                              # the retry used 22 + 2
+    assert not (rig.roots["media"] / "Movies").exists()
+
+
+@needs_ffmpeg
+def test_an_hdr_picture_is_never_squeezed_into_h264(rig):
+    make_hdr(rig.roots["tfiles"] / "Old/Heat.mkv")
+    profile = {"video_codec": "h264", "crf": 20, "preset": "ultrafast", "ten_bit": False, "audio_kbps": 192}
+    job_id = queue_compress(rig, "Old/Heat.mkv", profile)
+    rig.start()
+    job = wait(lambda: rig.job(job_id)["status"] in ("needs_review", "failed") and rig.job(job_id), timeout=60, what="the refusal")
+    assert "HDR" in (job["error"] or job["review_reason"] or "") and not (rig.roots["media"] / "Movies").exists()

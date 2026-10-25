@@ -14,7 +14,7 @@ import os
 import posixpath
 
 from synchub import db, jobs, settings, storage
-from synchub.library import scan, store
+from synchub.library import scan, size_policy, store
 from synchub.library import vocab as v
 
 logger = logging.getLogger(__name__)
@@ -222,13 +222,20 @@ def decide(conn, row, rec, now=None):
         why = rec.get("unreadable_reason") or rec.get("audit_error") or rec.get("integrity_status") or "the analysis did not finish"
         return _set(conn, row["id"], now, record_id=rec["id"], status="blocked", message=f"Could not analyse the file: {why}")
     plans = [p for p in v.json_list(rec.get("proposed_track_changes_json")) if isinstance(p, dict) and p.get("op") in ("keep_tracks", "convert")]
-    if not plans:
+    size = size_policy.decide(rec, plans, size_policy.load(conn))
+    if not plans and size.action != size_policy.COMPRESS and size.action != size_policy.REVIEW:
+        if size.action == size_policy.BLOCKED:
+            return _set(conn, row["id"], now, record_id=rec["id"], status="blocked", message=size.summary)
         return _set(conn, row["id"], now, record_id=rec["id"], status="nothing_to_do", message="Nothing to change: the tracks and format are already fine.", finished_at=now)
-    reasons = risks(rec, plans)
+    reasons = risks(rec, plans) if plans else []
+    if size.action == size_policy.REVIEW:
+        reasons += size.reasons
     if mode(conn) == "auto" and not reasons:
         _set(conn, row["id"], now, record_id=rec["id"], message="")
         return queue(conn, row["id"], "downloads (automatic)", now)
     why = " ".join(reasons) or "Waiting for your approval (review mode)."
+    if size.action == size_policy.COMPRESS:
+        why = f"{size.summary} {why}" if reasons else f"{size.summary} Waiting for your approval (review mode)."
     _set(conn, row["id"], now, record_id=rec["id"], status="awaiting_approval", message=why)
 
 
@@ -245,9 +252,10 @@ def queue(conn, intake_id, by, now=None):
     if rec["path_key"] != row["path_key"]:
         raise ValueError("The record no longer matches the file.")
     plans = [p for p in v.json_list(rec.get("proposed_track_changes_json")) if isinstance(p, dict) and p.get("op") in ("keep_tracks", "convert")]
-    if not plans:
+    size = size_policy.decide(rec, plans, size_policy.load(conn))
+    if not plans and size.profile is None:
         raise ValueError("There is nothing to change in this file.")
-    change = plans[0]
+    change = plans[0] if plans else {}
     dest_rel = row["relative_path"]
     extension = change.get("target_extension")
     if extension and not dest_rel.lower().endswith(extension.lower()):
@@ -255,6 +263,8 @@ def queue(conn, intake_id, by, now=None):
     now = now or db.now()
     plan = {"op": "convert", "replace": True, "change": change, "revision": rec["source_revision"], "duration": rec.get("duration_seconds"),
             "source_size": rec["size_bytes"], "source_mtime": rec["mtime"], "originals_retention_days": retention_days(conn), "import": row["id"]}
+    if size.profile is not None:                         # compress (or a quality-floor review the person has just accepted by approving)
+        plan, dest_rel = size_policy.apply(plan, size, dest_rel)
     job_id = jobs.create(conn, "download", title=f"Replace: {rec['file_name']}", ref=(REF, row["id"]), source=(row["root_name"], row["relative_path"]), dest=(row["root_name"], dest_rel),
                          plan=plan, policy={"originals_retention_days": plan["originals_retention_days"]}, need_bytes=(rec["size_bytes"] or 0) * 2 + WORK_MARGIN_BYTES)
     _set(conn, row["id"], now, status="queued", job_id=job_id, decided_by=by, message="Queued for a worker.")
@@ -306,7 +316,7 @@ def sync(conn, job_id, now=None):
     elif target in ("failed", "blocked", "skipped"):
         values.update(message=(job["error"] or job["review_reason"] or job["message"] or ("Cancelled." if job["status"] == "cancelled" else ""))[:500], finished_at=now)
     elif target == "converting":
-        values.update(message="A worker is converting it.")
+        values.update(message="A worker is converting it." if not (job["plan"].get("size_policy")) else "A worker is compressing it.")
     else:
         values.update(message="Queued for a worker.", finished_at=None)
     _set(conn, row["id"], now, **values)

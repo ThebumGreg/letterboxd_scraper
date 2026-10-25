@@ -214,11 +214,23 @@ def _fps(rec):
         return None
 
 
-def apply(plan, decision):
-    """The job plan with the compression added: the plan's op becomes `convert`, its video action `transcode` (to HEVC) and the profile rides along."""
+def apply(plan, decision, dest_rel=None):
+    """The job plan with the compression added: the op becomes `convert`, the video is transcoded to HEVC inside Matroska and the size cap rides in the profile.
+    A profile the person already chose that encodes to HEVC keeps its own quality and speed; only the cap and the HDR facts are added.
+    Returns (plan, dest_rel) - the destination gets an .mkv extension when the compressed file needs one."""
     out = dict(plan)
     change = dict(out.get("change") or {})
     change.setdefault("op", "convert")
-    change["video"] = {**(change.get("video") or {}), "action": "transcode", "codec": "hevc"}
-    out.update(op="convert", change=change, profile=decision.profile, size_policy=decision.numbers)
-    return out
+    change.setdefault("audio_convert", {})
+    change.update(container="matroska", video={**(change.get("video") or {}), "action": "transcode", "codec": "hevc"})
+    if dest_rel is not None and not dest_rel.lower().endswith(".mkv"):
+        change["target_extension"] = ".mkv"
+        dest_rel = dest_rel.rsplit(".", 1)[0] + ".mkv" if "." in dest_rel.rsplit("/", 1)[-1] else dest_rel + ".mkv"
+    chosen = out.get("profile") if isinstance(out.get("profile"), dict) and out["profile"].get("video_codec") == "hevc" else None
+    cap = {k: v for k, v in decision.profile.items() if k in ("maxrate_kbps", "bufsize_kbps", "max_bytes", "target_bytes", "size_policy", "deinterlace", "hdr")}
+    profile = {**chosen, **cap} if chosen else dict(decision.profile)
+    needs = list(out.get("needs") or [])
+    if "profiles" not in needs:
+        needs.append("profiles")
+    out.update(op="convert", change=change, profile=profile, needs=needs, size_policy=decision.numbers)
+    return out, dest_rel

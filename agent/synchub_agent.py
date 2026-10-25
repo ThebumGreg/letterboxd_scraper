@@ -611,15 +611,68 @@ def clean_profile(profile):
         if crf is None or not low <= crf <= high or preset not in VIDEO_PRESETS:
             raise JobFailure("bad_job", f"The conversion profile's quality or encoder speed is outside what this agent accepts for {codec}.", retryable=False)
         out.update(crf=crf, preset=preset, ten_bit=bool(profile.get("ten_bit")) and codec == "hevc")
+    if codec == "hevc":
+        out.update(clean_size_cap(profile))
     return out
+
+
+def _positive_int(value, high):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if 0 < number <= high else None
+
+
+_HDR_TEXT = re.compile(r"^[A-Za-z0-9(),.\-]{1,200}$")
+
+
+def clean_size_cap(profile):
+    """The optional size policy fields of a profile (a bitrate cap that keeps a constant-quality encode under the target, a size to check the result against,
+    deinterlacing and the HDR facts to copy). Numbers and a short list of known words only: nothing here is free text that reaches ffmpeg."""
+    out = {}
+    maxrate = _positive_int(profile.get("maxrate_kbps"), 400_000)
+    if maxrate:
+        out.update(maxrate_kbps=maxrate, bufsize_kbps=_positive_int(profile.get("bufsize_kbps"), 800_000) or maxrate * 2)
+    if _positive_int(profile.get("max_bytes"), 1 << 50):
+        out["max_bytes"] = int(profile["max_bytes"])
+    if profile.get("deinterlace"):
+        out["deinterlace"] = True
+    hdr = profile.get("hdr")
+    if isinstance(hdr, dict) and hdr.get("kind") in ("hdr10", "hlg"):
+        clean = {"kind": hdr["kind"]}
+        for key in ("master_display", "max_cll"):
+            if isinstance(hdr.get(key), str) and _HDR_TEXT.match(hdr[key]):
+                clean[key] = hdr[key]
+        out["hdr"] = clean
+    return out
+
+
+def hevc_extra_args(profile):
+    """x265 parameters and colour tags for a size-capped or HDR HEVC encode, as the (-x265-params value, extra ffmpeg arguments)."""
+    params, extra = ["log-level=error"], []
+    if profile.get("maxrate_kbps"):
+        params += [f"vbv-maxrate={profile['maxrate_kbps']}", f"vbv-bufsize={profile.get('bufsize_kbps') or profile['maxrate_kbps'] * 2}"]
+    hdr = profile.get("hdr")
+    if hdr:
+        transfer = "arib-std-b67" if hdr["kind"] == "hlg" else "smpte2084"
+        params += ["colorprim=bt2020", f"transfer={transfer}", "colormatrix=bt2020nc", "range=limited", "hdr10-opt=1" if hdr["kind"] == "hdr10" else "hdr10=0", "repeat-headers=1"]
+        if hdr.get("master_display"):
+            params.append(f"master-display={hdr['master_display']}")
+        if hdr.get("max_cll"):
+            params.append(f"max-cll={hdr['max_cll']}")
+        extra += ["-color_primaries", "bt2020", "-color_trc", transfer, "-colorspace", "bt2020nc"]
+    return ":".join(params), extra
 
 
 def video_arguments(video, profile):
     """The ffmpeg arguments for a video the plan says to re-encode. The profile chooses codec and quality; without one it is H.264 at CRF 20, as before."""
     codec = (profile or {}).get("video_codec") if (profile or {}).get("video_codec") not in (None, "keep") else (video.get("codec") or "h264")
     if codec == "hevc":
-        pix = "yuv420p10le" if (profile or {}).get("ten_bit") else "yuv420p"
-        return ["-c:v", "libx265", "-crf", str((profile or {}).get("crf") or 23), "-preset", (profile or {}).get("preset") or "medium", "-pix_fmt", pix, "-tag:v", "hvc1", "-x265-params", "log-level=error"]
+        pix = "yuv420p10le" if (profile or {}).get("ten_bit") or (profile or {}).get("hdr") else "yuv420p"
+        params, extra = hevc_extra_args(profile or {})
+        yadif = ["-vf", "yadif"] if (profile or {}).get("deinterlace") else []
+        return yadif + ["-c:v", "libx265", "-crf", str((profile or {}).get("crf") or 23), "-preset", (profile or {}).get("preset") or "medium", "-pix_fmt", pix, "-tag:v", "hvc1", "-x265-params", params] + extra
     return ["-c:v", "libx264", "-crf", str((profile or {}).get("crf") or 20), "-preset", (profile or {}).get("preset") or "medium", "-pix_fmt", "yuv420p"]
 
 
@@ -1536,9 +1589,11 @@ class JobRunner(threading.Thread):
             expected_duration = media_duration(media_analysis.run_ffprobe(settings, local))
         profile = clean_profile(profile)
         if profile and profile["video_codec"] != "keep" and (change.get("video") or {}).get("action") == "transcode":
-            transfer = next((st.get("color_transfer") for st in media_analysis.run_ffprobe(settings, local).get("streams") or [] if isinstance(st, dict) and st.get("codec_type") == "video"), None)
-            if transfer in ("smpte2084", "arib-std-b67"):
-                raise JobFailure("encode_failed", "This is an HDR video. Re-encoding it with this profile would wash out the colours, so it was not converted. Use the Standard or Move only profile for it.", retryable=False)
+            profile = self.with_source_colours(settings, local, profile)
+            bump = int(self.m.get("crf_bump") or 0)
+            if bump and profile.get("max_bytes"):
+                profile["crf"] = min(PROFILE_CRF["hevc"][1], profile["crf"] + 2 * bump)
+                self.log.info(f"The last attempt came out over the size limit; encoding at quality {profile['crf']} this time", crf=profile["crf"])
         command = build_convert_command(self.cfg.ffmpeg, local, partial, change, profile)
         text = shlex.join(command)
         self.log.info("Converting", command=text)
@@ -1568,11 +1623,45 @@ class JobRunner(threading.Thread):
         self.report_progress("encode", 0.85, "Checking the converted file", force=True)
         try:
             probe = self.check_conversion(settings, partial, change, expected_duration, profile)
+            produced = os.path.getsize(partial)
+            if profile and profile.get("max_bytes") and produced > profile["max_bytes"]:
+                self.m["crf_bump"] = int(self.m.get("crf_bump") or 0) + 1
+                self.save()
+                raise JobFailure("size_target_missed", f"The compressed file is {human_bytes(produced)}, over the {human_bytes(profile['max_bytes'])} limit"
+                                 + (" (it will be tried once more at a lower quality)." if self.m["crf_bump"] < 2 else "."))
         except JobFailure:
             self._remove(partial)
             raise
         os.replace(partial, converted)
         return {"done": True, "bytes": os.path.getsize(converted), "seconds": round(time.monotonic() - started, 1), "command": text[-4000:], "probe": probe, "finished": iso()}
+
+    def with_source_colours(self, settings, local, profile):
+        """Looks at the source's picture before an HEVC or H.264 re-encode. HDR10 and HLG are kept for HEVC (10-bit, colour tags, mastering data read from the file itself,
+        whatever SyncHub guessed); an HDR picture is never squeezed into H.264, and Dolby Vision profile 5 is never re-encoded: both would wash the colours out."""
+        data = media_analysis.run_ffprobe(settings, local)
+        video = next((st for st in data.get("streams") or [] if isinstance(st, dict) and st.get("codec_type") == "video"), None)
+        facts = media_analysis.video_facts(video, data.get("format"))
+        if facts["hdr"] != "sdr" and not (facts.get("master_display") and facts.get("max_cll")):
+            frame = media_analysis.video_facts({**(video or {}), "side_data_list": [*((video or {}).get("side_data_list") or []), *media_analysis.first_frame_side_data(settings, local)]})
+            facts = {**frame, **{k: v for k, v in facts.items() if v not in (None, "")}}
+        profile = dict(profile)
+        profile.pop("hdr", None)
+        if facts["hdr"] == "sdr":
+            if facts.get("interlaced"):
+                profile["deinterlace"] = True
+            return profile
+        if profile["video_codec"] != "hevc":
+            raise JobFailure("encode_failed", "This is an HDR video. Re-encoding it as H.264 would wash out the colours, so it was not converted. Use an HEVC, Standard or Move only profile for it.", retryable=False)
+        if facts["hdr"] == "dv" and str(facts.get("dv_profile")) == "5":
+            raise JobFailure("encode_failed", "This is Dolby Vision profile 5. Re-encoding it would turn the colours green and purple, so it was not converted.", retryable=False)
+        kind = "hlg" if facts.get("transfer") == "arib-std-b67" else "hdr10"
+        if facts["hdr"] == "dv" and facts.get("transfer") != "smpte2084":
+            raise JobFailure("encode_failed", "This Dolby Vision video has no HDR10 base layer, so it cannot be kept as HDR10. It was not converted.", retryable=False)
+        profile["hdr"] = {"kind": kind, **{k: facts[k] for k in ("master_display", "max_cll") if facts.get(k)}}
+        profile["ten_bit"] = True
+        if facts["hdr"] == "dv":
+            self.log.warning(f"Dolby Vision profile {facts.get('dv_profile')}: the Dolby layer is dropped and the HDR10 picture is kept")
+        return profile
 
     @staticmethod
     def _remove(path):

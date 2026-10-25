@@ -58,7 +58,7 @@ def test_a_scan_analyses_every_video_file_leaves_out_the_noise_and_fills_the_que
     assert run["counts"]["found"] == 4 and run["counts"]["analyzed"] == 4 and run["counts"]["inserted"] == 4 and run["status"] == "completed" and run["progress"] == 1.0
     heat = found["Movies/Heat.1995.1080p.BluRay.x264-GRP.mkv"]
     assert (heat["recommended_name"], heat["media_type"], heat["recommended_action"], heat["analysis_status"], heat["source_dir"]) == ("Heat (1995).mkv", "Movie/Unknown", "copy_rename", "completed", "tfiles:")
-    assert heat["source_path"] == os.path.join(str(rig.roots["tfiles"]), "Movies/Heat.1995.1080p.BluRay.x264-GRP.mkv") and heat["analysis_logic_version"] == 1 and heat["analysis_run_id"] == run["id"]
+    assert heat["source_path"] == os.path.join(str(rig.roots["tfiles"]), "Movies/Heat.1995.1080p.BluRay.x264-GRP.mkv") and heat["analysis_logic_version"] == v.ANALYSIS_LOGIC_VERSION and heat["analysis_run_id"] == run["id"]
     episode = found["TV Shows/Show Name/Season 1/Show.Name.S01E02.720p.HDTV.mkv"]
     assert (episode["media_type"], episode["show_title"], episode["season_number"], episode["recommended_name"]) == ("TV Episode", "Show Name", 1, "Show Name - S01E02.mkv")
     multi = found["Movies/Multi 2001.mkv"]

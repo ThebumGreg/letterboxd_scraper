@@ -573,6 +573,19 @@ def video_facts(stream, probe_format=None):
     return facts
 
 
+def first_frame_side_data(settings, path):
+    """The side data of the first video frame (HDR mastering display and content light level live there when they are in the bitstream, not the container)."""
+    command = [settings.ffprobe, "-v", "error", "-print_format", "json", "-select_streams", "v:0", "-read_intervals", "%+#1", "-show_frames", "-show_entries", "frame=side_data_list", path]
+    result, outcome = run_tool(settings, command, settings.ffprobe_timeout, f"ffprobe frame {path}")
+    if outcome != "ok" or result is None or result.returncode != 0:
+        return []
+    try:
+        frames = json.loads(result.stdout).get("frames") or []
+    except (ValueError, AttributeError):
+        return []
+    return [d for d in (frames[0].get("side_data_list") if frames else None) or [] if isinstance(d, dict)]
+
+
 def summarize_streams(streams):
     """Raw audio/subtitle facts stored in the cache (policy is applied later)."""
     out = []

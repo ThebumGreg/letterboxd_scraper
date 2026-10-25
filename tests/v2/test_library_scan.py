@@ -199,7 +199,7 @@ def test_a_reported_file_becomes_a_record_with_its_findings_and_a_share_style_pa
     assert tally["inserted"] == 1 and not tally["failed"]
     rec = store.by_key(lib.conn, v.record_key("tfiles", "Movies/Heat.1995.1080p.mkv"))
     assert rec["root_name"] == "tfiles" and rec["source_path"] == "//tower/TFiles/Movies/Heat.1995.1080p.mkv" and rec["source_dir"] == "tfiles:Movies" and rec["recommended_name"] == "Heat (1995).mkv"
-    assert rec["analysis_run_id"] == job["plan"]["run_id"] and rec["analysis_logic_version"] == 1 and json.loads(rec["findings_json"])["action"] == "copy_rename"
+    assert rec["analysis_run_id"] == job["plan"]["run_id"] and rec["analysis_logic_version"] == v.ANALYSIS_LOGIC_VERSION and json.loads(rec["findings_json"])["action"] == "copy_rename"
     assert rec["recommended_action"] == "copy_rename" and rec["review_status"] == "not_required" and rec["duplicate_status"] == v.DUP_NOT_CHECKED and rec["sha256"] is None
     counts = scan.list_runs(lib.conn)[0]["counts"]
     assert counts["analyzed"] == 1 and counts["inserted"] == 1
@@ -241,7 +241,7 @@ def test_a_reanalysed_file_keeps_what_is_known_about_its_duplicates_and_its_appr
     rel = rec_of(lib.conn, primary)["relative_path"]
     call(lib, scan.ingest_records, job, [lib.report(job, rel, name="A (2000).mkv", size=5000)])
     rec = rec_of(lib.conn, primary)
-    assert rec["duplicate_group"] == "DUP-" + "a" * 12 and rec["sha256"] == "a" * 64 and rec["analysis_logic_version"] == 1 and rec["approval_status"] == "approved"
+    assert rec["duplicate_group"] == "DUP-" + "a" * 12 and rec["sha256"] == "a" * 64 and rec["analysis_logic_version"] == v.ANALYSIS_LOGIC_VERSION and rec["approval_status"] == "approved"
 
 
 def test_records_come_in_bounded_batches(lib):

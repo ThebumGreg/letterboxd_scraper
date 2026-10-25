@@ -10,7 +10,7 @@ import logging
 import os
 
 from synchub import db, jobs, settings
-from synchub.library import layout, profiles, store
+from synchub.library import layout, profiles, size_policy, store
 from synchub.library import vocab as v
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ def _is_video(codec, wanted):
     return codec.startswith("hevc") or codec.startswith("h265") if wanted == "hevc" else codec.startswith("h264") or codec.startswith("avc")
 
 
-def plan_for(rec, cfg, profile=None, mode=None):
+def plan_for(rec, cfg, profile=None, mode=None, size=None):
     """(destination root, destination relative path, plan) for an approved record. Raises layout.LayoutError.
 
     `mode` 'rename_only' renames the file inside its own share and touches nothing else. Otherwise the profile decides: a move-only profile copies
@@ -78,7 +78,11 @@ def plan_for(rec, cfg, profile=None, mode=None):
             change["target_extension"] = ".mkv"
     if change is not None and _changes_nothing(change):
         change = None
-    if change is None and rec["approved_action"] == v.ACTION_COPY_RENAME:
+    decision = size_policy.decide(rec, [change] if change else [], size) if size is not None else None
+    compress = decision is not None and decision.action == size_policy.COMPRESS
+    if decision is not None and decision.action in (size_policy.REVIEW, size_policy.BLOCKED):
+        plan["size_policy_skipped"] = decision.summary               # not compressed; the plan says why
+    if change is None and rec["approved_action"] == v.ACTION_COPY_RENAME and not compress:
         plan["op"] = "copy"
         return cfg.destination_root, dest_rel, plan
     change = change or {}
@@ -88,6 +92,8 @@ def plan_for(rec, cfg, profile=None, mode=None):
         dest_rel = os.path.splitext(dest_rel)[0] + extension
     if profile and (profile["video_codec"] != "keep" or profile["audio_kbps"] != 192):
         plan.update(profile=profiles.for_plan(profile), needs=[profiles.FEATURE])
+    if compress:
+        plan, dest_rel = size_policy.apply(plan, decision, dest_rel)
     return cfg.destination_root, dest_rel, plan
 
 
@@ -120,7 +126,7 @@ def queue(conn, record_id, cfg, by="someone", force=False):
     if downloads.busy(conn, rec):                                # the download pipeline is replacing this very file in place
         return None
     try:
-        dest_root, dest_rel, plan = plan_for(rec, cfg, profile_for(conn, rec))
+        dest_root, dest_rel, plan = plan_for(rec, cfg, profile_for(conn, rec), size=size_policy.load(conn))
     except layout.LayoutError as exc:
         raise ValueError(f"cannot plan the destination: {exc}")
     need = 0 if plan["op"] == "rename" else (rec["size_bytes"] or 0) * (2 if plan["op"] == "convert" else 1) + WORK_MARGIN_BYTES
