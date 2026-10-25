@@ -100,15 +100,15 @@ def test_saving_or_deleting_a_profile_returns_to_people(client, v2, conn):
 
 
 # ---------------------------------------------------------------- Workers and Jobs
-def test_workers_and_jobs_are_two_tabs_of_the_live_fragment(client, v2):
+def test_workers_jobs_and_worker_status_are_tabs_of_the_live_fragment(client, v2):
     with v2.connection() as conn:
         worker_id, _ = workers.create(conn, "encoder-1")
         job_id = jobs.create(conn, "library", title="Heat")
         conn.execute("UPDATE job SET status = 'needs_review', review_reason = 'low confidence' WHERE id = ?", (job_id,))
     for path in ("/workers", "/workers/fragment"):
         page = text(client.get(path))
-        assert re.findall(r'data-pane="(\w+)"', page) == ["workers", "jobs"]
-        assert 'data-fleet-pane="workers"' in page and re.search(r'data-fleet-pane="jobs"[^>]*hidden', page)
+        assert re.findall(r'data-pane="(\w+)"', page) == ["workers", "jobs", "status"]
+        assert 'data-fleet-pane="workers"' in page and all(re.search(r'data-fleet-pane="%s"[^>]*hidden' % pane, page) for pane in ("jobs", "status"))
         assert "1 waiting for you" in page and 'id="workerTable"' in page and 'id="jobTable"' in page
 
 
