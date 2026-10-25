@@ -7,7 +7,7 @@
 - **Originals are kept on the worker** in `work/originals/` for *Keep originals (days)* (default 30; 0 drops the original once the replacement is verified), with a `meta.json` saying where each came from. The worker removes them only after that time. The Workers page shows how many are held.
 - **Safe by construction.** The worker checks the file on the share is still the one that was analysed before and again just before the swap; the new file is written as `.synchub-partial`, verified, and renamed in. Nothing is replaced if the file changed.
 - **Needs setup.** Each share on the Storage page needs the path Radarr/Sonarr see for it. An import no share covers is listed as blocked with that reason.
-- Agent: `replace` conversions, originals folder and sweep. Rebuild the worker (`docker compose up -d --build`). Database migration 014. Not done yet: the size policy for 30 GB+ movies and preview clips (next PRs).
+- Agent: `replace` conversions, originals folder and sweep. Rebuild the worker (`docker compose up -d --build`). Database migration 015. Not done yet: the size policy for 30 GB+ movies and preview clips (next PRs).
 
 Notifications: each person chooses what they hear about and when.
 
