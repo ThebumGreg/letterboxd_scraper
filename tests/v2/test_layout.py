@@ -114,7 +114,7 @@ def test_workers_and_jobs_are_two_tabs_of_the_live_fragment(client, v2):
 
 # ---------------------------------------------------------------- headings match the menu
 @pytest.mark.parametrize("path, heading", [("/tools", "Tools &amp; Operations"), ("/logs", "Logs"), ("/payloads", "Payloads"), ("/ddns", "Dynamic DNS"),
-                                           ("/settings", "Settings"), ("/people", "People"), ("/activity", "What it&#39;s doing now"), ("/jellyfin-events", "Jellyfin events")])
+                                           ("/settings", "Settings"), ("/notifications", "Notifications"), ("/people", "People"), ("/activity", "What it&#39;s doing now"), ("/jellyfin-events", "Jellyfin events")])
 def test_each_page_is_headed_with_its_menu_name(client, v2, path, heading):
     page = text(client.get(path))
     wanted = htmllib.unescape(heading)

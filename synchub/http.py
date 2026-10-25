@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 SLOW_SECONDS = 5
 
 _SENSITIVE_HEADERS = {"x-api-key", "authorization", "api-key", "x-emby-token", "x-mediabrowser-token"}
-_SENSITIVE_PARAMS = {"api_key", "apikey", "token"}
+_SENSITIVE_PARAMS = {"api_key", "apikey", "token", "user"}      # (Pushover sends its token and the recipient's key as form fields)
 DEFAULT_TIMEOUT = 15
 
 
@@ -52,7 +52,7 @@ def request(service, event, method, url, **kwargs):
     kwargs.setdefault("timeout", DEFAULT_TIMEOUT)
     db.assert_not_in_write_transaction(f"HTTP {method} to {service} ({event})")
     started = time.time()
-    payload = _mask_params(kwargs.get("params")) or kwargs.get("json")
+    payload = _mask_params(kwargs.get("params")) or _mask_params(kwargs.get("data")) or kwargs.get("json")
     where = f"{service} {event} {method} {urlsplit(url).netloc}{urlsplit(url).path}"
     try:
         response = requests.request(method, url, **kwargs)

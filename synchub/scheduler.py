@@ -4,6 +4,7 @@ import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from synchub import ddns, settings, tasks
+from synchub.notifications import dispatch
 
 logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
@@ -26,6 +27,7 @@ def queue_poll_seconds():
 
 
 REAPER_SECONDS = 30
+NOTIFY_SECONDS = 30       # how often the outbox is looked at (it sends nothing while the administrator's switch is off)
 
 
 def _reap_jobs():
@@ -64,6 +66,8 @@ def configure():
             scheduler.add_job(fn, "interval", hours=hours, id=job_id, max_instances=1, coalesce=True)
     scheduler.add_job(_reap_jobs, "interval", seconds=REAPER_SECONDS, id="job_reaper", max_instances=1, coalesce=True)
     scheduler.add_job(_prune_jellyfin_events, "interval", hours=24, id="job_prune_jellyfin_events", max_instances=1, coalesce=True)
+    scheduler.add_job(dispatch.run_due, "interval", seconds=NOTIFY_SECONDS, id="job_notify", max_instances=1, coalesce=True)
+    scheduler.add_job(dispatch.prune_history, "interval", hours=24, id="job_notify_prune", max_instances=1, coalesce=True)
     from synchub import backup
     if backup.keep_count():
         scheduler.add_job(tasks.backup_database, "cron", hour=3, minute=30, id="job_backup", max_instances=1, coalesce=True, misfire_grace_time=3600)

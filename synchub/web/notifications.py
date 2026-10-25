@@ -1,0 +1,139 @@
+"""A person's own notification settings: the delivery methods they add (such as Pushover), a test message, and what was sent to them."""
+from flask import jsonify, render_template, request
+
+from synchub import access, db
+from synchub.notifications import dispatch, providers, store
+from synchub.notifications.providers.base import BAD_SETUP, QUOTA, RETRY, ProviderError
+from synchub.notifications.throttle import Throttle
+from synchub.web import current_profile
+
+CHECKS = Throttle(limit=6, per_seconds=60)      # asking Pushover about a key, and adding one (which asks again)
+TESTS = Throttle(limit=5, per_seconds=60)
+SERVICE_STATUS = {RETRY: 502, QUOTA: 502, BAD_SETUP: 503}
+
+
+def _fail(message, status=400):
+    response = jsonify(ok=False, message=message)
+    response.status_code = status
+    return response
+
+
+def _person(conn):
+    """(the profile using this request, None), or (None, why they cannot manage notifications).
+
+    Anyone on the network can choose a profile that has no PIN, and notification settings decide where a person's messages go; so once any profile
+    has a PIN, a profile without one is not allowed to change them (until then nothing is restricted, as everywhere else in SyncHub)."""
+    profile = current_profile(conn)
+    if profile is None:
+        return None, "Choose your profile first (the link at the top right). Notifications belong to a profile."
+    has_pin = conn.execute("SELECT pin_hash IS NOT NULL FROM profile WHERE id = ?", (profile["id"],)).fetchone()[0]
+    if access.locked_down(conn) and not has_pin:
+        return None, "This profile has no PIN, and anyone on the network can choose a profile without one. Ask whoever manages People to give it a PIN before it sets up notifications."
+    return profile, None
+
+
+def _forms():
+    """What the Add form is built from: each method a person may add, with the fields it needs."""
+    return [{"key": p.key, "label": p.label, "fields": [{"name": f.name, "label": f.label, "secret": f.secret, "required": f.required, "help": f.help} for f in p.fields]}
+            for p in providers.for_people()]
+
+
+def _provider_and_config(data):
+    """The provider and its cleaned config from a request body, or a ProviderError saying what is wrong with what was typed."""
+    provider = providers.get(str(data.get("provider") or ""))
+    if provider.scope != "user":
+        raise ProviderError("That delivery method is not available.")
+    config = data.get("config")
+    config = {k: v for k, v in config.items() if isinstance(k, str) and isinstance(v, (str, int))} if isinstance(config, dict) else {}
+    return provider, provider.validate(config)
+
+
+def register(app):
+    @app.route("/notifications")
+    def notifications_page():
+        with db.connection() as conn:
+            profile, problem = _person(conn)
+            channels = store.list_channels(conn, profile["id"]) if profile else []
+            history = store.history(conn, profile["id"]) if profile else []
+        return render_template("notifications.html", profile=profile, problem=problem, channels=channels, history=history, forms=_forms(), state=dispatch.state())
+
+    @app.route("/api/notifications/verify", methods=["POST"])
+    def api_notifications_verify():
+        """Checks a key with the service and lists the choices it offers (such as the person's devices). Saves nothing."""
+        with db.connection() as conn:
+            profile, problem = _person(conn)
+        if problem:
+            return _fail(problem, 403)
+        try:
+            provider, config = _provider_and_config(request.get_json(silent=True) or {})
+        except ProviderError as exc:
+            return _fail(str(exc))
+        if not CHECKS.allow(profile["id"]):
+            return _fail("That is a lot of checks. Wait a minute and try again.", 429)
+        result = provider.check(config)
+        if not result.ok:
+            return _fail(result.detail, SERVICE_STATUS.get(result.outcome, 400))
+        return jsonify(ok=True, message="That works.", choices=provider.choices(result))
+
+    @app.route("/api/notifications/channels", methods=["POST"])
+    def api_notifications_add():
+        """Adds a delivery method for the person using this request. It is checked with the service again here: the browser's earlier check is not trusted."""
+        with db.connection() as conn:
+            profile, problem = _person(conn)
+        if problem:
+            return _fail(problem, 403)
+        data = request.get_json(silent=True) or {}
+        try:
+            provider, config = _provider_and_config(data)
+        except ProviderError as exc:
+            return _fail(str(exc))
+        if not CHECKS.allow(profile["id"]):
+            return _fail("That is a lot of checks. Wait a minute and try again.", 429)
+        result = provider.check(config)
+        if not result.ok:
+            return _fail(result.detail, SERVICE_STATUS.get(result.outcome, 400))
+        try:
+            with db.connection() as conn:
+                channel_id = store.add_channel(conn, profile["id"], provider.key, data.get("label"), config)
+        except ProviderError as exc:
+            return _fail(str(exc))
+        return jsonify(ok=True, message="Added. Send a test to see it arrive.", id=channel_id)
+
+    def _owned(action):
+        """Runs action(conn, profile) for the person using this request; their own channels only."""
+        with db.connection() as conn:
+            profile, problem = _person(conn)
+            if problem:
+                return _fail(problem, 403)
+            return action(conn, profile)
+
+    @app.route("/api/notifications/channels/<int:channel_id>/test", methods=["POST"])
+    def api_notifications_test(channel_id):
+        with db.connection() as conn:
+            profile, problem = _person(conn)
+        if problem:
+            return _fail(problem, 403)
+        if not TESTS.allow(profile["id"]):
+            return _fail("That is a lot of tests. Wait a minute and try again.", 429)
+        try:
+            got = dispatch.send_test(profile["id"], channel_id)
+        except LookupError as exc:
+            return _fail(str(exc), 404)
+        return jsonify(ok=got["ok"], message=got["message"], status=got["status"])
+
+    @app.route("/api/notifications/channels/<int:channel_id>/enabled", methods=["POST"])
+    def api_notifications_enable(channel_id):
+        wanted = (request.get_json(silent=True) or {}).get("enabled")
+        if not isinstance(wanted, bool):
+            return _fail("Say whether it should be on or off.")
+        return _owned(lambda conn, profile: jsonify(ok=True, message="Switched on." if wanted else "Switched off.") if store.set_enabled(conn, channel_id, profile["id"], wanted)
+                      else _fail("That delivery method no longer exists.", 404))
+
+    @app.route("/api/notifications/channels/<int:channel_id>/delete", methods=["POST"])
+    def api_notifications_delete(channel_id):
+        return _owned(lambda conn, profile: jsonify(ok=True, message="Removed.") if store.delete_channel(conn, channel_id, profile["id"])
+                      else _fail("That delivery method no longer exists.", 404))
+
+    @app.route("/api/notifications/history")
+    def api_notifications_history():
+        return _owned(lambda conn, profile: jsonify(ok=True, history=store.history(conn, profile["id"])))

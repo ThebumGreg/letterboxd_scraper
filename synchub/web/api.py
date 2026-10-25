@@ -439,12 +439,24 @@ def register(app):
                 except RequestError as exc:
                     return jsonify(ok=False, message=f"{hello}, but adding titles would fail: {exc}")
                 return jsonify(ok=True, message=f"{hello}. The quality profile and root folder are valid.")
+            if service == "pushover":
+                from synchub.notifications import dispatch
+                from synchub.notifications.providers import pushover
+                token = typed("pushover_app_token") or pushover.app_token()
+                in_use = token == pushover.app_token()               # a token only being tried says nothing about the one in use
+                result = pushover.check_token(token, remember_quota=in_use)
+                if not result.ok:
+                    return jsonify(ok=False, message=result.detail)
+                if in_use:
+                    dispatch.clear_pause("pushover")                # the token in use works: any hold put on by an earlier failure can end
+                left = result.data
+                return jsonify(ok=True, message=f"Pushover accepts that token. {left['remaining']} of {left['limit']} messages are left this month." if left["limit"] is not None and left["remaining"] is not None
+                               else "Pushover accepts that token.")
             if service == "notifications":
-                from synchub import notify
-                if not notify.urls():
-                    return jsonify(ok=False, message="No Apprise URLs set.")
-                sent = notify.send("SyncHub Test", "Test notification from SyncHub.", force=True)
-                return jsonify(ok=sent, message="Notification sent." if sent else "Sending failed.")
+                from synchub.notifications import providers
+                from synchub.notifications.providers.base import Message
+                result = providers.get("apprise").send({"urls": typed("apprise_urls") or settings.get("apprise_urls")}, Message("SyncHub Test", "Test notification from SyncHub."))
+                return jsonify(ok=result.ok, message="Notification sent." if result.ok else result.detail)
         except ConfigError as exc:
             return jsonify(ok=False, message=str(exc))
         except ApiError as exc:

@@ -8,6 +8,7 @@ from config import BASE_DIR
 from synchub import backup, catalog, db, ddns, posters, profiles, ratings, search, settings, states, tasks, webhooks
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.tmdb import TmdbClient
+from synchub.notifications import dispatch
 from synchub.web import current_limit, title_allowed
 
 logger = logging.getLogger(__name__)
@@ -158,7 +159,7 @@ def register(app):
         values = {**settings.DEFAULTS, **settings.get_all()}
         in_docker = os.getenv("SYNCHUB_IN_DOCKER") == "1"
         return render_template("settings.html", settings=values, profiles=profile_list, webhook_status=webhooks.status_for_all(), suggested_synchub_url=request.host_url.rstrip("/"),
-                               local_addresses=backup.addresses_on_this_machine(values) if in_docker else [], last_backup=backup.latest())
+                               local_addresses=backup.addresses_on_this_machine(values) if in_docker else [], last_backup=backup.latest(), notify=dispatch.state())
 
     @app.route("/payloads")
     def payloads_page():
