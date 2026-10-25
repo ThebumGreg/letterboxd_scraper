@@ -100,6 +100,30 @@
     </div>
 </div>
 
+<!-- A worker's own log, fetched on request for troubleshooting -->
+<div class="modal fade" id="workerLogModal" tabindex="-1" aria-labelledby="workerLogTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title" id="workerLogTitle">Worker log</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+            <div class="modal-body">
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                    <button type="button" class="btn btn-sm btn-info" id="wlRefresh"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i> Get the latest</button>
+                    <label class="visually-hidden" for="wlLevel">Show</label>
+                    <select class="form-select form-select-sm w-auto" id="wlLevel">
+                        <option value="0">Everything</option><option value="1">Info and above</option><option value="2">Warnings and errors</option><option value="3">Errors only</option>
+                    </select>
+                    <label class="visually-hidden" for="wlSearch">Search</label>
+                    <input type="search" class="form-control form-control-sm w-auto" id="wlSearch" placeholder="Search the log" autocomplete="off">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="wlCopy">Copy</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="wlDownload">Download</button>
+                </div>
+                <div class="small text-body-secondary mb-2" id="wlStatus" role="status"></div>
+                <pre class="p-2 rounded border mb-0" id="wlText" style="white-space: pre-wrap; word-break: break-word; height: 55vh; overflow: auto;"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Job details -->
 <div class="modal fade" id="jobModal" tabindex="-1" aria-labelledby="jobModalTitle" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
@@ -135,8 +159,8 @@
     }
     setInterval(refresh, 5000);
 
-    // Workers and Jobs are two tabs of one live fragment, so the open tab is remembered here (and in the address) across the refreshes.
-    let pane = location.hash === '#jobs' ? 'jobs' : 'workers';
+    // Workers, Jobs and Worker Status are tabs of one live fragment, so the open tab is remembered here (and in the address) across the refreshes.
+    let pane = ['jobs', 'status'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'workers';
     function showPane() {
         fleet.querySelectorAll('[data-fleet-pane]').forEach((el) => { el.hidden = el.dataset.fleetPane !== pane; });
         fleet.querySelectorAll('#fleetTabs [data-pane]').forEach((tab) => {
@@ -156,6 +180,7 @@
 
     // Setup files. Right after a token is made they hold it; nothing keeps them once the dialog closes.
     const NOTES = {
+        'setup-worker.sh': 'Run these on the worker PC. The script does everything on the other tabs for you; those files are here to read, or to set up by hand.',
         '.env': 'Save as .env next to docker-compose.yml (then chmod 600 .env) and fill in the Unraid user and password for the shares.',
         'docker-compose.yml': 'Save next to .env and the agent folder from the SyncHub repository, then run: docker compose up -d --build',
         'synchub-agent.ini': 'Only for a worker that runs without Docker: python3 synchub_agent.py --config synchub-agent.ini',
@@ -210,6 +235,91 @@
         catch (e) { document.getElementById('copyResult').textContent = 'Select the text and copy it.'; }
     });
 
+
+    // A worker's own log. Asking makes the worker upload the tail of its log with its next poll (a few seconds).
+    const wl = { id: null, name: '', raw: null, received: null, timer: null, asking: false };
+    const wlEl = (id) => document.getElementById(id);
+    const wlStop = () => { clearInterval(wl.timer); wl.timer = null; wl.asking = false; wlEl('wlRefresh').classList.remove('disabled'); wlEl('wlRefresh').setAttribute('aria-disabled', 'false'); };
+    const LEVELS = { DEBUG: 0, INFO: 1, WARNING: 2, ERROR: 3, CRITICAL: 3 };
+    function wlLine(line) {            // the agent writes one JSON object per line; anything else is shown as it is
+        try {
+            const o = JSON.parse(line);
+            if (o && typeof o === 'object' && o.msg !== undefined) {
+                const { ts, level, msg, error, ...rest } = o;
+                const extra = Object.entries(rest).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' ');
+                return { level: LEVELS[String(level).toUpperCase()] ?? 1, text: `${ts || ''} ${String(level || '').padEnd(7)} ${msg}${extra ? '  ' + extra : ''}${error ? '\n' + error : ''}` };
+            }
+        } catch (e) { /* not JSON */ }
+        return { level: null, text: line };
+    }
+    function wlPaint() {
+        const pre = wlEl('wlText');
+        if (wl.raw === null) { pre.textContent = ''; return; }
+        const min = Number(wlEl('wlLevel').value), needle = wlEl('wlSearch').value.trim().toLowerCase();
+        const all = wl.raw.split('\n').filter((l) => l.trim() !== '').map(wlLine);
+        const shown = all.filter((l) => (l.level === null ? min === 0 : l.level >= min) && (!needle || l.text.toLowerCase().includes(needle)));
+        pre.textContent = shown.length ? shown.map((l) => l.text).join('\n') : (all.length ? 'No line matches.' : '(the log is empty)');
+        pre.scrollTop = pre.scrollHeight;
+        wlEl('wlStatus').dataset.count = `${shown.length} of ${all.length} lines`;
+        wlStatusText();
+    }
+    // The status line has three parts: where the log on screen came from, what the page is waiting for, and how many lines are shown.
+    function wlStatusText(shown, ask) {
+        const el = wlEl('wlStatus');
+        if (shown !== undefined) el.dataset.shown = shown;
+        if (ask !== undefined) el.dataset.ask = ask;
+        el.textContent = [el.dataset.shown, el.dataset.ask, el.dataset.count].filter(Boolean).join(' \u00b7 ');
+    }
+    async function wlLook(waiting) {
+        const data = await (await fetch(`/api/workers/${wl.id}/log`)).json();
+        if (!data.ok) { wlStatusText('', data.message || 'Could not read the log.'); wlStop(); return; }
+        const fresh = data.log && data.log.received_at !== wl.received;
+        if (data.log && (!waiting || fresh)) {
+            wl.raw = data.log.content; wl.received = data.log.received_at;
+            wlStatusText(`From ${data.name}, ${data.log.received}${data.log.truncated ? ' (the oldest lines were left out)' : ''}`, waiting ? '' : undefined);
+            wlPaint();
+            if (waiting) wlStop();
+        } else if (waiting) {
+            wlStatusText(undefined, data.online ? `waiting for ${data.name} to answer...` : `${data.name} is offline: a fresh log arrives when it is back`);
+        }
+        return data;
+    }
+    async function wlAsk() {
+        if (wl.asking) return;
+        wl.asking = true; wlEl('wlRefresh').classList.add('disabled'); wlEl('wlRefresh').setAttribute('aria-disabled', 'true');
+        const data = await post(`/api/workers/${wl.id}/log`);
+        if (!data.ok) { wlStatusText('', data.message || 'Failed.'); wlStop(); return; }
+        wlStatusText(undefined, wl.raw === null ? data.message : 'asked the worker for a fresh one');
+        clearInterval(wl.timer);
+        let tries = 0;
+        wl.timer = setInterval(() => {
+            if (++tries > 40) { wlStop(); wlStatusText(undefined, 'the worker has not answered. If its agent is older than 0.4.0 it cannot send its log: update it (sudo ./agent/setup-worker.sh)'); return; }
+            wlLook(true);
+        }, 2000);
+    }
+    async function openWorkerLog(id, name) {
+        Object.assign(wl, { id, name, raw: null, received: null });
+        wlEl('workerLogTitle').textContent = `Log of ${name}`;
+        wlEl('wlSearch').value = ''; Object.assign(wlEl('wlStatus').dataset, { count: '', shown: '', ask: '' });
+        wlPaint(); wlStatusText('', '');
+        modal('workerLogModal').show();
+        await wlLook(false);          // the last log it sent, if any, while a fresh one is on its way
+        wlAsk();
+    }
+    wlEl('wlRefresh').addEventListener('click', wlAsk);
+    wlEl('wlLevel').addEventListener('change', wlPaint);
+    wlEl('wlSearch').addEventListener('input', wlPaint);
+    wlEl('wlCopy').addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(wlEl('wlText').textContent); wlStatusText(undefined, 'copied what is shown'); } catch (e) { wlStatusText(undefined, 'select the text and copy it'); }
+    });
+    wlEl('wlDownload').addEventListener('click', () => {
+        if (wl.raw === null) return;
+        const url = URL.createObjectURL(new Blob([wl.raw], { type: 'text/plain' }));
+        const a = Object.assign(document.createElement('a'), { href: url, download: `synchub-worker-${wl.name.replace(/[^A-Za-z0-9._-]+/g, '_')}.jsonl` });
+        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    });
+    wlEl('workerLogModal').addEventListener('hidden.bs.modal', () => { wlStop(); wl.raw = null; wlEl('wlText').textContent = ''; });
+
     // Add or edit a worker
     let editing = null;
     const form = document.getElementById('workerForm');
@@ -259,6 +369,9 @@
     document.addEventListener('click', async (e) => {
         const edit = e.target.closest('[data-edit-worker]');
         if (edit) { editing = edit.dataset.editWorker; openForm('Edit worker', { name: edit.dataset.name, tags: edit.dataset.tags, slots: edit.dataset.slots }); return; }
+
+        const logs = e.target.closest('[data-worker-logs]');
+        if (logs) { openWorkerLog(logs.dataset.workerLogs, logs.dataset.name); return; }
 
         const files = e.target.closest('[data-setup-worker]');
         if (files) {

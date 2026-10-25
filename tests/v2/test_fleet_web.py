@@ -227,3 +227,149 @@ def test_the_json_listing_has_workers_jobs_and_counts(client, v2):
     data = client.get("/api/workers").get_json()
     assert data["ok"] and [w["name"] for w in data["workers"]] == ["encoder-1"] and data["counts"] == {"queued": 1} and len(data["jobs"]) == 1
     assert data["workers"][0]["token_hash"] is True and "capabilities" in data["workers"][0]
+
+
+# ---------------------------------------------------------------- the worker's own log
+def test_the_workers_page_has_a_logs_button_and_a_viewer(client, v2):
+    worker_id, _ = make_worker(v2)
+    page = client.get("/workers").get_data(as_text=True)
+    assert f'data-worker-logs="{worker_id}"' in row_for(page, worker_id) and 'id="workerLogModal"' in page and 'id="wlRefresh"' in page
+    with v2.connection() as conn:
+        workers.revoke(conn, worker_id)
+    assert "data-worker-logs" not in row_for(client.get("/workers").get_data(as_text=True), worker_id)              # a revoked worker cannot answer
+
+
+def test_asking_for_the_log_marks_the_request_and_says_whether_the_worker_is_there(client, v2):
+    worker_id, _ = make_worker(v2)
+    before = client.get(f"/api/workers/{worker_id}/log").get_json()
+    assert before["ok"] and before["log"] is None and not before["pending"] and before["name"] == "encoder-1" and not before["online"]
+    offline = client.post(f"/api/workers/{worker_id}/log", json={}).get_json()
+    assert offline["ok"] and not offline["online"] and "offline" in offline["message"]
+    assert client.get(f"/api/workers/{worker_id}/log").get_json()["pending"]
+    with v2.connection() as conn:
+        workers.touch(conn, worker_id, {})
+    online = client.post(f"/api/workers/{worker_id}/log", json={}).get_json()
+    assert online["online"] and online["message"] == "Asked the worker for its log."
+
+
+def test_the_uploaded_log_is_shown_with_its_age_and_closes_the_request(client, v2):
+    worker_id, _ = make_worker(v2)
+    with v2.connection() as conn:
+        workers.request_log(conn, worker_id)
+        workers.store_log(conn, worker_id, '{"msg": "<b>hello</b>"}\n', truncated=True)
+    data = client.get(f"/api/workers/{worker_id}/log").get_json()
+    assert not data["pending"] and data["log"]["content"] == '{"msg": "<b>hello</b>"}\n' and data["log"]["truncated"] == 1 and data["log"]["received"]
+
+
+def test_only_the_latest_log_is_kept_and_it_goes_with_the_worker(client, v2):
+    worker_id, _ = make_worker(v2)
+    with v2.connection() as conn:
+        workers.store_log(conn, worker_id, "first")
+        workers.store_log(conn, worker_id, "second")
+        assert conn.execute("SELECT COUNT(*) FROM worker_log").fetchone()[0] == 1 and workers.stored_log(conn, worker_id)["content"] == "second"
+        workers.delete(conn, worker_id)
+        assert conn.execute("SELECT COUNT(*) FROM worker_log").fetchone()[0] == 0
+
+
+def test_a_huge_log_is_cut_to_its_end(v2):
+    worker_id, _ = make_worker(v2)
+    with v2.connection() as conn:
+        workers.store_log(conn, worker_id, "x" * (workers.MAX_LOG_CHARS + 500) + "END")
+        stored = workers.stored_log(conn, worker_id)
+    assert stored["truncated"] == 1 and stored["content"].startswith("[earlier lines left out]") and stored["content"].endswith("END") and len(stored["content"]) < workers.MAX_LOG_CHARS + 100
+
+
+def test_a_log_cannot_be_asked_of_a_missing_or_revoked_worker(client, v2):
+    assert client.post("/api/workers/99/log", json={}).status_code == 400 and client.get("/api/workers/99/log").status_code == 404
+    worker_id, _ = make_worker(v2)
+    with v2.connection() as conn:
+        workers.revoke(conn, worker_id)
+    r = client.post(f"/api/workers/{worker_id}/log", json={})
+    assert r.status_code == 400 and "revoked" in r.get_json()["message"]
+
+
+# ---------------------------------------------------------------- the Worker Status tab
+HOST = {"arch": "x86_64", "kernel": "6.8.0-45-generic", "container": "docker", "memory_bytes": 32 * 1024 ** 3, "render_devices": ["renderD128"],
+        "cpu": {"model": "Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz", "threads": 12, "cores": 6, "mhz": 4300, "flags": ["avx2", "aes"]},
+        "gpus": [{"name": "NVIDIA GeForce GTX 1660", "driver": "550.54", "memory_mb": 6144, "source": "nvidia-smi"}],
+        "ffmpeg": {"hwaccels": ["vaapi", "cuda"], "encoders_built": ["libx264", "libx265", "hevc_nvenc", "libaom-av1"]}}
+
+
+def status_pane(page, worker_id):
+    return re.search(r'<div class="panel[^"]*" data-status-worker="%d">.*?(?=<div class="panel[^"]*" data-status-worker=|\Z)' % worker_id, page, re.S).group(0)
+
+
+def reporting_worker(v2, name="encoder-1", host=HOST, **status):
+    worker_id, token = make_worker(v2, name)
+    with v2.connection() as conn:
+        workers.register(conn, worker_id, {"protocol": workers.PROTOCOL, "version": "0.4.0", "os": "Ubuntu 24.04", "hostname": "enc1", "slots": 2,
+                                           "capabilities": {"cores": 12, "encoders": ["libx264", "libx265"], "ffmpeg": "ffmpeg version 6.1", "ffprobe": "ffprobe version 6.1",
+                                                            "vmaf": True, "python": "3.12.3", "ops": ["copy", "scan"], "host": host}})
+        workers.touch(conn, worker_id, {"uptime_seconds": 7200, "work_free_bytes": 500 * 1024 ** 3,
+                                        "host": {"load": [0.5, 0.4, 0.3], "cpu_percent": 12.4, "mem_available_bytes": 20 * 1024 ** 3, "host_uptime_seconds": 90000}, **status})
+    return worker_id
+
+
+def test_the_status_tab_is_one_of_the_tabs_and_shows_the_hardware(client, v2):
+    worker_id = reporting_worker(v2)
+    page = client.get("/workers").get_data(as_text=True)
+    assert 'data-pane="status"' in page and "Worker Status" in page and 'data-fleet-pane="status"' in page
+    pane = status_pane(page, worker_id)
+    for text in ("Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz", "6 cores, 12 threads", "4.30 GHz", "x86_64", "12%", "0.50 0.40 0.30", ">avx2<", "32.0 GB", "(20.0 GB free)", "500.0 GB free",
+                 "1 d 1 h", "2 h 0 min", "NVIDIA GeForce GTX 1660", "6.0 GB", "driver 550.54", "renderD128", "6.8.0-45-generic", "docker container", "3.12.3", "copy, scan",
+                 "ffmpeg version 6.1", "available", "vaapi", "cuda"):
+        assert text in pane, text
+
+
+def test_each_encoder_says_whether_it_works_failed_or_was_not_tested(client, v2):
+    worker_id = reporting_worker(v2)
+    pane = status_pane(client.get("/workers").get_data(as_text=True), worker_id)
+    row = lambda name: re.search(r"<tr><td><code>%s</code>.*?</tr>" % re.escape(name), pane, re.S).group(0)
+    assert "works" in row("libx264") and "H.264" in row("libx264") and "Software (CPU)" in row("libx264")
+    assert "built in, but failed" in row("hevc_nvenc") and "NVIDIA NVENC" in row("hevc_nvenc") and "GPU" in row("hevc_nvenc")        # built into ffmpeg, but the test frame failed
+    assert "built in, not tested" in row("libaom-av1")
+    assert "<code>h264_vaapi</code>" not in pane                                                                    # not in this ffmpeg at all: not listed
+    assert pane.index("<code>libx264</code>") < pane.index("<code>hevc_nvenc</code>")                                  # working encoders first
+
+
+def test_an_older_agent_is_told_to_update_and_still_shows_its_encoders(client, v2):
+    worker_id, _ = make_worker(v2)
+    with v2.connection() as conn:
+        workers.register(conn, worker_id, {"protocol": workers.PROTOCOL, "version": "0.3.0", "slots": 1, "capabilities": {"encoders": ["libx264"]}})
+    pane = status_pane(client.get("/workers").get_data(as_text=True), worker_id)
+    assert "has not reported its hardware" in pane and "setup-worker.sh" in pane and "Encoders that work: libx264" in pane
+
+
+def test_a_worker_that_never_connected_says_so(client, v2):
+    worker_id, _ = make_worker(v2)
+    assert "has not connected yet" in status_pane(client.get("/workers").get_data(as_text=True), worker_id)
+
+
+def test_an_offline_worker_keeps_its_last_known_figures_marked_as_old(client, v2):
+    worker_id = reporting_worker(v2)
+    with v2.connection() as conn:
+        conn.execute("UPDATE worker SET last_seen = '2020-01-01 00:00:00' WHERE id = ?", (worker_id,))
+    pane = status_pane(client.get("/workers").get_data(as_text=True), worker_id)
+    assert "Offline" in pane and "the figures below are from then" in pane and "Intel(R) Core" in pane and "opacity-75" in pane
+
+
+def test_host_text_from_a_worker_is_escaped(client, v2):
+    host = {**HOST, "cpu": {**HOST["cpu"], "model": "<script>alert(1)</script>"}, "gpus": [{"name": "<img src=x onerror=alert(1)>"}]}
+    worker_id = reporting_worker(v2, host=host)
+    page = client.get("/workers").get_data(as_text=True)
+    assert "<script>alert(1)</script>" not in page and "&lt;script&gt;alert(1)&lt;/script&gt;" in page and "<img src=x" not in page
+
+
+def test_nonsense_in_the_report_does_not_break_the_page(client, v2):
+    host = {"cpu": "fast", "gpus": "none", "ffmpeg": [1, 2], "memory_bytes": "lots", "render_devices": 3}
+    worker_id = reporting_worker(v2, host=host)
+    r = client.get("/workers")
+    assert r.status_code == 200 and f'data-status-worker="{worker_id}"' in r.get_data(as_text=True)
+    api = client.get("/api/workers").get_json()
+    assert api["ok"] and api["workers"][0]["host"]["known"]
+
+
+def test_a_gpu_free_container_explains_why_no_card_is_shown(client, v2):
+    worker_id = reporting_worker(v2, host={**HOST, "gpus": [], "render_devices": []})
+    pane = status_pane(client.get("/workers").get_data(as_text=True), worker_id)
+    assert "No graphics card is visible to the agent" in pane and "docker container" in pane

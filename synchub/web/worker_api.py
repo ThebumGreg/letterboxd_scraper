@@ -1,4 +1,4 @@
-"""The worker API: what an agent on a worker PC calls (register, poll, progress, complete, fail, needs_review).
+"""The worker API: what an agent on a worker PC calls (register, poll, progress, complete, fail, needs_review, log, setup).
 
 Every call carries the worker's token (Authorization: Bearer ...). This is separate from the web pages: it is not behind the
 profile chooser, has no CSRF token and answers in JSON. A 409 means "that job is no longer yours: stop working on it".
@@ -6,7 +6,7 @@ profile chooser, has no CSRF token and answers in JSON. A 409 means "that job is
 import logging
 from functools import wraps
 
-from flask import g, jsonify, request
+from flask import Response, g, jsonify, request
 
 from synchub import db, jobs, storage, workers
 from synchub.library import scan
@@ -76,6 +76,16 @@ def register(app):
         with db.connection() as conn:
             return jsonify(ok=True, name=g.worker["name"], protocol=workers.PROTOCOL, roots=storage.for_agent(conn), roots_hash=storage.roots_hash(conn))
 
+    @route("/setup/<path:filename>", "setup")
+    def setup_file(filename):
+        """One of this worker's setup files as plain text, for agent/setup-worker.sh: the same files as the Workers page's Setup dialog, but with the
+        shares mounted by the PC itself (/etc/fstab) instead of by Docker. The caller proved it holds the token, so the token is in the text."""
+        if filename not in storage.SETUP_ORDER:
+            return _error(f"There is no setup file called '{filename}'.", 404)
+        with db.connection() as conn:
+            files = storage.setup_files(g.worker["name"], request.host_url.rstrip("/"), _bearer(), storage.list_all(conn), host_mounts=request.args.get("mounts") == "host")
+        return Response(files[filename], mimetype="text/plain")
+
     @route("/poll", "poll")
     def poll():
         data = _body()
@@ -93,7 +103,7 @@ def register(app):
             for job in claimed:
                 logger.info(f"[jobs] job {job['id']} ({job['kind']}: {job['title']}) went to {worker['name']}, attempt {job['attempt']}")
             return jsonify(ok=True, jobs=claimed, resume=resume, release=release, cancel=jobs.cancels_for(conn, worker["id"]), cleanup=jobs.cleanups_for(conn, worker["id"]),
-                           log_requests=jobs.log_requests_for(conn, worker["id"]), roots_hash=storage.roots_hash(conn), paused=bool(worker["paused"]), draining=bool(worker["draining"]),
+                           log_requests=jobs.log_requests_for(conn, worker["id"]), worker_log=bool(worker["log_requested"]), roots_hash=storage.roots_hash(conn), paused=bool(worker["paused"]), draining=bool(worker["draining"]),
                            poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS)
 
     @route("/jobs/<int:job_id>/progress", "progress")
@@ -143,6 +153,15 @@ def register(app):
         data = _body()
         with db.connection() as conn:
             jobs.store_log(conn, job_id, g.worker["id"], data.get("text"), truncated=data.get("truncated") is True)
+        return jsonify(ok=True)
+
+    @route("/log", "worker_log")
+    def worker_log():
+        """The tail of the worker's own log, uploaded after the Workers page asked for it (the poll answer says worker_log: true)."""
+        data = _body()
+        with db.connection() as conn:
+            workers.store_log(conn, g.worker["id"], data.get("text"), truncated=data.get("truncated") is True)
+        logger.info(f"[workers] {g.worker['name']} uploaded its log")
         return jsonify(ok=True)
 
     # ---- scans and duplicate searches

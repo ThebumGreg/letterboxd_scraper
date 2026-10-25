@@ -93,7 +93,8 @@ def test_a_new_worker_gets_setup_files_with_its_token_and_its_shares(client, v2)
     add_shares(v2, SMB, NFS)
     data = post(client, "/api/workers", {"name": "encoder-1", "slots": 1}).get_json()
     setup = data["setup"]
-    assert setup["order"] == [".env", "docker-compose.yml", "synchub-agent.ini", "fstab"] and set(setup["order"]) == set(setup["files"])
+    assert setup["order"] == ["setup-worker.sh", ".env", "docker-compose.yml", "synchub-agent.ini", "fstab"] and set(setup["order"]) == set(setup["files"])
+    assert f"--token {data['token']}" in setup["files"]["setup-worker.sh"] and "agent/setup-worker.sh" in setup["files"]["setup-worker.sh"]
     assert setup["has_token"] and setup["shares"] == 2 and setup["url"].startswith("http://localhost")
     assert f"SYNCHUB_TOKEN={data['token']}" in setup["files"][".env"] and f"token = {data['token']}" in setup["files"]["synchub-agent.ini"]
     assert "root_media" in setup["files"]["docker-compose.yml"] and "root_tfiles" in setup["files"]["docker-compose.yml"] and data["token"] not in setup["files"]["docker-compose.yml"]

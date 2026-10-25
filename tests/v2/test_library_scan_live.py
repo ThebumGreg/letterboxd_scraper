@@ -136,8 +136,9 @@ def test_a_scan_the_agent_does_not_understand_fails_instead_of_mixing_logic_vers
 def test_an_agent_without_the_analysis_module_does_not_offer_to_scan(rig, monkeypatch):
     from .agent_module import agent
     monkeypatch.setattr(agent, "media_analysis", None)
-    rig.start()
+    instance = rig.start()
     run_id = start(rig)
+    wait(lambda: instance.registered, what="the agent to register")
     time.sleep(1.0)
     with rig.db.connection() as conn:
         from synchub import workers

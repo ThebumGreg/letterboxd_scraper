@@ -423,3 +423,57 @@ def test_a_job_naming_shares_in_its_plan_waits_for_a_worker_that_has_all_of_them
     assert fleet.poll(status={"roots": {"media": ready, "tfiles": {"ok": False, "state": "not_mounted"}}})["jobs"] == []        # it reads files on both
     assert fleet.poll(status={"roots": {"media": ready}})["jobs"] == []
     assert [j["id"] for j in fleet.poll(status={"roots": {"media": ready, "tfiles": ready}})["jobs"]] == [job_id]
+
+
+# ---------------------------------------------------------------- the worker's own log
+def test_the_poll_says_when_the_workers_page_asked_for_the_log(fleet, v2):
+    assert fleet.poll()["worker_log"] is False
+    with v2.connection() as conn:
+        workers.request_log(conn, fleet.id)
+    assert fleet.poll()["worker_log"] is True and fleet.poll()["worker_log"] is True          # asked until the log arrives
+    assert fleet.call("/log", {"text": "line one\nline two\n"}).get_json() == {"ok": True}
+    assert fleet.poll()["worker_log"] is False
+    with v2.connection() as conn:
+        assert workers.stored_log(conn, fleet.id)["content"] == "line one\nline two\n"
+
+
+def test_a_worker_can_only_upload_its_own_log_and_needs_its_token(fleet, v2):
+    assert fleet.call("/log", {"text": "x"}, headers={}).status_code == 401
+    with v2.connection() as conn:
+        other, _ = workers.create(conn, "encoder-2")
+    assert fleet.call("/log", {"text": "mine"}).status_code == 200
+    with v2.connection() as conn:
+        assert workers.stored_log(conn, fleet.id)["content"] == "mine" and workers.stored_log(conn, other) is None
+
+
+def test_a_log_with_no_text_is_stored_as_empty_and_a_truncated_flag_is_kept(fleet, v2):
+    assert fleet.call("/log", {}).status_code == 200
+    assert fleet.call("/log", {"text": "tail", "truncated": True}).status_code == 200
+    with v2.connection() as conn:
+        stored = workers.stored_log(conn, fleet.id)
+    assert stored["content"] == "tail" and stored["truncated"] == 1
+
+
+# ---------------------------------------------------------------- hardware details
+def test_registration_keeps_the_host_details_whole_and_drops_them_rather_than_cut_them(fleet, v2):
+    host = {"cpu": {"model": "x" * 100}, "gpus": [{"name": "GPU"}]}
+    info = {"protocol": workers.PROTOCOL, "version": "0.4.0", "slots": 1, "capabilities": {"encoders": ["libx264"], "host": host}}
+    assert fleet.call("/register", info).status_code == 200
+    with v2.connection() as conn:
+        assert workers.get(conn, fleet.id)["capabilities"]["host"] == host
+    info["capabilities"]["host"] = {"junk": "y" * 40000}
+    assert fleet.call("/register", info).status_code == 200
+    with v2.connection() as conn:
+        caps = workers.get(conn, fleet.id)["capabilities"]
+    assert "host" not in caps and caps["encoders"] == ["libx264"]                  # still valid JSON, and the rest survived
+
+
+# ---------------------------------------------------------------- the setup files for agent/setup-worker.sh
+def test_the_setup_endpoint_needs_the_token_and_serves_only_the_known_files(fleet):
+    assert fleet.call("/setup/.env", headers={}).status_code == 401
+    for name in (".env", "docker-compose.yml", "synchub-agent.ini", "fstab"):
+        r = fleet.call(f"/setup/{name}")
+        assert r.status_code == 200 and r.mimetype == "text/plain", name
+    assert fleet.call("/setup/secrets").status_code == 404 and fleet.call("/setup/../../etc/passwd").status_code == 404
+    env = fleet.call("/setup/.env").get_data(as_text=True)
+    assert f"SYNCHUB_TOKEN={fleet.raw_token}" in env and "SYNCHUB_NAME=encoder-1" in env

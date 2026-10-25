@@ -426,7 +426,7 @@ def test_an_outage_is_survived_and_reporting_resumes(monkeypatch):
 def test_capabilities_list_only_encoders_that_really_work(tmp_path):
     caps = agent.detect_capabilities(config(tmp_path))
     assert caps["ops"] == ["copy", "hash", "scan"] and caps["ffmpeg"].startswith("ffmpeg version") and caps["ffprobe"].startswith("ffprobe version") and caps["cores"] >= 1
-    assert set(caps["encoders"]) <= {"libx265", "libx264", "hevc_nvenc", "h264_nvenc", "hevc_qsv", "h264_qsv", "hevc_vaapi", "h264_vaapi"}
+    assert set(caps["encoders"]) <= set(agent.TESTED_ENCODERS)
     assert "libx264" in caps["encoders"] or "libx265" in caps["encoders"]
     assert not any(e.endswith(("_nvenc", "_qsv", "_vaapi")) for e in caps["encoders"])           # no GPU here: those encoders exist in ffmpeg but do not work, and are not offered
 
@@ -466,3 +466,129 @@ def test_the_default_settings_files_are_only_looked_for_in_the_real_environment(
     monkeypatch.setattr(agent, "DEFAULT_CONFIG_FILES", ("synchub-agent.ini",))
     monkeypatch.delenv("SYNCHUB_URL", raising=False)
     assert agent.Config().url == "http://from-the-file:1"
+
+
+# ---------------------------------------------------------------- the worker's own log
+def write_log(dir_, name, lines):
+    (dir_ / name).write_text("".join(f'{{"msg": "{line}"}}\n' for line in lines))
+
+
+def test_the_log_tail_joins_the_rotated_files_oldest_first(tmp_path):
+    write_log(tmp_path, "worker.jsonl.2", ["a1", "a2"])
+    write_log(tmp_path, "worker.jsonl.1", ["b1", "b2"])
+    write_log(tmp_path, "worker.jsonl", ["c1"])
+    text, cut = agent.read_log_tail(str(tmp_path))
+    assert [json.loads(line)["msg"] for line in text.splitlines()] == ["a1", "a2", "b1", "b2", "c1"] and cut is False
+
+
+def test_a_huge_log_is_cut_on_a_line_boundary_and_says_so(tmp_path):
+    write_log(tmp_path, "worker.jsonl.1", [f"old{i}" for i in range(500)])
+    write_log(tmp_path, "worker.jsonl", [f"new{i}" for i in range(500)])
+    text, cut = agent.read_log_tail(str(tmp_path), limit=4000)
+    lines = text.splitlines()
+    assert cut is True and len(text) <= 4000 and all(json.loads(line)["msg"] for line in lines)          # no half line at the start
+    assert json.loads(lines[-1])["msg"] == "new499" and not any("old" in line for line in lines)
+
+
+def test_a_missing_or_empty_log_is_an_empty_answer_not_an_error(tmp_path):
+    assert agent.read_log_tail(str(tmp_path)) == ("", False)
+    assert agent.read_log_tail(str(tmp_path / "nowhere")) == ("", False)
+
+
+def test_the_agent_sends_its_log_and_survives_a_refusal(tmp_path):
+    cfg = config(tmp_path)
+    log = logger(cfg)
+    log.info("something happened", job=7)
+    api = FakeApi()
+    instance = agent.Agent(cfg, log, api=api)
+    instance.upload_worker_log()
+    path, body = api.posts[0]
+    assert path == "/log" and '"msg": "something happened"' in body["text"] and body["truncated"] is False
+
+    def refuse(path, body):
+        raise agent.ApiError(400, "no")
+    api.behaviour = refuse
+    instance.upload_worker_log()                                                    # a refusal is logged, not raised
+    api.behaviour = lambda path, body: (_ for _ in ()).throw(agent.Unreachable("down"))
+    instance.upload_worker_log()
+
+
+# ---------------------------------------------------------------- the host (Worker Status)
+CPUINFO = """processor\t: 0
+model\t\t: 158
+model name\t: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz
+cpu MHz\t\t: 800.000
+physical id\t: 0
+core id\t\t: 0
+cpu cores\t: 6
+flags\t\t: fpu sse4_2 avx avx2 aes fma vmx
+
+processor\t: 1
+model name\t: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz
+cpu MHz\t\t: 4300.000
+physical id\t: 0
+core id\t\t: 1
+cpu cores\t: 6
+flags\t\t: fpu sse4_2 avx avx2 aes fma vmx
+"""
+
+
+def test_the_cpu_is_read_from_proc_cpuinfo(monkeypatch):
+    monkeypatch.setattr(agent, "read_file", lambda path, limit=0: CPUINFO if path == "/proc/cpuinfo" else "")
+    monkeypatch.setattr(os, "sched_getaffinity", lambda pid: set(range(12)), raising=False)
+    cpu = agent.cpu_details()
+    assert cpu["model"] == "Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz" and cpu["threads"] == 12 and cpu["cores"] == 6 and cpu["mhz"] == 4300
+    assert cpu["flags"] == ["sse4_2", "avx", "avx2", "fma", "aes"]                  # only the sets that matter for encoding, in a fixed order
+
+
+def test_a_cpu_that_cannot_be_read_gives_blanks_not_an_error(monkeypatch):
+    monkeypatch.setattr(agent, "read_file", lambda path, limit=0: "")
+    monkeypatch.setattr(agent, "run_quiet", lambda command, timeout=20: (None, ""))
+    cpu = agent.cpu_details()
+    assert cpu["cores"] is None and cpu["flags"] == [] and cpu["threads"] >= 1
+
+
+def test_memory_and_live_figures_come_from_proc(monkeypatch):
+    files = {"/proc/meminfo": "MemTotal:       16384000 kB\nMemAvailable:    8192000 kB\n", "/proc/uptime": "3600.55 7000.1\n",
+             "/proc/stat": "cpu  100 0 100 700 100 0 0 0 0 0\n"}
+    monkeypatch.setattr(agent, "read_file", lambda path, limit=0: files.get(path, ""))
+    assert agent.memory_bytes() == 16384000 * 1024
+    stats, sample = agent.live_host_stats(None)
+    assert stats["mem_available_bytes"] == 8192000 * 1024 and stats["host_uptime_seconds"] == 3600 and "cpu_percent" not in stats and sample == (1000, 800)
+    files["/proc/stat"] = "cpu  300 0 200 800 100 0 0 0 0 0\n"                      # 400 jiffies passed, 100 of them idle
+    stats, _ = agent.live_host_stats(sample)
+    assert stats["cpu_percent"] == 75.0 and len(stats["load"]) == 3
+
+
+def test_graphics_cards_come_from_nvidia_smi_and_lspci_without_listing_an_nvidia_card_twice(monkeypatch):
+    outputs = {"nvidia-smi": (0, "NVIDIA GeForce GTX 1660, 550.54, 6144\n"),
+               "lspci": (0, '00:02.0 "VGA compatible controller" "Intel Corporation" "UHD Graphics 630" -r02 "ASUS" "x"\n'
+                            '01:00.0 "VGA compatible controller" "NVIDIA Corporation" "TU116 [GeForce GTX 1660]" -ra1 "x" "y"\n'
+                            '00:1f.3 "Audio device" "Intel Corporation" "Cannon Lake PCH cAVS" -r10 "x" "y"\n')}
+    monkeypatch.setattr(agent, "run_quiet", lambda command, timeout=20: outputs.get(command[0], (None, "")))
+    gpus = agent.gpu_details()
+    assert [(g["name"], g["source"]) for g in gpus] == [("NVIDIA GeForce GTX 1660", "nvidia-smi"), ("Intel Corporation UHD Graphics 630", "lspci")]
+    assert gpus[0]["driver"] == "550.54" and gpus[0]["memory_mb"] == 6144
+
+
+def test_host_info_never_raises(monkeypatch):
+    monkeypatch.setattr(agent, "cpu_details", lambda: 1 / 0)
+    assert agent.host_info() == {}
+
+
+def test_capabilities_carry_the_host_and_what_ffmpeg_has_built_in(tmp_path):
+    caps = agent.detect_capabilities(config(tmp_path, SYNCHUB_FFMPEG="/nonexistent/ffmpeg", SYNCHUB_FFPROBE="/nonexistent/ffprobe"))
+    assert caps["host"]["cpu"]["threads"] >= 1 and "ffmpeg" not in caps["host"]
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg is not installed")
+def test_the_encoders_built_into_ffmpeg_are_listed_apart_from_the_ones_that_work(tmp_path):
+    caps = agent.detect_capabilities(config(tmp_path))
+    ffmpeg = caps["host"]["ffmpeg"]
+    assert set(caps["encoders"]) <= set(ffmpeg["encoders_built"]) and isinstance(ffmpeg["hwaccels"], list)
+
+
+def test_an_arm_board_is_named_by_its_model_line(monkeypatch):
+    monkeypatch.setattr(agent, "read_file", lambda path, limit=0: "processor\t: 0\nFeatures\t: fp asimd evtstrm aes crc32\nHardware\t: BCM2835\nModel\t\t: Raspberry Pi 4 Model B Rev 1.4\n" if path == "/proc/cpuinfo" else "")
+    cpu = agent.cpu_details()
+    assert cpu["model"] == "BCM2835" and cpu["flags"] == ["aes", "asimd"] and cpu["cores"] is None

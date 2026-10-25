@@ -527,3 +527,39 @@ def test_leftover_folders_for_finished_jobs_are_released_but_kept_ones_stay(rig)
     (ghost / "manifest.json").write_text(json.dumps({"version": 1, "job_id": 999, "stages": {}, "state": "running"}))
     rig.start()
     wait(lambda: not ghost.exists(), what="the leftover folder to be released")
+
+
+# ---------------------------------------------------------------- the worker's own log and its hardware details
+def test_the_workers_own_log_is_uploaded_when_the_workers_page_asks(rig):
+    instance = rig.start()
+    wait(lambda: instance.registered, what="the agent to register")
+    with rig.db.connection() as conn:
+        assert workers.stored_log(conn, rig.worker_id) is None
+        workers.request_log(conn, rig.worker_id)
+    log = wait(lambda: _worker_log(rig), what="the log to arrive")
+    assert '"msg": "Registered with SyncHub as encoder-1"' in log["content"] and not log["truncated"]
+    with rig.db.connection() as conn:
+        assert not workers.get(conn, rig.worker_id)["log_requested"]                  # the request is closed
+    wait(lambda: '"msg": "Uploading the worker log as SyncHub asked"' in (rig.work / "logs" / "worker.jsonl").read_text(), what="the agent to log the upload")
+
+
+def _worker_log(rig):
+    with rig.db.connection() as conn:
+        return workers.stored_log(conn, rig.worker_id)
+
+
+def test_the_hardware_and_live_figures_reach_synchub_and_the_status_tab(rig, client):
+    instance = rig.start()
+    wait(lambda: instance.registered and _status_has_host(rig), what="a poll with the host figures")
+    with rig.db.connection() as conn:
+        worker = workers.get(conn, rig.worker_id)
+    host = worker["capabilities"]["host"]
+    assert host["cpu"]["threads"] >= 1 and host["arch"] and "gpus" in host
+    assert isinstance(worker["status"]["host"], dict)                       # the live figures (load, memory...) ride along with every poll
+    page = client.get("/workers/fragment").get_data(as_text=True)
+    assert 'data-fleet-pane="status"' in page and f'data-status-worker="{rig.worker_id}"' in page and "Processor" in page and "Encoding" in page
+
+
+def _status_has_host(rig):
+    with rig.db.connection() as conn:
+        return workers.get(conn, rig.worker_id)["status"].get("host") is not None

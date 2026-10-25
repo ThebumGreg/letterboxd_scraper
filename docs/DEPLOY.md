@@ -17,6 +17,8 @@
 
 Checked on a real Docker engine with the real Dockerfiles (earlier releases, and again for V1.1 apart from the image build, see below): the app starts as an unprivileged user from an empty, root-owned data folder and reports healthy; an older database was snapshotted, checked, moved in and upgraded with its data intact and a safety copy kept; the worker image talks to the app container, refuses unmarked shares, writes markers, goes online with both shares ready and completes a copy job whose hash matches; both containers survive restarts of the other and stop cleanly; every page and button works in a real browser with CSRF protection on.
 
+`agent/setup-worker.sh` was run for real against a running SyncHub, a real git repository and real files, with stand-ins for `apt-get`, `docker`, `mount` and `systemctl` (the tests in `tests/v2/test_setup_script.py`), and once in `--mode native` as root on a Linux machine (system user, files, service file, the agent's `--check`). **Not checked**: installing Docker with `apt` on a fresh Ubuntu, mounting your real Unraid shares through `/etc/fstab`, and the container build and start on that PC.
+
 **Not checked** (it needs your machines or the internet): the publishing workflow and the image build on GitHub (the build needs the internet; GitHub's first run is the test, and the same build runs on every pull request); pulling the image and the Unraid web UI route on Unraid itself; mounting your Unraid shares through Docker's SMB driver; `adb` inside the image talking to a real Google TV; ffmpeg inside the worker image; talking to your real Jellyfin, Radarr and Sonarr. The guide says where to look if one of these misbehaves.
 
 ---
@@ -151,7 +153,22 @@ Then **Library → Settings → Bring everything into** `media` (your clean-up d
 
 ## 5. Set up a worker (Ubuntu)
 
-On the worker PC:
+### With the setup script (recommended)
+
+In SyncHub: **Workers → Add worker**, name it (for example `encoder-1`) and copy the token (shown **once**). Then on the worker PC (Ubuntu or Debian):
+
+```bash
+git clone https://github.com/ThebumGreg/letterboxd_scraper.git && cd letterboxd_scraper
+sudo ./agent/setup-worker.sh --url http://UNRAID_IP:5001 --token sw_...
+```
+
+(The dialog's first tab, `setup-worker.sh`, holds this command with your token in it. For a private repository: `export GITHUB_TOKEN=...` with read access to *Contents*, and `sudo -E`.) The script installs Docker and the mount tools, asks SyncHub for this worker's settings and shares, pulls the latest code, adds the shares to `/etc/fstab` (one marked block, with a backup), keeps the Unraid user and password in `/etc/synchub-smb.cred` (mode 600), mounts the shares, writes `.env`, builds and starts the worker, marks the shares and runs `--check`. It asks for the Unraid user and password if you did not pass `--smb-user` and `--smb-password`. The **Workers** page then shows the worker **online** with each share **ready**; press **Test copy** with a small file to prove the path end to end.
+
+To update the worker later, run the same command again (it needs no arguments: the address and token are read from the `.env` it wrote; it pulls the newest code and refreshes the settings from SyncHub). `--dry-run` shows what it would do first; `--help` lists the options, including `--mode native` for a PC without Docker. The full list of what it does and does not touch is in `agent/README.md`.
+
+### By hand
+
+The same thing, step by step. On the worker PC:
 
 ```bash
 sudo apt update
@@ -199,7 +216,7 @@ docker rm -f synchub        # the data is in /data, not in the container
 # run the same `docker run ...` command from section 3 again
 ```
 
-A database from an older version is upgraded on start, and a copy of it as it was is saved first (`/data/backups/premigrate-v<N>-....db`). The version is shown at the bottom of every page. Update the workers by copying the new `agent/` folder from the repository (or `git pull`), then `docker compose up -d --build` (running jobs resume). The workers are built from the `agent/` folder; only the app image is published.
+A database from an older version is upgraded on start, and a copy of it as it was is saved first (`/data/backups/premigrate-v<N>-....db`). The version is shown at the bottom of every page. Update a worker by running `sudo ./agent/setup-worker.sh` again (section 5), or by hand: copy the new `agent/` folder from the repository (or `git pull`), then `docker compose up -d --build` (running jobs resume). The workers are built from the `agent/` folder; only the app image is published.
 
 **Backups.** Every night at 03:30 SyncHub saves a consistent copy into `/data/backups/` and keeps the newest 7 (Settings → Automation → *Database backups*; Tools has *Back up now*). Each copy comes with a `.tv.zip` beside it holding the TV pages' settings (TVs, app choices, Google TV pairing); `restore` puts both back. These files contain your API keys and the Google TV pairing key: keep them as private as the database. For a copy outside Unraid: `docker exec synchub python -m synchub.backup create /data/backups/manual.db`, then copy that file off.
 
@@ -214,7 +231,7 @@ docker start synchub
 
 The database that was there is kept beside it as `synchub.db.before-restore-<time>`. A copy from a *newer* SyncHub than the one running is refused.
 
-**Look at things.** `docker logs synchub` (start-up), the **Logs** page and `/data/logs/app.log` (everything, rotated), **Tools & Operations** and **System → Monitor → What it's doing now** (`/activity`) when a task looks stuck. On a worker: `docker compose logs -f`, and the **Fetch full log** button on a job in SyncHub.
+**Look at things.** `docker logs synchub` (start-up), the **Logs** page and `/data/logs/app.log` (everything, rotated), **Tools & Operations** and **System → Monitor → What it's doing now** (`/activity`) when a task looks stuck. For a worker: the **Logs** button on the Workers page fetches the worker's own log into SyncHub (filter, search, download), **Worker Status** shows its CPU, memory, graphics card and which encoders work, and a job's **Fetch full log** button gets that job's log; on the PC itself, `docker compose logs -f`.
 
 **Move to another server later:** the same three commands: `backup create`, `backup check`, copy, start.
 
@@ -229,6 +246,10 @@ The database that was there is kept beside it as `synchub.db.before-restore-<tim
 | Banner "These addresses will not work from inside Docker" | A service address says `localhost`/`127.0.0.1`: use the real IP (Settings). |
 | Radarr/Sonarr/Jellyfin webhook says it cannot reach SyncHub | The *SyncHub address* is wrong for where that service runs: use `http://UNRAID_IP:5001`, not `localhost`. |
 | A page answers "This is not open to ..." | Permissions (System → People). Lost PINs: `docker exec synchub python -m synchub.access reset-all`. |
+| `setup-worker.sh` says "SyncHub does not accept this token" or "Cannot reach SyncHub" | The token was replaced (Workers page, More, *New token*), or the address is wrong or blocked: `curl http://UNRAID_IP:5001/healthz` from the worker PC should answer. Nothing on the PC was changed. |
+| `setup-worker.sh` ends with "needs your attention" (exit 3) | A line marked `WARNING` says what: a share that would not mount (the reason from `mount` is printed), an `/etc/fstab` line of yours for the same folder, a checkout with local changes. Fix it and run the script again. |
+| **Logs** says the worker has not answered | The worker is offline, or its agent is older than 0.4.0 (it cannot send its log): run the setup script again on it. |
+| Worker Status says "has not reported its hardware" | The same: an agent older than 0.4.0. |
 | Worker will not mount a share | `cifs-utils` missing on the PC; wrong IP, share name, user or password in `.env`; for SMB try `vers=3.1.1` or `vers=2.1` in the share's options (Storage page), then regenerate the files. |
 | Worker online but a share says "no marker file" | Mounted but not set up: `docker compose run --rm worker --init-roots`. Or **not mounted** and you are looking at an empty folder: fix the mount first. |
 | Share says "wrong share" | The mounts are mixed up (`Media` mounted where `TFiles` belongs). |

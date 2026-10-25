@@ -200,6 +200,21 @@ def test_docker_compose_itself_accepts_the_generated_files_and_fills_in_the_logi
     assert done.returncode != 0 and "set SYNCHUB_TOKEN in .env" in done.stderr
 
 
+@pytest.mark.skipif(not _compose_available(), reason="docker compose is not installed")
+def test_docker_compose_accepts_the_host_mounted_files_and_the_shares_are_bind_mounts(tmp_path):
+    files = storage.setup_files("encoder-1", "http://192.168.1.20:5001", "sw_token", roots(SMB, NFS), host_mounts=True)
+    (tmp_path / "docker-compose.yml").write_text(files["docker-compose.yml"].replace("build: ./agent", f'build: "{tmp_path}"'))
+    (tmp_path / ".env").write_text(files[".env"])
+    done = subprocess.run(["docker", "compose", "--project-directory", str(tmp_path), "config", "--format", "json"], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    config = json.loads(done.stdout)
+    assert "volumes" not in config or not config["volumes"]                                                # Docker mounts nothing itself: the PC does
+    binds = {v["target"]: v for v in config["services"]["worker"]["volumes"] if v["type"] == "bind"}
+    for mount in ("/mnt/tower/Media", "/mnt/tower/TFiles"):
+        assert binds[mount]["source"] == mount and binds[mount]["bind"]["propagation"] == "rslave"          # a share mounted later still shows up inside
+    assert "SMB_USER" not in files[".env"] and "SMB_PASSWORD" not in files[".env"]
+
+
 def test_an_smb_share_named_by_host_name_gets_a_warning_in_the_compose_file_but_an_ip_address_does_not():
     named = storage.compose_file("w", roots({**SMB, "host": "tower"}))
     assert "use the server's IP address" in named and "addr=tower" in named
