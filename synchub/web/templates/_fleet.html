@@ -81,13 +81,13 @@
             </thead>
             <tbody>
                 {% for j in jobs %}
-                {% set color = {'running': 'primary', 'queued': 'secondary', 'needs_review': 'warning', 'done': 'success', 'failed': 'danger', 'cancelled': 'dark', 'skipped': 'dark'}.get(j.status, 'secondary') %}
+                {% set color = {'queued': 'secondary', 'needs_you': 'warning', 'completed': 'success', 'failed': 'danger', 'cancelled': 'dark'}.get(j.lifecycle.code, 'primary') %}
                 <tr data-job="{{ j.id }}">
                     <td class="ps-4">
                         <a href="#" class="fw-bold text-decoration-none" data-job-details="{{ j.id }}">#{{ j.id }} {{ j.title or j.kind }}</a>
                         <div class="small text-body-secondary">{{ j.kind }}</div>
                     </td>
-                    <td><span class="badge bg-{{ color }}{% if color == 'warning' %} text-dark{% endif %}">{{ j.status.replace('_', ' ') }}</span></td>
+                    <td><span class="badge bg-{{ color }}{% if color == 'warning' %} text-dark{% endif %}">{{ j.lifecycle.label }}</span></td>
                     <td class="small">
                         {% if j.status == 'running' %}
                         <div>{{ (j.stage or 'starting').replace('_', ' ') }}{% if j.percent is not none %} {{ j.percent }}%{% endif %}{% if j.eta %} &middot; {{ j.eta }} left{% endif %}</div>

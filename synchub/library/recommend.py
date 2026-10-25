@@ -378,7 +378,7 @@ def apply_recommendation(conn, record_id, by, name=None, keep_streams=None, note
     if r.kind == "skip_duplicate":
         store.set_approval(conn, record_id, db.APPROVAL_REJECTED, by, note="duplicate: skipped")
         return "rejected"
-    mode = mode or r.mode
+    mode = r.mode if mode is None else (None if mode == "copy" else mode)       # "copy" says: not the rename the recommendation suggested
     if mode not in (None, "rename_only"):
         raise ValueError("unknown way of handling the file")
     if mode == "rename_only":

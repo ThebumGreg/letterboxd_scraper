@@ -145,6 +145,7 @@ def describe_worker(w, root_names=()):
 
 
 def describe_job(j):
+    j["lifecycle"] = dict(zip(("code", "label"), jobs.lifecycle(j)))
     j["percent"] = None if j["progress"] is None else round(j["progress"] * 100)
     j["eta"] = None
     if j["eta_seconds"]:
