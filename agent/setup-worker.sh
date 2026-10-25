@@ -341,14 +341,16 @@ ensure_docker() {
 }
 
 write_credentials() {
-    [ "$DO_MOUNTS" = 1 ] && [ "$HAS_SMB" = 1 ] || return 0
+    if [ "$DO_MOUNTS" != 1 ] || [ "$HAS_SMB" != 1 ]; then return 0; fi
     if [ -z "$SMB_USER_VALUE" ] && [ -f "$CRED_FILE" ]; then
         say "Keeping the SMB login in $CRED_FILE (pass --smb-user and --smb-password to change it)"
         return 0
     fi
     [ -n "$SMB_USER_VALUE" ] || ask SMB_USER_VALUE "The Unraid user that may read and write the shares" || true
     [ -n "$SMB_PASSWORD_VALUE" ] || ask SMB_PASSWORD_VALUE "Its password" secret || true
-    [ -n "$SMB_USER_VALUE" ] && [ -n "$SMB_PASSWORD_VALUE" ] || die "The shares use SMB, which needs the Unraid user and password. Use --smb-user and --smb-password (or SMB_USER and SMB_PASSWORD)."
+    if [ -z "$SMB_USER_VALUE" ] || [ -z "$SMB_PASSWORD_VALUE" ]; then
+        die "The shares use SMB, which needs the Unraid user and password. Use --smb-user and --smb-password (or SMB_USER and SMB_PASSWORD)."
+    fi
     case "$SMB_USER_VALUE$SMB_PASSWORD_VALUE" in *$'\n'*) die "The user name and password cannot contain a line break." ;; esac
     if [ "$DRY_RUN" = 1 ]; then say "[dry run] would write $CRED_FILE (private, mode 600) with the SMB login"; return 0; fi
     ( umask 077; printf 'username=%s\npassword=%s\n' "$SMB_USER_VALUE" "$SMB_PASSWORD_VALUE" >"$CRED_FILE.new" )
