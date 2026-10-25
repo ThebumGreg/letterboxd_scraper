@@ -64,6 +64,10 @@ class RadarrClient(_Arr):
     def movies(self):
         return self._get("GetLibrary", "/api/v3/movie", timeout=60)
 
+    def rescan_movie(self, movie_id):
+        """Asks Radarr to look at the movie's folder again, so it notices the file was replaced."""
+        return self._send("RescanMovie", "POST", "/api/v3/command", {"name": "RescanMovie", "movieId": int(movie_id)})
+
     def lookup(self, tmdb_id):
         results = self._get("LookupMovie", "/api/v3/movie/lookup", params={"term": f"tmdb:{tmdb_id}"})
         return results[0] if results else None
@@ -83,6 +87,10 @@ class SonarrClient(_Arr):
 
     def episodes(self, series_id):
         return self._get("GetEpisodes", "/api/v3/episode", params={"seriesId": series_id}, timeout=60)
+
+    def rescan_series(self, series_id):
+        """Asks Sonarr to look at the series' folders again, so it notices the file was replaced."""
+        return self._send("RescanSeries", "POST", "/api/v3/command", {"name": "RescanSeries", "seriesId": int(series_id)})
 
     def get_series(self, sonarr_id):
         return self._get("GetSeries", f"/api/v3/series/{sonarr_id}")

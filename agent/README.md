@@ -86,7 +86,7 @@ A file in INI style (`--config`, or `./synchub-agent.ini`, or `/etc/synchub-agen
 | `[synchub] token` | `SYNCHUB_TOKEN` | required | The worker's token (shown once on the Workers page) |
 | `[synchub] name` | `SYNCHUB_NAME` | | Informational; SyncHub names a worker by its token |
 | `[synchub] use_proxy` | `SYNCHUB_USE_PROXY` | `no` | Use the system HTTP proxy to reach SyncHub (normally wrong on a LAN) |
-| `[worker] work_dir` | `SYNCHUB_WORK` | `./work` (`/work` in Docker) | Job folders, logs; use a big local disk |
+| `[worker] work_dir` | `SYNCHUB_WORK` | `./work` (`/work` in Docker) | Job folders, logs and `originals/` (files replaced in place, kept for the retention SyncHub sets); use a big local disk |
 | `[worker] slots` | `SYNCHUB_SLOTS` | `1` | Jobs at once (SyncHub's own limit for the worker also applies) |
 | `[worker] scan_threads` | `SYNCHUB_SCAN_THREADS` | `2` | Files a scan analyses at the same time (each is a short ffprobe and ffmpeg run; most of the time is the share) |
 | `[worker] scan_batch` | `SYNCHUB_SCAN_BATCH` | `25` | How many analysed files are reported to SyncHub at a time, so an interrupted scan loses at most this many |

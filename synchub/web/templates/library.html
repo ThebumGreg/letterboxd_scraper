@@ -61,6 +61,11 @@
                 </div>
                 <label for="setExclude" class="form-label small mb-1">Folders always left out</label>
                 <textarea class="form-control form-control-sm mb-2" id="setExclude" rows="4">{{ options.exclude_text }}</textarea>
+                <div class="row g-2 mb-2">
+                    <div class="col-7"><label for="setDownloads" class="form-label small mb-1">New Radarr/Sonarr downloads</label>
+                        <select class="form-select form-select-sm" id="setDownloads">{% for m, label in [('off', 'Leave alone'), ('review', 'Ask me first'), ('auto', 'Replace when safe')] %}<option value="{{ m }}"{% if m == download_summary.mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+                    <div class="col-5"><label for="setOriginals" class="form-label small mb-1">Keep originals (days)</label><input type="number" min="0" max="3650" class="form-control form-control-sm" id="setOriginals" value="{{ originals_days }}" title="0 drops the original once the replacement is verified"></div>
+                </div>
                 <button type="submit" class="btn btn-sm btn-outline-success">Save settings</button>
                 <div class="form-text">A new destination or folder name changes which files count as already in place.</div>
             </form>
@@ -104,7 +109,8 @@
     $('librarySettingsForm').addEventListener('submit', async (e) => {
         e.preventDefault();
         const data = await libraryPost('/api/library/settings', { library_destination_root: $('setDest').value, library_movie_folder: $('setMovies').value, library_tv_folder: $('setTv').value,
-            library_integrity_mode: $('setIntegrity').value, library_tail_seconds: $('setTail').value, library_exclude_folders: $('setExclude').value });
+            library_integrity_mode: $('setIntegrity').value, library_tail_seconds: $('setTail').value, library_exclude_folders: $('setExclude').value,
+            download_pipeline: $('setDownloads').value, originals_retention_days: $('setOriginals').value });
         librarySay(data.message || (data.ok ? 'Saved.' : 'Failed.'), data.ok);
         if (data.ok) setTimeout(() => location.reload(), 600);
     });
@@ -112,6 +118,13 @@
         if (e.target.closest('[data-queue-approved]')) {
             const data = await libraryPost('/api/library/queue-approved');
             librarySay(data.message || (data.ok ? 'Queued.' : 'Failed.'), data.ok);
+            refresh();
+            return;
+        }
+        const download = e.target.closest('[data-download]');
+        if (download) {
+            const data = await libraryPost(`/api/downloads/${download.dataset.id}/${download.dataset.download}`);
+            librarySay(data.message || (data.ok ? 'Done.' : 'Failed.'), data.ok);
             refresh();
             return;
         }

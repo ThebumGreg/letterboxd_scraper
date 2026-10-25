@@ -61,6 +61,9 @@ def queue(conn, record_id, cfg, by="someone"):
         return None
     if active_job(conn, record_id) is not None:
         return None
+    from synchub import downloads
+    if downloads.busy(conn, rec):                                # the download pipeline is replacing this very file in place
+        return None
     try:
         dest_root, dest_rel, plan = plan_for(rec, cfg)
     except layout.LayoutError as exc:

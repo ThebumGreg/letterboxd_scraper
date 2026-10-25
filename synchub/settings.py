@@ -20,6 +20,8 @@ DEFAULTS = {
     # the Library: the one share everything is brought into, how it is laid out, and how scans look at files
     "library_destination_root": "media", "library_tv_folder": "TV Shows", "library_movie_folder": "Movies",
     "library_integrity_mode": "tail", "library_tail_seconds": "30",
+    # downloads Radarr/Sonarr import: off, review (a person approves each one), auto (high-confidence plans run on their own); the original is kept on the worker this long
+    "download_pipeline": "off", "originals_retention_days": "30",
     "library_exclude_folders": "@eaDir\n#recycle\n.Recycle.Bin\n$RECYCLE.BIN\nSystem Volume Information\nlost+found\n.Trash-*",
 }
 

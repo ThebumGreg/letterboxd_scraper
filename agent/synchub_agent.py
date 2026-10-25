@@ -221,6 +221,10 @@ class Config:
         return os.path.join(self.work_dir, "jobs")
 
     @property
+    def originals_dir(self):
+        return os.path.join(self.work_dir, "originals")
+
+    @property
     def logs_dir(self):
         return os.path.join(self.work_dir, "logs")
 
@@ -1300,10 +1304,18 @@ class JobRunner(threading.Thread):
 
     def do_convert(self):
         src, dst = self.endpoints("convert")
-        change = self.job["plan"].get("change") or {}
+        plan = self.job["plan"]
+        change = plan.get("change") or {}
+        replace = bool(plan.get("replace"))
+        if replace and self.stage_info("copy_out").get("done") and self.m.get("replace_result"):
+            self.log.info("The file was already replaced; only the report is left")
+            self.remove_replaced_source(src, dst)
+            return self.m["replace_result"]
         stat = os.stat(src)
         if not os.path.isfile(src):
             raise JobFailure("source_changed", f"The source is not a file: {self.job['source']['rel']}")
+        if replace and (stat.st_size != plan.get("source_size") or abs(stat.st_mtime - float(plan.get("source_mtime") or 0)) > 2):
+            raise JobFailure("source_changed", f"{self.job['source']['rel']} is not the file SyncHub analysed (its size or date differs). It will be looked at again.")
         size, mtime, name = stat.st_size, int(stat.st_mtime), os.path.basename(src)
         local = os.path.join(self.folder, "source", name)
         converted = os.path.join(self.folder, "output", os.path.basename(dst))
@@ -1320,12 +1332,53 @@ class JobRunner(threading.Thread):
         if not done.get("sha256"):
             done["sha256"] = hash_file(converted, check=self.guard)
             self.save()
-        out_seconds = self.copy_out(converted, dst, out_size, done["sha256"], stat.st_mtime_ns)
+        keep = (lambda: self.keep_original(src, local, size, mtime, plan)) if replace else None
+        out_seconds = self.copy_out(converted, dst, out_size, done["sha256"], stat.st_mtime_ns, overwrite=src if replace else None, before_swap=keep)
         elapsed = time.monotonic() - t0
         result = {"op": "convert", "bytes": out_size, "source_bytes": size, "sha256": done["sha256"], "verified": "sha256" if self.cfg.verify == "hash" else "size",
                   "seconds": round(elapsed, 1), "encode_seconds": done.get("seconds"), "command": done.get("command"), "output": done.get("probe")}
+        if replace:
+            original = self.m.get("original") or {}
+            result.update(replaced=True, kept_original=bool(original.get("path")), original_expires=original.get("expires_at"), path_changed=dst != src)
+            self.m["replace_result"] = result
+            self.save()
+            self.remove_replaced_source(src, dst)
+            self.log.info(f"Replaced {name} in place ({human_bytes(size)} to {human_bytes(out_size)}); " + (f"the original is kept until {original['expires_at']}" if original.get("path") else "the original was not kept"))
+            return result
         self.log.info(f"Converted {name} ({human_bytes(size)} to {human_bytes(out_size)}) and brought it into the destination in {human_duration(elapsed)}")
         return result
+
+    def remove_replaced_source(self, src, dst):
+        """When the converted file has a different name (an .avi that became an .mkv), the old file is removed once the new one is in place."""
+        if dst != src and os.path.isfile(src) and os.path.isfile(dst):
+            os.remove(src)
+
+    def keep_original(self, src, local, size, mtime, plan):
+        """Called just before the converted file is swapped in: checks the share still holds the file that was copied and moves the verified local copy
+        into the originals folder, with a meta.json saying where it came from and when it may go. Does nothing if the retention is 0."""
+        now = os.stat(src)
+        if now.st_size != size or int(now.st_mtime) != mtime:
+            raise JobFailure("source_changed", "The file on the share changed while it was being converted; it was not replaced.")
+        days = plan.get("originals_retention_days")
+        days = int(days) if isinstance(days, (int, float)) else 30
+        if days <= 0:
+            self.log.info("Originals are not kept (retention is 0); the replacement is verified, so the original is dropped")
+            return
+        info = self.stage_info("copy_in")
+        folder = os.path.join(self.cfg.originals_dir, f"{self.job['id']}-{hashlib.sha1(self.job['source']['rel'].encode('utf-8')).hexdigest()[:8]}")
+        os.makedirs(folder, exist_ok=True)
+        kept = os.path.join(folder, os.path.basename(src))
+        if not (os.path.isfile(kept) and os.path.getsize(kept) == size):
+            if not os.path.isfile(local):
+                raise JobFailure("transient", "The verified copy of the original is missing from the work folder.")
+            shutil.move(local, kept)
+        expires = iso(utcnow() + timedelta(days=days))
+        meta = {"job_id": self.job["id"], "root": self.job["source"]["root"], "rel": self.job["source"]["rel"], "name": os.path.basename(src), "size": size,
+                "sha256": info.get("sha256"), "mtime": mtime, "saved_at": iso(), "retention_days": days, "expires_at": expires, "replaced_with": self.job["dest"]["rel"]}
+        atomic_write_json(os.path.join(folder, "meta.json"), meta)
+        self.m["original"] = {"path": kept, "expires_at": expires}
+        self.save()
+        self.log.info(f"Kept the original in {folder} for {days} day(s)")
 
     def encode(self, local, converted, change, expected_duration):
         """Runs ffmpeg on the local copy and checks what it made. Returns what the job remembers about the encode. The output only gets its
@@ -1506,7 +1559,9 @@ class JobRunner(threading.Thread):
         message = f"{verb}: {human_bytes(done)} of {human_bytes(total)}" + (f" at {human_bytes(rate)}/s" if rate > 0 else "")
         self.report_progress("copy_out" if band == "verify" else band, fraction, message, int(remaining / rate) if rate > 0 else None)
 
-    def copy_out(self, local, dst, size, digest, source_mtime_ns):
+    def copy_out(self, local, dst, size, digest, source_mtime_ns, overwrite=None, before_swap=None):
+        """Copies `local` to `dst` as a .synchub-partial, verifies it and renames it into place. Never overwrites, except the one file named in
+        `overwrite` (a replacement in place); `before_swap` runs once the copy is verified and just before it is renamed in."""
         info = self.stage_info("copy_out")
         self.stage = "copy_out"
         ancestor = os.path.dirname(dst)
@@ -1519,7 +1574,8 @@ class JobRunner(threading.Thread):
                 info.update(done=True, bytes=size, sha256=digest)
                 self.save()
                 return None
-            raise JobFailure("dest_exists", f"The destination already exists and is different: {self.job['dest']['rel']}. SyncHub never overwrites a file; pick another name.", retryable=False)
+            if overwrite != dst:
+                raise JobFailure("dest_exists", f"The destination already exists and is different: {self.job['dest']['rel']}. SyncHub never overwrites a file; pick another name.", retryable=False)
         partial = dst + ".synchub-partial"
         self.m["dest_partial"] = partial
         self.save()
@@ -1587,8 +1643,15 @@ class JobRunner(threading.Thread):
                 self.m["stages"].pop("copy_in", None)
                 self.save()
                 raise JobFailure("verification_failed", "The copy on the share does not match the source (checksums differ). Both copies were deleted so the retry starts clean.")
-        if os.path.lexists(dst):
+        if os.path.lexists(dst) and overwrite != dst:
             raise JobFailure("dest_exists", f"Someone created {self.job['dest']['rel']} while it was being copied. The finished copy is kept next to it as {os.path.basename(partial)}.", retryable=False)
+        if before_swap is not None:
+            try:
+                before_swap()
+            except JobFailure:
+                self._remove(partial)
+                info.clear()
+                raise
         os.replace(partial, dst)
         try:
             os.utime(dst, ns=(time.time_ns(), source_mtime_ns))             # keep the original's modified date, which Jellyfin shows as "date added"
@@ -1656,7 +1719,42 @@ class Agent:
             jobs = [{"id": i, "stage": s, "progress": p} for i, (s, p) in sorted(self.progress.items())][:10]
         roots = {name: {"ok": r["ok"], "state": r["state"], "message": (r["message"] or "")[:200], "free_bytes": r["free_bytes"]} for name, r in self.monitor.snapshot().items()}
         host, self._cpu_sample = live_host_stats(self._cpu_sample)
-        return {"version": __version__, "uptime_seconds": int(time.monotonic() - self.started), "work_free_bytes": self.work_free(), "roots": roots, "jobs": jobs, "host": host}
+        count, held = self.originals_held()
+        return {"version": __version__, "uptime_seconds": int(time.monotonic() - self.started), "work_free_bytes": self.work_free(), "roots": roots, "jobs": jobs, "host": host,
+                "originals_count": count, "originals_bytes": held}
+
+    def originals(self):
+        """(folder, meta) for each original kept after a file was replaced in place."""
+        out = []
+        try:
+            names = sorted(os.listdir(self.cfg.originals_dir))
+        except OSError:
+            return out
+        for name in names:
+            folder = os.path.join(self.cfg.originals_dir, name)
+            try:
+                with open(os.path.join(folder, "meta.json"), "r", encoding="utf-8") as handle:
+                    meta = json.load(handle)
+            except (OSError, ValueError):
+                continue
+            if isinstance(meta, dict):
+                out.append((folder, meta))
+        return out
+
+    def originals_held(self):
+        held = self.originals()
+        return len(held), sum(int(m.get("size") or 0) for _, m in held)
+
+    def sweep_originals(self):
+        """Deletes the originals whose retention has passed (never before). Returns how many."""
+        removed = 0
+        for folder, meta in self.originals():
+            until = parse_iso(meta.get("expires_at"))
+            if until is not None and until < utcnow():
+                shutil.rmtree(folder, ignore_errors=True)
+                removed += 1
+                self.log.info(f"Removed the kept original {meta.get('rel')} (retention of {meta.get('retention_days')} day(s) is over)")
+        return removed
 
     def work_free(self):
         try:
@@ -1817,6 +1915,7 @@ class Agent:
         removed = self.store.sweep(active)
         if removed:
             self.log.info(f"Housekeeping removed {removed} old job folder(s)")
+        self.sweep_originals()
 
     def run(self):
         self.log.info(f"SyncHub worker agent {__version__} starting", url=self.cfg.url, work_dir=os.path.abspath(self.cfg.work_dir), slots=self.cfg.slots)

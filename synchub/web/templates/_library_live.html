@@ -24,6 +24,36 @@
     {% endif %}
 </div>
 
+<div class="panel p-3 mb-4" id="downloadPipeline">
+    <div class="d-flex flex-wrap align-items-center gap-3">
+        <h5 class="mb-0">New downloads</h5>
+        <span class="badge bg-{{ 'secondary' if download_summary.mode == 'off' else 'success' }}">{{ {'off': 'off', 'review': 'asks first', 'auto': 'automatic'}[download_summary.mode] }}</span>
+        {% if download_summary.awaiting %}<span class="badge bg-warning text-dark">{{ download_summary.awaiting }} waiting for you</span>{% endif %}
+        {% if download_summary.working %}<span class="badge bg-primary">{{ download_summary.working }} in progress</span>{% endif %}
+        {% if download_summary.problems %}<span class="badge bg-danger">{{ download_summary.problems }} need attention</span>{% endif %}
+        <span class="badge bg-success">{{ download_summary.replaced }} replaced</span>
+    </div>
+    <p class="small text-body-secondary mb-2 mt-2">When Radarr or Sonarr imports a file, a worker looks at it. If it needs tracks removed or an older format converted, the result replaces the file under the same name, the original is kept on the worker for {{ originals_days }} day{{ '' if originals_days == 1 else 's' }}, and Radarr/Sonarr and Jellyfin are told. {% if download_summary.mode == 'off' %}This is switched off: choose how it behaves under Settings below.{% endif %}</p>
+    {% if downloads %}
+    <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+        <thead><tr><th>File</th><th>State</th><th class="text-end"></th></tr></thead>
+        <tbody>
+        {% for d in downloads %}
+            {% set color = {'replaced': 'success', 'nothing_to_do': 'secondary', 'skipped': 'secondary', 'awaiting_approval': 'warning', 'blocked': 'danger', 'failed': 'danger'}.get(d.status, 'primary') %}
+            <tr><td class="small">{{ d.name }}<div class="text-body-secondary">{{ d.service|title }}{% if d.title %}: {{ d.title }}{% endif %}</div></td>
+                <td class="small"><span class="badge bg-{{ color }}{% if color == 'warning' %} text-dark{% endif %}">{{ d.status.replace('_', ' ') }}</span> {{ d.message or '' }}
+                    {% if d.status == 'replaced' %}<div class="text-body-secondary">{{ d.rescan_message or 'Waiting to ask ' ~ d.service|title ~ ' to rescan.' }}</div>{% endif %}</td>
+                <td class="text-end text-nowrap">
+                    {% if d.status == 'awaiting_approval' %}<button type="button" class="btn btn-sm btn-success" data-download="approve" data-id="{{ d.id }}">Replace it</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-download="skip" data-id="{{ d.id }}">Leave it</button>{% endif %}
+                    {% if d.status in ('blocked', 'failed', 'skipped', 'nothing_to_do') %}<button type="button" class="btn btn-sm btn-outline-secondary" data-download="retry" data-id="{{ d.id }}">Check again</button>{% endif %}
+                    {% if d.status == 'replaced' and d.rescan_status == 'failed' %}<button type="button" class="btn btn-sm btn-outline-secondary" data-download="rescan" data-id="{{ d.id }}">Ask for a rescan</button>{% endif %}
+                </td></tr>
+        {% endfor %}
+        </tbody></table></div>
+    {% else %}<p class="small text-body-secondary mb-0">No imports yet.</p>{% endif %}
+</div>
+
 <div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3 mb-4" id="queueCards">
     {% for g in groups %}
     <div class="col">
