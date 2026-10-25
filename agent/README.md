@@ -44,12 +44,12 @@ To update a worker later: run the same script again. It needs no arguments the s
 If you set the worker up yourself (your own `/etc/fstab` lines, a customised `docker-compose.yml`, bind-mounted host paths), do **not** run `setup-worker.sh` again: it rewrites `/etc/fstab` and the compose file. Use `update-worker.sh` instead. It only pulls the latest code, copies the agent files into the folder your compose file builds from, and runs `docker compose up -d --build`. It never touches `/etc/fstab`, the compose file, `.env` or your mounts.
 
 ```
-git clone https://github.com/ThebumGreg/letterboxd_scraper.git ~/letterboxd_scraper   # once
+[ -d ~/letterboxd_scraper ] || git clone https://github.com/ThebumGreg/letterboxd_scraper.git ~/letterboxd_scraper
 sudo ~/letterboxd_scraper/agent/update-worker.sh --dir /opt/synchub-worker --dry-run  # look first
 sudo ~/letterboxd_scraper/agent/update-worker.sh --dir /opt/synchub-worker
 ```
 
-Options: `--dir` (the folder with the worker's compose file, default `/opt/synchub-worker`), `--branch`, `--no-pull`, `--dry-run`. The agent code is baked into the image, so a plain `docker compose restart` does not update it; this script rebuilds.
+Options: `--dir` (the folder with the worker's compose file, default `/opt/synchub-worker`), `--branch`, `--no-pull`, `--dry-run`, `--report` (prints the worker's current state and changes nothing). The full upgrade procedure is in [docs/UPGRADE.md](../docs/UPGRADE.md). The agent code is baked into the image, so a plain `docker compose restart` does not update it; this script rebuilds.
 
 ## Install on Ubuntu with Docker, by hand
 

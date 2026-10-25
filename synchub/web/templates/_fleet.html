@@ -1,6 +1,6 @@
 <!-- The workers, jobs and Worker Status tabs: rendered with the page and swapped in every few seconds. Which tab is open is kept by the page's script. -->
 {% set waiting = jobs|selectattr('status', 'equalto', 'needs_review')|list|length %}
-<ul class="nav nav-tabs mb-4" id="fleetTabs" role="tablist">
+<ul class="nav nav-pills mb-4" id="fleetTabs" role="tablist">
     <li class="nav-item" role="presentation"><button type="button" class="nav-link active" data-pane="workers" role="tab" aria-selected="true">Workers <span class="badge bg-secondary">{{ workers|length }}</span></button></li>
     <li class="nav-item" role="presentation"><button type="button" class="nav-link" data-pane="jobs" role="tab" aria-selected="false">Jobs <span class="badge bg-secondary">{{ jobs|length }}</span>{% if waiting %} <span class="badge bg-warning text-dark" title="Jobs waiting for your decision">{{ waiting }} waiting for you</span>{% endif %}</button></li>
     <li class="nav-item" role="presentation"><button type="button" class="nav-link" data-pane="status" role="tab" aria-selected="false">Worker Status</button></li>
@@ -46,7 +46,7 @@
                                 title="A draining worker finishes its jobs and takes no more">{{ 'Stop draining' if w.draining else 'Drain' }}</button>
                         {% endif %}
                         <div class="btn-group">
-                            <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" aria-label="More for {{ w.name }}">More</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" aria-label="More for {{ w.name }}">More</button>
                             <ul class="dropdown-menu dropdown-menu-end">
                                 <li><button type="button" class="dropdown-item" data-edit-worker="{{ w.id }}" data-name="{{ w.name }}" data-tags="{{ w.tags|join(' ') }}" data-slots="{{ w.slots }}">Edit name, tags, slots</button></li>
                                 <li><button type="button" class="dropdown-item" data-setup-worker="{{ w.id }}">Setup files (Docker, fstab)</button></li>

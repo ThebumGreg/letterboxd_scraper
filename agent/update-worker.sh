@@ -15,6 +15,7 @@ DIR="/opt/synchub-worker"
 BRANCH=""
 DO_PULL=1
 DRY_RUN=0
+REPORT=0
 AGENT_FILES=(Dockerfile synchub_agent.py media_analysis.py)
 
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -27,12 +28,14 @@ while [ $# -gt 0 ]; do
         --branch) BRANCH="${2:?--branch needs a name}"; shift 2 ;;
         --no-pull) DO_PULL=0; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
+        --report) REPORT=1; shift ;;
         -h|--help)
-            echo "Usage: update-worker.sh [--dir WORKER_FOLDER] [--branch NAME] [--no-pull] [--dry-run]"
+            echo "Usage: update-worker.sh [--dir WORKER_FOLDER] [--branch NAME] [--no-pull] [--dry-run] [--report]"
             echo "  --dir      folder with the worker's docker-compose.yml (default /opt/synchub-worker)"
             echo "  --branch   check out and pull this branch first (default: the branch already checked out)"
             echo "  --no-pull  use the checkout as it is"
             echo "  --dry-run  show what would happen without changing anything"
+            echo "  --report   print the worker's current state (changes nothing) and exit; paste it when asking for help"
             exit 0 ;;
         *) die "unknown option '$1' (try --help)" ;;
     esac
@@ -47,6 +50,29 @@ COMPOSE=""
 for f in docker-compose.yml docker-compose.yaml compose.yml compose.yaml; do [ -f "$DIR/$f" ] && { COMPOSE="$DIR/$f"; break; }; done
 [ -n "$COMPOSE" ] || die "No compose file in $DIR. Pass the worker's folder with --dir."
 command -v docker >/dev/null || die "docker is not installed."
+
+if [ "$REPORT" = 1 ]; then
+    # Read-only snapshot of the worker, to paste into the thread before an upgrade or when something is wrong.
+    section() { echo; echo "##### $*"; }
+    section "date / host";     date -u +%FT%TZ; hostname; uname -sr
+    section "checkout $REPO";  git -C "$REPO" log -1 --format='%H %ci %s'; git -C "$REPO" status -sb | head -n 15
+    git -C "$REPO" stash list | head -n 5
+    section "behind origin?";  git -C "$REPO" fetch --quiet origin 2>&1 | head -n 3; git -C "$REPO" rev-list --count HEAD..@{u} 2>/dev/null | sed 's/$/ commit(s) behind upstream/'
+    section "agent version in the checkout"; grep -m1 '^__version__' "$SRC/synchub_agent.py"
+    section "compose file $COMPOSE (build + volumes)"
+    ( cd "$DIR" && docker compose config 2>&1 | grep -E 'context:|image:|container_name:|source:|target:|SYNCHUB_URL|SYNCHUB_NAME' ) || true
+    section "container"
+    ( cd "$DIR" && docker compose ps 2>&1 ) || true
+    cid="$(cd "$DIR" && docker compose ps -q 2>/dev/null | head -n1)"
+    if [ -n "$cid" ]; then
+        docker inspect -f 'container created: {{.Created}}  started: {{.State.StartedAt}}  restarts: {{.RestartCount}}  health: {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>&1
+        docker image inspect -f 'image created: {{.Created}}' "$(docker inspect -f '{{.Image}}' "$cid")" 2>&1
+    fi
+    section "mounts under /mnt/tower"; mount | grep ' /mnt/tower/' || echo "(none)"
+    section "free space";      df -h / "${WORK_DIR:-$DIR}" 2>&1 | head -n 5
+    section "last 40 log lines"; ( cd "$DIR" && docker compose logs --tail 40 2>&1 ) || true
+    exit 0
+fi
 
 if [ "$DO_PULL" = 1 ]; then
     say "Updating $REPO"
