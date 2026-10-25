@@ -14,6 +14,7 @@ services:
       TZ: ${TZ:-UTC}
       PUID: ${PUID:-99}        # 99:100 is Unraid's nobody:users; on a normal Linux machine use your own (id -u, id -g)
       PGID: ${PGID:-100}
+      SYNCHUB_ACCESS_TOKEN: ${SYNCHUB_ACCESS_TOKEN:-}   # set this to put a login in front of the site (see docs/DEPLOY.md); empty = open, as before
       # SECRET_KEY: ...        # normally not needed: the key that signs sign-ins is created once and kept in the database
     volumes:
       - "${SYNCHUB_DATA:-./data}:/data"      # database, logs, posters and backups. On Unraid use /mnt/cache/appdata/synchub

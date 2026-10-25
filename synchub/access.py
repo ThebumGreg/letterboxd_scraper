@@ -4,9 +4,12 @@ This is a household lock, not a login system. A profile with no PIN can be chose
 do only means something once the profiles that matter have a PIN. Permissions are per page; a profile whose permission list is empty in the
 database (NULL) may open everything, including pages added later, so nothing changes for an installation that never opens the People page.
 """
+import hashlib
+import os
 import re
 import secrets
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 
 from itsdangerous import BadSignature, URLSafeTimedSerializer
@@ -41,13 +44,18 @@ FAILURES_BEFORE_LOCK = 5
 LOCK_STEP_SECONDS, LOCK_MAX_SECONDS = 30, 900
 SESSION_DAYS_DEFAULT = 30
 PROOF_SALT = "synchub-pin"
+TOKEN_SALT = "synchub-token"
+TOKEN_ENV = "SYNCHUB_ACCESS_TOKEN"
+TOKEN_EXEMPT = ("static", "healthz", "api_webhook", "worker_api_*", "login", "logout")      # these keep their own ways in: assets, the health check, Jellyfin/Radarr/Sonarr callbacks, workers
+LOGIN_FAILURES, LOGIN_WINDOW = 10, 300                                                      # this many wrong tries from one address, within this many seconds, and it waits
+_login_failures = {}
 
 PUBLIC, OPEN = "public", "open"                       # no profile needed / any profile (or a guest) may
 
 # Which permission each endpoint needs, first match wins. A trailing * matches a prefix. A new endpoint that matches nothing is refused
 # until it is listed here (a test lists every endpoint of the app to make sure none is forgotten).
 RULES = (
-    ("who", PUBLIC), ("static", PUBLIC), ("poster", PUBLIC), ("healthz", PUBLIC), ("api_webhook", PUBLIC), ("worker_api_*", PUBLIC),     # webhooks and workers have their own ways in
+    ("who", PUBLIC), ("login", PUBLIC), ("logout", PUBLIC), ("static", PUBLIC), ("poster", PUBLIC), ("healthz", PUBLIC), ("api_webhook", PUBLIC), ("worker_api_*", PUBLIC),     # webhooks and workers have their own ways in
     ("api_tasks", OPEN),
     ("index", "dashboard"), ("movie_details", "dashboard"), ("show_details", "dashboard"), ("api_season", "dashboard"), ("stream_events", "dashboard"),
     ("search_page", "search"), ("api_search_seasons", "search"),
@@ -296,6 +304,50 @@ def proof_valid(secret, token, profile_id, pin_version, days):
     except BadSignature:                                  # includes an expired signature
         return False
     return isinstance(data, dict) and data.get("p") == profile_id and data.get("v") == pin_version
+
+
+def access_token():
+    """The one token that opens the site ('' when SYNCHUB_ACCESS_TOKEN is not set, which leaves the site open as before)."""
+    return (os.getenv(TOKEN_ENV) or "").strip()
+
+
+def token_exempt(endpoint):
+    return any(endpoint == p or (p.endswith("*") and (endpoint or "").startswith(p[:-1])) for p in TOKEN_EXEMPT)
+
+
+def token_matches(given):
+    return bool(given) and secrets.compare_digest(str(given).encode(), access_token().encode())
+
+
+def _fingerprint(token):
+    return hashlib.sha256(token.encode()).hexdigest()[:16]
+
+
+def issue_token_proof(secret):
+    """What the browser keeps after the right token: signed, and tied to the token, so changing the token signs every device out."""
+    return URLSafeTimedSerializer(secret, salt=TOKEN_SALT).dumps({"t": _fingerprint(access_token())})
+
+
+def token_proof_valid(secret, cookie, days):
+    if not cookie:
+        return False
+    try:
+        data = URLSafeTimedSerializer(secret, salt=TOKEN_SALT).loads(cookie, max_age=days * 86400)
+    except BadSignature:
+        return False
+    return isinstance(data, dict) and secrets.compare_digest(str(data.get("t")), _fingerprint(access_token()))
+
+
+def login_wait(address, now=None):
+    """Seconds this address must wait before trying the token again (0 when it may try)."""
+    now = time.time() if now is None else now
+    recent = [t for t in _login_failures.get(address, []) if now - t < LOGIN_WINDOW]
+    _login_failures[address] = recent
+    return int(LOGIN_WINDOW - (now - recent[0])) + 1 if len(recent) >= LOGIN_FAILURES else 0
+
+
+def login_failed(address, now=None):
+    _login_failures.setdefault(address, []).append(time.time() if now is None else now)
 
 
 def persistent_secret():

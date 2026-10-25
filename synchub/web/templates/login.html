@@ -1,0 +1,19 @@
+<!-- synchub/web/templates/login.html -->
+{% extends "base.html" %}
+{% from "_macros.html" import csrf_field with context %}
+{% block title %}Access token{% endblock %}
+
+{% block content %}
+<div class="text-center my-4 my-md-5">
+    <h2 class="mb-2">Enter the access token</h2>
+    <p class="text-body-secondary mb-4">It is set with <code>SYNCHUB_ACCESS_TOKEN</code> on the server, and remembered on this device.</p>
+    {% if error %}<div class="alert alert-danger mx-auto" style="max-width: 22rem;" role="alert">{{ error }}</div>{% endif %}
+    <form method="POST" action="{{ url_for('login') }}" class="mx-auto" style="max-width: 20rem;" autocomplete="off">
+        {{ csrf_field() }}
+        <input type="hidden" name="next" value="{{ destination }}">
+        <label for="tokenInput" class="visually-hidden">Access token</label>
+        <input type="password" class="form-control form-control-lg text-center mb-3" id="tokenInput" name="token" autocomplete="off" autofocus required placeholder="Access token">
+        <div class="d-grid"><button type="submit" class="btn btn-success btn-lg">Continue</button></div>
+    </form>
+</div>
+{% endblock %}

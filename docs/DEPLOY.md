@@ -260,3 +260,9 @@ The database that was there is kept beside it as `synchub.db.before-restore-<tim
 ## 8. Security
 
 SyncHub is for your own network. Do not forward port 5001 to the internet. Give the profiles that can change things a **PIN**; profiles without one can be chosen by anyone on the network. Pages and actions are protected against forged requests (CSRF), PINs are stored hashed, and worker tokens are stored hashed. For access from outside, put a reverse proxy with HTTPS in front, or use a VPN.
+
+## Access token (optional login)
+
+SyncHub listens on every interface and, by default, has no login. To put one in front of it, set `SYNCHUB_ACCESS_TOKEN` in `.env` (any long random text, for example `openssl rand -hex 24`) and restart the container. Every page then asks for the token once per device and remembers it for a year. Changing the token signs every device out. Scripts can send `Authorization: Bearer <token>`.
+
+These stay open on purpose, because they have their own ways in: worker calls (`/api/worker/...`, each worker's own token), the Jellyfin, Radarr and Sonarr webhooks (`/api/webhook/...`), and `/healthz`. The profile picker and PINs still work on top of the token. Ten wrong tries from one address make it wait five minutes.
