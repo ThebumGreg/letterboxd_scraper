@@ -13,5 +13,6 @@ CREATE TABLE notification_pref (
     quiet_on    INTEGER NOT NULL DEFAULT 0,
     quiet_start TEXT NOT NULL DEFAULT '22:00',     -- local time, HH:MM
     quiet_end   TEXT NOT NULL DEFAULT '07:00',
-    timezone    TEXT NOT NULL DEFAULT 'UTC'        -- an IANA name such as America/Chicago
+    timezone    TEXT NOT NULL DEFAULT 'UTC',       -- an IANA name such as America/Chicago
+    batch_minutes INTEGER NOT NULL DEFAULT 0       -- 0: send each notice on its own; otherwise ordinary notices are collected and sent as one message every this many minutes
 );

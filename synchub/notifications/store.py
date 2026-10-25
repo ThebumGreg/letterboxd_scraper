@@ -130,7 +130,8 @@ def secret_values(conn):
 
 # ---------------------------------------------------------------- what a person wants to hear about, and when
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
-DEFAULT_PREF = {"quiet_on": False, "quiet_start": "22:00", "quiet_end": "07:00", "timezone": "UTC"}
+BATCH_CHOICES = (0, 15, 60)
+DEFAULT_PREF = {"quiet_on": False, "quiet_start": "22:00", "quiet_end": "07:00", "timezone": "UTC", "batch_minutes": 0}
 
 
 def rules(conn, profile_id):
@@ -155,11 +156,12 @@ def set_rule(conn, profile_id, event_type, enabled):
 
 def pref(conn, profile_id):
     row = conn.execute("SELECT * FROM notification_pref WHERE profile_id = ?", (profile_id,)).fetchone()
-    return {**DEFAULT_PREF, "quiet_on": bool(row["quiet_on"]), "quiet_start": row["quiet_start"], "quiet_end": row["quiet_end"], "timezone": row["timezone"]} if row else dict(DEFAULT_PREF)
+    return {**DEFAULT_PREF, "quiet_on": bool(row["quiet_on"]), "quiet_start": row["quiet_start"], "quiet_end": row["quiet_end"], "timezone": row["timezone"],
+            "batch_minutes": row["batch_minutes"]} if row else dict(DEFAULT_PREF)
 
 
-def set_pref(conn, profile_id, quiet_on, quiet_start, quiet_end, timezone_name):
-    """Saves quiet hours. Raises ValueError saying what is wrong with what was given."""
+def set_pref(conn, profile_id, quiet_on, quiet_start, quiet_end, timezone_name, batch_minutes=0):
+    """Saves quiet hours and batching. Raises ValueError saying what is wrong with what was given."""
     if not (TIME_RE.match(str(quiet_start)) and TIME_RE.match(str(quiet_end))):
         raise ValueError("Give the times as hours and minutes, such as 22:00.")
     if quiet_start == quiet_end and quiet_on:
@@ -168,9 +170,12 @@ def set_pref(conn, profile_id, quiet_on, quiet_start, quiet_end, timezone_name):
         ZoneInfo(str(timezone_name))
     except (ZoneInfoNotFoundError, ValueError, OSError):
         raise ValueError("That time zone is not known.")
-    conn.execute("INSERT INTO notification_pref (profile_id, quiet_on, quiet_start, quiet_end, timezone) VALUES (?, ?, ?, ?, ?) "
-                 "ON CONFLICT (profile_id) DO UPDATE SET quiet_on = excluded.quiet_on, quiet_start = excluded.quiet_start, quiet_end = excluded.quiet_end, timezone = excluded.timezone",
-                 (profile_id, 1 if quiet_on else 0, quiet_start, quiet_end, str(timezone_name)))
+    if batch_minutes not in BATCH_CHOICES:
+        raise ValueError("Choose how often to group notices from the list.")
+    conn.execute("INSERT INTO notification_pref (profile_id, quiet_on, quiet_start, quiet_end, timezone, batch_minutes) VALUES (?, ?, ?, ?, ?, ?) "
+                 "ON CONFLICT (profile_id) DO UPDATE SET quiet_on = excluded.quiet_on, quiet_start = excluded.quiet_start, quiet_end = excluded.quiet_end, "
+                 "timezone = excluded.timezone, batch_minutes = excluded.batch_minutes",
+                 (profile_id, 1 if quiet_on else 0, quiet_start, quiet_end, str(timezone_name), batch_minutes))
 
 
 def quiet_until(prefs, now):
@@ -198,3 +203,16 @@ def admin_ids(conn):
         if part.strip().isdigit():
             ids.append(int(part))
     return ids
+
+
+def next_batch(minutes, now):
+    """The next time (after `now`) that falls on a multiple of `minutes` since midnight UTC, in the database's text form."""
+    step = minutes * 60
+    at = datetime.strptime(now, FORMAT).replace(tzinfo=timezone.utc).timestamp()
+    return datetime.fromtimestamp((int(at) // step + 1) * step, timezone.utc).strftime(FORMAT)
+
+
+def hold_until(prefs, now):
+    """Until when an ordinary (not urgent) notice for this person should wait: the end of their quiet hours and/or the next batch time. None: send now."""
+    waits = [w for w in (quiet_until(prefs, now), next_batch(prefs["batch_minutes"], now) if prefs["batch_minutes"] else None) if w]
+    return max(waits) if waits else None

@@ -53,7 +53,7 @@ def notify(conn, event_type, dedupe_key, payload, profile_ids=None, now=None):
             if not mine:
                 continue
             channels += mine
-            until = store.quiet_until(store.pref(conn, profile_id), now)
+            until = store.hold_until(store.pref(conn, profile_id), now)
             if until:
                 hold[profile_id] = until
         if not channels:

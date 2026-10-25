@@ -163,10 +163,13 @@ def register(app):
         data = request.get_json(silent=True) or {}
         if not isinstance(data.get("quiet_on"), bool):
             return _fail("Say whether quiet hours should be on or off.")
+        batch = data.get("batch_minutes", 0)
+        if not isinstance(batch, int) or isinstance(batch, bool):
+            return _fail("Choose how often to group notices from the list.")
 
         def save(conn, profile):
             try:
-                store.set_pref(conn, profile["id"], data["quiet_on"], data.get("quiet_start"), data.get("quiet_end"), data.get("timezone"))
+                store.set_pref(conn, profile["id"], data["quiet_on"], data.get("quiet_start"), data.get("quiet_end"), data.get("timezone"), batch)
             except ValueError as exc:
                 return _fail(str(exc))
             return jsonify(ok=True, message="Saved.")

@@ -228,3 +228,125 @@ def test_administrators_are_chosen_in_settings(app, client, conn):
     assert settings.get("notify_admin_profiles") == str(pid)
     client.post("/tools/update-settings", data={"notify_admin_present": "1"})
     assert settings.get("notify_admin_profiles") == ""
+
+
+# ---------------------------------------------------------------- a wanted title arrives
+from synchub import states  # noqa: E402
+
+
+def wanted_movie(conn, pid, title="Heat", tmdb="1"):
+    mid = conn.execute("INSERT INTO media (kind, title, year, tmdb_id) VALUES ('movie', ?, 1995, ?)", (title, tmdb)).lastrowid
+    conn.execute("INSERT INTO manual_request (media_id, profile_id) VALUES (?, ?)", (mid, pid))
+    conn.commit()
+    return mid
+
+
+def put_in_library(conn, kind, entity_id, item_id):
+    conn.execute("INSERT INTO src_jellyfin_item (item_id, type, first_seen, last_seen) VALUES (?, ?, ?, ?)", (item_id, kind, T0, T0))
+    source = "jellyfin" if kind == "movie" else "jellyfin_episode"
+    conn.execute("INSERT INTO link (entity_type, entity_id, source, source_key, method, confidence) VALUES (?, ?, ?, ?, 'x', 1.0)",
+                 ("media" if kind == "movie" else "episode", entity_id, source, item_id))
+    conn.commit()
+
+
+def recompute(now=T0):
+    with db.connection() as c:
+        states.compute(c, now=now)
+
+
+def test_a_wanted_movie_arriving_notifies_the_person_who_wanted_it(v2, conn):
+    pid = add_profile(conn, "Greg")
+    add_channel(conn, pid)
+    other = add_profile(conn, "Bob")
+    add_channel(conn, other, OTHER_USER)
+    mid = wanted_movie(conn, pid)
+    recompute()                                              # first sight: Missing, nothing said
+    assert notes(conn) == []
+    put_in_library(conn, "movie", mid, "jf1")
+    recompute()
+    got = notes(conn, "request_available")
+    assert [n["profile_id"] for n in got] == [pid] and "Heat" in got[0]["title"]
+    recompute()
+    assert len(notes(conn, "request_available")) == 1        # not again
+
+
+def test_a_title_already_in_the_library_on_first_sight_is_not_news(v2, conn):
+    pid = add_profile(conn, "Greg")
+    add_channel(conn, pid)
+    mid = wanted_movie(conn, pid)
+    put_in_library(conn, "movie", mid, "jf1")
+    recompute()
+    assert notes(conn) == []
+
+
+def test_a_show_is_announced_for_its_first_episode_only(v2, conn):
+    pid = add_profile(conn, "Greg")
+    add_channel(conn, pid)
+    sid = conn.execute("INSERT INTO media (kind, title, tmdb_id) VALUES ('show', 'Severance', '9')").lastrowid
+    conn.execute("INSERT INTO manual_request (media_id, profile_id) VALUES (?, ?)", (sid, pid))
+    e1 = conn.execute("INSERT INTO episode (media_id, season_number, episode_number, air_date) VALUES (?, 1, 1, '2020-01-01')", (sid,)).lastrowid
+    e2 = conn.execute("INSERT INTO episode (media_id, season_number, episode_number, air_date) VALUES (?, 1, 2, '2020-01-01')", (sid,)).lastrowid
+    conn.commit()
+    recompute()
+    put_in_library(conn, "episode", e1, "ep1")
+    recompute()
+    put_in_library(conn, "episode", e2, "ep2")
+    recompute()
+    got = notes(conn, "request_available")
+    assert len(got) == 1 and "first episode" in got[0]["body"]
+
+
+def test_a_title_above_a_persons_rating_limit_is_not_announced_to_them(v2, conn):
+    pid = add_profile(conn, "Kid")
+    add_channel(conn, pid)
+    mid = wanted_movie(conn, pid)
+    conn.execute("UPDATE profile SET max_rating = 1 WHERE id = ?", (pid,))          # an unrated title is not allowed under a limit
+    conn.commit()
+    recompute()
+    put_in_library(conn, "movie", mid, "jf1")
+    recompute()
+    assert notes(conn) == []
+
+
+def test_a_bulk_arrival_is_treated_as_an_import(v2, conn):
+    pid = add_profile(conn, "Greg")
+    add_channel(conn, pid)
+    ids = [wanted_movie(conn, pid, f"T{i}", str(i)) for i in range(60)]
+    recompute()
+    for i, mid in enumerate(ids):
+        put_in_library(conn, "movie", mid, f"jf{i}")
+    recompute()
+    assert notes(conn) == []
+
+
+# ---------------------------------------------------------------- grouping
+def test_ordinary_notices_are_grouped_into_one_message(conn, push):
+    pid = admin(conn)
+    store.set_pref(conn, pid, False, "22:00", "07:00", "UTC", batch_minutes=60)
+    for i in range(3):
+        emit.notify(conn, "job_failed", f"j{i}", {"title": f"File{i}.mkv", "error": "boom"}, now="2026-11-03 10:05:00")
+    emit.notify(conn, "worker_offline", "w", {"worker": "w1"}, now="2026-11-03 10:06:00")            # urgent: on its own, at once
+    conn.commit()
+    settings.set_value("enable_notifications", "1")
+    assert dispatch.run_due(now="2026-11-03 10:30:00")["sent"] == 1 and len(push.sent) == 1          # only the urgent one
+    assert dispatch.run_due(now="2026-11-03 11:00:00")["sent"] == 1 and len(push.sent) == 2
+    message = push.sent[1]["data"]["message"] if "data" in push.sent[1] else json.dumps(push.sent[1])
+    assert "File0.mkv" in message and "File2.mkv" in message
+    merged = [n for n in notes(conn, "job_failed")]
+    assert {n["status"] for n in merged} == {"held"} and len(merged) == 3
+
+
+def test_a_single_waiting_notice_is_sent_as_it_is(conn, push):
+    pid = admin(conn)
+    store.set_pref(conn, pid, False, "22:00", "07:00", "UTC", batch_minutes=15)
+    emit.notify(conn, "job_failed", "j", {"title": "Solo.mkv", "error": "boom"}, now="2026-11-03 10:01:00")
+    conn.commit()
+    settings.set_value("enable_notifications", "1")
+    assert dispatch.run_due(now="2026-11-03 10:15:00")["sent"] == 1
+    assert "Job failed" in json.dumps(push.sent[0])
+
+
+def test_batch_choices_are_checked(conn):
+    pid = add_profile(conn)
+    with pytest.raises(ValueError):
+        store.set_pref(conn, pid, False, "22:00", "07:00", "UTC", batch_minutes=7)

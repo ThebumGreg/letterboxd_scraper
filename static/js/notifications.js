@@ -161,6 +161,7 @@
                 quiet_start: document.getElementById("quietStart").value,
                 quiet_end: document.getElementById("quietEnd").value,
                 timezone: zone.value.trim(),
+                batch_minutes: parseInt(document.getElementById("batchMinutes").value, 10) || 0,
             });
             say(document.getElementById("quietResult"), got.message, got.ok);
         });

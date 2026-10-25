@@ -97,7 +97,7 @@
     </div>
 
     <div class="panel p-3 p-md-4 mb-4" id="quietPanel">
-        <h5 class="text-success mb-1">Quiet hours</h5>
+        <h5 class="text-success mb-1">Quiet hours and grouping</h5>
         <p class="small text-body-secondary">During quiet hours, ordinary notifications wait and arrive when they end. Urgent ones (a worker offline, a share not mounted) still come through.</p>
         <div class="form-check form-switch mb-3">
             <input class="form-check-input" type="checkbox" role="switch" id="quietOn"{% if pref.quiet_on %} checked{% endif %}>
@@ -109,7 +109,14 @@
             <div class="col-12"><label for="quietZone" class="form-label">Time zone</label><input type="text" class="form-control" id="quietZone" value="{{ pref.timezone }}" data-saved="{{ pref.quiet_on|int }}" spellcheck="false">
                 <div class="form-text">For example America/Chicago. Filled in from this browser the first time.</div></div>
         </div>
-        <button type="button" class="btn btn-success btn-sm mt-3" id="quietSave">Save quiet hours</button>
+        <h5 class="text-success mt-4 mb-1">Group notices</h5>
+        <p class="small text-body-secondary">Instead of one message per event, ordinary notices are collected and sent together. Urgent ones are never held back.</p>
+        <select class="form-select" id="batchMinutes" style="max-width: 18rem;" aria-label="Group notices">
+            <option value="0"{% if not pref.batch_minutes %} selected{% endif %}>Send each one as it happens</option>
+            <option value="15"{% if pref.batch_minutes == 15 %} selected{% endif %}>Group them every 15 minutes</option>
+            <option value="60"{% if pref.batch_minutes == 60 %} selected{% endif %}>Group them every hour</option>
+        </select>
+        <button type="button" class="btn btn-success btn-sm mt-3" id="quietSave">Save</button>
         <span class="small ms-2" id="quietResult" role="status"></span>
     </div>
     {% endif %}

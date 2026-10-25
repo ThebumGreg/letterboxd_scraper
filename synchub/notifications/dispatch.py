@@ -173,6 +173,7 @@ def run_due(now=None, limit=BATCH):
         return counts
     try:
         at = now or db.now()
+        merge_batches(at)
         with db.connection() as conn:
             due = conn.execute("""SELECT n.id, c.provider FROM notification n LEFT JOIN notification_channel c ON c.id = n.channel_id
                                   WHERE n.status = 'pending' AND (n.next_attempt_at IS NULL OR n.next_attempt_at <= ?) ORDER BY n.id LIMIT ?""", (at, limit)).fetchall()
@@ -189,6 +190,46 @@ def run_due(now=None, limit=BATCH):
         return counts
     finally:
         _run_lock.release()
+
+
+def merge_batches(now=None):
+    """Turns each batching person's waiting ordinary notices (two or more for one delivery method, all now due) into one summary message.
+    The originals stay in the history, marked as included in the summary. Returns how many summaries were made."""
+    now = now or db.now()
+    made = 0
+    with db.connection() as conn:
+        groups = {}
+        for r in conn.execute("""SELECT n.*, p.batch_minutes AS batch FROM notification n JOIN notification_pref p ON p.profile_id = n.profile_id
+                                 WHERE p.batch_minutes > 0 AND n.status = 'pending' AND n.attempts = 0 AND n.priority < 1 AND n.channel_id IS NOT NULL
+                                   AND n.next_attempt_at IS NOT NULL AND n.next_attempt_at <= ? AND (n.expires_at IS NULL OR n.expires_at > ?)
+                                 ORDER BY n.id""", (now, now)):
+            groups.setdefault((r["profile_id"], r["channel_id"]), []).append(dict(r))
+        for (profile_id, channel_id), items in groups.items():
+            if len(items) < 2:
+                conn.execute("UPDATE notification SET next_attempt_at = NULL WHERE id = ?", (items[0]["id"],))      # alone: send as it is
+                continue
+            lines = [f"\u2022 {i['title']}: {i['body']}" if i["body"] else f"\u2022 {i['title']}" for i in items]
+            text = ""
+            for n, line in enumerate(lines):
+                tail = f"\n\u2026and {len(lines) - n} more. See the Notifications page." if n < len(lines) - 1 else ""
+                if len(text) + len(line) + 1 + len(tail) > 900 and n:
+                    text += f"\n\u2026and {len(lines) - n} more. See the Notifications page."
+                    break
+                text += ("\n" if text else "") + line
+            event = emit.events.get("digest")
+            payload = {"count": len(items), "text": text}
+            event_id = conn.execute("INSERT INTO notification_event (event_type, dedupe_key, payload, created_at) VALUES ('digest', ?, ?, ?)",
+                                    (uuid.uuid4().hex, json.dumps(payload), now)).lastrowid
+            message = event.render(payload)
+            conn.execute(
+                """INSERT INTO notification (event_id, profile_id, channel_id, channel_label, title, body, priority, ttl_seconds, expires_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)""",
+                (event_id, profile_id, channel_id, items[0]["channel_label"], message.title, message.body, message.ttl_seconds,
+                 max(i["expires_at"] or "" for i in items) or store.later(now, 48 * 3600), now))
+            conn.execute(f"UPDATE notification SET status = 'held', error = 'Included in a summary message.', next_attempt_at = NULL WHERE id IN ({','.join('?' * len(items))})",
+                         [i["id"] for i in items])
+            made += 1
+    return made
 
 
 def prune_history():

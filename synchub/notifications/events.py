@@ -86,3 +86,16 @@ register(EventType(
     description="Apps cannot be opened on a Google TV until you accept the prompt on it.",
 ))
 
+
+register(EventType(
+    "request_available", "A title I wanted is available", USER,
+    render=lambda p: Message(f"{p.get('title') or 'A title'} is ready",
+                             f"{p.get('title') or 'A title'}{' (' + str(p['year']) + ')' if p.get('year') else ''} is now in the library."
+                             + (" The first episode has arrived." if p.get("kind") == "show" else ""), ttl_seconds=7 * 86400),
+    description="A movie on your watchlist or that you requested reaches the library, or the first episode of a show you wanted does.", expires_hours=24 * 7,
+))
+register(EventType(
+    "digest", "Summary of several notices", USER,
+    render=lambda p: Message(f"SyncHub: {p.get('count', 0)} updates", p.get("text") or "", ttl_seconds=86400),
+    expires_hours=48, configurable=False,
+))
