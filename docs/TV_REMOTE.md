@@ -76,10 +76,24 @@ PIN rules as the rest of SyncHub). The "Watch a movie…" button asks where to w
 | on, another app | launch the Jellyfin app, wait for its session to appear |
 | already in Jellyfin | play right away |
 
-It then sends PlayNow (optionally resuming where you left off) and waits for Jellyfin to report that item
-playing. If the command is accepted but nothing starts, the result says so instead of claiming success.
+It then sends PlayNow and waits for Jellyfin to report that item playing (see "Where a title starts" for the
+position). If the command is accepted but nothing starts, the result says so instead of claiming success.
 It cannot tell which HDMI input the TV is showing: if the streamer is on but the TV is on a game console
 input, switch inputs (Roku: "More keys"; Google TV: HDMI keys, or CEC usually does this when an app starts).
+
+## Where a title starts
+
+A TV picks up **where the person using the page left off**. That person is the profile chosen on the Who-is-watching page, through the Jellyfin user set for it on People: SyncHub asks Jellyfin, at the moment of playing, how far that user got (Jellyfin keeps it for every user; if it cannot be asked, the copy SyncHub last made is used). A guest, or a profile with no Jellyfin user, starts from the beginning. The progress box says what was chosen ("Picking up where Alice left off, at 42:10"). A show plays the episode its viewer should watch next (Jellyfin's Next up, which includes an episode they are part-way through) from where they stopped in it.
+
+The request decides: `startPositionTicks` absent means "wherever they stopped", a number means exactly there, and **0 means start over**. Watch now's menu has **Start from the beginning** when there is something to pick up from (the remote link then carries `start=0`), and the search dialog's *Resume at* box does the same.
+
+What each way of playing can do with the position:
+
+| Way | Where it starts |
+|---|---|
+| Jellyfin session (Google TV, Android TV) | Jellyfin is sent the position with the play command, so it starts there. |
+| Deep link (Roku) | The link starts the title from the beginning. SyncHub then asks the app to jump to the position, but **only an app that accepts remote commands can be moved**, and the official Roku app accepts none (see below): the progress box says so and the title plays from the beginning. Jellyfin's own *Continue Watching* row on the TV does resume. |
+| Stream URL | A transcoded (HLS) stream starts at the position. A direct stream cannot be started part-way and says so. Jellyfin is not told about streamed playback, so its watched state does not move. |
 
 ## Devices
 
@@ -120,12 +134,12 @@ at once. So a Roku plays like this (`"play": "auto"`, the default):
    still playing something else), the Roku is sent **Home** first, then the app is launched with the new link, because
    handing a new item to an app that is busy playing fails. It starts playing inside the real Jellyfin app, so Jellyfin sees the session and records progress and watched
    state. Works for movies, episodes, series, seasons, collections and music; a series link starts the series. The app
-   always starts from the beginning (it ignores a resume point), and there is no queue (Play now only). Success is confirmed
-   from Jellyfin's session list.
+   starts from the beginning (it ignores a resume point, and since it takes no remote commands SyncHub cannot move it to
+   one), and there is no queue (Play now only). Success is confirmed from Jellyfin's session list.
 2. **Stream URL**, only if the deep link *request* fails (for example the Roku answers with an error). The Roku streams
    from Jellyfin through the "Play on Roku" system channel, the ECP call the Roku phone app casts through. Direct play for
    files the Roku understands (MP4/MKV with H.264 or HEVC video and AAC, AC3, E-AC3 or MP3 audio), otherwise an HLS
-   transcode. Jellyfin is not told about this playback (no resume or watched mark), and the URL contains your API key (masked
+   transcode (a transcode can start part-way, a direct stream cannot). Jellyfin is not told about this playback (no resume or watched mark), and the URL contains your API key (masked
    in every log, but visible to the Roku). `stream_base` is the address the *Roku* should use to reach Jellyfin if it differs
    from the Jellyfin address in Settings; `stream_mode` is `auto`, `direct` or `hls`.
 

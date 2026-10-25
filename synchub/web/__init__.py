@@ -17,7 +17,7 @@ PIN_COOKIE = "synchub_pin"              # signed proof that this profile's PIN w
 # The main menu. An (endpoint, label) is a link; a (label, [items]) is a dropdown, whose items are links or (None, heading) group titles.
 # What a person sees is what their permissions allow, and a heading with nothing under it is left out.
 NAV = (
-    ("index", "Dashboard"), ("tv_remote_page", "Remote"), ("search_page", "Search"),
+    ("index", "Dashboard"), ("tv_remote_page", "Remote"), ("search_page", "Search"), ("notifications_page", "Notifications"),
     ("Media", (("library_page", "Library"), ("resolution_center", "Resolution Center"), ("workers_page", "Workers"), ("storage_page", "Storage"))),
     ("System", (
         (None, "Run"), ("tools", "Tools & Operations"),
@@ -199,8 +199,8 @@ def create_app(start_scheduler=False, csrf=True):
         return {"jellyfin_app": config, "current_profile": profile, "has_profiles": getattr(g, "has_profiles", False), "can": can, "menu": menu,
                 "max_rating": getattr(g, "max_rating", None), "app_version": __version__}
 
-    from synchub.web import admin, api, fleet, library, pages, security, shares, tv, worker_api
-    for module in (pages, api, admin, fleet, library, shares, security, tv, worker_api):
+    from synchub.web import admin, api, fleet, library, notifications, pages, security, shares, tv, worker_api
+    for module in (pages, api, admin, fleet, library, notifications, shares, security, tv, worker_api):
         module.register(app)
     if csrf:
         csrf.exempt(app.view_functions["api_webhook"])

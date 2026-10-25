@@ -6,6 +6,14 @@ from . import casting
 from .devices import DeviceError
 from .jellyfin import match_session, summarize_session
 
+TICKS = 10_000_000          # Jellyfin counts time in 100-nanosecond ticks
+JUMP_TOLERANCE = 30         # seconds short of the saved position that still counts as having jumped to it
+
+
+def _clock(ticks):
+    seconds = max(0, int((ticks or 0) // TICKS))
+    return f"{seconds // 3600}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}" if seconds >= 3600 else f"{seconds // 60}:{seconds % 60:02d}"
+
 
 UNCONTROLLABLE_GRACE = 15      # seconds after opening the app during which a session that cannot be controlled is assumed to be a leftover
 
@@ -217,8 +225,8 @@ def stop_playback(jf, session_id, step, timeout=8):
     return bool(_wait_for(cleared, timeout, 1))
 
 
-def _playing_item(jf, driver, item_id):
-    """The device's Jellyfin session is playing this item (or something from this series/season)."""
+def _playing_session(jf, driver, item_id):
+    """The device's Jellyfin session that is playing this item (or something from this series/season), or None."""
     rules = rule_ladder(driver)
     wanted = _norm(item_id)
     for s in jf.sessions():   # not filtered by SupportsRemoteControl: a session that ignores commands still reports playback
@@ -226,16 +234,51 @@ def _playing_item(jf, driver, item_id):
             continue
         n = s.get("NowPlayingItem") or {}
         if wanted in {_norm(n.get(k)) for k in ("Id", "SeriesId", "SeasonId", "ParentId")}:
-            return n
+            return s
     return None
+
+
+def _playing_item(jf, driver, item_id):
+    """What the device's Jellyfin session is playing, when it is this item (or something from this series/season)."""
+    session = _playing_session(jf, driver, item_id)
+    return (session or {}).get("NowPlayingItem")
+
+
+def jump_to(jf, driver, item_id, ticks, step, timeout=10):
+    """A deep link starts a title from the beginning, so once it is playing, send its session a Seek to where the viewer stopped, then watch the
+    session's position to see that the app really moved (an app may accept the command and ignore it). True if it did.
+    An app that says it cannot be remote controlled (the official Roku app) is not sent anything: it would only be ignored."""
+    session = _playing_session(jf, driver, item_id)
+    where = _clock(ticks)
+    if not session:
+        step(f"Could not find the Jellyfin session to move it to {where}; it plays from the beginning", False)
+        return False
+    if session.get("SupportsRemoteControl") is False:        # the official Roku app is one: it registers no commands, so a Seek would be ignored
+        step(f"The Jellyfin app on this device cannot be remote controlled, so SyncHub cannot move it to {where}: it plays from the beginning. "
+             f"Jellyfin's own Continue Watching row on the TV picks up where they left off; or set this TV to play by stream URL", False)
+        return False
+    resp = jf.playstate(session["Id"], "Seek", {"seekPositionTicks": int(ticks)})
+    if not resp.ok:
+        step(f"The Jellyfin app would not jump to {where} (HTTP {resp.status_code}); it plays from the beginning", False)
+        return False
+
+    def arrived():
+        now = next((s for s in jf.sessions() if s.get("Id") == session["Id"]), None) or {}
+        position = (now.get("PlayState") or {}).get("PositionTicks")
+        return position is not None and position >= ticks - JUMP_TOLERANCE * TICKS
+    if _wait_for(arrived, timeout, 1):
+        step(f"Jumped to {where}, where they left off")
+        return True
+    step(f"Asked the Jellyfin app to jump to {where}, but it still reports an earlier position. It may have ignored the command; seek to {where} by hand if it is at the start", False)
+    return False
 
 
 def play_deeplink(driver, jf, logbook, item_id, start_ticks=None, timeout=45):
     """Power the device on and send the Jellyfin app a deep link. -> {"ok", "steps", "confirmed", "retryable"}.
 
     The app plays inside itself, so Jellyfin sees the session and records progress and watched state.
-    Deep links always start from the beginning. `retryable` means the request itself failed (so a
-    different route may be tried), as opposed to it being sent but not confirmed."""
+    A deep link starts from the beginning, so when `start_ticks` is given the session is sent a Seek once it is playing (see jump_to).
+    `retryable` means the request itself failed (so a different route may be tried), as opposed to it being sent but not confirmed."""
     steps = []
 
     def step(msg, ok=True):
@@ -264,13 +307,15 @@ def play_deeplink(driver, jf, logbook, item_id, start_ticks=None, timeout=45):
     except DeviceError as e:
         return fail(str(e), retryable=True)
     step(f'Asked the Jellyfin app to play "{item.get("Name")}" ({media_type}): {how}')
-    if start_ticks:
-        step("Deep links always start from the beginning; the saved resume point is not used", True)
     playing = _wait_for(lambda: _playing_item(jf, driver, item_id), timeout, 2)
     if playing:
         step(f'Jellyfin reports it playing: {playing.get("Name")}')
+        if start_ticks:
+            jump_to(jf, driver, item_id, start_ticks, step)
     else:
         step("The link was sent, but Jellyfin never reported it playing. The app may still be loading, or not be signed in.", False)
+        if start_ticks:
+            step(f"It could not be moved to {_clock(start_ticks)} either, so it will play from the beginning", False)
     return {"ok": True, "steps": steps, "confirmed": bool(playing), "retryable": False}
 
 
@@ -279,6 +324,7 @@ def play_url(driver, jf, logbook, item_id, start_ticks=None):
 
     No Jellyfin app or session is involved, so Jellyfin does not learn about the playback
     (no resume point or watched mark), but nothing depends on the TV app's remote control.
+    A transcoded (HLS) stream can start part-way; a direct stream cannot.
     """
     steps = []
 
@@ -297,6 +343,9 @@ def play_url(driver, jf, logbook, item_id, start_ticks=None):
         return fail(f"Jellyfin has no item {item_id}")
     url, fmt, why = casting.stream_url(jf, item, driver.cfg.get("stream_base"), driver.cfg.get("stream_mode", "auto"), start_ticks)
     step(f'Streaming "{item.get("Name")}" to {driver.name}: {why}')
+    if start_ticks:
+        step(f"Starting at {_clock(start_ticks)}" if "StartTimeTicks" in url else
+             f"A direct stream cannot be started part-way, so it starts from the beginning (go to {_clock(start_ticks)} by hand). Streamed titles are not recorded by Jellyfin either")
     try:
         driver.play_url(url, item.get("Name"), fmt)
     except DeviceError as e:

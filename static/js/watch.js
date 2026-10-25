@@ -2,7 +2,9 @@
    Its menu offers "This device" (the Jellyfin link, which jellyfin-app.js opens in the Jellyfin app on an iPhone or iPad
    and in Jellyfin web everywhere else) and every TV SyncHub controls (it wakes the TV, opens Jellyfin and plays the title).
    Pages only place <span data-watch-now data-link data-item data-title data-size> where the button goes; this script builds it,
-   including for rows the page adds later. Without the TV permission the button is just the "This device" link. */
+   including for rows the page adds later. Without the TV permission the button is just the "This device" link.
+   A title this person is part-way through says so (data-resume): the button reads Resume, a TV picks up where they stopped, and the menu
+   offers "Start from the beginning" (the remote link then carries start=0). */
 (() => {
     "use strict";
     const configEl = document.getElementById("jellyfin-app-config");
@@ -37,13 +39,17 @@
         const wrap = make("div", "dropdown watch-now-menu" + (slot.dataset.size === "card" ? " w-100" : " d-inline-block"));
         wrap.dataset.item = slot.dataset.item;
         wrap.dataset.title = slot.dataset.title || "this title";
+        const resume = slot.dataset.resume || "";                // where this person stopped ("at 42:10", "S2E4 at 12:30"), when they are part-way through
         const toggle = make("button", size + " dropdown-toggle");
         toggle.type = "button";
         toggle.dataset.bsToggle = "dropdown";
         toggle.dataset.bsPopperConfig = '{"strategy":"fixed"}';   // so a table that scrolls sideways cannot clip the menu
+        if (resume) toggle.dataset.bsAutoClose = "outside";       // so the "from the beginning" box can be ticked without closing the menu
         toggle.setAttribute("aria-expanded", "false");
-        toggle.setAttribute("aria-label", `Watch ${wrap.dataset.title} now: choose where`);
-        toggle.append(icon("play-circle"), "Watch now");
+        toggle.setAttribute("aria-label", resume ? `Resume ${wrap.dataset.title} ${resume}: choose where` : `Watch ${wrap.dataset.title} now: choose where`);
+        if (resume) toggle.title = `Resume ${resume}`;
+        const wide = !slot.dataset.size || slot.dataset.size === "lg";        // a big button has room for where; a row or a card only says Resume
+        toggle.append(icon("play-circle"), !resume ? "Watch now" : wide ? `Resume ${resume}` : "Resume");
         const menu = make("ul", "dropdown-menu dropdown-menu-end");
         const here = make("li");
         const a = deviceLink(slot, "dropdown-item");
@@ -53,7 +59,21 @@
         const header = make("li"); header.appendChild(make("h6", "dropdown-header", "On a TV"));
         const loading = make("li", "px-3 pb-1 small text-body-secondary", "Loading TVs...");
         loading.dataset.tvSlot = "1";
-        menu.append(here, divider, header, loading);
+        menu.append(here, divider);
+        if (resume) {                                             // TVs pick up where they left off; this box starts from the beginning instead
+            const choice = make("li", "px-3 pb-1");
+            const box = make("div", "form-check mb-0");
+            const input = make("input", "form-check-input");
+            input.type = "checkbox";
+            input.dataset.startOver = "1";
+            input.id = `startOver-${Math.random().toString(36).slice(2, 8)}`;
+            const label = make("label", "form-check-label small", "Start from the beginning");
+            label.htmlFor = input.id;
+            box.append(input, label);
+            choice.appendChild(box);
+            menu.appendChild(choice);
+        }
+        menu.append(header, loading);
         wrap.append(toggle, menu);
         slot.appendChild(wrap);
     }
@@ -103,6 +123,7 @@
     // A TV choice opens that TV's remote, which starts the title there and shows each step (waking a TV can take a minute).
     function playOn(wrap, button) {
         const params = new URLSearchParams({ tv: button.dataset.watchTv, play: wrap.dataset.item, title: wrap.dataset.title });
+        if (wrap.querySelector("input[data-start-over]")?.checked) params.set("start", "0");      // a TV otherwise picks up where this person left off
         window.location.href = `/tv/remote?${params}`;
     }
 

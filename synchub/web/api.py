@@ -5,9 +5,9 @@ import threading
 import logging
 from datetime import date
 
-from flask import Response, jsonify, request
+from flask import Response, g, jsonify, request
 
-from synchub import automation, catalog, db, jellyfin_events, matching, ratings, search, settings, states, tasks, webhooks
+from synchub import automation, catalog, db, jellyfin_events, matching, ratings, search, settings, states, tasks, watch, webhooks
 from synchub.automation import RequestError
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.arr import RadarrClient, SonarrClient
@@ -133,6 +133,11 @@ def register(app):
             payload = payload if isinstance(payload, dict) else {}
             event = payload.get("eventType") or payload.get("NotificationType") or "WebhookTrigger"
         webhooks.record(service, event)
+        if service == "jellyfin":
+            try:
+                tasks.watch_event(event, payload)               # someone stopped playing something: their watch record is read again
+            except Exception as exc:
+                logger.warning(f"Could not act on a Jellyfin {event} event for watch history: {exc}")
         action = webhooks.classify(service, event)
         if action == "ignore":
             return jsonify(status="received", service=service)
@@ -273,7 +278,11 @@ def register(app):
                 return fail("That title is not available for your profile.", 403)
             defs = states.definitions(conn)
             eps = states.season_episodes(conn, media_id, season_number, today)
+            viewer = watch.user_of(getattr(g, "profile", None))
+            watched = watch.item_states(conn, viewer, [e["jellyfin_item_id"] for e in eps])        # what the person using this page has watched, by Jellyfin item
         for e in eps:
+            w = watched.get(watch.norm(e["jellyfin_item_id"]))
+            e["watch"] = {k: w[k] for k in ("state", "state_label", "percent", "position_label", "runtime_label", "last_played_label", "play_count", "resume_label")} if w else None
             info = defs.get(e["state"], defs["missing"])
             e.update(state_label=info["label"], state_color=info["color"], state_icon=info.get("icon"),
                      progress_pct=round(e["progress"] * 100) if e["progress"] is not None else None,
@@ -439,12 +448,24 @@ def register(app):
                 except RequestError as exc:
                     return jsonify(ok=False, message=f"{hello}, but adding titles would fail: {exc}")
                 return jsonify(ok=True, message=f"{hello}. The quality profile and root folder are valid.")
+            if service == "pushover":
+                from synchub.notifications import dispatch
+                from synchub.notifications.providers import pushover
+                token = typed("pushover_app_token") or pushover.app_token()
+                in_use = token == pushover.app_token()               # a token only being tried says nothing about the one in use
+                result = pushover.check_token(token, remember_quota=in_use)
+                if not result.ok:
+                    return jsonify(ok=False, message=result.detail)
+                if in_use:
+                    dispatch.clear_pause("pushover")                # the token in use works: any hold put on by an earlier failure can end
+                left = result.data
+                return jsonify(ok=True, message=f"Pushover accepts that token. {left['remaining']} of {left['limit']} messages are left this month." if left["limit"] is not None and left["remaining"] is not None
+                               else "Pushover accepts that token.")
             if service == "notifications":
-                from synchub import notify
-                if not notify.urls():
-                    return jsonify(ok=False, message="No Apprise URLs set.")
-                sent = notify.send("SyncHub Test", "Test notification from SyncHub.", force=True)
-                return jsonify(ok=sent, message="Notification sent." if sent else "Sending failed.")
+                from synchub.notifications import providers
+                from synchub.notifications.providers.base import Message
+                result = providers.get("apprise").send({"urls": typed("apprise_urls") or settings.get("apprise_urls")}, Message("SyncHub Test", "Test notification from SyncHub."))
+                return jsonify(ok=result.ok, message="Notification sent." if result.ok else result.detail)
         except ConfigError as exc:
             return jsonify(ok=False, message=str(exc))
         except ApiError as exc:

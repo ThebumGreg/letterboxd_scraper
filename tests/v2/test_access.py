@@ -74,7 +74,8 @@ def test_every_permission_is_needed_by_something():
 
 
 @pytest.mark.parametrize("endpoint, need", [
-    ("index", "dashboard"), ("show_details", "dashboard"), ("stream_events", "dashboard"), ("search_page", "search"), ("api_search_add_movie", "requests"),
+    ("index", "dashboard"), ("show_details", "dashboard"), ("stream_events", "dashboard"), ("search_page", "search"), ("notifications_page", "notifications"), ("api_notifications_verify", "notifications"), ("api_notifications_test", "notifications"),
+    ("api_search_add_movie", "requests"),
     ("api_request_all", "requests"), ("api_refresh", "requests"), ("resolution_center", "resolution"), ("api_resolution_approve", "resolution"),
     ("ddns_page", "ddns"), ("api_ddns_check", "ddns"), ("library_page", "library"), ("api_library_scan", "library"), ("workers_page", "workers"), ("api_worker_create", "workers"),
     ("api_job_log", "workers"), ("api_test_copy", "workers"), ("storage_page", "storage"), ("api_storage_create", "storage"), ("tools", "tools"), ("trigger", "tools"),
@@ -458,7 +459,7 @@ def test_the_menu_groups_workers_library_and_storage_and_tools_logs_and_payloads
     conn.commit()
     sign_in(browser, pid)
     shown = menu(text(browser.get("/")))
-    assert shown["links"] == ["Dashboard", "Remote", "Search", "Settings"]
+    assert shown["links"] == ["Dashboard", "Remote", "Search", "Notifications", "Settings"]
     assert shown["dropdowns"] == {"Media": ["Library", "Resolution Center", "Workers", "Storage"],
                                   "System": ["Tools &amp; Operations", "What it&#39;s doing now", "Logs", "Jellyfin events", "Payloads", "Dynamic DNS", "People", "TV apps", "TVs", "TV tools"]}
     page = text(browser.get("/"))
