@@ -80,6 +80,40 @@
         {% endif %}
     </div>
 
+    {% if profile and not problem %}
+    <div class="panel p-3 p-md-4 mb-4" id="rulesPanel">
+        <h5 class="text-success mb-1">What to tell me about</h5>
+        <p class="small text-body-secondary">Switch off anything you do not want. Changes save at once.</p>
+        {% for r in rules %}
+        <div class="form-check form-switch mb-2">
+            <input class="form-check-input" type="checkbox" role="switch" id="rule-{{ r.event_type }}" data-rule="{{ r.event_type }}"{% if r.enabled %} checked{% endif %}>
+            <label class="form-check-label" for="rule-{{ r.event_type }}">{{ r.label }}{% if r.audience == 'admin' %} <span class="badge bg-secondary">admin</span>{% endif %}</label>
+            {% if r.description %}<div class="small text-body-secondary">{{ r.description }}</div>{% endif %}
+        </div>
+        {% else %}
+        <div class="small text-body-secondary">Nothing to choose yet.</div>
+        {% endfor %}
+        <span class="small" id="ruleResult" role="status"></span>
+    </div>
+
+    <div class="panel p-3 p-md-4 mb-4" id="quietPanel">
+        <h5 class="text-success mb-1">Quiet hours</h5>
+        <p class="small text-body-secondary">During quiet hours, ordinary notifications wait and arrive when they end. Urgent ones (a worker offline, a share not mounted) still come through.</p>
+        <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" role="switch" id="quietOn"{% if pref.quiet_on %} checked{% endif %}>
+            <label class="form-check-label" for="quietOn">Use quiet hours</label>
+        </div>
+        <div class="row g-3" style="max-width: 36rem;">
+            <div class="col-6"><label for="quietStart" class="form-label">From</label><input type="time" class="form-control" id="quietStart" value="{{ pref.quiet_start }}"></div>
+            <div class="col-6"><label for="quietEnd" class="form-label">Until</label><input type="time" class="form-control" id="quietEnd" value="{{ pref.quiet_end }}"></div>
+            <div class="col-12"><label for="quietZone" class="form-label">Time zone</label><input type="text" class="form-control" id="quietZone" value="{{ pref.timezone }}" data-saved="{{ pref.quiet_on|int }}" spellcheck="false">
+                <div class="form-text">For example America/Chicago. Filled in from this browser the first time.</div></div>
+        </div>
+        <button type="button" class="btn btn-success btn-sm mt-3" id="quietSave">Save quiet hours</button>
+        <span class="small ms-2" id="quietResult" role="status"></span>
+    </div>
+    {% endif %}
+
     <div class="panel p-0 overflow-hidden mb-4" id="historyPanel">
         <div class="p-3 p-md-4 border-bottom border-secondary border-opacity-25"><h5 class="mb-0 text-success">What was sent to me</h5></div>
         <div class="table-responsive">

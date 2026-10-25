@@ -1,6 +1,8 @@
 """A person's delivery methods ("channels") and the history of what was sent to them."""
 import json
-from datetime import datetime, timedelta
+import re
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from synchub import db, settings
 from synchub.notifications import events, providers
@@ -124,3 +126,75 @@ def secret_values(conn):
         config = _load(row["config"])
         found.update(str(config[n]) for n in secret_names if len(str(config.get(n) or "")) >= 6)
     return sorted(found, key=len, reverse=True)
+
+
+# ---------------------------------------------------------------- what a person wants to hear about, and when
+TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+DEFAULT_PREF = {"quiet_on": False, "quiet_start": "22:00", "quiet_end": "07:00", "timezone": "UTC"}
+
+
+def rules(conn, profile_id):
+    """Every choosable event type with whether this person gets it: their own choice, else the event's default."""
+    chosen = {r["event_type"]: bool(r["enabled"]) for r in conn.execute("SELECT event_type, enabled FROM notification_rule WHERE profile_id = ?", (profile_id,))}
+    return [{"event_type": e.code, "label": e.label, "description": e.description, "audience": e.audience, "enabled": chosen.get(e.code, e.default_on)}
+            for e in events.REGISTRY.values() if e.configurable]
+
+
+def wants(conn, profile_id, event_type):
+    row = conn.execute("SELECT enabled FROM notification_rule WHERE profile_id = ? AND event_type = ?", (profile_id, event_type)).fetchone()
+    return bool(row["enabled"]) if row else events.get(event_type).default_on
+
+
+def set_rule(conn, profile_id, event_type, enabled):
+    event = events.REGISTRY.get(event_type)
+    if event is None or not event.configurable:
+        raise ValueError("There is no such notification.")
+    conn.execute("INSERT INTO notification_rule (profile_id, event_type, enabled) VALUES (?, ?, ?) "
+                 "ON CONFLICT (profile_id, event_type) DO UPDATE SET enabled = excluded.enabled", (profile_id, event_type, 1 if enabled else 0))
+
+
+def pref(conn, profile_id):
+    row = conn.execute("SELECT * FROM notification_pref WHERE profile_id = ?", (profile_id,)).fetchone()
+    return {**DEFAULT_PREF, "quiet_on": bool(row["quiet_on"]), "quiet_start": row["quiet_start"], "quiet_end": row["quiet_end"], "timezone": row["timezone"]} if row else dict(DEFAULT_PREF)
+
+
+def set_pref(conn, profile_id, quiet_on, quiet_start, quiet_end, timezone_name):
+    """Saves quiet hours. Raises ValueError saying what is wrong with what was given."""
+    if not (TIME_RE.match(str(quiet_start)) and TIME_RE.match(str(quiet_end))):
+        raise ValueError("Give the times as hours and minutes, such as 22:00.")
+    if quiet_start == quiet_end and quiet_on:
+        raise ValueError("Quiet hours need a start and an end that differ.")
+    try:
+        ZoneInfo(str(timezone_name))
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        raise ValueError("That time zone is not known.")
+    conn.execute("INSERT INTO notification_pref (profile_id, quiet_on, quiet_start, quiet_end, timezone) VALUES (?, ?, ?, ?, ?) "
+                 "ON CONFLICT (profile_id) DO UPDATE SET quiet_on = excluded.quiet_on, quiet_start = excluded.quiet_start, quiet_end = excluded.quiet_end, timezone = excluded.timezone",
+                 (profile_id, 1 if quiet_on else 0, quiet_start, quiet_end, str(timezone_name)))
+
+
+def quiet_until(prefs, now):
+    """When quiet hours end (database UTC text) if `now` falls inside them, else None. Handles a window that crosses midnight."""
+    if not prefs["quiet_on"]:
+        return None
+    zone = ZoneInfo(prefs["timezone"])
+    local = datetime.strptime(now, FORMAT).replace(tzinfo=timezone.utc).astimezone(zone)
+    start = datetime.strptime(prefs["quiet_start"], "%H:%M").time()
+    end = datetime.strptime(prefs["quiet_end"], "%H:%M").time()
+    t = local.time()
+    inside = (start <= t < end) if start < end else (t >= start or t < end)
+    if not inside:
+        return None
+    ends = local.replace(hour=end.hour, minute=end.minute, second=0, microsecond=0)
+    if ends <= local:
+        ends += timedelta(days=1)
+    return ends.astimezone(timezone.utc).strftime(FORMAT)
+
+
+def admin_ids(conn):
+    """The profiles the administrator chose to receive administrator alerts (Settings)."""
+    ids = []
+    for part in str(settings.get("notify_admin_profiles", conn=conn) or "").split(","):
+        if part.strip().isdigit():
+            ids.append(int(part))
+    return ids

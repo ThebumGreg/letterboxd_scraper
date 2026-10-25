@@ -55,7 +55,11 @@ def register(app):
             profile, problem = _person(conn)
             channels = store.list_channels(conn, profile["id"]) if profile else []
             history = store.history(conn, profile["id"]) if profile else []
-        return render_template("notifications.html", profile=profile, problem=problem, channels=channels, history=history, forms=_forms(), state=dispatch.state())
+            is_admin = bool(profile) and profile["id"] in store.admin_ids(conn)
+            rules = [r for r in store.rules(conn, profile["id"]) if is_admin or r["audience"] == "user"] if profile else []
+            pref = store.pref(conn, profile["id"]) if profile else store.DEFAULT_PREF
+        return render_template("notifications.html", profile=profile, problem=problem, channels=channels, history=history, forms=_forms(), state=dispatch.state(),
+                               rules=rules, pref=pref, is_admin=is_admin)
 
     @app.route("/api/notifications/verify", methods=["POST"])
     def api_notifications_verify():
@@ -137,3 +141,33 @@ def register(app):
     @app.route("/api/notifications/history")
     def api_notifications_history():
         return _owned(lambda conn, profile: jsonify(ok=True, history=store.history(conn, profile["id"])))
+
+    @app.route("/api/notifications/rules", methods=["POST"])
+    def api_notifications_rule():
+        """Switches one kind of notification on or off for the person using this request."""
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data.get("enabled"), bool):
+            return _fail("Say whether it should be on or off.")
+
+        def save(conn, profile):
+            try:
+                store.set_rule(conn, profile["id"], str(data.get("event_type") or ""), data["enabled"])
+            except ValueError as exc:
+                return _fail(str(exc), 404)
+            return jsonify(ok=True, message="Saved.")
+        return _owned(save)
+
+    @app.route("/api/notifications/quiet", methods=["POST"])
+    def api_notifications_quiet():
+        """Saves the quiet hours of the person using this request."""
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data.get("quiet_on"), bool):
+            return _fail("Say whether quiet hours should be on or off.")
+
+        def save(conn, profile):
+            try:
+                store.set_pref(conn, profile["id"], data["quiet_on"], data.get("quiet_start"), data.get("quiet_end"), data.get("timezone"))
+            except ValueError as exc:
+                return _fail(str(exc))
+            return jsonify(ok=True, message="Saved.")
+        return _owned(save)

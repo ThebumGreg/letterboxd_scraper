@@ -10,6 +10,7 @@ from datetime import datetime
 from flask import Response, flash, jsonify, redirect, render_template, request, send_file, url_for
 
 from config import LOG_FILE_PATH
+from settings_validation import validate_setting
 from synchub import catalog, db, ddns, ddns_check, jellyfin_events, profiles, settings, tasks, webhooks
 from synchub.profiles import ProfileError
 from synchub.web import current_limit
@@ -73,6 +74,12 @@ def register(app):
     @app.route("/tools/update-settings", methods=["POST"])
     def update_settings():
         errors = settings.save_form(request.form)
+        if request.form.get("notify_admin_present"):
+            ok, chosen = validate_setting("notify_admin_profiles", ",".join(request.form.getlist("admin_profile")))
+            if ok:
+                settings.set_value("notify_admin_profiles", chosen)
+            else:
+                errors.append(chosen)
         if (request.form.get("pushover_app_token") or "").strip():
             from synchub.notifications import dispatch
             dispatch.clear_pause("pushover")                # a new token ends the hold put on by the old one

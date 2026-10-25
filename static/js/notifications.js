@@ -139,4 +139,30 @@
         if (r.ok) { window.location.reload(); return; }
         button.disabled = false; say(result, r.message, false);
     });
+
+    /* ---------- what to tell me about, and quiet hours ---------- */
+    root.querySelectorAll("[data-rule]").forEach((box) => {
+        box.addEventListener("change", async () => {
+            const out = document.getElementById("ruleResult");
+            const got = await post("/api/notifications/rules", { event_type: box.dataset.rule, enabled: box.checked });
+            if (!got.ok) box.checked = !box.checked;
+            say(out, got.message, got.ok);
+        });
+    });
+    const zone = document.getElementById("quietZone");
+    if (zone && zone.value === "UTC" && zone.dataset.saved === "0") {
+        try { zone.value = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch (e) { /* keep UTC */ }
+    }
+    const quietSave = document.getElementById("quietSave");
+    if (quietSave) {
+        quietSave.addEventListener("click", async () => {
+            const got = await post("/api/notifications/quiet", {
+                quiet_on: document.getElementById("quietOn").checked,
+                quiet_start: document.getElementById("quietStart").value,
+                quiet_end: document.getElementById("quietEnd").value,
+                timezone: zone.value.trim(),
+            });
+            say(document.getElementById("quietResult"), got.message, got.ok);
+        });
+    }
 })();

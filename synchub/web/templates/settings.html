@@ -78,6 +78,21 @@
                 </div>
                 <button type="button" class="btn btn-outline-info btn-sm" data-test-service="notifications" data-test-fields="apprise_urls">Send test notification</button>
                 <span class="small ms-2" data-test-result="notifications" role="status"></span>
+                <hr>
+                <fieldset class="mb-3">
+                    <legend class="form-label fs-6">Who gets administrator alerts</legend>
+                    <input type="hidden" name="notify_admin_present" value="1">
+                    {% set admin_ids = (settings.notify_admin_profiles or '').split(',') %}
+                    {% for p in profiles %}
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="admin_profile" value="{{ p.id }}" id="adminProfile{{ p.id }}"{% if p.id|string in admin_ids %} checked{% endif %}>
+                        <label class="form-check-label" for="adminProfile{{ p.id }}">{{ p.name }}</label>
+                    </div>
+                    {% else %}
+                    <div class="small text-body-secondary">Add a profile first.</div>
+                    {% endfor %}
+                    <div class="form-text">Worker, share, job and TV alerts go to these people's own delivery methods. Each of them can switch individual alerts off, and set quiet hours, on the Notifications page.</div>
+                </fieldset>
                 <div class="mt-4" style="max-width: 18rem;">
                     <label for="notify_history_keep_days" class="form-label">Keep notification history for (days)</label>
                     <input type="number" class="form-control" id="notify_history_keep_days" name="notify_history_keep_days" value="{{ settings.notify_history_keep_days }}" min="0" max="36500" step="1">
