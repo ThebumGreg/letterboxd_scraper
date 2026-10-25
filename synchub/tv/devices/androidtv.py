@@ -1,4 +1,5 @@
 """Google TV / Android TV over ADB (needs the `adb` binary and Network debugging on the TV)."""
+import hashlib
 import os
 import re
 import socket
@@ -133,16 +134,67 @@ class AndroidTVDriver(Driver):
         self._media = (0.0, None)
         self._status_lock = threading.Lock()
         self._last_status = {"online": False, "power": None, "app": None, "error": "checking…"}
+        self.adb_auth = None          # "ok" once a command ran, "unauthorized" while the TV has not accepted our key
+        self._auth_try = 0.0
 
     # --- adb plumbing -------------------------------------------------------------------
+    _server_home = None            # the HOME the running adb server was started under (shared by every TV)
+    _server_lock = threading.Lock()
+
+    def _env(self):
+        home = self.options.get("adb_home")
+        if not home:
+            return None
+        Path(home).mkdir(parents=True, exist_ok=True)
+        return {**os.environ, "HOME": home}      # adb looks for (and makes) its key under $HOME/.android
+
+    def _ensure_server_key(self, env):
+        """adb reads its key once, when its server starts. A server left running from before the key folder was set (or
+        started under another HOME) keeps trusting the wrong key, so restart it once per process under ours."""
+        home = self.options.get("adb_home")
+        with AndroidTVDriver._server_lock:
+            if not home or AndroidTVDriver._server_home == home:
+                return
+            try:
+                subprocess.run([self.adb_path, "kill-server"], capture_output=True, timeout=8, env=env)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            AndroidTVDriver._server_home = home
+
+    def adb_info(self):
+        """Where the key lives, which key it is, and whether the TV accepts it."""
+        pub = Path(self.options.get("adb_home") or Path.home()) / ".android" / "adbkey.pub"
+        fingerprint = None
+        if pub.is_file():
+            fingerprint = hashlib.md5(pub.read_bytes().split(b" ")[0].strip()).hexdigest()
+        return {"key": str(pub), "fingerprint": fingerprint, "state": self.adb_auth or "unknown"}
+
+    def adb_reset(self, new_key=True):
+        """Forget the ADB key (a new one is made on the next connect), restart the adb server and connect again, which
+        makes the TV show its 'Allow USB debugging' prompt."""
+        env = self._env()
+        home = Path(self.options.get("adb_home") or Path.home()) / ".android"
+        if new_key:
+            for name in ("adbkey", "adbkey.pub"):
+                (home / name).unlink(missing_ok=True)
+        try:
+            subprocess.run([self.adb_path, "kill-server"], capture_output=True, timeout=8, env=env)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        AndroidTVDriver._server_home = self.options.get("adb_home")
+        self.adb_auth = None
+        self._auth_try = 0.0
+        out = self._adb("connect", self.target, action="adb reset", scoped=False)
+        self.log("adb reset", "", None, True, None, "new key made; look at the TV and choose Allow (tick Always allow)" if new_key
+                 else "adb restarted; look at the TV for the Allow prompt")
+        return out
+
     def _adb(self, *args, action=None, quiet=False, timeout=15, raw=False, scoped=True, _retry=True):
         cmd = [self.adb_path] + (["-s", self.target] if scoped else []) + list(args)
         shown = "adb " + " ".join(cmd[1:])
         t0 = time.perf_counter()
-        env = None
-        if self.options.get("adb_home"):
-            Path(self.options["adb_home"]).mkdir(parents=True, exist_ok=True)
-            env = {**os.environ, "HOME": self.options["adb_home"]}      # adb looks for (and makes) its key under $HOME/.android
+        env = self._env()
+        self._ensure_server_key(env)
         try:
             p = subprocess.run(cmd, capture_output=True, timeout=timeout, env=env)
         except FileNotFoundError:
@@ -159,9 +211,21 @@ class AndroidTVDriver(Driver):
                 self._adb("connect", self.target, action="reconnect", scoped=False, quiet=quiet, _retry=False, timeout=6)
                 return self._adb(*args, action=action, quiet=quiet, timeout=timeout, raw=raw, _retry=False)
             if "unauthorized" in text:
-                text += " - accept the 'Allow USB debugging' prompt on the TV"
+                self.adb_auth = "unauthorized"
+                # A connect (re)starts the TV's 'Allow USB debugging' prompt; not more than once in 20 s, or polls would spam it.
+                if scoped and _retry and time.time() - self._auth_try > 20:
+                    self._auth_try = time.time()
+                    try:
+                        self._adb("connect", self.target, action="authorize", scoped=False, quiet=True, _retry=False, timeout=6)
+                    except DeviceError:
+                        pass
+                    return self._adb(*args, action=action, quiet=quiet, timeout=timeout, raw=raw, _retry=False)
+                text += (" - the TV has not accepted SyncHub's ADB key: look at the TV for 'Allow USB debugging' and tick Always allow, "
+                         "or press 'Reset ADB key' on the TVs page")
             self._fail(action, shown, p.returncode, text, quiet, t0)
             raise DeviceError(text or f"adb exited with {p.returncode}")
+        if "connect" not in args[:1]:
+            self.adb_auth = "ok"
         if not quiet:
             self.log(action or args[0], shown, p.returncode, True, ms, "<binary>" if raw else text)
         return p.stdout if raw else text
@@ -184,13 +248,18 @@ class AndroidTVDriver(Driver):
             if not self._status_lock.acquire(blocking=False):
                 return self._last_status
             try:
-                self._last_status = self._read_state(quiet=True)
+                self._last_status = self._with_auth(self._read_state(quiet=True))
                 return self._last_status
             finally:
                 self._status_lock.release()
         with self._status_lock:
-            self._last_status = self._read_state(quiet=False)
+            self._last_status = self._with_auth(self._read_state(quiet=False))
             return self._last_status
+
+    def _with_auth(self, state):
+        if self.adb_auth == "unauthorized":
+            state["adbAuth"] = "unauthorized"
+        return state
 
     def _read_state(self, quiet, timeout=4):
         # `adb get-state` only reports the adb server's cached view, so test the port directly first.

@@ -24,11 +24,15 @@ function renderTvs() {
     return `<div class="tvcard" data-id="${esc(t.id)}">
       <div class="tvhead"><b>${esc(t.name)}</b><span class="chip">${esc(t.managed ? 'saved in the app' : 'devices.json')}</span><span class="grow"></span><span class="small" data-stat>${statText(t.id)}</span></div>
       <div class="small dim">${meta}</div>
+      ${t.adb || t.type === 'androidtv' ? `<div class="pair" data-adb hidden><b>ADB needs authorizing</b> <span class="small dim">The TV has not accepted SyncHub's ADB key, so apps cannot be opened over ADB. Look at the TV for “Allow USB debugging”, tick Always allow, and press Reset ADB key if it never appears.</span>
+        <div class="tv-row"><button data-act="tvAdbReset" data-id="${esc(t.id)}">Reset ADB key</button></div></div>` : ''}
       ${t.type === 'googletv' ? `<div class="pair" data-pair hidden><b>Pairing required</b> <span class="small dim">Press Start, then type the code that appears on the TV.</span>
         <div class="tv-row"><button data-act="tvPairStart" data-id="${esc(t.id)}">Start pairing</button><input data-code placeholder="code on TV" maxlength="8" style="max-width:130px" aria-label="Pairing code"><button data-act="tvPairFinish" data-id="${esc(t.id)}">Finish</button></div></div>` : ''}
       <div class="tv-row">
         ${t.managed ? `<button data-act="tvEdit" data-id="${esc(t.id)}">Edit</button><button data-act="tvRemove" data-id="${esc(t.id)}">Remove</button>` : '<span class="small dim">Set in devices.json</span>'}
         <button data-act="tvMac" data-id="${esc(t.id)}" title="Read the MAC address (the TV must be on)">${t.mac ? 'Re-detect MAC' : 'Detect MAC'}</button>
+        ${t.type === 'googletv' ? `<button data-act="tvForgetPair" data-id="${esc(t.id)}" title="Delete the pairing identity so the TV can be paired from scratch">Forget pairing</button>` : ''}
+        ${t.adb || t.type === 'androidtv' ? `<button data-act="tvAdbReset" data-id="${esc(t.id)}" title="Make a new ADB key and ask the TV to trust it">Reset ADB key</button>` : ''}
       </div></div>`;
   }).join('') || '<div class="dim">No TVs yet. Use “Scan network” below, or add one manually.</div>';
   paintStatus();
@@ -38,6 +42,7 @@ function paintStatus() {   // status changes touch only the status text, so an o
     const id = card.dataset.id, st = S.status[id];
     card.querySelector('[data-stat]').innerHTML = statText(id);
     const pair = card.querySelector('[data-pair]'); if (pair) pair.hidden = !(st && st.needsPairing);
+    const adb = card.querySelector('[data-adb]'); if (adb) adb.hidden = !(st && st.adbAuth === 'unauthorized');
   });
 }
 
@@ -135,6 +140,17 @@ Object.assign(ACTIONS, {
     if (!r.ok) return alert(r.body || 'Could not read the MAC address');
     if (t.managed) { await api('PUT', `/api/tv/setup/tvs/${encodeURIComponent(t.id)}`, {...t, mac: r.mac}); refreshAll(); }
     else alert(`${r.mac}\nAdd "mac": "${r.mac}" to ${t.id} in devices.json to keep it.`);
+  },
+  tvForgetPair: async b => {
+    if (!confirm('Forget the pairing? Every Google TV shares it, so each one will need pairing again.')) return;
+    const r = await run(b, api('POST', devPath('/pair/forget', b.dataset.id), {}));
+    if (r.ok) pollAll(); else alert(r.body || 'Could not forget the pairing');
+  },
+  tvAdbReset: async b => {
+    if (!confirm('Make a new ADB key? Then accept the “Allow USB debugging” prompt on the TV (tick Always allow).')) return;
+    const r = await run(b, api('POST', devPath('/adb/reset', b.dataset.id), {}));
+    alert(r.body || (r.ok ? 'Done. Now accept the prompt on the TV.' : 'Reset failed'));
+    pollAll();
   },
   tvPairStart: b => run(b, api('POST', devPath('/pair/start', b.dataset.id), {})),
   tvPairFinish: async b => {

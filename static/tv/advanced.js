@@ -23,7 +23,8 @@ function renderTools() {
   el.innerHTML = `<h2>Device tools</h2>
     <h3 style="margin:0">${esc(d.name)}</h3>
     <div class="rstat small dim" id="rstat"></div>
-    ${pairing}${power}
+    ${pairing}${has('pairing') ? '<div class="tv-row"><button data-act="pairForget" title="Delete the pairing identity (all Google TVs share it)">Forget pairing</button></div>' : ''}
+    ${has('diagnose') ? '<div class="tv-row"><button data-act="adbInfo">ADB key status</button><button data-act="adbReset" title="Make a new ADB key and ask the TV to trust it">Reset ADB key</button></div>' : ''}${power}
     <h2 style="margin-top:10px">All keys</h2>
     <div class="rgrid r4">${ALL_KEYS.map(([k, label]) => `<button data-act="key" data-key="${k}" ${d.keys[k] ? '' : 'disabled'} title="${k}">${label}</button>`).join('')}</div>
     ${has('text') ? '<div class="tv-row"><input id="txt" placeholder="Type on the TV"><button data-act="text">Send</button></div>' : ''}
@@ -216,6 +217,9 @@ Object.assign(ACTIONS, {
   diagnose: b => run(b, api('POST', devPath('/diagnose'), {})),
   wol: async b => { await run(b, api('POST', devPath('/wol'), {})); setTimeout(() => pollStatus(dev()), 4000); },
   detectMac: async b => { await run(b, api('POST', devPath('/detect-mac'), {})); pollStatus(dev()); },
+  pairForget: async b => { if (confirm('Forget the pairing? Every Google TV shares it, so each one will need pairing again.')) { await run(b, api('POST', devPath('/pair/forget'), {})); pollStatus(dev()); } },
+  adbInfo: b => run(b, api('GET', devPath('/adb'))),
+  adbReset: async b => { if (confirm('Make a new ADB key? Then accept the “Allow USB debugging” prompt on the TV.')) { await run(b, api('POST', devPath('/adb/reset'), {})); pollStatus(dev()); } },
   pairStart: b => run(b, api('POST', devPath('/pair/start'), {})),
   pairFinish: async b => { const r = await run(b, api('POST', devPath('/pair/finish'), {code: $('#pairCode').value})); if (r.ok) { $('#pairCode').value = ''; pollStatus(dev()); } },
   text: b => run(b, api('POST', devPath('/text'), {text: $('#txt').value})),

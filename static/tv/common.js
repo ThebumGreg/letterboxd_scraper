@@ -51,7 +51,7 @@ async function run(btn, promise) {
   return res;
 }
 // Everyday device calls are /api/tv/devices/..; probes, pairing, screenshots and the like need the TV setup permission
-const SETUP_PATH = /^\/(sleep|screensaver|probe|diagnose|wol|detect-mac|pair|connect|screenshot|prepare)/;
+const SETUP_PATH = /^\/(sleep|screensaver|probe|diagnose|wol|detect-mac|pair|adb|connect|screenshot|prepare)/;
 const devPath = (p, id = S.devId) => `/api/tv/${SETUP_PATH.test(p) ? 'setup/' : ''}devices/${encodeURIComponent(id)}${p}`;
 const lastLine = t => String(t || 'failed').split('\n').filter(Boolean).pop();
 const fmt = t => { t = Math.round(t); const h = Math.floor(t/3600), m = Math.floor(t%3600/60), s = t%60; return (h ? h + ':' + String(m).padStart(2,'0') : m) + ':' + String(s).padStart(2,'0'); };
