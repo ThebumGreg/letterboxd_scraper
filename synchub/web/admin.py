@@ -10,7 +10,7 @@ from datetime import datetime
 from flask import Response, flash, jsonify, redirect, render_template, request, send_file, url_for
 
 from config import LOG_FILE_PATH
-from synchub import catalog, db, ddns, ddns_check, jellyfin_events, notify, profiles, settings, tasks, webhooks
+from synchub import catalog, db, ddns, ddns_check, jellyfin_events, profiles, settings, tasks, webhooks
 from synchub.profiles import ProfileError
 
 # name -> (job, message shown after starting it)
@@ -71,7 +71,8 @@ def register(app):
         from synchub import scheduler
         scheduler.configure()
         flash("Some values were not saved: " + " ".join(errors), "danger") if errors else flash("Settings updated successfully.", "success")
-        return redirect(url_for("payloads_page") if request.referrer and "payloads" in request.referrer else url_for("settings_page"))
+        tab = request.form.get("tab")
+        return redirect(url_for("settings_page", tab=tab) if tab in ("connections", "automation", "logging") else url_for("settings_page"))
 
     @app.route("/tools/export-csv")
     def export_csv():
@@ -100,7 +101,7 @@ def register(app):
             flash(f"Profile '{(form.get('profile_name') or '').strip()}' saved.", "success")
         except ProfileError as exc:
             flash(str(exc), "danger")
-        return redirect(url_for("settings_page"))
+        return redirect(url_for("people_page"))
 
     @app.route("/settings/profiles/delete/<int:profile_id>", methods=["POST"])
     def delete_profile(profile_id):
@@ -110,7 +111,7 @@ def register(app):
             flash("Profile removed. Its Letterboxd/Serializd entries are kept.", "info")
         except ProfileError as exc:
             flash(str(exc), "danger")
-        return redirect(url_for("settings_page"))
+        return redirect(url_for("people_page"))
 
     @app.route("/api/profiles/toggle", methods=["POST"])
     def api_toggle_profile():
@@ -159,12 +160,6 @@ def register(app):
         ok, message = ddns.run_update(force=True)
         flash(message, "success" if ok else "danger")
         return redirect(url_for("ddns_page"))
-
-    @app.route("/tools/test-notification", methods=["POST"])
-    def test_notification():
-        sent = notify.send("SyncHub Test", "Test notification from SyncHub.", force=True)
-        flash("Notification sent!" if sent else "Failed to send. Check the Apprise URLs in Settings.", "success" if sent else "danger")
-        return redirect(url_for("tools"))
 
     # ---------------------------------------------------------------- logs and payloads
     @app.route("/api/logs")

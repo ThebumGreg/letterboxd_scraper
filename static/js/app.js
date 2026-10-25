@@ -105,23 +105,15 @@
         });
     }
 
-    /* ---------- Settings page ---------- */
-    const settingsForm = document.getElementById("settingsForm");
-    if (settingsForm) {
+    /* ---------- Settings page (one form per tab, each saved on its own) ---------- */
+    const settingsForms = Array.from(document.querySelectorAll("form.settings-form"));
+    if (settingsForms.length) {
         // Username boxes: show one name per line, store as a JSON list (the format the backend already uses).
-        const boxes = Array.from(settingsForm.querySelectorAll("textarea[data-usernames]"));
         const parseList = (text) => {
             const t = text.trim();
             if (t.startsWith("[")) { try { const v = JSON.parse(t); if (Array.isArray(v)) return v.map(String); } catch (_) { /* fall through */ } }
             return t.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
         };
-        boxes.forEach((box) => {
-            const t = box.value.trim();
-            if (t.startsWith("[")) {
-                try { const v = JSON.parse(t); if (Array.isArray(v)) box.value = v.join("\n"); } catch (_) { /* leave raw text */ }
-            }
-            box.addEventListener("input", () => box.setCustomValidity(""));
-        });
 
         // Max delay must not be below min delay.
         [["request_delay_min", "request_delay_max"], ["user_delay_min", "user_delay_max"]].forEach(([minId, maxId]) => {
@@ -144,38 +136,47 @@
             const dim = cb.dataset.dimsWhen === "checked" ? cb.checked : !cb.checked;
             target.classList.toggle("is-dimmed", dim);
         };
-        settingsForm.querySelectorAll("[data-dims]").forEach((cb) => { applyDims(cb); cb.addEventListener("change", () => applyDims(cb)); });
+        document.querySelectorAll("[data-dims]").forEach((cb) => { applyDims(cb); cb.addEventListener("change", () => applyDims(cb)); });
 
-        // Unsaved-changes indicator + leave warning.
-        const badge = document.getElementById("dirtyBadge");
-        let dirty = false;
+        // Unsaved-changes indicator (per tab) + leave warning.
+        const dirty = new Set();
         let saving = false;
-        const markDirty = () => { dirty = true; badge.classList.remove("d-none"); };
-        settingsForm.addEventListener("input", markDirty);
-        settingsForm.addEventListener("change", markDirty);
-        window.addEventListener("beforeunload", (e) => { if (dirty && !saving) { e.preventDefault(); e.returnValue = ""; } });
-
-        settingsForm.addEventListener("submit", (e) => {
-            // Validate usernames, then convert each box back to a JSON list.
-            for (const box of boxes) {
-                const names = parseList(box.value);
-                const bad = names.find((n) => !/^[\w.\-]+$/.test(n));
-                if (bad) {
-                    box.setCustomValidity(`"${bad}" is not a valid username (letters, numbers, _ . - only).`);
-                    box.reportValidity();
-                    e.preventDefault();
-                    return;
+        settingsForms.forEach((form) => {
+            const badge = form.querySelector(".dirty-badge");
+            const markDirty = () => { dirty.add(form); badge?.classList.remove("d-none"); };
+            form.addEventListener("input", markDirty);
+            form.addEventListener("change", markDirty);
+            const boxes = Array.from(form.querySelectorAll("textarea[data-usernames]"));
+            boxes.forEach((box) => {
+                const t = box.value.trim();
+                if (t.startsWith("[")) {
+                    try { const v = JSON.parse(t); if (Array.isArray(v)) box.value = v.join("\n"); } catch (_) { /* leave raw text */ }
                 }
-                box.value = JSON.stringify([...new Set(names)]);
-            }
-            if (!e.defaultPrevented) saving = true;
+                box.addEventListener("input", () => box.setCustomValidity(""));
+            });
+            form.addEventListener("submit", (e) => {
+                // Validate usernames, then convert each box back to a JSON list.
+                for (const box of boxes) {
+                    const names = parseList(box.value);
+                    const bad = names.find((n) => !/^[\w.\-]+$/.test(n));
+                    if (bad) {
+                        box.setCustomValidity(`"${bad}" is not a valid username (letters, numbers, _ . - only).`);
+                        box.reportValidity();
+                        e.preventDefault();
+                        return;
+                    }
+                    box.value = JSON.stringify([...new Set(names)]);
+                }
+                if (!e.defaultPrevented) saving = true;
+            });
         });
+        window.addEventListener("beforeunload", (e) => { if (dirty.size && !saving) { e.preventDefault(); e.returnValue = ""; } });
 
         // "Set up in Radarr/Sonarr" buttons: ask the service to create the SyncHub webhook. Blank secrets mean "use the saved value".
-        settingsForm.querySelectorAll("[data-webhook-setup]").forEach((btn) => {
+        document.querySelectorAll("[data-webhook-setup]").forEach((btn) => {
             btn.addEventListener("click", async () => {
                 const service = btn.dataset.webhookSetup;
-                const out = settingsForm.querySelector(`[data-webhook-result="${service}"]`);
+                const out = document.querySelector(`[data-webhook-result="${service}"]`);
                 const fields = {};
                 btn.dataset.webhookFields.split(",").forEach((n) => { const i = document.getElementById(n); if (i) fields[n] = i.value; });
                 const show = (text, cls) => { out.className = "small d-block " + cls; out.textContent = text; };
@@ -207,10 +208,10 @@
         }
 
         // "Test connection" buttons. Blank secret fields mean "use the saved value" on the server.
-        settingsForm.querySelectorAll("[data-test-service]").forEach((btn) => {
+        document.querySelectorAll("[data-test-service]").forEach((btn) => {
             btn.addEventListener("click", async () => {
                 const service = btn.dataset.testService;
-                const out = settingsForm.querySelector(`[data-test-result="${service}"]`);
+                const out = document.querySelector(`[data-test-result="${service}"]`);
                 const fields = {};
                 btn.dataset.testFields.split(",").forEach((n) => { const i = document.getElementById(n); if (i) fields[n] = i.value; });
                 const show = (text, cls) => { out.className = "small ms-2 " + cls; out.textContent = text; };

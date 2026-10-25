@@ -1,5 +1,5 @@
 'use strict';
-/* Settings page: which apps each TV's remote shows, quick launch, and a few per-browser preferences. */
+/* TV apps page: which apps each TV's remote shows, quick launch, and a few per-browser preferences. */
 S.filter = '';
 
 function renderAppGrid() {

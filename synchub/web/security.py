@@ -1,7 +1,7 @@
-"""The Access page: who has a PIN and who may open what."""
-from flask import current_app, g, jsonify, render_template, request
+"""The People page: who has a PIN and who may open what (the profiles themselves are in admin.py)."""
+from flask import current_app, g, jsonify, redirect, render_template, request, url_for
 
-from synchub import access, db, settings
+from synchub import access, db, profiles, settings
 
 PRESETS = {"everything": list(access.KEYS), "viewer": ["dashboard", "search"], "nothing": []}
 
@@ -22,11 +22,16 @@ def _keys(data):
 def register(app):
     from synchub.web import PIN_COOKIE
 
-    @app.route("/access")
-    def access_page():
+    @app.route("/people")
+    def people_page():
         with db.connection() as conn:
             overview = access.overview(conn)
-        return render_template("access.html", overview=overview, permissions=access.PERMISSIONS, presets=PRESETS, me=(g.profile or {}).get("id"))
+            profile_list = profiles.list_all(conn)
+        return render_template("people.html", overview=overview, profiles=profile_list, permissions=access.PERMISSIONS, presets=PRESETS, me=(g.profile or {}).get("id"))
+
+    @app.route("/access")
+    def access_page():
+        return redirect(url_for("people_page"), code=301)         # the page's old address
 
     def act(profile_id, change, message):
         """Runs `change(conn)`; the answer is the message or the reason it was refused."""

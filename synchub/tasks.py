@@ -117,7 +117,7 @@ def _jellyfin(scope, label, report):
 
 
 def backup_database():
-    """A consistent copy of the database in the backups folder, keeping the newest few (Settings, 'Database backups')."""
+    """A consistent copy of the database in the backups folder, keeping the newest few (Settings, Automation, 'Database backups')."""
     def work():
         from synchub import backup
         keep = backup.keep_count()

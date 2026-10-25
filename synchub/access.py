@@ -2,7 +2,7 @@
 
 This is a household lock, not a login system. A profile with no PIN can be chosen by anyone on the network (as before), so what a profile may
 do only means something once the profiles that matter have a PIN. Permissions are per page; a profile whose permission list is empty in the
-database (NULL) may open everything, including pages added later, so nothing changes for an installation that never opens the Access page.
+database (NULL) may open everything, including pages added later, so nothing changes for an installation that never opens the People page.
 """
 import re
 import secrets
@@ -30,7 +30,7 @@ PERMISSIONS = (
     ("logs", "Logs", "Read the log and the Jellyfin events that were kept"),
     ("payloads", "Payloads", "Read and clear the API payload log"),
     ("settings", "Settings", "Change service addresses, API keys and the other settings"),
-    ("access", "Access", "Create profiles, set PINs and decide who can open what"),
+    ("access", "People", "Add and edit profiles, set PINs and decide who can open what"),
 )
 KEYS = tuple(key for key, _, _ in PERMISSIONS)
 LABELS = {key: label for key, label, _ in PERMISSIONS}
@@ -57,12 +57,13 @@ RULES = (
     ("workers_*", "workers"), ("api_worker*", "workers"), ("api_job*", "workers"), ("api_test_copy", "workers"),
     ("storage_page", "storage"), ("api_storage*", "storage"),
     ("tv_setup*", "tv_setup"), ("api_tv_setup*", "tv_setup"), ("tv_*", "tv"), ("api_tv_*", "tv"),
-    ("tools", "tools"), ("trigger", "tools"), ("test_notification", "tools"), ("export_csv", "tools"), ("diagnostics_page", "tools"), ("api_diagnostics", "tools"),
+    ("tools", "tools"), ("trigger", "tools"), ("export_csv", "tools"),
+    ("activity_page", "logs"), ("diagnostics_page", "logs"), ("api_activity", "logs"),
     ("logs_page", "logs"), ("api_logs", "logs"), ("jellyfin_event*", "logs"),
     ("payloads_page", "payloads"), ("api_payload_logs", "payloads"), ("api_clear_payload_logs", "payloads"),
     ("settings_page", "settings"), ("update_settings", "settings"), ("api_test_connection", "settings"), ("api_quality_profiles", "settings"),
     ("api_root_folders", "settings"), ("api_webhook_setup", "settings"),
-    ("save_profile", "access"), ("delete_profile", "access"), ("api_toggle_profile", "access"), ("api_jellyfin_users", "access"), ("access_page", "access"), ("api_access_*", "access"),
+    ("save_profile", "access"), ("delete_profile", "access"), ("api_toggle_profile", "access"), ("api_jellyfin_users", "access"), ("people_page", "access"), ("access_page", "access"), ("api_access_*", "access"),
 )
 
 
@@ -109,7 +110,7 @@ def profile_permissions(row):
 
 
 def _holders_of_access(conn, change=None):
-    """Names of the profiles (and 'guests') that may open the Access page, as it would be after `change` = {profile_id or 'guest': keys}."""
+    """Names of the profiles (and 'guests') that may open the People page, as it would be after `change` = {profile_id or 'guest': keys}."""
     change = change or {}
     holders = []
     for row in conn.execute("SELECT id, name, permissions FROM profile"):
@@ -123,12 +124,12 @@ def _holders_of_access(conn, change=None):
 
 
 def ensure_access_remains(conn, change=None, removing=None):
-    """Refuses a change after which nobody could open the Access page again."""
+    """Refuses a change after which nobody could open the People page again."""
     holders = _holders_of_access(conn, change)
     if removing is not None:
         holders = [h for h in holders if h != removing]
     if not holders:
-        raise AccessError("Somebody has to keep the Access permission, or nobody could change these settings again. Give it to a profile first.")
+        raise AccessError("Somebody has to keep the People permission, or nobody could change these settings again. Give it to a profile first.")
 
 
 def set_permissions(conn, profile_id, keys):
@@ -268,7 +269,7 @@ def persistent_secret():
         return conn.execute("SELECT value FROM app_secret WHERE name = 'secret_key'").fetchone()["value"]
 
 
-# ---------------------------------------------------------------- for the Access page
+# ---------------------------------------------------------------- for the People page
 def overview(conn, now=None):
     """Every profile with its PIN state and permissions, the guest's, and the plain warnings about what is left open."""
     people = []
@@ -280,7 +281,7 @@ def overview(conn, now=None):
     guest_info = {"all": guest is None, "permissions": list(KEYS) if guest is None else [k for k in KEYS if k in guest]}
     warnings = []
     if "access" in guest_info["permissions"]:
-        warnings.append("Guests (anyone who picks \"Just looking\") can open this page, so they can give themselves anything. Untick Access for guests.")
+        warnings.append("Guests (anyone who picks \"Just looking\") can open this page, so they can give themselves anything. Untick People for guests.")
     for person in people:
         if not person["has_pin"] and set(person["permissions"]) - set(guest_info["permissions"]):
             extra = [LABELS[k] for k in person["permissions"] if k not in guest_info["permissions"]]

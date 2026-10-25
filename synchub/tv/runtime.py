@@ -49,7 +49,7 @@ class Runtime:
         from synchub import settings
         url, key = settings.get("jellyfin_url").rstrip("/"), settings.get("jellyfin_api_key")
         if not (url and key) or settings.get("disable_jellyfin_connection") == "1":
-            raise JellyfinError("Jellyfin is not set up: enter its address and API key under Settings.")
+            raise JellyfinError("Jellyfin is not set up: enter its address and API key under Settings, Connections.")
         if self._jf[0] != (url, key):
             self._jf = ((url, key), JellyfinClient(url, key, self.logbook))
         return self._jf[1]

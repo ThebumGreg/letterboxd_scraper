@@ -130,10 +130,29 @@
         if (busy()) return;
         try {
             const res = await fetch('/workers/fragment');
-            if (res.ok && !busy()) fleet.innerHTML = await res.text();
+            if (res.ok && !busy()) { fleet.innerHTML = await res.text(); showPane(); }
         } catch (e) { /* the next tick tries again */ }
     }
     setInterval(refresh, 5000);
+
+    // Workers and Jobs are two tabs of one live fragment, so the open tab is remembered here (and in the address) across the refreshes.
+    let pane = location.hash === '#jobs' ? 'jobs' : 'workers';
+    function showPane() {
+        fleet.querySelectorAll('[data-fleet-pane]').forEach((el) => { el.hidden = el.dataset.fleetPane !== pane; });
+        fleet.querySelectorAll('#fleetTabs [data-pane]').forEach((tab) => {
+            const on = tab.dataset.pane === pane;
+            tab.classList.toggle('active', on);
+            tab.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+    }
+    fleet.addEventListener('click', (e) => {
+        const tab = e.target.closest('#fleetTabs [data-pane]');
+        if (!tab) return;
+        pane = tab.dataset.pane;
+        history.replaceState(null, '', '#' + pane);
+        showPane();
+    });
+    showPane();
 
     // Setup files. Right after a token is made they hold it; nothing keeps them once the dialog closes.
     const NOTES = {

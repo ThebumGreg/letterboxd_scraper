@@ -5,7 +5,7 @@
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
-    <h2 class="mb-0"><i class="bi bi-terminal" aria-hidden="true"></i> System Execution Logs</h2>
+    <h2 class="mb-0"><i class="bi bi-terminal" aria-hidden="true"></i> Logs</h2>
     <div class="d-flex gap-2 align-items-center flex-wrap">
         <div class="form-check form-switch me-2 mb-0">
             <input class="form-check-input" type="checkbox" role="switch" id="autoRefreshToggle" checked>
@@ -17,7 +17,6 @@
         <button id="btnDownloadLogs" type="button" class="btn btn-sm btn-outline-secondary">
             <i class="bi bi-download" aria-hidden="true"></i> Download
         </button>
-        <a href="{{ url_for('diagnostics_page') }}" class="btn btn-sm btn-outline-warning"><i class="bi bi-activity" aria-hidden="true"></i> What is it doing now?</a>
         <button id="btnClearLogs" type="button" class="btn btn-sm btn-outline-danger">
             <i class="bi bi-trash" aria-hidden="true"></i> Clear view
         </button>

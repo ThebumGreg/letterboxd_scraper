@@ -5,7 +5,7 @@
 {% block title %}Tools &amp; Operations{% endblock %}
 
 {% block content %}
-<h2 class="mb-4">Operations &amp; Tools</h2>
+<h2 class="mb-4">Tools &amp; Operations</h2>
 
 {% set all_task = task_statuses.get('all') %}
 <div class="panel border border-warning p-3 p-md-4 mb-4">
@@ -25,7 +25,7 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
     <h4 class="mb-0">Individual tasks</h4>
-    <span class="small"><a href="{{ url_for('diagnostics_page') }}" class="text-decoration-none">A task looks stuck or failed? See what the app is doing</a> &middot; <a href="{{ url_for('logs_page') }}" class="text-decoration-none">Logs</a></span>
+    <span class="small"><a href="{{ url_for('activity_page') }}" class="text-decoration-none">A task looks stuck or failed? See what the app is doing</a> &middot; <a href="{{ url_for('logs_page') }}" class="text-decoration-none">Logs</a></span>
 </div>
 <div class="row row-cols-1 row-cols-md-2 g-4 mb-4">
     {{ task_card('jellyfin_movies', 'Jellyfin movies', 'Reads your movie library from Jellyfin.', task_statuses.get('jellyfin_movies'), url_for('trigger', name='jellyfin_movies'), 'Sync movies now') }}
@@ -48,15 +48,6 @@
                 <p class="text-body-secondary m-0 mt-1">Download the catalog with statuses as CSV.</p>
             </div>
             <div><a href="{{ url_for('export_csv') }}" class="btn btn-secondary btn-sm">Export CSV</a></div>
-        </div>
-    </div>
-    <div class="col-md-6">
-        <div class="panel p-3 p-md-4 h-100 d-flex flex-column justify-content-between gap-3">
-            <div>
-                <h5 class="m-0 text-success">Notifications</h5>
-                <p class="text-body-secondary m-0 mt-1">Send a test message to the Apprise targets from Settings.</p>
-            </div>
-            <form action="{{ url_for('test_notification') }}" method="POST">{{ csrf_field() }}<button type="submit" class="btn btn-secondary btn-sm">Send test notification</button></form>
         </div>
     </div>
 </div>

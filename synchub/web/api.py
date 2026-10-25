@@ -96,8 +96,8 @@ def register(app):
     def api_tasks():
         return jsonify(tasks=tasks.all_statuses())
 
-    @app.route("/api/diagnostics")
-    def api_diagnostics():
+    @app.route("/api/activity")
+    def api_activity():
         from synchub import diagnostics
         return jsonify(diagnostics.snapshot())
 

@@ -14,12 +14,17 @@ PROFILE_COOKIE = "synchub_profile"      # a profile's ID, or "0" for "just looki
 PROFILE_COOKIE_DAYS = 365
 PIN_COOKIE = "synchub_pin"              # signed proof that this profile's PIN was entered on this device (only for a profile that has one)
 
-# The main menu. A (endpoint, label) is a link; a (label, [links]) is a dropdown. What a person sees is what their permissions allow.
+# The main menu. An (endpoint, label) is a link; a (label, [items]) is a dropdown, whose items are links or (None, heading) group titles.
+# What a person sees is what their permissions allow, and a heading with nothing under it is left out.
 NAV = (
-    ("index", "Dashboard"), ("search_page", "Search"), ("resolution_center", "Resolution Center"), ("ddns_page", "Dynamic DNS"),
-    ("Media", (("library_page", "Library"), ("workers_page", "Workers"), ("storage_page", "Storage"))),
-    ("TV", (("tv_remote_page", "Remote"), ("tv_settings_page", "Settings"), ("tv_setup_devices_page", "TVs"), ("tv_setup_advanced_page", "Advanced"))),
-    ("System", (("tools", "Tools & Operations"), ("logs_page", "Logs"), ("payloads_page", "Payloads"), ("jellyfin_events_page", "Jellyfin events"), ("access_page", "Access"))),
+    ("index", "Dashboard"), ("tv_remote_page", "Remote"), ("search_page", "Search"),
+    ("Media", (("library_page", "Library"), ("resolution_center", "Resolution Center"), ("workers_page", "Workers"), ("storage_page", "Storage"))),
+    ("System", (
+        (None, "Run"), ("tools", "Tools & Operations"),
+        (None, "Monitor"), ("activity_page", "What it's doing now"), ("logs_page", "Logs"), ("jellyfin_events_page", "Jellyfin events"), ("payloads_page", "Payloads"),
+        (None, "Admin"), ("ddns_page", "Dynamic DNS"), ("people_page", "People"),
+        (None, "TV"), ("tv_settings_page", "TV apps"), ("tv_setup_devices_page", "TVs"), ("tv_setup_advanced_page", "TV tools"),
+    )),
     ("settings_page", "Settings"),
 )
 
@@ -151,8 +156,22 @@ def create_app(start_scheduler=False, csrf=True):
                 if item:
                     menu.append(item)
             else:
-                children = [c for c in (link(e, l) for e, l in second) if c]
-                if children:
+                children = []
+                for endpoint, label in second:
+                    if endpoint is None:
+                        children.append({"heading": label})
+                    elif item := link(endpoint, label):
+                        children.append(item)
+                shown = []
+                for c in children:
+                    if "heading" in c and shown and "heading" in shown[-1]:
+                        shown[-1] = c                       # the heading before this one had nothing under it
+                    else:
+                        shown.append(c)
+                while shown and "heading" in shown[-1]:
+                    shown.pop()
+                children = shown
+                if any("href" in c for c in children):
                     menu.append({"label": first, "children": children})
         return {"jellyfin_app": config, "current_profile": profile, "has_profiles": getattr(g, "has_profiles", False), "can": can, "menu": menu}
 

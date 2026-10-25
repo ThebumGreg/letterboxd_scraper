@@ -166,9 +166,13 @@ def register(app):
     def logs_page():
         return render_template("logs.html")
 
+    @app.route("/activity")
+    def activity_page():
+        return render_template("activity.html")
+
     @app.route("/diagnostics")
     def diagnostics_page():
-        return render_template("diagnostics.html")
+        return redirect(url_for("activity_page"), code=301)         # the page's old address
 
     @app.route("/ddns")
     def ddns_page():

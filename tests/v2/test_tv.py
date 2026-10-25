@@ -41,9 +41,10 @@ def test_the_tv_menu_has_four_pages_and_marks_the_current_one(client, tv):
     for path in ("/tv/remote", "/tv/settings", "/tv/devices", "/tv/advanced"):
         assert client.get(path).status_code == 200, path
     page = client.get("/tv/settings").get_data(as_text=True)
-    assert re.search(r'dropdown-toggle active"[^>]*>TV', page)
-    assert re.search(r'dropdown-item active" href="/tv/settings" aria-current="page"', page)
-    assert not re.search(r'dropdown-item active" href="/tv/remote"', page)
+    assert re.search(r'dropdown-toggle active"[^>]*>System', page)                         # TV apps lives under System, in the TV section
+    assert re.search(r'dropdown-item active" href="/tv/settings" aria-current="page">TV apps', page)
+    assert not re.search(r'nav-link active" href="/tv/remote"', page)
+    assert re.search(r'nav-link active" href="/tv/remote"', client.get("/tv/remote").get_data(as_text=True))   # Remote is a main menu item
 
 
 def test_the_pages_load_scripts_and_styles_that_exist(client, tv):
@@ -112,7 +113,7 @@ def test_the_tv_permission_opens_the_remote_but_not_the_setup_pages(client, tv, 
     denied = post(client, "/api/tv/setup/tvs", {"type": "roku", "host": "10.0.0.9"})
     assert denied.status_code == 403 and denied.get_json()["ok"] is False and "TV setup" in denied.get_json()["message"]
     menu = client.get("/tv/remote").get_data(as_text=True)
-    assert ">Remote<" in menu and 'href="/tv/devices"' not in menu.split('<div class="tvr')[0]
+    assert ">Remote<" in menu and ">TV apps<" in menu and 'href="/tv/devices"' not in menu.split('<div class="tvr')[0]
 
 
 def test_without_the_tv_permission_nothing_is_open(client, tv, v2):

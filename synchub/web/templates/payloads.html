@@ -1,12 +1,12 @@
 <!-- templates/payloads.html -->
 {% extends "base.html" %}
-{% block title %}API Payload Inspector{% endblock %}
+{% block title %}Payloads{% endblock %}
 
 {% block content %}
 <div class="row mb-4 align-items-center">
     <div class="col-md-7">
-        <h2 class="mb-0">API Payload Inspector</h2>
-        <p class="text-body-secondary mb-0 mt-1">Monitor incoming webhooks and outgoing API requests in real-time.</p>
+        <h2 class="mb-0">Payloads</h2>
+        <p class="text-body-secondary mb-0 mt-1">The API requests SyncHub sent and the webhooks it received, with their full contents.</p>
     </div>
     <div class="col-md-5 text-md-end mt-3 mt-md-0 d-flex gap-2 justify-content-md-end flex-wrap">
         <button class="btn btn-outline-info" id="exportLogsBtn">
@@ -21,64 +21,12 @@
     </div>
 </div>
 
-<!-- Control Panel -->
-<div class="panel p-3 p-md-4 mb-4">
-    <h5 class="mb-3 text-success">Logging Configuration</h5>
-    <form action="{{ url_for('update_settings') }}" method="POST">
-        {% if csrf_token %}
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-        {% endif %}
-        
-        <div class="row align-items-center mb-3">
-            <div class="col-md-3 mb-3 mb-md-0">
-                <label class="form-label fw-bold">Master Toggle</label>
-                <select name="payload_logging_enabled" class="form-select">
-                    <option value="0" {% if settings.get('payload_logging_enabled', '0') == '0' %}selected{% endif %}>Disabled</option>
-                    <option value="1" {% if settings.get('payload_logging_enabled') == '1' %}selected{% endif %}>Enabled</option>
-                </select>
-            </div>
-            <div class="col-md-3 mb-3 mb-md-0">
-                <label class="form-label fw-bold">Retention Limit</label>
-                <select name="payload_retention_limit" class="form-select">
-                    {% for opt in ['100', '500', '1000', '2500', '5000'] %}
-                    <option value="{{ opt }}" {% if settings.get('payload_retention_limit', '500') == opt %}selected{% endif %}>{{ opt }} records</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="col-md-6 d-flex align-items-end">
-                <button type="submit" class="btn btn-success">Save Configuration</button>
-            </div>
-        </div>
-        
-        <div class="mb-2 fw-bold">Services to Log</div>
-        <div class="d-flex flex-wrap gap-3">
-            <div class="form-check">
-                <input type="hidden" name="log_service_jellyfin" id="hidden_jellyfin" value="{{ settings.get('log_service_jellyfin', '0') }}">
-                <input class="form-check-input" type="checkbox" id="log_jellyfin" {% if settings.get('log_service_jellyfin') == '1' %}checked{% endif %} onchange="document.getElementById('hidden_jellyfin').value = this.checked ? '1' : '0';">
-                <label class="form-check-label" for="log_jellyfin">Jellyfin</label>
-            </div>
-            <div class="form-check">
-                <input type="hidden" name="log_service_radarr" id="hidden_radarr" value="{{ settings.get('log_service_radarr', '0') }}">
-                <input class="form-check-input" type="checkbox" id="log_radarr" {% if settings.get('log_service_radarr') == '1' %}checked{% endif %} onchange="document.getElementById('hidden_radarr').value = this.checked ? '1' : '0';">
-                <label class="form-check-label" for="log_radarr">Radarr</label>
-            </div>
-            <div class="form-check">
-                <input type="hidden" name="log_service_sonarr" id="hidden_sonarr" value="{{ settings.get('log_service_sonarr', '0') }}">
-                <input class="form-check-input" type="checkbox" id="log_sonarr" {% if settings.get('log_service_sonarr') == '1' %}checked{% endif %} onchange="document.getElementById('hidden_sonarr').value = this.checked ? '1' : '0';">
-                <label class="form-check-label" for="log_sonarr">Sonarr</label>
-            </div>
-            <div class="form-check">
-                <input type="hidden" name="log_service_tmdb" id="hidden_tmdb" value="{{ settings.get('log_service_tmdb', '0') }}">
-                <input class="form-check-input" type="checkbox" id="log_tmdb" {% if settings.get('log_service_tmdb') == '1' %}checked{% endif %} onchange="document.getElementById('hidden_tmdb').value = this.checked ? '1' : '0';">
-                <label class="form-check-label" for="log_tmdb">TMDB</label>
-            </div>
-            <div class="form-check">
-                <input type="hidden" name="log_service_dynu" id="hidden_dynu" value="{{ settings.get('log_service_dynu', '0') }}">
-                <input class="form-check-input" type="checkbox" id="log_dynu" {% if settings.get('log_service_dynu') == '1' %}checked{% endif %} onchange="document.getElementById('hidden_dynu').value = this.checked ? '1' : '0';">
-                <label class="form-check-label" for="log_dynu">Dynu DDNS</label>
-            </div>
-        </div>
-    </form>
+<!-- Logging status (the switches are on Settings, Logging) -->
+{% set services = [] %}
+{% for key, label in [('log_service_jellyfin', 'Jellyfin'), ('log_service_radarr', 'Radarr'), ('log_service_sonarr', 'Sonarr'), ('log_service_tmdb', 'TMDB'), ('log_service_dynu', 'Dynu DDNS')] %}{% if settings.get(key) == '1' %}{% set _ = services.append(label) %}{% endif %}{% endfor %}
+<div class="alert {{ 'alert-success' if settings.get('payload_logging_enabled') == '1' else 'alert-secondary' }} d-flex flex-wrap justify-content-between align-items-center gap-2" id="loggingStatus">
+    <span>{% if settings.get('payload_logging_enabled') == '1' %}Payload logging is <strong>on</strong>{% if services %} for {{ services|join(', ') }}{% else %}, but no service is selected{% endif %}; the newest {{ settings.get('payload_retention_limit') or '500' }} records are kept.{% else %}Payload logging is <strong>off</strong>, so nothing new is captured.{% endif %}</span>
+    <a href="{{ url_for('settings_page', tab='logging') }}" class="btn btn-sm btn-outline-secondary">Change on Settings</a>
 </div>
 
 <!-- Quick Filters & Table -->

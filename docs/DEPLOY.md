@@ -125,7 +125,7 @@ Run **one** copy of the app. The scheduler runs inside it; a second copy against
 
 1. **If you moved a database:** the log says `The database is older than this version: a copy was saved as /data/backups/premigrate-v6-....db before upgrading it.` That copy is yours to keep until you are happy.
 2. **Settings:** a yellow banner appears if any service address still says `localhost` or `127.0.0.1` (inside Docker that means the container itself). Change **Jellyfin**, **Radarr** and **Sonarr** to the address other devices use, for example `http://192.168.1.10:8096`, and use *Test connection*.
-3. **Live updates (webhooks):** set *SyncHub's address* to `http://UNRAID_IP:5001`, then press **Set up in Radarr / Sonarr / Jellyfin**. Webhooks left over from the old machine point at it: delete them in Radarr and Sonarr.
+3. **Live updates (webhooks)** (Settings → Automation): set *SyncHub's address* to `http://UNRAID_IP:5001`, then press **Set up in Radarr / Sonarr / Jellyfin**. Webhooks left over from the old machine point at it: delete them in Radarr and Sonarr.
 4. **Access:** give the profiles that matter a PIN (System → Access). Lost them all? `docker exec synchub python -m synchub.access reset-all`.
 5. **Tools:** *Run all* once to refresh everything from the new address.
 
@@ -193,7 +193,7 @@ docker rm -f synchub        # the data is in /data, not in the container
 
 A database from an older version is upgraded on start, and a copy of it as it was is saved first (`/data/backups/premigrate-v<N>-....db`). Update the workers the same way: `git pull` or copy the new `agent/` folder, then `docker compose up -d --build` (running jobs resume).
 
-**Backups.** Every night at 03:30 SyncHub saves a consistent copy into `/data/backups/` and keeps the newest 7 (Settings → *Database backups*; Tools has *Back up now*). These files contain your API keys: keep them as private as the database. For a copy outside Unraid: `docker exec synchub python -m synchub.backup create /data/backups/manual.db`, then copy that file off.
+**Backups.** Every night at 03:30 SyncHub saves a consistent copy into `/data/backups/` and keeps the newest 7 (Settings → Automation → *Database backups*; Tools has *Back up now*). These files contain your API keys: keep them as private as the database. For a copy outside Unraid: `docker exec synchub python -m synchub.backup create /data/backups/manual.db`, then copy that file off.
 
 **Restore**
 

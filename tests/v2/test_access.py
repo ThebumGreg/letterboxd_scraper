@@ -1,4 +1,4 @@
-"""PINs and permissions: who is who, what each person may open, the menu they see, and the Access page that changes it."""
+"""PINs and permissions: who is who, what each person may open, the menu they see, and the People page that changes it."""
 import re
 import time
 
@@ -78,9 +78,9 @@ def test_every_permission_is_needed_by_something():
     ("api_job_log", "workers"), ("api_test_copy", "workers"), ("storage_page", "storage"), ("api_storage_create", "storage"), ("tools", "tools"), ("trigger", "tools"),
     ("tv_remote_page", "tv"), ("tv_settings_page", "tv"), ("api_tv_device_launch", "tv"), ("api_tv_prefs_apps", "tv"), ("api_tv_jf_sessions", "tv"),
     ("tv_setup_devices_page", "tv_setup"), ("tv_setup_advanced_page", "tv_setup"), ("api_tv_setup_tvs_add", "tv_setup"), ("api_tv_setup_discovery_scan", "tv_setup"),
-    ("export_csv", "tools"), ("api_diagnostics", "tools"), ("logs_page", "logs"), ("api_logs", "logs"), ("jellyfin_events_export", "logs"), ("payloads_page", "payloads"),
+    ("export_csv", "tools"), ("api_activity", "logs"), ("logs_page", "logs"), ("api_logs", "logs"), ("jellyfin_events_export", "logs"), ("payloads_page", "payloads"),
     ("api_clear_payload_logs", "payloads"), ("settings_page", "settings"), ("update_settings", "settings"), ("api_webhook_setup", "settings"), ("api_test_connection", "settings"),
-    ("save_profile", "access"), ("delete_profile", "access"), ("api_jellyfin_users", "access"), ("access_page", "access"), ("api_access_set_pin", "access"),
+    ("save_profile", "access"), ("delete_profile", "access"), ("api_jellyfin_users", "access"), ("access_page", "access"), ("people_page", "access"), ("api_access_set_pin", "access"),
     ("who", access.PUBLIC), ("static", access.PUBLIC), ("poster", access.PUBLIC), ("api_webhook", access.PUBLIC), ("worker_api_poll", access.PUBLIC), ("worker_api_scan_records", access.PUBLIC),
     ("api_tasks", access.OPEN), ("something_new", None), (None, None)])
 def test_what_each_endpoint_needs(endpoint, need):
@@ -110,7 +110,7 @@ def test_saving_every_permission_stores_everything_so_later_pages_are_included(v
 def test_somebody_always_keeps_the_access_permission(v2, conn, people):
     access.set_guest_permissions(conn, ["dashboard"])
     access.set_permissions(conn, people["cara"], ["library"])                  # Alice still has everything
-    with pytest.raises(access.AccessError, match="Somebody has to keep the Access permission"):
+    with pytest.raises(access.AccessError, match="Somebody has to keep the People permission"):
         access.set_permissions(conn, people["alice"], ["dashboard"])             # she is the last one
     access.set_permissions(conn, people["cara"], ["library", "access"])
     access.set_permissions(conn, people["alice"], ["dashboard"])                 # now Cara holds it
@@ -366,7 +366,7 @@ def test_a_deleted_profile_is_nobody(browser, v2, conn, people):
 def test_a_profile_can_open_exactly_the_pages_it_was_given(browser, people):
     sign_in(browser, people["cara"], "1357")
     assert browser.get("/library").status_code == 200 and browser.get("/workers").status_code == 200
-    for denied in ("/", "/settings", "/storage", "/tools", "/logs", "/payloads", "/ddns", "/search", "/resolution", "/access", "/jellyfin-events"):
+    for denied in ("/", "/settings", "/storage", "/tools", "/logs", "/payloads", "/ddns", "/search", "/resolution", "/access", "/people", "/activity", "/jellyfin-events"):
         r = browser.get(denied)
         assert r.status_code == 403, denied
     page = text(browser.get("/settings"))
@@ -434,7 +434,7 @@ def test_everything_stays_open_when_nobody_changed_anything(browser, v2, conn):
     pid = conn.execute("INSERT INTO profile (name) VALUES ('Dana')").lastrowid
     conn.commit()
     sign_in(browser, pid)
-    for path in ("/", "/search", "/resolution", "/ddns", "/library", "/workers", "/storage", "/tools", "/logs", "/payloads", "/settings", "/access", "/jellyfin-events", "/tv/remote", "/tv/settings", "/tv/devices", "/tv/advanced"):
+    for path in ("/", "/search", "/resolution", "/ddns", "/library", "/workers", "/storage", "/tools", "/logs", "/payloads", "/settings", "/people", "/activity", "/jellyfin-events", "/tv/remote", "/tv/settings", "/tv/devices", "/tv/advanced"):
         assert browser.get(path).status_code == 200, path
 
 
@@ -454,9 +454,11 @@ def test_the_menu_groups_workers_library_and_storage_and_tools_logs_and_payloads
     conn.commit()
     sign_in(browser, pid)
     shown = menu(text(browser.get("/")))
-    assert shown["links"] == ["Dashboard", "Search", "Resolution Center", "Dynamic DNS", "Settings"]
-    assert shown["dropdowns"] == {"Media": ["Library", "Workers", "Storage"], "TV": ["Remote", "Settings", "TVs", "Advanced"],
-                                  "System": ["Tools &amp; Operations", "Logs", "Payloads", "Jellyfin events", "Access"]}
+    assert shown["links"] == ["Dashboard", "Remote", "Search", "Settings"]
+    assert shown["dropdowns"] == {"Media": ["Library", "Resolution Center", "Workers", "Storage"],
+                                  "System": ["Tools &amp; Operations", "What it&#39;s doing now", "Logs", "Jellyfin events", "Payloads", "Dynamic DNS", "People", "TV apps", "TVs", "TV tools"]}
+    page = text(browser.get("/"))
+    assert re.findall(r'class="dropdown-header">(.*?)</h6>', page) == ["Run", "Monitor", "Admin", "TV"]
 
 
 def test_the_menu_shows_only_what_the_person_may_open(browser, people):
@@ -482,22 +484,53 @@ def test_the_dropdowns_work_on_a_phone_menu(browser, v2, conn):
     conn.commit()
     sign_in(browser, pid)
     page = text(browser.get("/"))
-    assert page.count('data-bs-toggle="dropdown"') == 3 and 'aria-expanded="false"' in page and 'class="collapse navbar-collapse"' in page
+    assert page.count('data-bs-toggle="dropdown"') == 2 and 'aria-expanded="false"' in page and 'class="collapse navbar-collapse"' in page
 
 
-def test_settings_hides_profile_management_from_people_without_access_and_never_prints_a_pin(browser, v2, conn, people):
+def test_people_holds_profile_management_for_those_with_access_and_never_prints_a_pin(browser, v2, conn, people):
     sign_in(browser, people["alice"], "4821")
-    page = text(browser.get("/settings"))
-    assert "Import Jellyfin Users" in page and 'id="profileModal"' in page and "PIN and pages" in page and "bi-lock-fill" in page
+    page = text(browser.get("/people"))
+    assert "Import Jellyfin Users" in page and 'id="profileModal"' in page and 'href="#person-%d"' % people["bob"] in page and "bi-lock-fill" in page
     assert "scrypt:" not in page and "pbkdf2:" not in page
+    settings_page = text(browser.get("/settings"))
+    assert "Import Jellyfin Users" not in settings_page and 'id="profileModal"' not in settings_page      # Settings no longer holds profiles
     access.set_permissions(conn, people["cara"], ["settings"])
     conn.commit()
     sign_in(browser, people["cara"], "1357")
-    page = text(browser.get("/settings"))
-    assert "Import Jellyfin Users" not in page and 'id="profileModal"' not in page and "profile-edit" not in page and "System Settings" in page
+    assert browser.get("/people").status_code == 403 and browser.get("/settings").status_code == 200
     assert browser.post("/settings/profiles/save", data={"profile_name": "Eve"}).status_code == 403
     assert browser.post(f"/settings/profiles/delete/{people['bob']}").status_code == 403 and browser.post("/api/profiles/toggle", json={"id": 1, "is_active": 0}).status_code == 403
     assert browser.get("/api/jellyfin/users").status_code == 403
+
+
+def test_the_old_addresses_lead_to_the_new_pages(browser, v2, conn):
+    pid = conn.execute("INSERT INTO profile (name) VALUES ('Dana')").lastrowid
+    conn.commit()
+    sign_in(browser, pid)
+    for old, new in (("/access", "/people"), ("/diagnostics", "/activity")):
+        r = browser.get(old)
+        assert r.status_code == 301 and r.headers["Location"].endswith(new)
+        assert browser.get(new).status_code == 200
+
+
+def test_the_activity_page_belongs_to_whoever_may_read_the_logs(browser, v2, conn):
+    reader = conn.execute("INSERT INTO profile (name, permissions) VALUES ('Reader', 'logs')").lastrowid
+    tooler = conn.execute("INSERT INTO profile (name, permissions) VALUES ('Tooler', 'tools')").lastrowid
+    conn.commit()
+    sign_in(browser, reader)
+    assert browser.get("/activity").status_code == 200 and browser.get("/api/activity").status_code == 200
+    assert "What it&#39;s doing now" in text(browser.get("/logs"))             # in the menu
+    sign_in(browser, tooler)
+    assert browser.get("/activity").status_code == 403 and browser.get("/api/activity").status_code == 403
+
+
+def test_a_menu_heading_with_nothing_under_it_is_left_out(browser, v2, conn):
+    pid = conn.execute("INSERT INTO profile (name, permissions) VALUES ('Mon', 'logs,tv')").lastrowid
+    conn.commit()
+    sign_in(browser, pid)
+    page = text(browser.get("/logs"))
+    assert re.findall(r'class="dropdown-header">(.*?)</h6>', page) == ["Monitor", "TV"]
+    assert menu(page)["dropdowns"] == {"System": ["What it&#39;s doing now", "Logs", "Jellyfin events", "TV apps"]}
 
 
 def test_the_last_person_who_can_manage_access_cannot_be_deleted(browser, v2, conn, people):
@@ -506,12 +539,12 @@ def test_the_last_person_who_can_manage_access_cannot_be_deleted(browser, v2, co
     conn.commit()
     sign_in(browser, people["alice"], "4821")
     page = text(browser.post(f"/settings/profiles/delete/{people['alice']}", follow_redirects=True))
-    assert "Somebody has to keep the Access permission" in page
+    assert "Somebody has to keep the People permission" in page
     assert conn.execute("SELECT COUNT(*) FROM profile WHERE id = ?", (people["alice"],)).fetchone()[0] == 1
     assert "Profile removed" in text(browser.post(f"/settings/profiles/delete/{people['bob']}", follow_redirects=True))
 
 
-# ---------------------------------------------------------------- the Access page
+# ---------------------------------------------------------------- the People page
 def api(browser, url, body=None):
     return browser.post(url, json=body if body is not None else {})
 
@@ -522,7 +555,7 @@ def admin(browser, people):
 
 
 def test_the_access_page_lists_everyone_with_their_pin_state_and_permissions(admin, people):
-    page = text(admin.get("/access"))
+    page = text(admin.get("/people"))
     assert "PIN set" in page and "No PIN" in page and ">you<" in page and 'data-card="guest"' in page
     for key in access.KEYS:
         assert f'id="perm-guest-{key}"' in page and f'id="perm-{people["bob"]}-{key}"' in page
@@ -531,7 +564,7 @@ def test_the_access_page_lists_everyone_with_their_pin_state_and_permissions(adm
 
 
 def test_the_page_warns_about_profiles_without_a_pin_that_can_do_more_than_a_guest(admin, v2, conn, people):
-    page = text(admin.get("/access"))
+    page = text(admin.get("/people"))
     assert 'id="accessWarnings"' in page and "Guests (anyone who picks" in page                              # guests may open everything by default, access included
     access.set_guest_permissions(conn, ["dashboard"])
     access.set_permissions(conn, people["bob"], ["dashboard", "search", "settings"])
@@ -540,7 +573,7 @@ def test_the_page_warns_about_profiles_without_a_pin_that_can_do_more_than_a_gue
     assert len(warnings) == 1 and warnings[0].startswith("Bob has no PIN") and "Search" in warnings[0] and "Settings" in warnings[0] and "anyone on your network" in warnings[0]
     access.set_pin(conn, people["bob"], "2468")
     conn.commit()
-    assert access.overview(conn)["warnings"] == [] and "Every profile that can open more than a guest can has a PIN." in text(admin.get("/access"))
+    assert access.overview(conn)["warnings"] == [] and "Every profile that can open more than a guest can has a PIN." in text(admin.get("/people"))
 
 
 def test_permissions_are_saved_checked_and_refused_when_they_would_lock_everyone_out(admin, v2, conn, people):
@@ -551,7 +584,7 @@ def test_permissions_are_saved_checked_and_refused_when_they_would_lock_everyone
     assert api(admin, f"/api/access/profile/{people['bob']}/permissions", {"permissions": "library"}).status_code == 400
     assert api(admin, "/api/access/guest", {"permissions": ["dashboard"]}).get_json()["ok"]
     bad = api(admin, f"/api/access/profile/{people['alice']}/permissions", {"permissions": ["dashboard"]})
-    assert bad.status_code == 400 and "Somebody has to keep the Access permission" in bad.get_json()["message"]
+    assert bad.status_code == 400 and "Somebody has to keep the People permission" in bad.get_json()["message"]
     assert api(admin, "/api/access/profile/999/permissions", {"permissions": []}).status_code == 400
 
 
@@ -569,12 +602,12 @@ def test_changing_your_own_pin_keeps_this_device_signed_in_and_removing_it_forge
     before = cookie(admin, PIN_COOKIE)
     r = api(admin, f"/api/access/profile/{people['alice']}/pin", {"pin": "9753"})
     assert r.status_code == 200 and "PIN saved" in r.get_json()["message"] and cookie(admin, PIN_COOKIE) not in (None, before)
-    assert admin.get("/access").status_code == 200                                                                  # still in, with the new proof
+    assert admin.get("/people").status_code == 200                                                                  # still in, with the new proof
     other = create_app(csrf=False).test_client()
     assert choose(other, people["alice"], "4821").status_code == 401                                              # the old PIN is gone
     assert choose(other, people["alice"], "9753").status_code == 302
     r = api(admin, f"/api/access/profile/{people['alice']}/pin/clear")
-    assert r.status_code == 200 and cookie(admin, PIN_COOKIE) is None and admin.get("/access").status_code == 200
+    assert r.status_code == 200 and cookie(admin, PIN_COOKIE) is None and admin.get("/people").status_code == 200
 
 
 def test_changing_someone_elses_pin_signs_them_out_but_not_you(admin, app, v2, conn, people):
@@ -582,7 +615,7 @@ def test_changing_someone_elses_pin_signs_them_out_but_not_you(admin, app, v2, c
     sign_in(cara, people["cara"], "1357")
     assert cara.get("/library").status_code == 200
     api(admin, f"/api/access/profile/{people['cara']}/pin", {"pin": "8642"})
-    assert cara.get("/library").status_code == 302 and admin.get("/access").status_code == 200
+    assert cara.get("/library").status_code == 302 and admin.get("/people").status_code == 200
 
 
 def test_sign_out_everywhere_and_unlock_work_from_the_page(admin, v2, conn, people):
@@ -591,9 +624,9 @@ def test_sign_out_everywhere_and_unlock_work_from_the_page(admin, v2, conn, peop
     assert api(admin, f"/api/access/profile/{people['cara']}/signout").get_json()["ok"] and cara.get("/library").status_code == 302
     for _ in range(5):
         choose(create_app(csrf=False).test_client(), people["cara"], "0000")
-    assert "locked for" in text(admin.get("/access"))
+    assert "locked for" in text(admin.get("/people"))
     assert api(admin, f"/api/access/profile/{people['cara']}/unlock").get_json()["message"] == "Unlocked."
-    assert "locked for" not in text(admin.get("/access")) and choose(create_app(csrf=False).test_client(), people["cara"], "1357").status_code == 302
+    assert "locked for" not in text(admin.get("/people")) and choose(create_app(csrf=False).test_client(), people["cara"], "1357").status_code == 302
 
 
 def test_the_remembered_days_are_validated(admin):

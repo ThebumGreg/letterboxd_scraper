@@ -260,8 +260,10 @@ def test_snapshot_lists_a_connection_with_a_pending_write(v2):
 def test_diagnostics_endpoint_and_page(v2):
     from synchub.web import create_app
     client = create_app(csrf=False).test_client()
-    data = client.get("/api/diagnostics").get_json()
+    data = client.get("/api/activity").get_json()
     assert set(data) == {"time", "pid", "database", "running_tasks", "database_connections", "threads"}
-    page = client.get("/diagnostics").get_data(as_text=True)
-    assert "What is the app doing?" in page and "/api/diagnostics" in page
-    assert "/diagnostics" in client.get("/tools").get_data(as_text=True) and "/diagnostics" in client.get("/logs").get_data(as_text=True)
+    page = client.get("/activity").get_data(as_text=True)
+    assert "What it&#39;s doing now" in page or "What it's doing now" in page
+    assert "/api/activity" in page
+    assert "/activity" in client.get("/tools").get_data(as_text=True)
+    assert client.get("/diagnostics").status_code == 301

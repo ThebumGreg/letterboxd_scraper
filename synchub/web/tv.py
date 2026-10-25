@@ -1,6 +1,6 @@
 """The TV menu: a remote for each TV, which apps it shows, the TVs themselves, and the advanced testing tools.
 
-Pages are /tv/remote, /tv/settings (needs the "tv" permission), /tv/devices and /tv/advanced (need "tv_setup"). The script on those pages
+Pages are Remote (/tv/remote) and TV apps (/tv/settings), which need the "tv" permission, and TVs (/tv/devices) and TV tools (/tv/advanced), which need "tv_setup". The script on those pages
 talks to /api/tv/... . Endpoint names matter: access.RULES gives every `tv_setup*` / `api_tv_setup*` endpoint the TV setup permission and every other
 `tv_*` / `api_tv_*` endpoint the TV permission.
 """

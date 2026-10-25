@@ -180,7 +180,7 @@ def test_profile_crud_and_duplicate_identities(client, v2):
     assert [p["name"] for p in rows] == ["Alice"]
     pid = rows[0]["id"]
     client.post("/settings/profiles/save", data={"profile_id": pid, "profile_name": "Alice B", "letterboxd_username": "alice", "serializd_username": "alice_sz", "jellyfin_user_id": ""})
-    assert "Alice B" in text(client.get("/settings")) and "alice_sz" in text(client.get("/settings"))
+    assert "Alice B" in text(client.get("/people")) and "alice_sz" in text(client.get("/people"))
     assert client.post("/api/profiles/toggle", json={"id": pid, "is_active": 0}).get_json() == {"ok": True}
     assert client.post("/api/profiles/toggle", json={"id": 999, "is_active": 0}).status_code == 404
     assert client.post("/api/profiles/toggle", json={"nope": 1}).status_code == 400

@@ -1,0 +1,256 @@
+<!-- synchub/web/templates/people.html -->
+{% extends "base.html" %}
+{% from "_macros.html" import csrf_field, profile_modal, jellyfin_import_modal with context %}
+{% block title %}People{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <h2 class="mb-1">People</h2>
+    <p class="text-body-secondary mb-0">Who uses SyncHub: each person's Letterboxd, Serializd and Jellyfin identities, a PIN, and which pages they may open. <a href="#access" class="text-decoration-none">Jump to PINs and pages</a>.</p>
+</div>
+
+<div class="mb-4" id="profiles">
+    <div class="panel p-3 p-md-4 mb-0">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <h5 class="text-success mb-1"><i class="bi bi-people-fill"></i> Profiles</h5>
+                <p class="text-body-secondary mb-0">One person, with at most one Letterboxd, Serializd and Jellyfin identity each.</p>
+            </div>
+            <div class="d-flex gap-2">
+                <button type="button" class="btn btn-outline-info btn-sm" onclick="fetchJellyfinUsers()">
+                    <i class="bi bi-cloud-arrow-down"></i> Import Jellyfin Users
+                </button>
+                <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#profileModal" onclick="resetProfileForm()">
+                    <i class="bi bi-person-plus"></i> Add Profile
+                </button>
+            </div>
+        </div>
+        
+        <div class="table-responsive border rounded">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 60px;">Active</th>
+                        <th>SyncHub Profile</th>
+                        <th>Letterboxd Username</th>
+                        <th>Serializd Username</th>
+                        <th>Jellyfin User ID</th>
+                        <th style="width: 140px;" class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for prof in profiles %}
+                    <tr>
+                        <td>
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input profile-toggle" type="checkbox" role="switch" data-id="{{ prof.id }}" {% if prof.is_active %}checked{% endif %} title="Include this profile in scraping and requests">
+                            </div>
+                        </td>
+                        <td><strong>{{ prof.name }}</strong>{% if prof.has_pin %} <i class="bi bi-lock-fill small text-success" title="Has a PIN" aria-label="Has a PIN"></i>{% endif %}<div class="small"><a class="text-decoration-none" href="#person-{{ prof.id }}">PIN and pages</a></div></td>
+                        <td>{{ prof.letterboxd_username or '—' }}</td>
+                        <td>{{ prof.serializd_username or '—' }}</td>
+                        <td><code class="small">{{ prof.jellyfin_user_id or '—' }}</code></td>
+                        <td class="text-end">
+                            <button type="button" class="btn btn-sm btn-outline-secondary profile-edit"
+                                data-id="{{ prof.id }}" data-name="{{ prof.name }}" data-lb="{{ prof.letterboxd_username or '' }}"
+                                data-sz="{{ prof.serializd_username or '' }}" data-jf="{{ prof.jellyfin_user_id or '' }}">Edit</button>
+                            <form action="{{ url_for('delete_profile', profile_id=prof.id) }}" method="POST" class="d-inline">
+                                {{ csrf_field() }}
+                                <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Remove this profile? Its Letterboxd/Serializd entries are kept and re-attach if you recreate it.');">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" class="text-center text-muted py-4">No profiles yet. Add one or import from Jellyfin to start scraping.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="mb-3" id="access">
+    <h4 class="mb-1">PINs and pages</h4>
+    <p class="text-body-secondary mb-0">Give a profile a PIN and choose which pages it may open. Anyone can still choose a profile that has no PIN, so a PIN is what makes its permissions mean something.</p>
+</div>
+<div id="accessMessage" class="alert d-none" role="status" aria-live="polite"></div>
+
+{% if overview.warnings %}
+<div class="alert alert-warning" role="alert" id="accessWarnings"><strong>Worth fixing</strong>
+    <ul class="mb-0">{% for w in overview.warnings %}<li>{{ w }}</li>{% endfor %}</ul></div>
+{% else %}
+<div class="alert alert-success" id="accessWarnings">Every profile that can open more than a guest can has a PIN.</div>
+{% endif %}
+
+{% macro grid(owner, perms, all_perms) %}
+    <div class="row row-cols-1 row-cols-sm-2 row-cols-xl-3 g-1 mb-2" data-perm-grid="{{ owner }}">
+        {% for key, label, help in permissions %}
+        <div class="col"><div class="form-check">
+            <input class="form-check-input" type="checkbox" id="perm-{{ owner }}-{{ key }}" value="{{ key }}" {% if key in perms %}checked{% endif %}>
+            <label class="form-check-label" for="perm-{{ owner }}-{{ key }}" title="{{ help }}">{{ label }}</label>
+        </div></div>
+        {% endfor %}
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-center mb-1">
+        <button type="button" class="btn btn-success btn-sm" data-save-perms="{{ owner }}">Save pages</button>
+        <span class="small text-body-secondary">Quick pick:</span>
+        {% for name, keys in presets.items() %}<button type="button" class="btn btn-outline-secondary btn-sm" data-preset="{{ owner }}" data-keys="{{ keys|join(',') }}">{{ name|capitalize }}</button>{% endfor %}
+    </div>
+{% endmacro %}
+
+<div class="panel p-3 p-md-4 mb-3" data-card="guest">
+    <div class="d-flex align-items-center gap-2 mb-2"><h5 class="mb-0">Guests</h5><span class="badge bg-secondary">&ldquo;Just looking&rdquo;</span></div>
+    <p class="small text-body-secondary">What anyone can open without choosing a profile or after choosing &ldquo;Just looking&rdquo;.</p>
+    {{ grid('guest', overview.guest.permissions, overview.guest.all) }}
+</div>
+
+{% for p in overview.people %}
+<div class="panel p-3 p-md-4 mb-3" data-card="{{ p.id }}" id="person-{{ p.id }}">
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <h5 class="mb-0">{{ p.name }}</h5>
+        {% if p.has_pin %}<span class="badge bg-success"><i class="bi bi-lock-fill" aria-hidden="true"></i> PIN set</span>{% else %}<span class="badge bg-warning text-dark">No PIN</span>{% endif %}
+        {% if p.id == me %}<span class="badge bg-info text-dark">you</span>{% endif %}
+        {% if p.locked_for %}<span class="badge bg-danger">locked for {{ p.locked_for }} s after wrong tries</span>{% endif %}
+    </div>
+    {{ grid(p.id, p.permissions, p.all) }}
+    <hr>
+    <div class="row g-2 align-items-end">
+        <div class="col-sm-5 col-md-4">
+            <label for="pin-{{ p.id }}" class="form-label small mb-1">{{ 'New PIN' if p.has_pin else 'Set a PIN' }} (4 to 8 digits)</label>
+            <input type="password" class="form-control form-control-sm" id="pin-{{ p.id }}" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8" autocomplete="new-password" placeholder="e.g. 4821">
+        </div>
+        <div class="col-auto d-flex flex-wrap gap-2">
+            <button type="button" class="btn btn-outline-success btn-sm" data-set-pin="{{ p.id }}">{{ 'Change PIN' if p.has_pin else 'Set PIN' }}</button>
+            {% if p.has_pin %}<button type="button" class="btn btn-outline-danger btn-sm" data-clear-pin="{{ p.id }}" data-name="{{ p.name }}">Remove PIN</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-signout="{{ p.id }}" title="Ask for the PIN again on every device">Sign out everywhere</button>{% endif %}
+            {% if p.locked_for or p.failures %}<button type="button" class="btn btn-outline-warning btn-sm" data-unlock="{{ p.id }}">Unlock</button>{% endif %}
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-secondary">There are no profiles yet. Add one above, then come back to give it a PIN.</div>
+{% endfor %}
+
+<div class="panel p-3 p-md-4 mb-4">
+    <h5 class="mb-2">Remembering a PIN</h5>
+    <div class="row g-2 align-items-end">
+        <div class="col-auto"><label for="sessionDays" class="form-label small mb-1">Ask for the PIN again after (days)</label>
+            <input type="number" class="form-control form-control-sm" id="sessionDays" min="1" max="365" value="{{ overview.session_days }}"></div>
+        <div class="col-auto"><button type="button" class="btn btn-outline-success btn-sm" id="saveSessionDays">Save</button></div>
+    </div>
+    <p class="small text-body-secondary mt-2 mb-0">Five wrong PINs in a row lock that profile for 30 seconds, doubling each time up to 15 minutes. If every PIN is lost, run <code>python -m synchub.access reset-all</code> on the machine that runs SyncHub.</p>
+</div>
+
+{{ profile_modal(url_for('save_profile')) }}
+{{ jellyfin_import_modal() }}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Profile Management
+    function fillProfileForm(p) {
+        document.getElementById('modal_profile_id').value = p.id || '';
+        document.getElementById('modal_profile_name').value = p.name || '';
+        document.getElementById('modal_lb_user').value = p.lb || '';
+        document.getElementById('modal_sz_user').value = p.sz || '';
+        document.getElementById('modal_jf_id').value = p.jf || '';
+    }
+    function resetProfileForm() { fillProfileForm({}); }
+    document.querySelectorAll('.profile-edit').forEach((btn) => btn.addEventListener('click', () => {
+        fillProfileForm(btn.dataset);
+        new bootstrap.Modal(document.getElementById('profileModal')).show();
+    }));
+
+    document.querySelectorAll('.profile-toggle').forEach(toggle => {
+        toggle.addEventListener('change', (e) => {
+            fetch('/api/profiles/toggle', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || ''
+                },
+                body: JSON.stringify({ id: e.target.dataset.id, is_active: e.target.checked ? 1 : 0 })
+            });
+        });
+    });
+
+    // Jellyfin Import
+    const jfModal = new bootstrap.Modal(document.getElementById('jellyfinImportModal'));
+    function fetchJellyfinUsers() {
+        jfModal.show();
+        fetch('/api/jellyfin/users')
+            .then(res => res.json())
+            .then(users => {
+                const list = document.getElementById('jellyfinUserList');
+                if (!users || users.length === 0) {
+                    list.innerHTML = '<div class="p-4 text-center text-danger">No users found or connection failed. Check Jellyfin settings.</div>';
+                    return;
+                }
+                list.replaceChildren(...users.map((u) => {
+                    const row = document.createElement('div');
+                    row.className = 'list-group-item d-flex justify-content-between align-items-center';
+                    const info = document.createElement('div');
+                    const name = document.createElement('strong'); name.textContent = u.name;
+                    const id = document.createElement('div'); id.className = 'small text-muted font-monospace'; id.textContent = u.id;
+                    info.append(name, id);
+                    const form = document.createElement('form');
+                    form.action = '{{ url_for("save_profile") }}'; form.method = 'POST'; form.className = 'm-0';
+                    const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
+                    if (csrf) form.append(Object.assign(document.createElement('input'), { type: 'hidden', name: 'csrf_token', value: csrf }));
+                    form.append(Object.assign(document.createElement('input'), { type: 'hidden', name: 'profile_name', value: u.name }),
+                                Object.assign(document.createElement('input'), { type: 'hidden', name: 'jellyfin_user_id', value: u.id }));
+                    const button = document.createElement('button'); button.type = 'submit'; button.className = 'btn btn-sm btn-outline-success'; button.textContent = 'Import';
+                    form.append(button);
+                    row.append(info, form);
+                    return row;
+                }));
+            })
+            .catch(() => {
+                document.getElementById('jellyfinUserList').innerHTML = '<div class="p-4 text-center text-danger">Network error fetching users.</div>';
+            });
+    }
+</script>
+<script>
+(() => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const box = document.getElementById('accessMessage');
+    const say = (text, ok) => { box.className = 'alert ' + (ok ? 'alert-success' : 'alert-danger'); box.textContent = text; box.scrollIntoView({ block: 'nearest' }); };
+    async function post(url, body) {
+        try {
+            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(body || {}) });
+            return await res.json();
+        } catch (e) { return { ok: false, message: 'Could not reach the server.' }; }
+    }
+    const after = (data, reload) => { say(data.message || (data.ok ? 'Done.' : 'Failed.'), data.ok); if (data.ok && reload) setTimeout(() => location.reload(), 900); };
+    const ticked = (owner) => [...document.querySelectorAll(`[data-perm-grid="${owner}"] input:checked`)].map((i) => i.value);
+
+    document.addEventListener('click', async (e) => {
+        const t = e.target.closest('button');
+        if (!t) return;
+        if (t.dataset.preset) {
+            const keys = t.dataset.keys ? t.dataset.keys.split(',') : [];
+            document.querySelectorAll(`[data-perm-grid="${t.dataset.preset}"] input`).forEach((i) => { i.checked = keys.includes(i.value); });
+        } else if (t.dataset.savePerms) {
+            const owner = t.dataset.savePerms;
+            after(await post(owner === 'guest' ? '/api/access/guest' : `/api/access/profile/${owner}/permissions`, { permissions: ticked(owner) }), true);
+        } else if (t.dataset.setPin) {
+            const input = document.getElementById(`pin-${t.dataset.setPin}`);
+            const data = await post(`/api/access/profile/${t.dataset.setPin}/pin`, { pin: input.value });
+            if (data.ok) input.value = '';
+            after(data, true);
+        } else if (t.dataset.clearPin) {
+            if (!confirm(`Remove the PIN of ${t.dataset.name}? Anyone on your network will be able to choose this profile.`)) return;
+            after(await post(`/api/access/profile/${t.dataset.clearPin}/pin/clear`), true);
+        } else if (t.dataset.signout) {
+            after(await post(`/api/access/profile/${t.dataset.signout}/signout`), false);
+        } else if (t.dataset.unlock) {
+            after(await post(`/api/access/profile/${t.dataset.unlock}/unlock`), true);
+        } else if (t.id === 'saveSessionDays') {
+            after(await post('/api/access/session-days', { days: document.getElementById('sessionDays').value }), false);
+        }
+    });
+})();
+</script>
+{% endblock %}

@@ -25,7 +25,7 @@ def token_from(browser, path="/settings"):
 
 
 def test_every_page_carries_a_token_for_scripts(secured):
-    for path in ("/", "/settings", "/library", "/workers", "/access", "/ddns", "/who"):
+    for path in ("/", "/settings", "/library", "/workers", "/people", "/ddns", "/who"):
         assert token_from(secured, path)
 
 

@@ -1,4 +1,11 @@
-<!-- The workers and jobs tables: rendered with the page and swapped in every few seconds. -->
+<!-- The workers and jobs tables: rendered with the page and swapped in every few seconds. Which tab is open is kept by the page's script. -->
+{% set waiting = jobs|selectattr('status', 'equalto', 'needs_review')|list|length %}
+<ul class="nav nav-tabs mb-4" id="fleetTabs" role="tablist">
+    <li class="nav-item" role="presentation"><button type="button" class="nav-link active" data-pane="workers" role="tab" aria-selected="true">Workers <span class="badge bg-secondary">{{ workers|length }}</span></button></li>
+    <li class="nav-item" role="presentation"><button type="button" class="nav-link" data-pane="jobs" role="tab" aria-selected="false">Jobs <span class="badge bg-secondary">{{ jobs|length }}</span>{% if waiting %} <span class="badge bg-warning text-dark" title="Jobs waiting for your decision">{{ waiting }} waiting for you</span>{% endif %}</button></li>
+</ul>
+
+<div data-fleet-pane="workers" role="tabpanel">
 <h4 class="mb-3">Workers <small class="text-muted">({{ workers|length }})</small></h4>
 <div class="panel p-0 overflow-hidden mb-5">
     <div class="table-responsive">
@@ -58,6 +65,9 @@
     </div>
 </div>
 
+</div>
+
+<div data-fleet-pane="jobs" role="tabpanel" hidden>
 <h4 class="mb-3">Jobs
     <small class="text-muted">{{ summary }}</small>
 </h4>
@@ -106,4 +116,5 @@
             </tbody>
         </table>
     </div>
+</div>
 </div>
