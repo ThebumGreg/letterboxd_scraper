@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from synchub import db, settings
+from synchub import db, ratings, settings
 
 # key, name in the menu, what it lets a person do
 PERMISSIONS = (
@@ -128,6 +128,8 @@ def ensure_access_remains(conn, change=None, removing=None):
     holders = _holders_of_access(conn, change)
     if removing is not None:
         holders = [h for h in holders if h != removing]
+        if conn.execute("SELECT COUNT(*) FROM profile WHERE name <> ?", (removing,)).fetchone()[0] == 0:
+            return                                   # no profile left: everyone can open everything again until one is added
     if not holders:
         raise AccessError("Somebody has to keep the People permission, or nobody could change these settings again. Give it to a profile first.")
 
@@ -146,6 +148,30 @@ def set_guest_permissions(conn, keys):
     ensure_access_remains(conn, {"guest": keys})
     settings.set_value("access_guest_permissions", "*" if keys == list(KEYS) else ",".join(keys), conn=conn)
     return keys
+
+
+def _level(value):
+    """A submitted rating limit: 0-3, or None for 'no limit'. Anything else is refused rather than quietly meaning no limit."""
+    if value in (None, "", "none"):
+        return None
+    level = ratings.parse_level(value) if not isinstance(value, bool) else None
+    if level is None:
+        raise AccessError("Choose G, PG, PG-13, R, or no limit.")
+    return level
+
+
+def set_max_rating(conn, profile_id, value):
+    """The most mature rating a profile may see (see synchub.ratings); None = no limit."""
+    level = _level(value)
+    if not conn.execute("UPDATE profile SET max_rating = ? WHERE id = ?", (level, profile_id)).rowcount:
+        raise AccessError("That profile no longer exists.")
+    return level
+
+
+def set_guest_max_rating(conn, value):
+    level = _level(value)
+    settings.set_value("guest_max_rating", "" if level is None else str(level), conn=conn)
+    return level
 
 
 def ensure_profile_can_go(conn, profile_id):
@@ -276,12 +302,15 @@ def overview(conn, now=None):
     for row in conn.execute("SELECT * FROM profile ORDER BY name COLLATE NOCASE"):
         perms = profile_permissions(row)
         people.append({"id": row["id"], "name": row["name"], "has_pin": bool(row["pin_hash"]), "locked_for": locked_for(row, now), "failures": row["pin_failures"],
-                       "all": perms is None, "permissions": list(KEYS) if perms is None else [k for k in KEYS if k in perms]})
+                       "all": perms is None, "permissions": list(KEYS) if perms is None else [k for k in KEYS if k in perms],
+                       "max_rating": ratings.parse_level(row["max_rating"])})
     guest = guest_permissions(conn)
-    guest_info = {"all": guest is None, "permissions": list(KEYS) if guest is None else [k for k in KEYS if k in guest]}
+    guest_info = {"all": guest is None, "permissions": list(KEYS) if guest is None else [k for k in KEYS if k in guest], "max_rating": ratings.guest_limit(conn)}
     warnings = []
     if "access" in guest_info["permissions"]:
         warnings.append("Guests (anyone who picks \"Just looking\") can open this page, so they can give themselves anything. Untick People for guests.")
+    if people and guest_info["max_rating"] is None and ("dashboard" in guest_info["permissions"] or "search" in guest_info["permissions"]):
+        warnings.append("Guests have no rating limit, so they can see every title (unrated ones too). Choose a limit under Guests.")
     for person in people:
         if not person["has_pin"] and set(person["permissions"]) - set(guest_info["permissions"]):
             extra = [LABELS[k] for k in person["permissions"] if k not in guest_info["permissions"]]

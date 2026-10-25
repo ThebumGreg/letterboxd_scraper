@@ -14,7 +14,7 @@ and an optional hand-written `devices.json` for the options the pages do not edi
 `SYNCHUB_TV_DEVICES` to read that file from somewhere else and `ADB_PATH` for an `adb` binary that is not on the path.
 
 **Access.** Two permissions (People page): **TV remote** opens Remote and TV apps, **TV setup** opens TVs and TV tools
-(adding and removing TVs, probes, pairing, raw Jellyfin commands). Anyone may use both until you change it.
+(adding and removing TVs, probes, pairing, raw Jellyfin commands). Profiles may use both until you change it; guests get only TV remote. A profile's or guest's rating limit (People page) also applies here: the Jellyfin search, episode lists, play calls and the "Playing now" strip leave out, and refuse, titles above it.
 
 **Networking.** The TV pages talk straight to your TVs, so SyncHub must be on the same network as them. Wake-on-LAN
 broadcasts and mDNS discovery do not cross Docker's bridge network or WSL2's NAT (the range scan and unicast calls do).

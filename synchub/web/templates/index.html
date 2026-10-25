@@ -100,7 +100,7 @@
                 <td>
                     <div class="fw-bold">
                         <a href="{{ r.url }}" class="text-decoration-none {{ 'text-info' if r.kind == 'show' else 'text-primary' }}">{{ r.title }}</a>
-                        {% if r.year %}<span class="badge bg-secondary ms-1 fw-normal">{{ r.year }}</span>{% endif %}
+                        {% if r.year %}<span class="badge bg-secondary ms-1 fw-normal">{{ r.year }}</span>{% endif %}{% if r.certification %}<span class="badge border text-body-secondary ms-1 fw-normal" title="Age rating">{{ r.certification }}</span>{% endif %}
                     </div>
                     {% if r.kind == 'show' and r.aired %}
                         <small class="text-body-secondary d-block">{{ r.in_library }} of {{ r.aired }} episodes ({{ r.percent }}%)</small>

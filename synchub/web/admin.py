@@ -12,6 +12,7 @@ from flask import Response, flash, jsonify, redirect, render_template, request, 
 from config import LOG_FILE_PATH
 from synchub import catalog, db, ddns, ddns_check, jellyfin_events, profiles, settings, tasks, webhooks
 from synchub.profiles import ProfileError
+from synchub.web import current_limit
 
 # name -> (job, message shown after starting it)
 TRIGGERS = {
@@ -77,7 +78,7 @@ def register(app):
     @app.route("/tools/export-csv")
     def export_csv():
         with db.connection() as conn:
-            rows = catalog.list_catalog(conn)
+            rows = catalog.list_catalog(conn, max_rating=current_limit())
         out = io.StringIO()
         writer = csv.writer(out)
         writer.writerow(["title", "year", "type", "state", "in_jellyfin", "in_radarr", "in_sonarr", "wanted_by", "watched_by", "tmdb_id", "tvdb_id"])

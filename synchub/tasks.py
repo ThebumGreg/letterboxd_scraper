@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 
-from synchub import automation, db, episodes, matching, metadata, posters, settings, states
+from synchub import automation, db, episodes, matching, metadata, posters, ratings, settings, states
 from synchub.clients import ConfigError
 from synchub.clients.arr import RadarrClient, SonarrClient
 from synchub.clients.jellyfin import JellyfinClient
@@ -294,7 +294,11 @@ def reconcile_now(tmdb=None, report=lambda message, force=False: None):
 
     def metadata_stage():
         with db.connection() as conn:
-            return metadata.refresh_pending(conn, tmdb, progress=report)
+            stats = metadata.refresh_pending(conn, tmdb, progress=report)
+        if tmdb:
+            with db.connection() as conn:
+                stats["ratings"] = ratings.fill_missing(conn, tmdb, progress=report)     # age ratings for titles that have none yet
+        return stats
 
     def link_stage():
         with db.connection() as conn:

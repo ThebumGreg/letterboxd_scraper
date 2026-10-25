@@ -64,6 +64,12 @@
 .poster-grid  { height: 260px; object-fit: cover; }
 
 /* Dropdown UI Overlap & Z-Index Fixes */
+/* The menu bar sits above the dashboard controls (z-index 1020), so its dropdowns open over the search bar, not under it. */
+.navbar {
+    position: relative;
+    z-index: 1030;
+}
+
 #controls.panel {
     overflow: visible !important;
     position: relative;

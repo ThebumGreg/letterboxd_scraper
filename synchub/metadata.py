@@ -2,7 +2,7 @@
 import logging
 from datetime import datetime, timedelta
 
-from synchub import db, settings
+from synchub import db, ratings, settings
 from synchub.text import clean_id
 
 logger = logging.getLogger(__name__)
@@ -39,12 +39,19 @@ def ensure_media(conn, kind, tmdb_id, title, year=None, tvdb_id=None, imdb_id=No
     return media_id
 
 
+def _store_rating(conn, kind, details, appended, now):
+    """Keeps the age rating and audience score that came with the details (only when TMDB included the ratings, so a bare response is not read as 'unrated')."""
+    if details.get("id") and appended in details:
+        ratings.store(conn, kind, details["id"], details, now)
+
+
 def apply_movie_details(conn, media_id, details, now=None):
     conn.execute(
         "UPDATE media SET title = ?, original_title = ?, year = ?, overview = ?, status = ?, first_air_date = ?, poster_path = ?, metadata_refreshed_at = ? WHERE id = ?",
         (details.get("title") or details.get("original_title"), details.get("original_title"), _year(details.get("release_date")),
          details.get("overview"), details.get("status"), details.get("release_date") or None, details.get("poster_path"), now or db.now(), media_id))
     _set_ids(conn, media_id, "movie", None, clean_id(details.get("imdb_id")))
+    _store_rating(conn, "movie", details, "release_dates", now)
 
 
 def apply_show_details(conn, media_id, details, now=None):
@@ -54,6 +61,7 @@ def apply_show_details(conn, media_id, details, now=None):
          details.get("overview"), details.get("status"), details.get("first_air_date") or None, details.get("poster_path"), now or db.now(), media_id))
     external = details.get("external_ids") or {}
     _set_ids(conn, media_id, "show", clean_id(external.get("tvdb_id")), clean_id(external.get("imdb_id")))
+    _store_rating(conn, "show", details, "content_ratings", now)
 
 
 def upsert_episodes(conn, media_id, season_number, episodes, now):

@@ -40,7 +40,12 @@ def no_ddns_watcher(monkeypatch):
 
 @pytest.fixture
 def app(v2):
+    """The app with guests allowed everything and no rating limit, so the many tests that add a profile and then browse as a guest are not about
+    access. test_ratings.py and test_access.py say what the real defaults (the dashboard and remote only, nothing above PG) do."""
+    from synchub import settings
     from synchub.web import create_app
+    settings.set_value("access_guest_permissions", "*")
+    settings.set_value("guest_max_rating", "")
     flask_app = create_app(csrf=False)
     flask_app.config["TESTING"] = True
     return flask_app

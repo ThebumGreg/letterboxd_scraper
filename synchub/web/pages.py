@@ -5,9 +5,10 @@ import os
 from flask import abort, flash, jsonify, redirect, render_template, request, send_file, send_from_directory, url_for
 
 from config import BASE_DIR
-from synchub import backup, catalog, db, ddns, posters, profiles, search, settings, states, tasks, webhooks
+from synchub import backup, catalog, db, ddns, posters, profiles, ratings, search, settings, states, tasks, webhooks
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.tmdb import TmdbClient
+from synchub.web import current_limit, title_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ def register(app):
     @app.route("/")
     def index():
         with db.connection() as conn:
-            rows = catalog.list_catalog(conn)
+            rows = catalog.list_catalog(conn, max_rating=current_limit())
             defs = states.definitions(conn)
             defs["partial"] = {"label": "Partial"}
         users = sorted({u for r in rows for u in r["wanted_by"] + r["watched_by"]}, key=str.lower)
@@ -29,7 +30,7 @@ def register(app):
     def movie_details(media_id):
         with db.connection() as conn:
             movie = catalog.media_detail(conn, media_id)
-            if not movie or movie["kind"] != "movie":
+            if not movie or movie["kind"] != "movie" or not title_allowed(conn, media_id):
                 flash("Movie not found.", "warning")
                 return redirect(url_for("index"))
             state = states.movie_state(conn, media_id)
@@ -40,7 +41,7 @@ def register(app):
     def show_details(media_id):
         with db.connection() as conn:
             show = catalog.media_detail(conn, media_id)
-            if not show or show["kind"] != "show":
+            if not show or show["kind"] != "show" or not title_allowed(conn, media_id):
                 flash("Show not found.", "warning")
                 return redirect(url_for("index"))
             summary = states.show_summary(conn, media_id)
@@ -78,7 +79,8 @@ def register(app):
         results, error = [], None
         if query:
             try:
-                results = search.find(TmdbClient(), query, kind)
+                tmdb = TmdbClient()
+                results = ratings.for_results(tmdb, search.find(tmdb, query, kind), current_limit())
                 with db.connection() as conn:
                     search.annotate(conn, results)
             except ConfigError:

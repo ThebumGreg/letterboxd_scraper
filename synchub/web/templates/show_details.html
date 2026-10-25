@@ -1,6 +1,6 @@
 <!-- synchub/web/templates/show_details.html -->
 {% extends "base.html" %}
-{% from "_macros.html" import state_badge, watch_now with context %}
+{% from "_macros.html" import rating_facts, state_badge, watch_now with context %}
 
 {% block title %}{{ show.title }} - Details{% endblock %}
 
@@ -34,6 +34,7 @@
             {% if show.overview %}<p class="text-body-secondary" style="max-width: 75ch;">{{ show.overview }}</p>{% endif %}
 
             <dl class="sd-facts mb-3">
+                {{ rating_facts(show) }}
                 {% if show.tmdb_id %}<div><dt>TMDB</dt><dd><a class="text-decoration-none" target="_blank" rel="noopener noreferrer" href="https://www.themoviedb.org/tv/{{ show.tmdb_id }}"><span class="badge bg-secondary">{{ show.tmdb_id }}</span></a></dd></div>{% endif %}
                 {% if show.tvdb_id %}<div><dt>TVDB</dt><dd><span class="badge bg-secondary">{{ show.tvdb_id }}</span></dd></div>{% endif %}
             </dl>

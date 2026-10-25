@@ -79,6 +79,9 @@ def summarize_item(i):
         "Episode": i.get("IndexNumber"),
         "RunTimeTicks": i.get("RunTimeTicks"),
         "ResumeTicks": (i.get("UserData") or {}).get("PlaybackPositionTicks"),
+        "OfficialRating": i.get("OfficialRating"),
+        "Tmdb": (i.get("ProviderIds") or {}).get("Tmdb"),
+        "SeriesId": i.get("SeriesId"),
     }
 
 
@@ -160,7 +163,7 @@ class JellyfinClient:
     def search(self, q):
         r = self.request("GET", "/Items", params={
             "userId": self.lookup_user_id(), "searchTerm": q, "recursive": "true",
-            "includeItemTypes": "Movie,Series,Episode", "limit": 25, "fields": "ProductionYear"})
+            "includeItemTypes": "Movie,Series,Episode", "limit": 25, "fields": "ProductionYear,OfficialRating,ProviderIds"})
         return [summarize_item(i) for i in r.json().get("Items", [])]
 
     def episodes(self, series_id):

@@ -100,10 +100,24 @@
     </div>
 {% endmacro %}
 
+{% macro rating_picker(owner, current) %}
+    <div class="d-flex flex-wrap gap-2 align-items-center mt-2" data-rating-box="{{ owner }}">
+        <label for="rating-{{ owner }}" class="small mb-0"><i class="bi bi-shield-check" aria-hidden="true"></i> Most mature rating they may see</label>
+        <select class="form-select form-select-sm w-auto" id="rating-{{ owner }}">
+            {% for level, name, covers in levels %}<option value="{{ level }}" {% if current == level %}selected{% endif %}>{{ name }} ({{ covers }})</option>{% endfor %}
+            <option value="" {% if current is none %}selected{% endif %}>No limit (everything, unrated titles too)</option>
+        </select>
+        <button type="button" class="btn btn-success btn-sm" data-save-rating="{{ owner }}">Save rating limit</button>
+    </div>
+{% endmacro %}
+
 <div class="panel p-3 p-md-4 mb-3" data-card="guest">
     <div class="d-flex align-items-center gap-2 mb-2"><h5 class="mb-0">Guests</h5><span class="badge bg-secondary">&ldquo;Just looking&rdquo;</span></div>
     <p class="small text-body-secondary">What anyone can open without choosing a profile or after choosing &ldquo;Just looking&rdquo;.</p>
     {{ grid('guest', overview.guest.permissions, overview.guest.all) }}
+    <hr>
+    <p class="small text-body-secondary mb-0">Guests only see titles up to this rating on the dashboard, in search and on the Remote. Titles with no US rating are hidden from anyone who has a limit. Until the first profile is added, everyone can open everything.</p>
+    {{ rating_picker('guest', overview.guest.max_rating) }}
 </div>
 
 {% for p in overview.people %}
@@ -115,6 +129,7 @@
         {% if p.locked_for %}<span class="badge bg-danger">locked for {{ p.locked_for }} s after wrong tries</span>{% endif %}
     </div>
     {{ grid(p.id, p.permissions, p.all) }}
+    {{ rating_picker(p.id, p.max_rating) }}
     <hr>
     <div class="row g-2 align-items-end">
         <div class="col-sm-5 col-md-4">
@@ -235,6 +250,9 @@
         } else if (t.dataset.savePerms) {
             const owner = t.dataset.savePerms;
             after(await post(owner === 'guest' ? '/api/access/guest' : `/api/access/profile/${owner}/permissions`, { permissions: ticked(owner) }), true);
+        } else if (t.dataset.saveRating) {
+            const owner = t.dataset.saveRating;
+            after(await post(owner === 'guest' ? '/api/access/guest-rating' : `/api/access/profile/${owner}/rating`, { max_rating: document.getElementById(`rating-${owner}`).value }), true);
         } else if (t.dataset.setPin) {
             const input = document.getElementById(`pin-${t.dataset.setPin}`);
             const data = await post(`/api/access/profile/${t.dataset.setPin}/pin`, { pin: input.value });

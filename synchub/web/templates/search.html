@@ -48,7 +48,7 @@
                 </div>
                 <h5 class="mb-1">
                     <a class="text-decoration-none text-reset" target="_blank" rel="noopener noreferrer" href="https://www.themoviedb.org/{{ 'movie' if r.kind == 'movie' else 'tv' }}/{{ r.tmdb_id }}">{{ r.title }}</a>
-                    {% if r.year %}<span class="text-muted fw-normal fs-6">({{ r.year }})</span>{% endif %}
+                    {% if r.year %}<span class="text-muted fw-normal fs-6">({{ r.year }})</span>{% endif %}{% if r.certification %} <span class="badge border text-body-secondary fw-normal fs-6" title="Age rating">{{ r.certification }}</span>{% endif %}
                 </h5>
                 {% if r.overview %}<p class="small text-body-secondary mb-2 search-overview">{{ r.overview }}</p>{% endif %}
 

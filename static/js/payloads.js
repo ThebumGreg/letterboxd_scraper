@@ -102,10 +102,16 @@ document.addEventListener("DOMContentLoaded", function () {
 
     clearBtn.addEventListener("click", async () => {
         if (confirm("Are you sure you want to clear all payload history?")) {
-            const res = await fetch('/api/payload-logs/clear', { method: 'POST' });
+            const token = document.querySelector('meta[name="csrf-token"]')?.content || "";
+            const res = await fetch('/api/payload-logs/clear', {
+                method: 'POST',
+                headers: token ? { 'X-CSRFToken': token } : {},
+            });
             if (res.ok) {
                 loadedLogs = [];
                 renderTable();
+            } else {
+                alert("Could not clear the payload history (" + res.status + "). Reload the page and try again.");
             }
         }
     });

@@ -36,6 +36,15 @@ Items marked ★ could not be checked without your hardware or devices, so they 
 - [ ] **What it's doing now** loads, refreshes, and needs the Logs permission.
 - [ ] Each page's heading matches its menu name.
 
+## 2b. Ratings, parental controls and guests
+
+- [ ] A movie page and a show page show **Rated** (PG-13, TV-MA ...) and the **Audience score**. A title TMDB has no US rating for says "Not rated". Run **Match & update** first if they are blank.
+- [ ] **People**: each profile and the Guests card has a "most mature rating" box. Set a test profile to PG and choose it: the dashboard, its counts, search and the Remote's search show nothing above PG, and typing the address of an R-rated movie goes back to the dashboard.
+- [ ] Unrated titles are hidden from that profile; a profile with no limit sees everything.
+- [ ] As a guest (choose "Just looking" once a profile exists): the menu is only Dashboard and Remote, other addresses (try `/search` and `/settings`) say you have no access, and nothing above PG shows. Change the guest limit and the dashboard follows.
+- [ ] ★ Play an R-rated movie from the Remote as the PG profile: it is refused ("not available for your profile"). The "Playing now" strip does not name it.
+- [ ] A PIN-less profile can still be chosen by anyone; give the kids' profiles a PIN only if the limit has to hold against them.
+
 ## 3. TV remote (real TVs)
 
 - [ ] **System, TVs, Scan network** with your real address range finds the Roku and the Google TV. Add both from the results.

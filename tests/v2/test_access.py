@@ -130,11 +130,13 @@ def test_guests_holding_access_count_as_somebody(v2, conn, people):
         access.set_guest_permissions(conn, ["dashboard"])
 
 
-def test_an_installation_that_never_opens_the_access_page_changes_nothing(v2, conn):
+def test_an_installation_that_never_opens_the_access_page_keeps_every_profile_unrestricted_and_limits_only_guests(v2, conn):
+    from synchub import ratings
     pid = conn.execute("INSERT INTO profile (name) VALUES ('Old')").lastrowid
     row = conn.execute("SELECT * FROM profile WHERE id = ?", (pid,)).fetchone()
-    assert row["permissions"] is None and row["pin_hash"] is None and row["pin_version"] == 0
-    assert access.guest_permissions(conn) is None
+    assert row["permissions"] is None and row["pin_hash"] is None and row["pin_version"] == 0 and row["max_rating"] is None
+    assert access.guest_permissions(conn) == {"dashboard", "tv"}          # guests: the dashboard and the remote only ...
+    assert ratings.guest_limit(conn) == 1                                  # ... and nothing above PG
 
 
 # ---------------------------------------------------------------- PINs
@@ -567,6 +569,7 @@ def test_the_page_warns_about_profiles_without_a_pin_that_can_do_more_than_a_gue
     page = text(admin.get("/people"))
     assert 'id="accessWarnings"' in page and "Guests (anyone who picks" in page                              # guests may open everything by default, access included
     access.set_guest_permissions(conn, ["dashboard"])
+    access.set_guest_max_rating(conn, 1)                                                                     # (the shared app fixture leaves guests without a rating limit)
     access.set_permissions(conn, people["bob"], ["dashboard", "search", "settings"])
     conn.commit()
     warnings = access.overview(conn)["warnings"]

@@ -2,7 +2,7 @@
 from collections import defaultdict
 from datetime import date, datetime
 
-from synchub import settings, states
+from synchub import ratings, settings, states
 
 
 def demand(conn):
@@ -97,8 +97,15 @@ def _show_rollups(conn, today):
     return out
 
 
-def list_catalog(conn, today=None, only=None):
-    """One row per movie/show for the dashboard, with state, requesters and links. `only` limits the rows to a set of media IDs."""
+def _rating_info(conn):
+    """{(kind, tmdb_id): (certification, vote_average)} for every title that has been looked up."""
+    return {(r["kind"], r["tmdb_id"]): (r["certification"], r["vote_average"])
+            for r in conn.execute("SELECT kind, tmdb_id, certification, vote_average FROM title_rating")}
+
+
+def list_catalog(conn, today=None, only=None, max_rating=None):
+    """One row per movie/show for the dashboard, with state, requesters and links. `only` limits the rows to a set of media IDs.
+    `max_rating` (0-3, see synchub.ratings) hides what the person may not see; None shows everything."""
     today = today or date.today().isoformat()
     defs = states.definitions(conn)
     defs["partial"] = {"code": "partial", "label": "Partial", "color": "warning", "icon": "bi-pie-chart"}
@@ -112,9 +119,11 @@ def list_catalog(conn, today=None, only=None):
     movie_states = {r["target_id"]: (r["state_code"], r["progress"]) for r in conn.execute("SELECT * FROM item_state WHERE target_type = 'movie'")}
     episode_counts = {r["media_id"]: r["n"] for r in conn.execute("SELECT media_id, COUNT(*) AS n FROM episode WHERE season_number <> 0 GROUP BY media_id")}
 
+    permitted = ratings.media_ids_allowed(conn, max_rating)
+    rated = _rating_info(conn)
     rows = []
     for m in conn.execute("SELECT * FROM media ORDER BY title COLLATE NOCASE"):
-        if only is not None and m["id"] not in only:
+        if (only is not None and m["id"] not in only) or (permitted is not None and m["id"] not in permitted):
             continue
         d = wanted.get(m["id"], {"wanted_by": [], "watched_by": []})
         if m["kind"] == "movie":
@@ -137,6 +146,7 @@ def list_catalog(conn, today=None, only=None):
             "jellyfin_link": _jellyfin_link(base, jf.get(m["id"])),
             "jellyfin_item_id": jf.get(m["id"]),
             "date_added": date_added, "date_added_label": date_added_label,
+            "certification": rated.get((m["kind"], m["tmdb_id"]), (None, None))[0],
             **extra,
         })
     return rows
@@ -173,6 +183,8 @@ def media_detail(conn, media_id):
     d["date_added"], d["date_added_label"] = _added_label(_added_dates(conn).get(jf))
     d["in_radarr"] = media_id in _active_links(conn, "radarr", "src_radarr_movie", "radarr_id")
     d["in_sonarr"] = media_id in _active_links(conn, "sonarr", "src_sonarr_series", "sonarr_id")
+    known = ratings.get(conn, m["kind"], m["tmdb_id"]) or {}
+    d["certification"], d["vote_average"], d["rating_rank"] = known.get("certification"), known.get("vote_average"), known.get("rank")
     return d
 
 

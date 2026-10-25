@@ -28,10 +28,10 @@ class TmdbClient:
         return self._get("/configuration")
 
     def movie(self, tmdb_id):
-        return self._get(f"/movie/{tmdb_id}")
+        return self._get(f"/movie/{tmdb_id}", append_to_response="release_dates")
 
     def show(self, tmdb_id):
-        return self._get(f"/tv/{tmdb_id}", append_to_response="external_ids")
+        return self._get(f"/tv/{tmdb_id}", append_to_response="external_ids,content_ratings")
 
     def seasons(self, tmdb_id, numbers):
         """{season_number: season_json} for the given season numbers (Season 0 = Specials), in batched calls."""

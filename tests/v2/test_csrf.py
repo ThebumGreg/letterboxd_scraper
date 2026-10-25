@@ -11,6 +11,7 @@ from synchub.web import create_app
 def secured(v2, conn):
     """The app as it runs for real (token required), with a profile so the chooser has something to show, and a browser that chose 'just looking'."""
     conn.execute("INSERT INTO profile (name) VALUES ('Alice')")
+    conn.execute("INSERT INTO app_setting (key, value) VALUES ('access_guest_permissions', '*')")      # these tests are about tokens, not pages
     conn.commit()
     app = create_app()
     app.config["TESTING"] = True

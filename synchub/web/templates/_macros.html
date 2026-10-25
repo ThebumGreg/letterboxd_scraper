@@ -136,3 +136,10 @@
     </div>
 </div>
 {% endmacro %}
+
+
+{# The age rating and TMDB audience score for the facts list on a movie or show page. `title` is the dict catalog.media_detail returns. #}
+{% macro rating_facts(title) %}
+<div><dt>Rated</dt><dd>{% if title.certification %}<span class="badge text-bg-light" title="US age rating" data-rating="{{ title.certification }}">{{ title.certification }}</span>{% else %}<span class="text-body-secondary fw-normal" data-rating="none">Not rated</span>{% endif %}</dd></div>
+<div><dt>Audience score</dt><dd>{% if title.vote_average %}<span data-score="{{ title.vote_average }}" title="TMDB audience score, out of 10"><i class="bi bi-star-fill text-warning" aria-hidden="true"></i> {{ '%.1f'|format(title.vote_average) }}<span class="text-body-secondary fw-normal"> / 10</span></span>{% else %}<span class="text-body-secondary fw-normal">No score yet</span>{% endif %}</dd></div>
+{% endmacro %}

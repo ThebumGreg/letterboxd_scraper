@@ -6,7 +6,7 @@ from pathlib import Path
 from flask import Flask, g, jsonify, redirect, render_template, request, url_for
 
 from config import BASE_DIR
-from synchub import access, backup, db, tasks
+from synchub import access, backup, db, ratings, tasks
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,16 @@ def current_profile(conn):
     return _public(row) if row and (not row["has_pin"] or _pin_entered(row, conn)) else None
 
 
+def current_limit():
+    """The most mature rating (0-3) the person using this request may see, or None for no limit. See synchub.ratings."""
+    return getattr(g, "max_rating", None)
+
+
+def title_allowed(conn, media_id):
+    """Whether the person using this request may see this title (their rating limit; see synchub.ratings)."""
+    return ratings.media_allowed(conn, media_id, current_limit())
+
+
 def safe_next(target):
     """Where to go after choosing: a path on this site only (never another site)."""
     target = (target or "").strip()
@@ -48,7 +58,7 @@ def safe_next(target):
 
 
 def _profile_rows(conn):
-    return [dict(r) for r in conn.execute("SELECT id, name, jellyfin_user_id, pin_hash IS NOT NULL AS has_pin, pin_version, permissions FROM profile")]
+    return [dict(r) for r in conn.execute("SELECT id, name, jellyfin_user_id, pin_hash IS NOT NULL AS has_pin, pin_version, permissions, max_rating FROM profile")]
 
 
 def _public(row):
@@ -98,7 +108,7 @@ def create_app(start_scheduler=False, csrf=True):
     def identify():
         """Works out who is using the app from the cookies, sends a browser that has not chosen (or has not entered its PIN) to the chooser,
         and refuses what the person's permissions do not allow."""
-        g.profile, g.has_profiles, g.permissions, g.pin_profile = None, False, None, None
+        g.profile, g.has_profiles, g.permissions, g.pin_profile, g.max_rating = None, False, None, None, None
         endpoint = request.endpoint
         if endpoint is None or endpoint in ("static", "poster"):
             return None
@@ -108,6 +118,7 @@ def create_app(start_scheduler=False, csrf=True):
             rows = _profile_rows(conn)
             guest = access.guest_permissions(conn)
             days = access.session_days(conn)
+            guest_cap = ratings.guest_limit(conn)
         g.has_profiles = bool(rows)
         raw = request.cookies.get(PROFILE_COOKIE, "")
         chosen = raw == "0"
@@ -117,7 +128,9 @@ def create_app(start_scheduler=False, csrf=True):
                 g.pin_profile = row                                   # chosen, but its PIN has not been entered on this device lately
             else:
                 g.profile, chosen = _public(row), True
-        g.permissions = access.parse(row["permissions"]) if g.profile else guest
+        # Before any profile exists there is nobody to give pages to, so everyone can open everything (the first thing to do is add a profile).
+        g.permissions = access.parse(row["permissions"]) if g.profile else (guest if rows else None)
+        g.max_rating = ratings.parse_level(row["max_rating"]) if g.profile else (guest_cap if rows else None)
         need = access.required(endpoint)
         if need == access.PUBLIC:
             return None
@@ -176,7 +189,8 @@ def create_app(start_scheduler=False, csrf=True):
                 children = shown
                 if any("href" in c for c in children):
                     menu.append({"label": first, "children": children})
-        return {"jellyfin_app": config, "current_profile": profile, "has_profiles": getattr(g, "has_profiles", False), "can": can, "menu": menu}
+        return {"jellyfin_app": config, "current_profile": profile, "has_profiles": getattr(g, "has_profiles", False), "can": can, "menu": menu,
+                "max_rating": getattr(g, "max_rating", None)}
 
     from synchub.web import admin, api, fleet, library, pages, security, shares, tv, worker_api
     for module in (pages, api, admin, fleet, library, shares, security, tv, worker_api):

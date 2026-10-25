@@ -1,9 +1,9 @@
 """The People page: who has a PIN and who may open what (the profiles themselves are in admin.py)."""
 from flask import current_app, g, jsonify, redirect, render_template, request, url_for
 
-from synchub import access, db, profiles, settings
+from synchub import access, db, profiles, ratings, settings
 
-PRESETS = {"everything": list(access.KEYS), "viewer": ["dashboard", "search"], "nothing": []}
+PRESETS = {"everything": list(access.KEYS), "viewer": ["dashboard", "search"], "dashboard + remote": ["dashboard", "tv"], "nothing": []}
 
 
 def _fail(message, status=400):
@@ -27,7 +27,7 @@ def register(app):
         with db.connection() as conn:
             overview = access.overview(conn)
             profile_list = profiles.list_all(conn)
-        return render_template("people.html", overview=overview, profiles=profile_list, permissions=access.PERMISSIONS, presets=PRESETS, me=(g.profile or {}).get("id"))
+        return render_template("people.html", overview=overview, profiles=profile_list, permissions=access.PERMISSIONS, presets=PRESETS, levels=ratings.LEVELS, me=(g.profile or {}).get("id"))
 
     @app.route("/access")
     def access_page():
@@ -57,6 +57,16 @@ def register(app):
         except access.AccessError as exc:
             return _fail(str(exc))
         return act(None, lambda conn: access.set_guest_permissions(conn, keys), "Saved.")
+
+    @app.route("/api/access/profile/<int:profile_id>/rating", methods=["POST"])
+    def api_access_rating(profile_id):
+        value = (request.get_json(silent=True) or {}).get("max_rating")
+        return act(profile_id, lambda conn: access.set_max_rating(conn, profile_id, value), "Saved. Titles above this rating are now hidden from this profile.")
+
+    @app.route("/api/access/guest-rating", methods=["POST"])
+    def api_access_guest_rating():
+        value = (request.get_json(silent=True) or {}).get("max_rating")
+        return act(None, lambda conn: access.set_guest_max_rating(conn, value), "Saved. Guests only see titles up to this rating.")
 
     @app.route("/api/access/profile/<int:profile_id>/pin", methods=["POST"])
     def api_access_set_pin(profile_id):

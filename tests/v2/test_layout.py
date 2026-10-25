@@ -166,6 +166,8 @@ def test_every_place_that_offered_watch_on_jellyfin_now_offers_watch_now(client,
 
 
 def test_the_page_tells_watch_now_whether_the_tvs_may_be_offered(client, v2):
+    with v2.connection() as conn:
+        conn.execute("INSERT INTO profile (name) VALUES ('Admin')")        # guest limits only apply once a profile exists
     config = lambda: json.loads(re.search(r'id="jellyfin-app-config">(.*?)</script>', text(client.get("/")), re.S).group(1))
     assert config()["tv"] is True and config()["tv_setup"] is True                       # everything is open by default
     settings.set_value("access_guest_permissions", "dashboard,tv")
@@ -175,6 +177,8 @@ def test_the_page_tells_watch_now_whether_the_tvs_may_be_offered(client, v2):
 
 
 def test_the_tv_list_and_the_play_call_behind_watch_now_are_allowed_by_the_tv_permission(client, v2):
+    with v2.connection() as conn:
+        conn.execute("INSERT INTO profile (name) VALUES ('Admin')")        # guest limits only apply once a profile exists
     settings.set_value("access_guest_permissions", "dashboard,tv")
     assert client.get("/api/tv/config").status_code == 200
     assert client.post("/api/tv/devices/nothing/play", json={"itemIds": ["x"], "playCommand": "PlayNow"}).status_code != 403
@@ -192,3 +196,28 @@ def test_choosing_a_tv_in_watch_now_opens_that_tvs_remote_which_starts_the_title
     assert "q.get('play')" in remote and "history.replaceState(null, '', location.pathname)" in remote and "onStart: startFromLink" in remote
     common = (BASE_DIR / "static/tv/common.js").read_text()
     assert "get('tv')" in common and "hook('onStart')" in common
+
+
+# ---------------------------------------------------------------- small fixes
+def test_the_tools_page_shows_the_match_and_update_title_as_typed(client, v2):
+    page = text(client.get("/tools"))
+    assert "Match &amp; update" in page and "Match &amp;amp; update" not in page
+
+
+def test_every_script_that_posts_sends_the_csrf_token():
+    # (the TV pages post through the shared api() in tv/common.js, which sends it)
+    """The Clear History button on Payloads failed with 'CSRF token missing' because its fetch sent no token."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2] / "static"
+    for script in [*root.glob("js/*.js"), *root.glob("tv/*.js")]:
+        source = script.read_text()
+        if re.search(r"method:\s*['\"](POST|PUT|DELETE)['\"]", source):
+            assert "csrf" in source.lower(), f"{script.name} posts without a CSRF token"
+
+
+def test_the_menu_bar_sits_above_the_dashboard_controls():
+    from pathlib import Path
+    css = (Path(__file__).resolve().parents[2] / "static/css/synchub.css").read_text()
+    controls = int(re.search(r"#controls\.panel\s*{[^}]*z-index:\s*(\d+)", css).group(1))
+    bar = int(re.search(r"\.navbar\s*{[^}]*z-index:\s*(\d+)", css).group(1))
+    assert bar > controls

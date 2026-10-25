@@ -10,10 +10,12 @@ from pathlib import Path
 from flask import Response, g, jsonify, redirect, render_template, request, url_for
 
 from config import BASE_DIR
+from synchub import ratings
 from synchub.tv import discovery, orchestrator, runtime
 from synchub.tv.devices import DeviceError
 from synchub.tv.jellyfin import JellyfinError, is_stale, item_label, match_session, summarize_session
 from synchub.tv.notices import NOTICES
+from synchub.web import current_limit
 
 TV_STATIC = BASE_DIR / "static" / "tv"
 PLAYSTATE_COMMANDS = {"Stop", "Pause", "Unpause", "NextTrack", "PreviousTrack", "Seek", "Rewind", "FastForward", "PlayPause"}
@@ -442,6 +444,7 @@ def register(app):
         body = json_body()
         if body.get("playCommand") not in PLAY_COMMANDS or not body.get("itemIds"):
             raise DeviceError("bad playCommand or itemIds")
+        require_items_allowed(r.jf(), body["itemIds"])
         note = resolve_series(r, body)
         response = play_dispatch(r, d, body)
         if not note:
@@ -528,8 +531,10 @@ def register(app):
         """What each TV is playing through Jellyfin, for the dashboard strip. One call to Jellyfin and none to the TVs, so it is cheap to poll.
         Without Jellyfin set up it simply lists nothing."""
         r = rt()
+        limit, cache = current_limit(), {}
         try:
-            raw = r.jf().sessions(quiet=True)
+            jf = r.jf()
+            raw = jf.sessions(quiet=True)
         except JellyfinError:
             return jsonify(ok=True, tvs=[])
         owner = session_owners(r, raw)
@@ -539,18 +544,46 @@ def register(app):
             if not found:
                 continue
             s = max(found, key=lambda x: x.get("LastActivityDate") or "")
+            if limit is not None and not ratings.permitted(jf_rank(jf, s["NowPlayingItem"], cache), limit):
+                continue
             playing.append({"id": d.id, "name": d.name, "title": item_label(s["NowPlayingItem"]), "paused": bool((s.get("PlayState") or {}).get("IsPaused"))})
         return jsonify(ok=True, tvs=playing)
 
+    # Parental controls: someone with a rating limit (see synchub.ratings) only finds, opens and plays titles within it. Unrated titles count as too mature.
+    def jf_rank(jf, item, cache):
+        series_id = item.get("SeriesId") if item.get("Type") == "Episode" else None
+        series = None
+        if series_id:
+            if series_id not in cache:
+                cache[series_id] = jf.item(series_id) or {}
+            series = cache[series_id]
+        return ratings.of_jellyfin_item(item, series)
+
+    def require_items_allowed(jf, item_ids):
+        limit = current_limit()
+        if limit is None:
+            return
+        cache = {}
+        for item_id in item_ids:
+            if not valid_id(item_id) or not ratings.permitted(jf_rank(jf, jf.item(item_id) or {}, cache), limit):
+                raise DeviceError("That title is not available for your profile.")
+
     @app.get("/api/tv/jf/search")
     def api_tv_jf_search():
-        return jsonify(rt().jf().search(request.args.get("q", "").strip()))
+        jf = rt().jf()
+        found, limit = jf.search(request.args.get("q", "").strip()), current_limit()
+        if limit is not None:
+            cache = {}
+            found = [i for i in found if ratings.permitted(jf_rank(jf, i, cache), limit)]
+        return jsonify(found)
 
     @app.get("/api/tv/jf/episodes/<series_id>")
     def api_tv_jf_episodes(series_id):
         if not valid_id(series_id):
             raise JellyfinError("bad id")
-        return jsonify(rt().jf().episodes(series_id))
+        jf = rt().jf()
+        require_items_allowed(jf, [series_id])
+        return jsonify(jf.episodes(series_id))
 
     def session_id(body):
         sid = body.get("sessionId")
@@ -563,7 +596,9 @@ def register(app):
         body = json_body()
         if body.get("playCommand") not in PLAY_COMMANDS:
             raise JellyfinError("bad playCommand")
-        return relay(rt().jf().play(session_id(body), play_params(body)))
+        jf = rt().jf()
+        require_items_allowed(jf, body.get("itemIds") or [])
+        return relay(jf.play(session_id(body), play_params(body)))
 
     @app.post("/api/tv/jf/playstate")
     def api_tv_jf_playstate():
