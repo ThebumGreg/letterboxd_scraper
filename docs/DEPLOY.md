@@ -15,9 +15,9 @@
 
 ## What has been checked, and what only your hardware can show
 
-Checked on a real Docker engine with the real Dockerfiles: both images build; the app starts as an unprivileged user from an empty, root-owned data folder and reports healthy; an older database (schema 6, recent changes still in its `-wal` file) was snapshotted, checked, moved in and upgraded to schema 8 with its data intact and a safety copy kept; the worker image talks to the app container, refuses unmarked shares, writes markers, goes online with both shares ready and completes a copy job whose hash matches; both containers survive restarts of the other and stop cleanly; every page and button works in a real browser with CSRF protection on.
+Checked on a real Docker engine with the real Dockerfiles (earlier releases, and again for V1.1 apart from the image build, see below): the app starts as an unprivileged user from an empty, root-owned data folder and reports healthy; an older database was snapshotted, checked, moved in and upgraded with its data intact and a safety copy kept; the worker image talks to the app container, refuses unmarked shares, writes markers, goes online with both shares ready and completes a copy job whose hash matches; both containers survive restarts of the other and stop cleanly; every page and button works in a real browser with CSRF protection on.
 
-**Not checked** (it needs your machines): mounting your Unraid shares through Docker's SMB driver; the Unraid web UI route (the `docker run` command below is the verified one); installing ffmpeg inside the worker image (that step is one `apt-get install ffmpeg` line; the network used for testing blocked it, so the test image had no ffmpeg and library scans in the container were not run, though scans with real ffmpeg are covered by the test suite); talking to your real Jellyfin, Radarr and Sonarr. The guide says where to look if one of these misbehaves.
+**Not checked** (it needs your machines or the internet): the publishing workflow and the image build on GitHub (the build needs the internet; GitHub's first run is the test, and the same build runs on every pull request); pulling the image and the Unraid web UI route on Unraid itself; mounting your Unraid shares through Docker's SMB driver; `adb` inside the image talking to a real Google TV; ffmpeg inside the worker image; talking to your real Jellyfin, Radarr and Sonarr. The guide says where to look if one of these misbehaves.
 
 ---
 
@@ -26,44 +26,26 @@ Checked on a real Docker engine with the real Dockerfiles: both images build; th
 - **Unraid**: its IP address (give it a fixed one or a DHCP reservation), and the shares `Media` and `TFiles` exported over **SMB**. Make a user for the workers (Unraid: *Users → Add user*, for example `synchub`) with **read/write** on both shares.
 - **Ubuntu worker PC**: Docker, and a big local disk for the work folder (job copies and the originals kept for 30 days).
 - The workers must reach the Unraid address on port **5001** (same network, no firewall in between).
-- The code: the repository, on the branch that has these changes (`claude/epic-babbage-qhfxnj` until it is merged, then `main`).
+- A GitHub account that can read this repository's packages (the image is published to GitHub's container registry, section 1).
 
-## 1. Build the app image
+## 1. Get the app image
 
-SyncHub is not published to a registry, so the image has to be **built once on the Unraid box**; until it exists, Unraid answers `Unable to find image 'synchub:latest' locally ... pull access denied for synchub`. The repository is private and Unraid does not ship `git`, so the simplest way is to send the code from your PC. You end up with an image called `synchub:latest` on Unraid.
+GitHub builds the image for you. Every push to `main` runs the tests and then publishes it to GitHub's container registry as
 
-**A. Send the code from your PC and build on Unraid** (needs only `git` and `ssh` on your PC; nothing extra on Unraid, no GitHub token):
-
-```bash
-# on your PC, in the repository folder
-git fetch origin
-git archive --format=tar.gz --prefix=synchub-src/ -o /tmp/synchub-src.tar.gz origin/claude/epic-babbage-qhfxnj
-scp /tmp/synchub-src.tar.gz root@UNRAID_IP:/mnt/user/appdata/
-
-# then on Unraid (SSH or its terminal)
-cd /mnt/user/appdata && rm -rf synchub-src && tar xzf synchub-src.tar.gz
-cd synchub-src && docker build -t synchub:latest .
-docker images | grep synchub        # must list  synchub  latest
+```
+ghcr.io/thebumgreg/synchub:latest      the newest main (what Unraid's "apply update" follows)
+ghcr.io/thebumgreg/synchub:1.1.0       a release (made by tagging v1.1.0; see docs/RELEASING.md); also :1.1
+ghcr.io/thebumgreg/synchub:sha-abc1234 one exact commit
 ```
 
-`git archive` sends exactly the committed code (no database, no virtual environment). The build takes a minute or two and needs Unraid to reach the internet (it downloads the Python base image and the packages). To update later, repeat these commands.
+The first publish happens when the V1.1 code reaches `main`. Until then the image does not exist.
 
-**B. Build on Unraid straight from GitHub** (a private repository needs a token: GitHub → Settings → Developer settings → Fine-grained tokens, read-only access to **Contents** for this repository):
+**Who can pull it.** A package made from a private repository is private. Choose one:
 
-```bash
-mkdir -p /mnt/user/appdata/synchub-src && cd /mnt/user/appdata/synchub-src
-curl -L -H "Authorization: Bearer YOUR_TOKEN" https://api.github.com/repos/ThebumGreg/letterboxd_scraper/tarball/claude/epic-babbage-qhfxnj | tar xz --strip-components=1
-docker build -t synchub:latest .
-```
+- **Make the package public** (simplest, and the only choice that survives an Unraid reboot without extra steps): GitHub, your profile, *Packages*, `synchub`, *Package settings*, *Change visibility*, Public. The repository stays private, but the image holds the application code, so anyone who knows the name could pull it. The image contains no settings, keys or data (those live in `/data`).
+- **Keep it private and log in once on Unraid**: make a token (GitHub, Settings, Developer settings, *Personal access tokens (classic)*, scope **read:packages**), then in Unraid's terminal `docker login ghcr.io -u ThebumGreg` and paste the token as the password. Unraid keeps Docker's login in memory, so it is lost at a reboot: add the same `docker login` line to a *User Scripts* job set to run at array start (or the update check and "apply update" will fail with "denied" after every reboot).
 
-**C. Build on your PC and send the image** (needs Docker on the PC):
-
-```bash
-docker build -t synchub:latest .
-docker save synchub:latest | gzip | ssh root@UNRAID_IP 'gunzip | docker load'
-```
-
-The source folder is not the data folder: keep them apart (`synchub-src` for the code, `synchub` for the data). Once the image exists, the `docker run` command or the Unraid template in the next sections starts it; the Unraid UI cannot check this local image for updates, which is normal.
+**Without GitHub's registry** (offline, or to try a branch): build it yourself. On a PC with `git` and Docker: `docker build -t synchub:latest .` and `docker save synchub:latest | gzip | ssh root@UNRAID_IP 'gunzip | docker load'`, then use `synchub:latest` as the repository name below. Unraid's update check cannot see a local image, which is normal.
 
 ## 2. Move your existing database
 
@@ -80,9 +62,9 @@ python -m synchub.backup check  ~/synchub-transfer.db
 
 ```
   integrity: ok
-  database version: 6  (this SyncHub: 8)
+  database version: 6  (this SyncHub: 10)
   holds: 2 profiles, 2 titles, 0 episodes, 0 workers, 0 library files
-  note: it will be upgraded to version 8 the first time SyncHub opens it (a copy is kept first)
+  note: it will be upgraded to version 10 the first time SyncHub opens it (a copy is kept first)
   FIX AFTER MOVING: jellyfin_url is http://localhost:8096, which means 'this machine'. ...
 ```
 
@@ -103,23 +85,47 @@ If you have no data worth keeping, skip this section: the app creates an empty d
 
 ## 3. Run the app
 
+### On Unraid, from its web UI (and update it from there)
+
+1. **Install the template** (once). It fills in the Docker form for you. In Unraid's terminal:
+
+   ```bash
+   mkdir -p /boot/config/plugins/dockerMan/templates-user
+   curl -fL -H "Authorization: Bearer YOUR_GITHUB_TOKEN" \
+     -o /boot/config/plugins/dockerMan/templates-user/synchub.xml \
+     https://raw.githubusercontent.com/ThebumGreg/letterboxd_scraper/main/unraid/synchub.xml
+   ```
+
+   (A private repository needs the token header, a token with read access to **Contents**; if the repository is public leave the `-H` line out. Or copy the file from your checkout: `scp unraid/synchub.xml root@UNRAID_IP:/boot/config/plugins/dockerMan/templates-user/`.)
+2. **Docker tab, Add Container**, choose **SyncHub** in the *Template* list. Check:
+   - *Data*: `/mnt/cache/appdata/synchub` (a cache or pool path, not `/mnt/user`).
+   - *Time zone*, for example `America/Los_Angeles`.
+   - *Network type*: **Custom: br0** with a fixed IP if you want the TV remote's automatic discovery and Wake-on-LAN (they need to be on your LAN, see "The TV remote in Docker" below), otherwise leave **Bridge**.
+   - Press **Apply**. Unraid pulls `ghcr.io/thebumgreg/synchub:latest` and starts it. Open the WebUI from the container's menu; `docker ps` shows `(healthy)` within about a minute.
+3. **Updates, from the GUI.** Docker tab, **Check for Updates**. A SyncHub row that says *update ready* has a newer `latest` on GitHub: click it and **apply update**. Unraid pulls the new image and replaces the container (the data is in `/data`, so nothing is lost; a database from an older version is upgraded on start and a copy is saved first). For hands-off updates install the *Auto Update Applications* plugin (from Community Applications) and switch SyncHub on there.
+4. **Pin a version, or go back.** Edit the container and change *Repository* to `ghcr.io/thebumgreg/synchub:1.1.0`: it then only changes when you change it. Back to `:latest` to follow main again. Going back to an older image after the database was upgraded is not supported: restore a backup from before (section 6).
+
+Run **one** copy of the app. The scheduler runs inside it; a second copy against the same `/data` would run every job twice.
+
+### With a command
+
 ```bash
 docker run -d --name synchub --init --restart unless-stopped \
   -p 5001:5001 \
   -e PUID=99 -e PGID=100 -e TZ=Europe/London \
   -v /mnt/cache/appdata/synchub:/data \
-  synchub:latest
+  ghcr.io/thebumgreg/synchub:latest
 ```
 
 - `PUID=99 PGID=100` is Unraid's `nobody:users`. On start the container makes `/data` belong to that user and then runs as it, so a folder Docker created as root is fine.
 - `TZ` sets the clock the nightly backup (03:30) and the logs use.
 - Open `http://UNRAID_IP:5001`. `docker ps` should show `(healthy)` within about a minute; `docker logs synchub` shows the start.
 
-**With the Unraid web UI instead** (*Docker → Add Container*; not verified on Unraid itself): Name `synchub`, Repository `synchub:latest`, Network `bridge`, port **5001** to **5001**, path **/data** to **/mnt/cache/appdata/synchub** (read/write), variables `PUID=99`, `PGID=100`, `TZ=Europe/London`, Extra Parameters `--init`.
+**With Docker Compose** (if your Unraid or PC has it): the repository has `docker-compose.yml` and `.env.example`. Copy the example to `.env`, edit it, then `docker compose up -d` (it pulls the image; `docker compose up -d --build` builds from the checkout instead).
 
-**With Docker Compose** (if your Unraid has it): the repository has `docker-compose.yml` and `.env.example`. Copy the example to `.env`, edit it, then `docker compose up -d --build`.
+### The TV remote in Docker
 
-Run **one** copy of the app. The scheduler runs inside it; a second copy against the same `/data` would run every job twice.
+Controlling a TV, pairing a Google TV and playing a title only need the container to reach the TV's address, which works on any network type. Two things need the container to be **on your LAN**: *Scan network* (finds TVs by broadcasting) and *Wake-on-LAN* (a broadcast packet). On Unraid's default **Bridge** network they cannot work; give the container its own address (**Custom: br0**, with a fixed IP) or use **Host** (then port 5001 must be free). TVs can always be added by typing their address. The image includes `adb` for Google TV / Android TV; the key the TVs were told to trust is kept in `/data/tv`, so a replaced container is still trusted. Everything the TV pages remember (TVs, app choices, pairing) is in `/data/tv`, and the nightly backup saves it beside the database.
 
 ### After the first start
 
@@ -185,13 +191,15 @@ More workers: repeat this section with another name; each gets its own token. Ma
 
 **Update**
 
+On Unraid: Docker tab, **Check for Updates**, then **apply update** on SyncHub (section 3). By hand, anywhere:
+
 ```bash
-cd /mnt/user/appdata/synchub-src && git pull && docker build -t synchub:latest .
+docker pull ghcr.io/thebumgreg/synchub:latest
 docker rm -f synchub        # the data is in /data, not in the container
 # run the same `docker run ...` command from section 3 again
 ```
 
-A database from an older version is upgraded on start, and a copy of it as it was is saved first (`/data/backups/premigrate-v<N>-....db`). Update the workers the same way: `git pull` or copy the new `agent/` folder, then `docker compose up -d --build` (running jobs resume).
+A database from an older version is upgraded on start, and a copy of it as it was is saved first (`/data/backups/premigrate-v<N>-....db`). The version is shown at the bottom of every page. Update the workers by copying the new `agent/` folder from the repository (or `git pull`), then `docker compose up -d --build` (running jobs resume). The workers are built from the `agent/` folder; only the app image is published.
 
 **Backups.** Every night at 03:30 SyncHub saves a consistent copy into `/data/backups/` and keeps the newest 7 (Settings → Automation → *Database backups*; Tools has *Back up now*). Each copy comes with a `.tv.zip` beside it holding the TV pages' settings (TVs, app choices, Google TV pairing); `restore` puts both back. These files contain your API keys and the Google TV pairing key: keep them as private as the database. For a copy outside Unraid: `docker exec synchub python -m synchub.backup create /data/backups/manual.db`, then copy that file off.
 
@@ -199,7 +207,7 @@ A database from an older version is upgraded on start, and a copy of it as it wa
 
 ```bash
 docker stop synchub
-docker run --rm -v /mnt/cache/appdata/synchub:/data synchub:latest \
+docker run --rm -v /mnt/cache/appdata/synchub:/data ghcr.io/thebumgreg/synchub:latest \
     python -m synchub.backup restore /data/backups/synchub-20261022-033000.db
 docker start synchub
 ```
@@ -214,7 +222,9 @@ The database that was there is kept beside it as `synchub.db.before-restore-<tim
 
 | You see | Likely cause and fix |
 |---|---|
-| `Unable to find image 'synchub:latest' locally` / `pull access denied` | The image has not been built on this Unraid box yet (section 1). It is not on any registry, so Docker cannot download it. |
+| `pull access denied` / `denied` / `unauthorized` for `ghcr.io/thebumgreg/synchub` | The package is private and Unraid is not logged in (or the login was lost at a reboot): make the package public or log in again (section 1). `manifest unknown` means nothing has been published yet: the V1.1 code has to reach `main` first, or check the *Actions* tab for a failed run. |
+| Update check says nothing, or *not available* | The repository field is not the registry name (`ghcr.io/thebumgreg/synchub:latest`), or the image is a local build. |
+| *Scan network* finds nothing, Wake-on-LAN does nothing | The container is on Bridge; see "The TV remote in Docker" (section 3). |
 | Container `unhealthy`, or restarting | `docker logs synchub`. `cannot write to /data`: start it as root with `PUID`/`PGID` (the command above), or make the folder writable for the user you chose. `database is locked` or a WAL warning: the data folder is on a network or FUSE path; use `/mnt/cache/...`. |
 | Banner "These addresses will not work from inside Docker" | A service address says `localhost`/`127.0.0.1`: use the real IP (Settings). |
 | Radarr/Sonarr/Jellyfin webhook says it cannot reach SyncHub | The *SyncHub address* is wrong for where that service runs: use `http://UNRAID_IP:5001`, not `localhost`. |

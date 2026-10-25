@@ -34,7 +34,8 @@ class Runtime:
         self.folder.mkdir(parents=True, exist_ok=True)
         self.prefs_path = self.folder / "prefs.json"
         self.config_path = Path(os.environ.get("SYNCHUB_TV_DEVICES") or self.folder / "devices.json")
-        self.options = {"adb": os.environ.get("ADB_PATH", "adb"), "cert_dir": str(self.folder / "certs")}
+        self.options = {"adb": os.environ.get("ADB_PATH", "adb"), "cert_dir": str(self.folder / "certs"),
+                        "adb_home": str(self.folder / "adb")}      # adb keeps the key the TVs were told to trust here, so it survives a container being replaced
         self.logbook = LogBook(path=str(self.folder / "tv.log"))
         self.lock = threading.RLock()
         self.prefs = _empty_prefs()

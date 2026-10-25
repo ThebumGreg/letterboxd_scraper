@@ -1,9 +1,10 @@
-# SyncHub (the main app). Start it with:   docker compose up -d --build
+# SyncHub (the main app). Start it with:   docker compose up -d        (pulls the published image)
+# To build from this checkout instead:     docker compose up -d --build
 # Settings come from a file named .env next to this one (see .env.example); every value has a default.
 services:
   synchub:
     build: .
-    image: synchub:latest
+    image: ghcr.io/thebumgreg/synchub:latest
     container_name: synchub
     init: true
     restart: unless-stopped

@@ -1,12 +1,25 @@
 # SyncHub
 
-Keeps Letterboxd/Serializd watchlists, Jellyfin, Radarr and Sonarr in one place, shows what you have, what is on its way and what is missing, and can add wanted titles to Radarr/Sonarr.
+**Version 1.1** ([what changed](CHANGELOG.md)). Keeps Letterboxd/Serializd watchlists, Jellyfin, Radarr and Sonarr in one place, shows what you have, what is on its way and what is missing, and can add wanted titles to Radarr/Sonarr. It is also a whole-house TV remote (Roku, Google TV / Android TV) that plays Jellyfin titles, and has profiles with PINs, page permissions and parental controls.
 
-Start it with `python -m synchub.web` (port 5001, set `SYNCHUB_PORT` to change). The database is `data/synchub.db`, created on first start. The design is in [docs/DESIGN_V2.md](docs/DESIGN_V2.md).
+**Documentation**
 
-The original app and its `data/letterboxd.db` are no longer used; nothing is read from that file, so it can be deleted or kept as a backup.
+| | |
+|---|---|
+| [docs/DEPLOY.md](docs/DEPLOY.md) | Installing and updating on Unraid (the image is published to GitHub), moving a database, workers, backups, restoring, troubleshooting |
+| [docs/RELEASING.md](docs/RELEASING.md) | How a change reaches the server: CI, the published image, version tags |
+| [docs/TV_REMOTE.md](docs/TV_REMOTE.md) | How the TV remote works, supported devices, adding another kind |
+| [docs/READINESS_CHECKLIST.md](docs/READINESS_CHECKLIST.md) | A checklist to run through before trusting a new version |
+| [docs/DESIGN_V2.md](docs/DESIGN_V2.md), [docs/DESIGN_ENCODING.md](docs/DESIGN_ENCODING.md), [docs/DDNS_DELAY.md](docs/DDNS_DELAY.md) | Design notes: data model, the workers and Library plan, the Dynamic DNS findings |
+| [CHANGELOG.md](CHANGELOG.md) | Release notes |
 
-## Running the app
+## Installing
+
+**On Unraid (recommended):** the image is `ghcr.io/thebumgreg/synchub`. Add the template from `unraid/synchub.xml` once, install it from the Docker tab, and update it later with *Check for Updates* and *apply update*, no command line. [docs/DEPLOY.md](docs/DEPLOY.md) has the steps. Anywhere with Docker: `docker compose up -d` (see `docker-compose.yml` and `.env.example`).
+
+**From a checkout, for trying it out or developing:** the next section. The database is `data/synchub.db`, created on first start; port 5001 (`SYNCHUB_PORT` changes it).
+
+## Running from source
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -22,13 +35,13 @@ Then open http://localhost:5001 and:
 2. **Tools & Operations**: press **Run all**. It reads Jellyfin, scrapes the watchlists, resolves IDs, matches everything to a movie or show, fetches every episode from TMDB, then reads Radarr and Sonarr and works out each item's status.
 3. **Resolution Center**: approve or dismiss the matches the app was not sure about, or link an item by TMDB ID. **Approve all** (top of the page) approves the strongest suggestion for every title listed and leaves titles whose best suggestions are tied for you to decide.
 
+After that the scheduler repeats the work on the intervals set in Settings, Automation (0 turns a job off). Radarr/Sonarr webhooks (`/api/webhook/radarr`, `/api/webhook/sonarr`) refresh the status within seconds of a download starting or finishing.
+
 ## Running it in Docker (Unraid for the app, Ubuntu for the workers)
 
-The repository has a `Dockerfile` and `docker-compose.yml` for the app (one `/data` volume holds the database, logs, poster cache and backups) and `agent/Dockerfile` for the worker. **[docs/DEPLOY.md](docs/DEPLOY.md) is the step-by-step guide**: building the image, moving your existing database, running on Unraid, setting up the shares and the workers, updating, restoring, and what to do when something is wrong.
+The image is published to GitHub by an Actions workflow on every change to `main` (`ghcr.io/thebumgreg/synchub:latest`, or a version such as `:1.1.0`). One `/data` volume holds the database, logs, poster cache, TV settings and backups. Workers (heavy file work on other PCs) are built from `agent/` with its own `Dockerfile`. **[docs/DEPLOY.md](docs/DEPLOY.md) is the step-by-step guide**: getting the image, installing and updating on Unraid from its web UI, moving your existing database, the shares and workers, restoring, and what to do when something is wrong. The TV remote needs the container on your LAN for *Scan network* and Wake-on-LAN (Unraid: Custom br0); see "The TV remote in Docker" there.
 
-Two commands worth knowing, which also work from a checkout: `python -m synchub.backup create FILE` makes a **consistent copy of the database while the app runs** (copying `synchub.db` by hand can miss recent changes that still sit in the `-wal` file next to it) and `python -m synchub.backup check FILE` says what is in a copy, whether it is sound, and which service addresses will stop working after a move (a `localhost` address means the container itself inside Docker). SyncHub also saves a copy every night at 03:30 (the newest 7 are kept; Settings, Automation, *Database backups*) and before any upgrade changes the database. The TV pages keep their settings (TVs added, app choices, Google TV pairing) in a `tv` folder beside the database rather than in it, so each copy comes with a second small file, `<name>.tv.zip`, and `backup restore` puts both back (the TV folder it replaces is kept beside it). `backup check` says whether the TV settings are there. `GET /healthz` answers while the app and its database are up.
-
-After that the scheduler repeats the work on the intervals set in Settings, Automation (0 turns a job off). Radarr/Sonarr webhooks (`/api/webhook/radarr`, `/api/webhook/sonarr`) refresh the status within seconds of a download starting or finishing.
+Two commands worth knowing, which also work from a checkout (in Docker: `docker exec synchub python -m synchub.backup ...`): `python -m synchub.backup create FILE` makes a **consistent copy of the database while the app runs** (copying `synchub.db` by hand can miss recent changes that still sit in the `-wal` file next to it) and `python -m synchub.backup check FILE` says what is in a copy, whether it is sound, and which service addresses will stop working after a move (a `localhost` address means the container itself inside Docker). SyncHub also saves a copy every night at 03:30 (the newest 7 are kept; Settings, Automation, *Database backups*) and before any upgrade changes the database. The TV pages keep their settings (TVs added, app choices, Google TV pairing) in a `tv` folder beside the database rather than in it, so each copy comes with a second small file, `<name>.tv.zip`, and `backup restore` puts both back (the TV folder it replaces is kept beside it). `backup check` says whether the TV settings are there. `GET /healthz` answers while the app and its database are up.
 
 ## What the statuses mean
 
@@ -150,4 +163,6 @@ Tests use a temporary database and never touch the network (a guard fails any te
 
 ## Layout
 
-The code is in `synchub/`: `db.py` + `migrations/` (schema), `clients/` (Jellyfin, Radarr, Sonarr, TMDB), `ingest/` (one module per source, writing the `src_*` tables), `matching.py` and `episodes.py` (linking), `library/` (the Library's decision logic, scans and duplicate search), `storage.py` and `jobs.py` (shares and worker jobs), `access.py` (PINs and permissions), `backup.py` (consistent copies, checks and restore of the database), `jellyfin_events.py` (kept Jellyfin events), `ddns.py` and `ddns_check.py` (dynamic DNS and its delay check), `states.py` (statuses), `catalog.py` (what the pages read), `automation.py` (requests and auto-add), `tasks.py` and `scheduler.py` (jobs), `tv/` (the TV remote: device drivers for Roku and Google / Android TV, discovery, wake and play logic), `web/` (pages, templates and API; `web/tv.py` is the TV menu). `config.py`, `logger.py` and `settings_validation.py` at the top level are shared helpers; `static/` holds the CSS, JavaScript and cached posters.
+The code is in `synchub/`: `db.py` + `migrations/` (schema), `clients/` (Jellyfin, Radarr, Sonarr, TMDB), `ingest/` (one module per source, writing the `src_*` tables), `matching.py` and `episodes.py` (linking), `library/` (the Library's decision logic, scans and duplicate search), `storage.py` and `jobs.py` (shares and worker jobs), `access.py` (PINs and permissions) and `ratings.py` (age ratings and the rating limit), `backup.py` (consistent copies, checks and restore of the database), `jellyfin_events.py` (kept Jellyfin events), `ddns.py` and `ddns_check.py` (dynamic DNS and its delay check), `states.py` (statuses), `catalog.py` (what the pages read), `automation.py` (requests and auto-add), `tasks.py` and `scheduler.py` (jobs), `tv/` (the TV remote: device drivers for Roku and Google / Android TV, discovery, wake and play logic), `web/` (pages, templates and API; `web/tv.py` is the TV menu). `config.py`, `logger.py` and `settings_validation.py` at the top level are shared helpers; `static/` holds the CSS, JavaScript and cached posters.
+
+Also in the repository: `Dockerfile`, `docker-compose.yml` and `docker/entrypoint.sh` (the app image), `agent/` (the worker), `unraid/synchub.xml` (the Unraid template), `.github/workflows/` (tests and publishing the image), and `docs/`.

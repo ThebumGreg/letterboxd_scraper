@@ -1,9 +1,11 @@
 """Google TV / Android TV over ADB (needs the `adb` binary and Network debugging on the TV)."""
+import os
 import re
 import socket
 import subprocess
 import threading
 import time
+from pathlib import Path
 
 from . import Driver, DeviceError, register
 
@@ -137,8 +139,12 @@ class AndroidTVDriver(Driver):
         cmd = [self.adb_path] + (["-s", self.target] if scoped else []) + list(args)
         shown = "adb " + " ".join(cmd[1:])
         t0 = time.perf_counter()
+        env = None
+        if self.options.get("adb_home"):
+            Path(self.options["adb_home"]).mkdir(parents=True, exist_ok=True)
+            env = {**os.environ, "HOME": self.options["adb_home"]}      # adb looks for (and makes) its key under $HOME/.android
         try:
-            p = subprocess.run(cmd, capture_output=True, timeout=timeout)
+            p = subprocess.run(cmd, capture_output=True, timeout=timeout, env=env)
         except FileNotFoundError:
             msg = f'adb not found ("{self.adb_path}"). Install it (sudo apt install adb) or pass --adb PATH.'
             self._fail(action, shown, None, msg, quiet)

@@ -13,9 +13,23 @@ ENV PYTHONUNBUFFERED=1 \
     SYNCHUB_DATA_DIR=/data \
     SYNCHUB_IN_DOCKER=1
 
+# adb: the Google TV / Android TV pages open apps and read what is playing through it (the TV pairing key it makes is kept under /data/tv).
+# ping: the TV tools' network probe. Both are small.
+RUN apt-get update \
+    && (apt-get install -y --no-install-recommends adb iputils-ping || apt-get install -y --no-install-recommends android-tools-adb iputils-ping) \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
+
+ARG VERSION=dev
+ARG REVISION=unknown
+LABEL org.opencontainers.image.title="SyncHub" \
+      org.opencontainers.image.description="Letterboxd/Serializd, Jellyfin, Radarr and Sonarr in one place, with a whole-house TV remote" \
+      org.opencontainers.image.source="https://github.com/ThebumGreg/letterboxd_scraper" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}"
 
 COPY config.py logger.py settings_validation.py ./
 COPY synchub ./synchub

@@ -82,9 +82,13 @@ Items marked ★ could not be checked without your hardware or devices, so they 
 - [ ] You did not press **Set up in Radarr/Sonarr/Jellyfin** or **Run update** on Dynamic DNS in the test copy.
 - [ ] When finished, delete `~/synchub-test` (it holds API keys and PINs).
 
-## 6. Before the Docker phase
+## 6. Docker and Unraid (V1.1)
 
-- [ ] ★ For testing from a phone, and for Wake-on-LAN and automatic discovery: put `networkingMode=mirrored` in `.wslconfig` (Windows 11), run `wsl --shutdown`, and confirm each works.
-- [ ] ★ The Docker image builds for this branch, and the TV pages work from inside it (it needs the same network as the TVs).
-- [ ] Decide how the `tv` data folder (TVs added, app choices, Google TV pairing) is backed up: the database backup does not include it.
-- [ ] Run the automated tests: `python -m pytest` (about 3.5 minutes; all should pass).
+- [ ] After the code reaches `main`, GitHub's *Actions* tab shows **Publish image** green, and the package `ghcr.io/thebumgreg/synchub` exists (make it public or log Unraid in: DEPLOY.md, section 1).
+- [ ] ★ Install the Unraid template and start SyncHub from the Docker tab. It shows healthy, the footer says `SyncHub v1.1.0`, and the Settings banner about `localhost` addresses is dealt with.
+- [ ] ★ Move a database in (DEPLOY.md, section 2). The log says a copy was saved before upgrading, and the dashboard matches production.
+- [ ] ★ The TV pages from inside the container: add a TV by address, pair the Google TV, open an app, play a title. With the container on Custom br0, *Scan network* finds the TVs and Wake-on-LAN works; on Bridge only those two do not.
+- [ ] ★ Restart the container: the TVs and the Google TV pairing are still there, and the Google TV does not ask to "Allow USB debugging" again (the adb key is kept in `/data/tv`).
+- [ ] ★ Push a small change to `main` (or tag `v1.1.1`). **Check for Updates** shows SyncHub as *update ready*, **apply update** replaces it, and everything is still there.
+- [ ] A backup from the container (`docker exec synchub python -m synchub.backup create /data/backups/manual.db`) restores on a fresh data folder (DEPLOY.md, section 6).
+- [ ] Run the automated tests: `python -m pytest` (about 4 minutes; all should pass).

@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>SyncHub</Name>
+  <Repository>ghcr.io/thebumgreg/synchub:latest</Repository>
+  <Registry>https://github.com/ThebumGreg/letterboxd_scraper/pkgs/container/synchub</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/ThebumGreg/letterboxd_scraper/issues</Support>
+  <Project>https://github.com/ThebumGreg/letterboxd_scraper</Project>
+  <ReadMe>https://github.com/ThebumGreg/letterboxd_scraper/blob/main/docs/DEPLOY.md</ReadMe>
+  <Overview>SyncHub keeps Letterboxd/Serializd watchlists, Jellyfin, Radarr and Sonarr in one place, shows what you have, what is on its way and what is missing, and adds wanted titles to Radarr/Sonarr. It also has a whole-house TV remote (Roku, Google TV / Android TV) that plays Jellyfin titles. For the TV remote's automatic discovery and Wake-on-LAN, give the container its own address on your network (Network Type: Custom br0) or use Host; everything else works on the default bridge.</Overview>
+  <Category>MediaApp:Video Tools:</Category>
+  <WebUI>http://[IP]:[PORT:5001]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/ThebumGreg/letterboxd_scraper/main/unraid/synchub.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/ThebumGreg/letterboxd_scraper/main/static/favicon.svg</Icon>
+  <ExtraParams>--init</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="Web UI port" Target="5001" Default="5001" Mode="tcp" Description="The port SyncHub's pages are on. With a custom br0 address the container has its own IP and this is ignored." Type="Port" Display="always" Required="true" Mask="false">5001</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/cache/appdata/synchub" Mode="rw" Description="Database, logs, poster cache, TV settings and backups. Use the cache or pool path, not /mnt/user (SQLite needs real file locking)." Type="Path" Display="always" Required="true" Mask="false">/mnt/cache/appdata/synchub</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User the app runs as (99 is Unraid's nobody)." Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group the app runs as (100 is Unraid's users)." Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="Time zone" Target="TZ" Default="UTC" Mode="" Description="For the logs and the nightly backup at 03:30, for example America/Los_Angeles." Type="Variable" Display="always" Required="false" Mask="false">UTC</Config>
+</Container>

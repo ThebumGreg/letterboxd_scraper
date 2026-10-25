@@ -6,7 +6,7 @@ from pathlib import Path
 from flask import Flask, g, jsonify, redirect, render_template, request, url_for
 
 from config import BASE_DIR
-from synchub import access, backup, db, ratings, tasks
+from synchub import __version__, access, backup, db, ratings, tasks
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +197,7 @@ def create_app(start_scheduler=False, csrf=True):
                 if any("href" in c for c in children):
                     menu.append({"label": first, "children": children})
         return {"jellyfin_app": config, "current_profile": profile, "has_profiles": getattr(g, "has_profiles", False), "can": can, "menu": menu,
-                "max_rating": getattr(g, "max_rating", None)}
+                "max_rating": getattr(g, "max_rating", None), "app_version": __version__}
 
     from synchub.web import admin, api, fleet, library, pages, security, shares, tv, worker_api
     for module in (pages, api, admin, fleet, library, shares, security, tv, worker_api):

@@ -221,3 +221,5 @@ Apple TV (pyatv) and Fire TV (ADB, like Google TV) would fit this shape.
 
 
 **Playing through a Jellyfin session (Google TV, Android TV).** Before sending a title, SyncHub opens the Jellyfin app if another app is in front (a session left over from an earlier run says it cannot be remote controlled until the app registers a new one, so that only counts as a failure once the app has been in front for 15 seconds). If the session reports something already open in the player, SyncHub sends a Stop first. If the app accepts the command but never reports the title playing, SyncHub presses Home, reopens the app and sends the command once more; the steps of each attempt are in the progress box and the log.
+
+**In Docker.** The image includes `adb`, and the key the TVs were told to trust is kept in `/data/tv/adb`, so a replaced container is still trusted. Control, pairing and playing only need the container to reach the TV's address. *Scan network* and Wake-on-LAN need the container on the LAN itself (Unraid: Network Type Custom br0, or Host); on Bridge add TVs by address. See docs/DEPLOY.md, "The TV remote in Docker".
