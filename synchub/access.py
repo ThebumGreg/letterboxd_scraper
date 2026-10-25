@@ -109,29 +109,37 @@ def profile_permissions(row):
     return parse(row["permissions"])
 
 
-def _holders_of_access(conn, change=None):
-    """Names of the profiles (and 'guests') that may open the People page, as it would be after `change` = {profile_id or 'guest': keys}."""
+def locked_down(conn):
+    """True once any profile has a PIN. Until then nobody can tell people apart, so nothing is restricted (otherwise the first profile
+    added would lock its owner out of the People page). From then on a profile without a PIN is treated as a guest: anyone on the
+    network can choose it, so it gets no more than guests do."""
+    return conn.execute("SELECT 1 FROM profile WHERE pin_hash IS NOT NULL LIMIT 1").fetchone() is not None
+
+
+def _holders_of_access(conn, change=None, with_pin=None, without_pin=None, removing=None):
+    """Names of who could still open the People page after `change` = {profile_id or 'guest': keys}, or None when nothing is restricted
+    (no profile has a PIN). Only a profile with a PIN counts: one without is limited to the guest pages."""
     change = change or {}
-    holders = []
-    for row in conn.execute("SELECT id, name, permissions FROM profile"):
+    holders, any_pin = [], False
+    for row in conn.execute("SELECT id, name, permissions, pin_hash IS NOT NULL AS has_pin FROM profile WHERE id IS NOT ?", (removing,)):
+        has_pin = (row["has_pin"] or row["id"] == with_pin) and row["id"] != without_pin
+        any_pin = any_pin or has_pin
         perms = parse(",".join(change[row["id"]])) if row["id"] in change else profile_permissions(row)
-        if allowed(perms, "access"):
+        if has_pin and allowed(perms, "access"):
             holders.append(row["name"])
+    if not any_pin:
+        return None
     guest = parse(",".join(change["guest"])) if "guest" in change else guest_permissions(conn)
     if allowed(guest, "access"):
         holders.append("guests")
     return holders
 
 
-def ensure_access_remains(conn, change=None, removing=None):
-    """Refuses a change after which nobody could open the People page again."""
-    holders = _holders_of_access(conn, change)
-    if removing is not None:
-        holders = [h for h in holders if h != removing]
-        if conn.execute("SELECT COUNT(*) FROM profile WHERE name <> ?", (removing,)).fetchone()[0] == 0:
-            return                                   # no profile left: everyone can open everything again until one is added
-    if not holders:
-        raise AccessError("Somebody has to keep the People permission, or nobody could change these settings again. Give it to a profile first.")
+def ensure_access_remains(conn, change=None, removing=None, with_pin=None, without_pin=None):
+    """Refuses a change after which nobody could open the People page again. `removing` is the ID of a profile about to be deleted."""
+    holders = _holders_of_access(conn, change, with_pin, without_pin, removing)
+    if holders is not None and not holders:
+        raise AccessError("Somebody has to keep the People permission, and it has to be a profile with a PIN, or nobody could change these settings again. Give it to a profile that has a PIN first.")
 
 
 def set_permissions(conn, profile_id, keys):
@@ -176,9 +184,7 @@ def set_guest_max_rating(conn, value):
 
 def ensure_profile_can_go(conn, profile_id):
     """Deleting a profile must not take the last Access holder with it."""
-    row = conn.execute("SELECT name FROM profile WHERE id = ?", (profile_id,)).fetchone()
-    if row:
-        ensure_access_remains(conn, removing=row["name"])
+    ensure_access_remains(conn, removing=profile_id)
 
 
 # ---------------------------------------------------------------- PINs
@@ -191,6 +197,7 @@ def validate_pin(pin):
 
 def set_pin(conn, profile_id, pin):
     pin = validate_pin(pin)
+    ensure_access_remains(conn, with_pin=profile_id)
     done = conn.execute("UPDATE profile SET pin_hash = ?, pin_version = pin_version + 1, pin_failures = 0, pin_locked_until = NULL WHERE id = ?",
                         (generate_password_hash(pin), profile_id)).rowcount
     if not done:
@@ -198,6 +205,7 @@ def set_pin(conn, profile_id, pin):
 
 
 def clear_pin(conn, profile_id):
+    ensure_access_remains(conn, without_pin=profile_id)
     if not conn.execute("UPDATE profile SET pin_hash = NULL, pin_version = pin_version + 1, pin_failures = 0, pin_locked_until = NULL WHERE id = ?", (profile_id,)).rowcount:
         raise AccessError("That profile no longer exists.")
 
@@ -298,24 +306,25 @@ def persistent_secret():
 # ---------------------------------------------------------------- for the People page
 def overview(conn, now=None):
     """Every profile with its PIN state and permissions, the guest's, and the plain warnings about what is left open."""
+    locked = locked_down(conn)
     people = []
     for row in conn.execute("SELECT * FROM profile ORDER BY name COLLATE NOCASE"):
         perms = profile_permissions(row)
         people.append({"id": row["id"], "name": row["name"], "has_pin": bool(row["pin_hash"]), "locked_for": locked_for(row, now), "failures": row["pin_failures"],
                        "all": perms is None, "permissions": list(KEYS) if perms is None else [k for k in KEYS if k in perms],
-                       "max_rating": ratings.parse_level(row["max_rating"])})
+                       "max_rating": ratings.parse_level(row["max_rating"]),
+                       "as_guest": locked and not row["pin_hash"]})            # no PIN: gets the guest pages and limit, whatever is saved here
     guest = guest_permissions(conn)
     guest_info = {"all": guest is None, "permissions": list(KEYS) if guest is None else [k for k in KEYS if k in guest], "max_rating": ratings.guest_limit(conn)}
     warnings = []
-    if "access" in guest_info["permissions"]:
-        warnings.append("Guests (anyone who picks \"Just looking\") can open this page, so they can give themselves anything. Untick People for guests.")
-    if people and guest_info["max_rating"] is None and ("dashboard" in guest_info["permissions"] or "search" in guest_info["permissions"]):
-        warnings.append("Guests have no rating limit, so they can see every title (unrated ones too). Choose a limit under Guests.")
-    for person in people:
-        if not person["has_pin"] and set(person["permissions"]) - set(guest_info["permissions"]):
-            extra = [LABELS[k] for k in person["permissions"] if k not in guest_info["permissions"]]
-            warnings.append(f"{person['name']} has no PIN, so anyone on your network can choose this profile and open {', '.join(extra[:4])}{' and more' if len(extra) > 4 else ''}. Give it a PIN, or take those pages away.")
-    return {"people": people, "guest": guest_info, "warnings": warnings, "session_days": session_days(conn)}
+    if people and not locked:
+        warnings.append("No profile has a PIN yet, so nothing is restricted: every device can open every page and see every title. "
+                        "Give your own profile a PIN to switch on the guest limits below; from then on a profile without a PIN is treated as a guest.")
+    if locked and "access" in guest_info["permissions"]:
+        warnings.append("Guests (anyone who picks \"Just looking\", and every profile without a PIN) can open this page, so they can give themselves anything. Untick People for guests.")
+    if locked and guest_info["max_rating"] is None and ("dashboard" in guest_info["permissions"] or "search" in guest_info["permissions"]):
+        warnings.append("Guests have no rating limit, so they (and every profile without a PIN) can see every title, unrated ones too. Choose a limit under Guests.")
+    return {"people": people, "guest": guest_info, "warnings": warnings, "session_days": session_days(conn), "locked_down": locked}
 
 
 # ---------------------------------------------------------------- recovery from the command line

@@ -128,9 +128,16 @@ def create_app(start_scheduler=False, csrf=True):
                 g.pin_profile = row                                   # chosen, but its PIN has not been entered on this device lately
             else:
                 g.profile, chosen = _public(row), True
-        # Before any profile exists there is nobody to give pages to, so everyone can open everything (the first thing to do is add a profile).
-        g.permissions = access.parse(row["permissions"]) if g.profile else (guest if rows else None)
-        g.max_rating = ratings.parse_level(row["max_rating"]) if g.profile else (guest_cap if rows else None)
+        # Until some profile has a PIN nobody can be told apart, so nothing is restricted (the first profile added must be able to open People
+        # and set its PIN). After that, only a profile whose PIN was entered here gets its own pages and rating limit: a profile without
+        # a PIN can be chosen by anyone on the network, so it is limited to what guests may do (it is still the one requests are credited to).
+        lockdown = any(r["has_pin"] for r in rows)
+        if not lockdown:
+            g.permissions, g.max_rating = None, None
+        elif g.profile and row["has_pin"]:
+            g.permissions, g.max_rating = access.parse(row["permissions"]), ratings.parse_level(row["max_rating"])
+        else:
+            g.permissions, g.max_rating = guest, guest_cap
         need = access.required(endpoint)
         if need == access.PUBLIC:
             return None

@@ -43,7 +43,10 @@ Items marked ★ could not be checked without your hardware or devices, so they 
 - [ ] Unrated titles are hidden from that profile; a profile with no limit sees everything.
 - [ ] As a guest (choose "Just looking" once a profile exists): the menu is only Dashboard and Remote, other addresses (try `/search` and `/settings`) say you have no access, and nothing above PG shows. Change the guest limit and the dashboard follows.
 - [ ] ★ Play an R-rated movie from the Remote as the PG profile: it is refused ("not available for your profile"). The "Playing now" strip does not name it.
-- [ ] A PIN-less profile can still be chosen by anyone; give the kids' profiles a PIN only if the limit has to hold against them.
+- [ ] With no PIN on any profile nothing is restricted (the People page says so). Give your own profile a PIN: from then on guests and every profile without a PIN get only the Guests pages and rating limit, and the People page marks them "guest limits apply". Give a profile a PIN and its own pages and limit apply once it is entered.
+
+- [ ] ★ **Front Room (Google TV) playback**: play a movie, then play a different movie or an episode while the Jellyfin app is still on the player screen. The progress box should show "is still open in the app: stopping it first" and then Now playing. With the TV on another app (the Jellyfin session is a leftover) it should open the app and play, not stop with "cannot be controlled remotely".
+- [ ] ★ After playing, the box shows a **Close** button (and tapping outside closes it). When playback fails it stays open with **Try again** and the steps to read.
 
 ## 3. TV remote (real TVs)
 

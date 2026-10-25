@@ -106,7 +106,7 @@ def test_a_script_call_without_the_csrf_token_is_refused(csrf_app, tv):
 # ---------------------------------------------------------------- permissions
 def test_the_tv_permission_opens_the_remote_but_not_the_setup_pages(client, tv, v2):
     with v2.connection() as conn:
-        conn.execute("INSERT INTO profile (name) VALUES ('Admin')")        # guest limits only apply once a profile exists
+        conn.execute("INSERT INTO profile (name, pin_hash) VALUES ('Admin', 'x')")        # limits only apply once some profile has a PIN
     settings.set_value("access_guest_permissions", "tv")
     assert client.get("/tv/remote").status_code == 200 and client.get("/tv/settings").status_code == 200
     assert client.get("/api/tv/config").status_code == 200
@@ -120,7 +120,7 @@ def test_the_tv_permission_opens_the_remote_but_not_the_setup_pages(client, tv, 
 
 def test_without_the_tv_permission_nothing_is_open(client, tv, v2):
     with v2.connection() as conn:
-        conn.execute("INSERT INTO profile (name) VALUES ('Admin')")        # guest limits only apply once a profile exists
+        conn.execute("INSERT INTO profile (name, pin_hash) VALUES ('Admin', 'x')")        # limits only apply once some profile has a PIN
     settings.set_value("access_guest_permissions", "dashboard")
     for path in ("/tv/remote", "/tv/settings", "/api/tv/config", "/api/tv/log"):
         assert client.get(path).status_code == 403, path

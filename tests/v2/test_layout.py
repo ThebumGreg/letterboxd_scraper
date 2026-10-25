@@ -167,7 +167,7 @@ def test_every_place_that_offered_watch_on_jellyfin_now_offers_watch_now(client,
 
 def test_the_page_tells_watch_now_whether_the_tvs_may_be_offered(client, v2):
     with v2.connection() as conn:
-        conn.execute("INSERT INTO profile (name) VALUES ('Admin')")        # guest limits only apply once a profile exists
+        conn.execute("INSERT INTO profile (name, pin_hash) VALUES ('Admin', 'x')")        # limits only apply once some profile has a PIN
     config = lambda: json.loads(re.search(r'id="jellyfin-app-config">(.*?)</script>', text(client.get("/")), re.S).group(1))
     assert config()["tv"] is True and config()["tv_setup"] is True                       # everything is open by default
     settings.set_value("access_guest_permissions", "dashboard,tv")
@@ -178,7 +178,7 @@ def test_the_page_tells_watch_now_whether_the_tvs_may_be_offered(client, v2):
 
 def test_the_tv_list_and_the_play_call_behind_watch_now_are_allowed_by_the_tv_permission(client, v2):
     with v2.connection() as conn:
-        conn.execute("INSERT INTO profile (name) VALUES ('Admin')")        # guest limits only apply once a profile exists
+        conn.execute("INSERT INTO profile (name, pin_hash) VALUES ('Admin', 'x')")        # limits only apply once some profile has a PIN
     settings.set_value("access_guest_permissions", "dashboard,tv")
     assert client.get("/api/tv/config").status_code == 200
     assert client.post("/api/tv/devices/nothing/play", json={"itemIds": ["x"], "playCommand": "PlayNow"}).status_code != 403

@@ -218,3 +218,6 @@ Subclass `Driver` in `synchub/tv/devices/`, set `type`, `keymap` (logical key ->
 `status()["media"]` if the device can), decorate with `@register`, and import it at the bottom of
 `devices/__init__.py`. The remote layout, apps, prepare-and-play flow, Watch chooser and log need no UI changes.
 Apple TV (pyatv) and Fire TV (ADB, like Google TV) would fit this shape.
+
+
+**Playing through a Jellyfin session (Google TV, Android TV).** Before sending a title, SyncHub opens the Jellyfin app if another app is in front (a session left over from an earlier run says it cannot be remote controlled until the app registers a new one, so that only counts as a failure once the app has been in front for 15 seconds). If the session reports something already open in the player, SyncHub sends a Stop first. If the app accepts the command but never reports the title playing, SyncHub presses Home, reopens the app and sends the command once more; the steps of each attempt are in the progress box and the log.

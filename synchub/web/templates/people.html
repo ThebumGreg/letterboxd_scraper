@@ -73,7 +73,7 @@
 
 <div class="mb-3" id="access">
     <h4 class="mb-1">PINs and pages</h4>
-    <p class="text-body-secondary mb-0">Give a profile a PIN and choose which pages it may open. Anyone can still choose a profile that has no PIN, so a PIN is what makes its permissions mean something.</p>
+    <p class="text-body-secondary mb-0">Give a profile a PIN and choose which pages it may open and which ratings it may see. Anyone can choose a profile that has no PIN, so once any profile has a PIN, a profile without one is treated as a guest: the pages and rating limit below only take effect when it has a PIN.</p>
 </div>
 <div id="accessMessage" class="alert d-none" role="status" aria-live="polite"></div>
 
@@ -81,7 +81,7 @@
 <div class="alert alert-warning" role="alert" id="accessWarnings"><strong>Worth fixing</strong>
     <ul class="mb-0">{% for w in overview.warnings %}<li>{{ w }}</li>{% endfor %}</ul></div>
 {% else %}
-<div class="alert alert-success" id="accessWarnings">Every profile that can open more than a guest can has a PIN.</div>
+<div class="alert alert-success" id="accessWarnings">{% if overview.locked_down %}Restrictions are on: guests, and any profile without a PIN, get only what the Guests card allows.{% else %}There are no profiles yet.{% endif %}</div>
 {% endif %}
 
 {% macro grid(owner, perms, all_perms) %}
@@ -125,6 +125,7 @@
     <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
         <h5 class="mb-0">{{ p.name }}</h5>
         {% if p.has_pin %}<span class="badge bg-success"><i class="bi bi-lock-fill" aria-hidden="true"></i> PIN set</span>{% else %}<span class="badge bg-warning text-dark">No PIN</span>{% endif %}
+        {% if p.as_guest %}<span class="badge bg-secondary" title="Anyone on the network can choose a profile that has no PIN, so until it has one it gets the Guests pages and rating limit, whatever is set below.">guest limits apply</span>{% endif %}
         {% if p.id == me %}<span class="badge bg-info text-dark">you</span>{% endif %}
         {% if p.locked_for %}<span class="badge bg-danger">locked for {{ p.locked_for }} s after wrong tries</span>{% endif %}
     </div>

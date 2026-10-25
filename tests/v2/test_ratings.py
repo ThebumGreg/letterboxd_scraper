@@ -9,7 +9,7 @@ from synchub.tv import runtime
 from synchub.web import create_app
 
 from .fakes import FakeTmdb
-from .test_access import add_profile
+from . import test_access
 from .test_search import movie_hit, show_hit
 
 
@@ -59,9 +59,24 @@ def on_dashboard(client):
     return sorted(set(re.findall(r'data-display-title="([^"]*)"', page)))
 
 
+def add_profile(conn, name, permissions=None, pin="1234"):
+    """A profile with a PIN (a profile without one is treated as a guest, and once nobody has a PIN nothing is restricted at all)."""
+    pid = test_access.add_profile(conn, name, permissions)
+    if pin:                                  # straight into the table: access.set_pin would refuse a first PIN on a profile that cannot open People
+        from werkzeug.security import generate_password_hash
+        conn.execute("UPDATE profile SET pin_hash = ?, pin_version = 1 WHERE id = ?", (generate_password_hash(pin), pid))
+        conn.commit()
+    return pid
+
+
 def as_profile(app, profile_id):
+    """A device where this profile has been chosen and its PIN entered."""
+    from synchub import access, db
     browser = app.test_client()
     browser.set_cookie("synchub_profile", str(profile_id))
+    with db.connection() as conn:
+        version = conn.execute("SELECT pin_version FROM profile WHERE id = ?", (profile_id,)).fetchone()["pin_version"]
+    browser.set_cookie("synchub_pin", access.issue_proof(app.secret_key, profile_id, version))
     return browser
 
 

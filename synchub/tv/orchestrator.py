@@ -7,6 +7,9 @@ from .devices import DeviceError
 from .jellyfin import match_session, summarize_session
 
 
+UNCONTROLLABLE_GRACE = 15      # seconds after opening the app during which a session that cannot be controlled is assumed to be a leftover
+
+
 def rule_ladder(driver):
     """The device's session rule, then its kind's default rule as a fallback."""
     rules = [driver.session_rule()]
@@ -153,15 +156,18 @@ def prepare(driver, jf, logbook, session_timeout=40):
     app = driver.jellyfin_app()
 
     def uncontrollable():
-        """The app's session exists but says it cannot take commands: no point waiting or launching."""
+        """The app's session exists but says it cannot take commands."""
         rules = rule_ladder(driver)
         return any(not x.get("SupportsRemoteControl") and any(match_session(r, x) for r in rules) for x in jf.sessions())
 
-    if not device_sessions(jf, driver) and uncontrollable():
+    in_front = st["app"] == app
+    # A session that cannot be controlled only means something while the app is open: with another app in front it is a leftover
+    # from an earlier run, and opening the app makes a new one.
+    if in_front and not device_sessions(jf, driver) and uncontrollable():
         message, reason = explain_no_session(jf, driver)
         return {**fail(message), "reason": reason}
     baseline = {s["Id"]: s.get("LastActivityDate") for s in device_sessions(jf, driver)}
-    if st["app"] == app:
+    if in_front:
         step(f"Jellyfin app ({app}) already in the foreground")
         session = _wait_for(lambda: (device_sessions(jf, driver) or [None])[0] or ("uncontrollable" if uncontrollable() else None), 15)
     else:
@@ -170,11 +176,12 @@ def prepare(driver, jf, logbook, session_timeout=40):
         except DeviceError as e:
             return fail(str(e))
         step(f'Launched {app} (was {st["app"]}): {how or "sent"}')
-        # A stale session may linger from an earlier run, so wait for one that is new or has reported activity
-        # since the launch (or for the app to show it cannot be controlled, which ends the wait early).
+        launched = time.time()
+        # A stale session may linger from an earlier run, so wait for one that is new or has reported activity since the launch.
+        # The old session says it cannot be controlled until the app registers a new one, so that only counts after a grace period.
         session = _wait_for(
             lambda: next((s for s in device_sessions(jf, driver) if baseline.get(s["Id"]) != s.get("LastActivityDate")), None)
-            or ("uncontrollable" if uncontrollable() else None),
+            or ("uncontrollable" if time.time() - launched > UNCONTROLLABLE_GRACE and uncontrollable() else None),
             session_timeout)
     if not session or session == "uncontrollable":
         message, reason = explain_no_session(jf, driver)
@@ -182,6 +189,32 @@ def prepare(driver, jf, logbook, session_timeout=40):
     step(f'Session found: {session.get("Client")} / {session.get("DeviceName")}')
     time.sleep(1)  # let the client finish registering before the first command
     return {"ok": True, "steps": steps, "session": summarize_session(session)}
+
+
+def go_home(driver, step, wait=2):
+    """Press the device's Home key and give it time to settle (a player screen ignores play commands from outside)."""
+    key = driver.keymap.get("home")
+    if not key:
+        return False
+    try:
+        driver.send_key(key)
+    except DeviceError as e:
+        step(f"Could not press Home: {e}", False)
+        return False
+    time.sleep(wait)
+    return True
+
+
+def stop_playback(jf, session_id, step, timeout=8):
+    """Something is already playing (or paused) in the app: stop it and wait for the session to say nothing is playing."""
+    resp = jf.playstate(session_id, "Stop")
+    step(f"Stopped what was playing -> HTTP {resp.status_code}", resp.ok)
+    if not resp.ok:
+        return False
+
+    def cleared():
+        return all(not s.get("NowPlayingItem") for s in jf.sessions() if s.get("Id") == session_id) or None
+    return bool(_wait_for(cleared, timeout, 1))
 
 
 def _playing_item(jf, driver, item_id):

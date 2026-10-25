@@ -99,7 +99,7 @@ def test_the_labels_and_the_staleness_rule():
 
 def test_the_strip_belongs_to_the_tv_permission_and_the_dashboard_carries_it(browser, tv, v2):
     with v2.connection() as conn:
-        conn.execute("INSERT INTO profile (name) VALUES ('Admin')")        # guest limits only apply once a profile exists
+        conn.execute("INSERT INTO profile (name, pin_hash) VALUES ('Admin', 'x')")        # limits only apply once some profile has a PIN
     page = browser.get("/").get_data(as_text=True)
     assert 'id="tvNow"' in page and "js/tv-now.js" in page
     settings.set_value("access_guest_permissions", "dashboard")

@@ -496,16 +496,39 @@ def register(app):
                     return play_by_url(d, body, ["No Jellyfin session is open on this device, so the movie is streamed directly"])
                 raise JellyfinError(f"No Jellyfin session for {d.name}. Tick 'prepare device first' or open the app.")
             session = summarize_session(found[0])
-        resp = jf.play(session["Id"], play_params(body))
-        steps.append(f'{body["playCommand"]} -> HTTP {resp.status_code}')
-        confirmed = None
-        if resp.ok and body["playCommand"] == "PlayNow":
-            ids = body["itemIds"]
-            index = int(body.get("startIndex") or 0)
-            confirmed, title, secs = orchestrator.confirm_playing(jf, session["Id"], ids[index] if index < len(ids) else ids[0])
-            steps.append(f"Playback confirmed: {title} (after {secs}s)" if confirmed else
-                         f"The command was accepted but the session never reported the item playing within {secs}s")
-            r.logbook.add("system", d.id, "play", response=steps[-1], ok=confirmed)
+        command = body["playCommand"]
+        ids, index = body["itemIds"], int(body.get("startIndex") or 0)
+        wanted = ids[index] if index < len(ids) else ids[0]
+
+        def log_step(message, ok=True):
+            steps.append(message)
+            r.logbook.add("system", d.id, "play", response=message, ok=ok)
+
+        def attempt(session):
+            """Send the play command; for Play now, wait for the session to report the item playing. -> (response, confirmed)."""
+            playing = session.get("NowPlaying")
+            if command == "PlayNow" and playing and orchestrator._norm(playing.get("Id")) != orchestrator._norm(wanted):
+                log_step(f'"{playing.get("Name")}" is still open in the app: stopping it first')
+                orchestrator.stop_playback(jf, session["Id"], log_step)
+            response = jf.play(session["Id"], play_params(body))
+            steps.append(f"{command} -> HTTP {response.status_code}")
+            confirmed = None
+            if response.ok and command == "PlayNow":
+                confirmed, title, secs = orchestrator.confirm_playing(jf, session["Id"], wanted)
+                log_step(f"Playback confirmed: {title} (after {secs}s)" if confirmed else
+                         f"The command was accepted but the session never reported the item playing within {secs}s", bool(confirmed))
+            return response, confirmed
+
+        resp, confirmed = attempt(session)
+        if resp.ok and confirmed is False and body.get("prepare", True) and d.keymap.get("home"):
+            # The app took the command but did nothing (it is often stuck on a player or detail screen): go Home, reopen it, try once more.
+            log_step("Nothing started, so going Home, reopening the Jellyfin app and trying once more")
+            if orchestrator.go_home(d, log_step):
+                again = orchestrator.prepare(d, jf, r.logbook)
+                steps.extend(again["steps"])
+                if again["ok"]:
+                    session = again["session"]
+                    resp, confirmed = attempt(session)
         return reply(resp.ok, "\n".join(steps), resp.status_code, steps=steps, sessionId=session["Id"], confirmed=confirmed)
 
     # ------------------------------------------------------------------ Jellyfin

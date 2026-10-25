@@ -28,8 +28,10 @@ def add_profile(conn, name, permissions=None, pin=None):
 
 @pytest.fixture
 def people(v2, conn):
-    """Alice: PIN 4821, may open everything. Bob: no PIN, may open the dashboard and search. Cara: PIN 1357, may open Library and Workers."""
-    return {"alice": add_profile(conn, "Alice", None, "4821"), "bob": add_profile(conn, "Bob", "dashboard,search"), "cara": add_profile(conn, "Cara", "library,workers", "1357")}
+    """Alice: PIN 4821, may open everything. Bob: PIN 2468, may open the dashboard and search. Cara: PIN 1357, may open Library and Workers.
+    Dan: no PIN, so (with the others having PINs) he is limited to what guests may do, whatever his own list says."""
+    return {"alice": add_profile(conn, "Alice", None, "4821"), "bob": add_profile(conn, "Bob", "dashboard,search", "2468"), "cara": add_profile(conn, "Cara", "library,workers", "1357"),
+            "dan": add_profile(conn, "Dan", "dashboard,search")}
 
 
 @pytest.fixture
@@ -149,11 +151,11 @@ def test_a_pin_is_four_to_eight_digits(v2, conn, people, pin):
 def test_a_pin_is_stored_hashed_and_changing_it_signs_everyone_out(v2, conn, people):
     row = conn.execute("SELECT pin_hash, pin_version FROM profile WHERE id = ?", (people["alice"],)).fetchone()
     assert row["pin_hash"] and "4821" not in row["pin_hash"] and row["pin_hash"] != "4821" and row["pin_version"] == 1
-    access.set_pin(conn, people["alice"], " 4821 ")
-    assert conn.execute("SELECT pin_version FROM profile WHERE id = ?", (people["alice"],)).fetchone()[0] == 2
-    access.sign_out_everywhere(conn, people["alice"])
-    access.clear_pin(conn, people["alice"])
-    assert conn.execute("SELECT pin_hash, pin_version FROM profile WHERE id = ?", (people["alice"],)).fetchone()[:] == (None, 4)
+    access.set_pin(conn, people["bob"], " 2468 ")
+    assert conn.execute("SELECT pin_version FROM profile WHERE id = ?", (people["bob"],)).fetchone()[0] == 2
+    access.sign_out_everywhere(conn, people["bob"])
+    access.clear_pin(conn, people["bob"])
+    assert conn.execute("SELECT pin_hash, pin_version FROM profile WHERE id = ?", (people["bob"],)).fetchone()[:] == (None, 4)
     for call in (access.set_pin, ):
         with pytest.raises(access.AccessError, match="no longer exists"):
             call(conn, 9999, "1234")
@@ -165,7 +167,7 @@ def test_a_pin_is_stored_hashed_and_changing_it_signs_everyone_out(v2, conn, peo
 def test_the_listing_of_profiles_never_includes_a_pin(v2, conn, people):
     for p in profiles.list_all(conn):
         assert "pin_hash" not in p and set(p) >= {"id", "name", "has_pin"}
-    assert {p["name"]: p["has_pin"] for p in profiles.list_all(conn)} == {"Alice": 1, "Bob": 0, "Cara": 1}
+    assert {p["name"]: p["has_pin"] for p in profiles.list_all(conn)} == {"Alice": 1, "Bob": 1, "Cara": 1, "Dan": 0}
 
 
 def test_wrong_pins_are_counted_and_the_fifth_locks_for_a_while(v2, conn, people):
@@ -195,7 +197,7 @@ def test_unlocking_clears_the_lock(v2, conn, people):
 
 
 def test_a_profile_without_a_pin_or_that_is_gone_has_nothing_to_check(v2, conn, people):
-    assert access.check_pin(conn, people["bob"], "1234") == ("none", None) and access.check_pin(conn, 9999, "1234") == ("none", None)
+    assert access.check_pin(conn, people["dan"], "1234") == ("none", None) and access.check_pin(conn, 9999, "1234") == ("none", None)
     assert access.locked_for({"pin_locked_until": "garbage"}) == 0 and access.locked_for({"pin_locked_until": None}) == 0
 
 
@@ -266,23 +268,23 @@ def test_a_wrong_pin_is_refused_with_the_tries_left_and_then_locks(browser, peop
 
 def test_the_prompt_can_be_opened_directly_and_only_for_a_profile_that_has_a_pin(browser, people):
     assert "Enter the PIN for Cara" in text(browser.get(f"/who?profile={people['cara']}"))
-    page = text(browser.get(f"/who?profile={people['bob']}"))
+    page = text(browser.get(f"/who?profile={people['dan']}"))
     assert "Who is watching?" in page and "Enter the PIN" not in page
     assert "Who is watching?" in text(browser.get("/who?profile=999"))
 
 
 def test_locks_show_on_the_chooser_and_a_profile_without_a_pin_signs_in_at_once(browser, people):
     page = text(browser.get("/who"))
-    assert re.search(r"Alice\s*<i class=\"bi bi-lock-fill", page) and not re.search(r"Bob\s*<i class=\"bi bi-lock-fill", page)
-    assert 'aria-label="Continue as Alice (asks for a PIN)"' in page and 'aria-label="Continue as Bob"' in page
-    r = choose(browser, people["bob"])
-    assert r.status_code == 302 and cookie(browser, PROFILE_COOKIE) == str(people["bob"]) and cookie(browser, PIN_COOKIE) is None
+    assert re.search(r"Alice\s*<i class=\"bi bi-lock-fill", page) and not re.search(r"Dan\s*<i class=\"bi bi-lock-fill", page)
+    assert 'aria-label="Continue as Alice (asks for a PIN)"' in page and 'aria-label="Continue as Dan"' in page
+    r = choose(browser, people["dan"])
+    assert r.status_code == 302 and cookie(browser, PROFILE_COOKIE) == str(people["dan"]) and cookie(browser, PIN_COOKIE) is None
 
 
 def test_switching_away_forgets_the_pin_proof(browser, people):
     sign_in(browser, people["alice"], "4821")
     assert cookie(browser, PIN_COOKIE)
-    choose(browser, people["bob"])
+    choose(browser, people["dan"])
     assert cookie(browser, PIN_COOKIE) is None
     sign_in(browser, people["cara"], "1357")
     choose(browser, "0")
@@ -376,7 +378,7 @@ def test_a_profile_can_open_exactly_the_pages_it_was_given(browser, people):
 
 
 def test_the_denial_of_an_action_is_json_for_scripts_and_a_page_for_forms(browser, people):
-    sign_in(browser, people["bob"])
+    sign_in(browser, people["bob"], "2468")
     r = browser.get("/api/logs")
     assert r.status_code == 403 and r.get_json() == {"ok": False, "message": "You don't have access to Logs."}
     assert browser.post("/api/library/scan", json={"root": "x"}).status_code == 403
@@ -393,7 +395,7 @@ def test_the_live_stream_belongs_to_the_dashboard(browser, people):
 def test_actions_need_their_own_permission_even_on_a_page_the_person_can_open(browser, v2, conn, people):
     access.set_permissions(conn, people["bob"], ["dashboard"])
     conn.commit()
-    sign_in(browser, people["bob"])
+    sign_in(browser, people["bob"], "2468")
     assert browser.get("/").status_code == 200
     assert browser.post("/api/request/movie/1", json={}).status_code == 403 and browser.post("/api/search/add/movie", json={}).status_code == 403
     assert browser.post("/api/movie/1/refresh").status_code == 403
@@ -467,7 +469,7 @@ def test_the_menu_shows_only_what_the_person_may_open(browser, people):
     sign_in(browser, people["cara"], "1357")
     shown = menu(text(browser.get("/library")))
     assert shown == {"links": [], "dropdowns": {"Media": ["Library", "Workers"]}}
-    sign_in(browser, people["bob"])
+    sign_in(browser, people["bob"], "2468")
     assert menu(text(browser.get("/"))) == {"links": ["Dashboard", "Search"], "dropdowns": {}}
 
 
@@ -516,20 +518,17 @@ def test_the_old_addresses_lead_to_the_new_pages(browser, v2, conn):
 
 
 def test_the_activity_page_belongs_to_whoever_may_read_the_logs(browser, v2, conn):
-    reader = conn.execute("INSERT INTO profile (name, permissions) VALUES ('Reader', 'logs')").lastrowid
-    tooler = conn.execute("INSERT INTO profile (name, permissions) VALUES ('Tooler', 'tools')").lastrowid
-    conn.commit()
-    sign_in(browser, reader)
+    reader, tooler = add_profile(conn, "Reader", "logs", "1111"), add_profile(conn, "Tooler", "tools", "2222")
+    sign_in(browser, reader, "1111")
     assert browser.get("/activity").status_code == 200 and browser.get("/api/activity").status_code == 200
     assert "What it&#39;s doing now" in text(browser.get("/logs"))             # in the menu
-    sign_in(browser, tooler)
+    sign_in(browser, tooler, "2222")
     assert browser.get("/activity").status_code == 403 and browser.get("/api/activity").status_code == 403
 
 
 def test_a_menu_heading_with_nothing_under_it_is_left_out(browser, v2, conn):
-    pid = conn.execute("INSERT INTO profile (name, permissions) VALUES ('Mon', 'logs,tv')").lastrowid
-    conn.commit()
-    sign_in(browser, pid)
+    pid = add_profile(conn, "Mon", "logs,tv", "3333")
+    sign_in(browser, pid, "3333")
     page = text(browser.get("/logs"))
     assert re.findall(r'class="dropdown-header">(.*?)</h6>', page) == ["Monitor", "TV"]
     assert menu(page)["dropdowns"] == {"System": ["What it&#39;s doing now", "Logs", "Jellyfin events", "TV apps"]}
@@ -565,18 +564,25 @@ def test_the_access_page_lists_everyone_with_their_pin_state_and_permissions(adm
     assert "python -m synchub.access reset-all" in page
 
 
-def test_the_page_warns_about_profiles_without_a_pin_that_can_do_more_than_a_guest(admin, v2, conn, people):
+def test_the_page_warns_about_what_is_left_open(admin, v2, conn, people):
     page = text(admin.get("/people"))
-    assert 'id="accessWarnings"' in page and "Guests (anyone who picks" in page                              # guests may open everything by default, access included
+    assert 'id="accessWarnings"' in page and "Guests (anyone who picks" in page                              # (the shared app fixture lets guests open everything, People included)
     access.set_guest_permissions(conn, ["dashboard"])
-    access.set_guest_max_rating(conn, 1)                                                                     # (the shared app fixture leaves guests without a rating limit)
-    access.set_permissions(conn, people["bob"], ["dashboard", "search", "settings"])
     conn.commit()
-    warnings = access.overview(conn)["warnings"]
-    assert len(warnings) == 1 and warnings[0].startswith("Bob has no PIN") and "Search" in warnings[0] and "Settings" in warnings[0] and "anyone on your network" in warnings[0]
-    access.set_pin(conn, people["bob"], "2468")
+    assert [w for w in access.overview(conn)["warnings"] if "rating limit" in w]                              # ... and without a rating limit
+    access.set_guest_max_rating(conn, 1)
     conn.commit()
-    assert access.overview(conn)["warnings"] == [] and "Every profile that can open more than a guest can has a PIN." in text(admin.get("/people"))
+    assert access.overview(conn)["warnings"] == [] and "Restrictions are on" in text(admin.get("/people"))
+    dan = next(p for p in access.overview(conn)["people"] if p["name"] == "Dan")
+    assert dan["as_guest"] and not any(p["as_guest"] for p in access.overview(conn)["people"] if p["has_pin"])
+    assert "guest limits apply" in text(admin.get("/people"))
+
+
+def test_with_no_pin_anywhere_nothing_is_restricted_and_the_page_says_how_to_switch_it_on(v2, conn):
+    add_profile(conn, "Alice")
+    overview = access.overview(conn)
+    assert not overview["locked_down"] and len(overview["warnings"]) == 1 and "No profile has a PIN yet" in overview["warnings"][0]
+    assert not overview["people"][0]["as_guest"]
 
 
 def test_permissions_are_saved_checked_and_refused_when_they_would_lock_everyone_out(admin, v2, conn, people):
@@ -656,7 +662,7 @@ def test_the_command_line_can_take_a_pin_off_one_profile_or_all_and_give_everyth
     conn.commit()
     assert access.main(["list"]) == 0
     listing = capsys.readouterr().out
-    assert "Alice: PIN set, dashboard" in listing and "Bob: no PIN, dashboard, search" in listing and "Cara: PIN set, library, access" in listing
+    assert "Alice: PIN set, dashboard" in listing and "Bob: PIN set, dashboard, search" in listing and "Dan: no PIN, dashboard, search" in listing and "Cara: PIN set, library, access" in listing
     assert access.main(["reset-pin", "alice"]) == 0 and "Removed the PIN and gave back every permission for: Alice" in capsys.readouterr().out
     row = conn.execute("SELECT pin_hash, permissions FROM profile WHERE id = ?", (people["alice"],)).fetchone()
     assert (row[0], row[1]) == (None, None) and conn.execute("SELECT pin_hash IS NOT NULL FROM profile WHERE id = ?", (people["cara"],)).fetchone()[0] == 1
@@ -680,3 +686,69 @@ def test_a_reset_signs_out_every_device(browser, v2, conn, people):
     access.set_pin(conn, people["alice"], "4821")
     conn.commit()
     assert browser.get("/settings").status_code == 302
+
+
+# ---------------------------------------------------------------- a profile without a PIN is limited to guest settings
+def test_a_profile_without_a_pin_gets_what_guests_get_not_what_its_own_list_says(app, v2, conn, people):
+    from synchub import ratings
+    access.set_permissions(conn, people["dan"], list(access.KEYS))                  # everything, but no PIN
+    access.set_guest_permissions(conn, ["dashboard", "tv"])
+    access.set_max_rating(conn, people["dan"], None)
+    access.set_guest_max_rating(conn, 1)
+    conn.commit()
+    dan = app.test_client()
+    sign_in(dan, people["dan"])
+    assert dan.get("/").status_code == 200 and dan.get("/tv/remote").status_code == 200
+    for path in ("/search", "/settings", "/people", "/tools"):
+        assert dan.get(path).status_code == 403, path
+    page = text(dan.get("/"))
+    assert "Dan" in page and menu(page)["links"] == ["Dashboard", "Remote"]      # still known by name, still credited for requests
+
+
+def test_giving_that_profile_a_pin_gives_back_its_own_pages_and_rating_limit(app, v2, conn, people):
+    access.set_permissions(conn, people["dan"], ["dashboard", "search"])
+    access.set_guest_permissions(conn, ["dashboard"])
+    conn.commit()
+    dan = app.test_client()
+    sign_in(dan, people["dan"])
+    assert dan.get("/search").status_code == 403
+    access.set_pin(conn, people["dan"], "9753")
+    conn.commit()
+    sign_in(dan, people["dan"], "9753")
+    assert dan.get("/search").status_code == 200 and dan.get("/settings").status_code == 403
+
+
+def test_a_profile_without_a_pin_is_limited_to_the_guest_rating(app, v2, conn, people):
+    from .test_ratings import add_title, on_dashboard
+    add_title(conn, "movie", "Family", 2, "PG")
+    add_title(conn, "movie", "Adult", 4, "R")
+    access.set_max_rating(conn, people["dan"], 3)                                    # his own list says R ...
+    access.set_guest_max_rating(conn, 1)                                             # ... guests get PG
+    access.set_guest_permissions(conn, ["dashboard", "tv"])
+    access.set_max_rating(conn, people["bob"], 3)
+    conn.commit()
+    dan, bob = app.test_client(), app.test_client()
+    sign_in(dan, people["dan"])
+    sign_in(bob, people["bob"], "2468")
+    assert on_dashboard(dan) == ["Family"] and on_dashboard(bob) == ["Adult", "Family"]
+
+
+def test_nobody_can_be_left_without_a_pin_holding_the_people_permission(v2, conn):
+    admin = add_profile(conn, "Admin", None, "1111")
+    other = add_profile(conn, "Other", "dashboard")
+    access.set_guest_permissions(conn, ["dashboard"])
+    with pytest.raises(access.AccessError, match="Somebody has to keep the People permission"):
+        access.set_permissions(conn, admin, ["dashboard"])                           # the only profile with a PIN
+    access.set_permissions(conn, other, list(access.KEYS))                           # no PIN, so it does not count as a holder ...
+    with pytest.raises(access.AccessError):
+        access.set_permissions(conn, admin, ["dashboard"])
+    access.set_pin(conn, other, "2222")                                              # ... until it has one
+    access.set_permissions(conn, admin, ["dashboard"])
+
+
+def test_removing_the_last_pin_returns_everything_to_setup_mode(v2, conn):
+    only = add_profile(conn, "Only", None, "1111")
+    add_profile(conn, "NoPin")
+    assert access.locked_down(conn)
+    access.clear_pin(conn, only)
+    assert not access.locked_down(conn) and access.overview(conn)["warnings"][0].startswith("No profile has a PIN yet")

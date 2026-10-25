@@ -277,11 +277,12 @@ const WATCH_HTML = `<dialog id="watch">
   <div id="wProgress" hidden>
     <div id="wSteps" class="steps"></div>
     <div id="wResult"></div>
-    <div class="tv-row"><button data-act="watchAgain">Choose another place</button><button data-act="watchClose">Close</button></div>
+    <div class="tv-row"><button data-act="watchRetry" id="wRetry" hidden>Try again</button><button data-act="watchAgain" id="wAgain">Choose another place</button><button data-act="watchClose" id="wClose">Close</button></div>
   </div>
 </dialog>`;
 ($('.tvr') || document.body).insertAdjacentHTML('beforeend', WATCH_HTML);
 $('#wq').onkeydown = e => { if (e.key === 'Enter') watchSearch(); };
+$('#watch').addEventListener('click', e => { if (e.target === e.currentTarget && W.done === 'good') e.currentTarget.close(); });   // a tap outside closes it, but only once playback started
 
 function openWatch(item) {
   const dlg = $('#watch');
@@ -291,6 +292,7 @@ function openWatch(item) {
   pollAll().then(() => { if (W.item && !$('#wChoose').hidden) chooseTarget(W.item); });
 }
 function showWatchStep(id) {
+  if (id !== 'wProgress') W.done = null;
   ['wSearch', 'wChoose', 'wProgress'].forEach(x => $('#' + x).hidden = x !== id);
   $('#wTitle').textContent = id === 'wSearch' ? 'Watch a movie' : id === 'wChoose' ? 'Where to watch?' : 'Starting playback';
   if (id === 'wSearch') $('#wq').focus();
@@ -334,9 +336,10 @@ function chooseTarget(item) {
 }
 async function watchOn(devId) {
   const d = S.devices.find(x => x.id === devId), item = W.item;
-  W.devId = devId;
+  W.devId = devId; W.done = null;
   showWatchStep('wProgress');
   $('#wResult').innerHTML = '';
+  setWatchButtons(null);
   $('#wSteps').innerHTML = `<div>Starting ${esc(itemLabel(item))} on ${esc(d.name)}…</div>`;
   const startId = S.logLast;
   const timer = setInterval(() => {   // live progress from the server log while the request is running
@@ -352,8 +355,17 @@ async function watchOn(devId) {
   $('#wResult').innerHTML = r.ok && r.confirmed ? `<div class="wres good">✓ Now playing on ${esc(d.name)}</div>`
     : r.ok ? `<div class="wres warn">⚠ ${esc(d.name)} accepted the command, but Jellyfin never reported it playing. The app may not support remote play; see the log.</div>`
     : `<div class="wres fail">✗ ${esc(lastLine(r.body))}</div>`;
+  W.done = r.ok && r.confirmed ? 'good' : 'problem';
+  setWatchButtons(W.done);
   if (r.learned) refreshDevices();   // the app learned this device cannot be remote controlled and now streams
   if (r.ok) selectDevice(devId);
+}
+/* Playing: the box is only in the way, so Close is the main button. Anything else: it stays open, with the steps to read and a way to try again. */
+function setWatchButtons(outcome) {
+  $('#wRetry').hidden = outcome !== 'problem';
+  $('#wAgain').hidden = outcome === 'good';
+  $('#wClose').classList.toggle('primary', outcome === 'good');
+  if (outcome === 'good') $('#wClose').focus();
 }
 function watchPhone() {
   const base = (S.publicUrl || '').replace(/\/$/, '');
@@ -386,6 +398,7 @@ const ACTIONS = {
   watchItem: b => openWatch(S.items[b.dataset.id]),
   watchBack: () => showWatchStep('wSearch'),
   watchAgain: () => chooseTarget(W.item),
+  watchRetry: () => watchOn(W.devId),
   watchOn: b => watchOn(b.dataset.dev),
   watchPhone: () => watchPhone(),
   dismissNotice: b => { markSeen(b.dataset.id); renderNotices(); },
