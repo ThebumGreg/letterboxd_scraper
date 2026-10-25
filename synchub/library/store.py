@@ -17,7 +17,7 @@ ANALYSIS_COLUMNS = [
     "integrity_mode", "integrity_status", "integrity_scope", "audit_error", "cache_status",
     "container", "duration_seconds", "bitrate_kbps", "video_codec", "resolution",
     "frame_rate", "audio_codecs", "audio_languages", "subtitle_languages",
-    "video_streams", "audio_streams", "subtitle_streams", "streams_json",
+    "video_streams", "audio_streams", "subtitle_streams", "streams_json", "video_info_json",
     "media_type", "recommended_name", "show_title", "season_number",
     "naming_confidence", "naming_score", "naming_flags",
     "duplicate_group", "duplicate_status",
