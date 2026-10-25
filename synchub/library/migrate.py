@@ -243,12 +243,20 @@ def queue_summary(conn):
     # Only a record's newest job counts as its state, so an old failed attempt that was retried is not listed twice.
     latest = {r["status"]: r["n"] for r in conn.execute(
         "SELECT j.status, COUNT(*) AS n FROM job j WHERE j.ref_type = ? AND j.id = (SELECT MAX(id) FROM job WHERE ref_type = ? AND ref_id = j.ref_id) GROUP BY j.status", (REF, REF))}
+    cancelled = conn.execute("SELECT COUNT(*) FROM library_file WHERE approval_status = 'approved' AND migration_cancelled_at IS NOT NULL AND migration_status = 'pending'").fetchone()[0]
     unqueued = conn.execute(
-        """SELECT COUNT(*) FROM library_file f WHERE f.approval_status = 'approved' AND f.migration_status IN ('pending', 'failed') AND f.missing_since IS NULL
+        """SELECT COUNT(*) FROM library_file f WHERE f.approval_status = 'approved' AND f.migration_status = 'pending' AND f.migration_cancelled_at IS NULL AND f.missing_since IS NULL
            AND NOT EXISTS (SELECT 1 FROM job j WHERE j.ref_type = 'library_file' AND j.ref_id = f.id AND j.status IN ('queued', 'running', 'needs_review'))""").fetchone()[0]
     return {"queued": counts.get("queued", 0), "running": counts.get("running", 0), "waiting": counts.get("needs_review", 0),
             "failed": latest.get("failed", 0), "completed": conn.execute("SELECT COUNT(*) FROM library_file WHERE migration_status = 'completed'").fetchone()[0],
-            "unqueued": unqueued}
+            "unqueued": unqueued, "cancelled": cancelled}
+
+
+def attention(conn, limit=20):
+    """Approved files that stopped without finishing: cancelled (they stay cancelled until queued again) or failed."""
+    return [dict(r) for r in conn.execute(
+        "SELECT id, file_name, root_name, migration_status, migration_cancelled_at, migration_last_error FROM library_file WHERE approval_status = 'approved' "
+        "AND missing_since IS NULL AND ((migration_status = 'pending' AND migration_cancelled_at IS NOT NULL) OR migration_status = 'failed') ORDER BY id LIMIT ?", (limit,))]
 
 
 def tell_jellyfin(count=1):

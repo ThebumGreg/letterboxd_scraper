@@ -145,6 +145,7 @@ def describe_worker(w, root_names=()):
 
 
 def describe_job(j):
+    j["lifecycle"] = dict(zip(("code", "label"), jobs.lifecycle(j)))
     j["percent"] = None if j["progress"] is None else round(j["progress"] * 100)
     j["eta"] = None
     if j["eta_seconds"]:
@@ -200,9 +201,8 @@ def _fail(message, status=400):
 def register(app):
     @app.route("/workers")
     def workers_page():
-        with db.connection() as conn:
-            data = snapshot(conn)
-        return render_template("workers.html", **data)
+        from synchub.web import media
+        return media.render_media("workers")
 
     @app.route("/workers/fragment")
     def workers_fragment():

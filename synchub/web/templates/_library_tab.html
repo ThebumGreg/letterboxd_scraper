@@ -1,11 +1,7 @@
-<!-- synchub/web/templates/library.html -->
-{% extends "base.html" %}
-{% block title %}Library{% endblock %}
-
-{% block content %}
+<!-- synchub/web/templates/_library_tab.html: the Library tab of the Media page -->
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
     <div>
-        <h2 class="mb-2">Library</h2>
+        <h3 class="h4 mb-2">Library</h3>
         <p class="text-body-secondary mb-0">Look at every video file on your shares, see what we suggest for each one in plain words, and approve what is right. Everything is brought into
             <strong>{{ cfg.destination_root }}</strong>, laid out as <code>{{ cfg.movie_folder }}/&lt;name&gt;/&lt;name&gt;</code> and <code>{{ cfg.tv_folder }}/&lt;show&gt;/Season NN/&lt;name&gt;</code>.
             Nothing is changed on a share by looking at it or approving it.</p>
@@ -66,75 +62,50 @@
                         <select class="form-select form-select-sm" id="setDownloads">{% for m, label in [('off', 'Leave alone'), ('review', 'Ask me first'), ('auto', 'Replace when safe')] %}<option value="{{ m }}"{% if m == download_summary.mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
                     <div class="col-5"><label for="setOriginals" class="form-label small mb-1">Keep originals (days)</label><input type="number" min="0" max="3650" class="form-control form-control-sm" id="setOriginals" value="{{ originals_days }}" title="0 drops the original once the replacement is verified"></div>
                 </div>
+                <div class="mb-2"><label for="setProfile" class="form-label small mb-1">Convert with (default profile)</label>
+                    <select class="form-select form-select-sm" id="setProfile">{% for p in profiles %}<option value="{{ p.id }}"{% if p.id == default_profile_id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select>
+                    <div class="form-text">Used for every file unless you pick another when approving it. Profiles are listed below.</div></div>
+                <div class="row g-2 mb-2">
+                    <div class="col-12"><label for="setSourceDelete" class="form-label small mb-1">Delete the source after a verified migration</label>
+                        <select class="form-select form-select-sm" id="setSourceDelete">{% for d, label in [('0', 'Never (off)'), ('7', 'After 7 days'), ('14', 'After 14 days'), ('30', 'After 30 days')] %}<option value="{{ d }}"{% if d == cleanup.days|string %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+                        <div class="form-text">A worker deletes the source only after checking the library copy is still whole and the source is unchanged. You can keep any file's source on its page. Switching this off stops pending deletions.</div></div>
+                    <div class="col-7"><label for="setArr" class="form-label small mb-1">Radarr / Sonarr after a migration</label>
+                        <select class="form-select form-select-sm" id="setArr">{% for m, label in [('none', 'Leave them alone'), ('update_location', 'Tell them the new location'), ('unmonitor', 'Stop monitoring the title'), ('remove', 'Stop tracking the title (no files deleted)')] %}<option value="{{ m }}"{% if m == cleanup.arr_mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+                    <div class="col-5"><label for="setArrWhen" class="form-label small mb-1">When</label>
+                        <select class="form-select form-select-sm" id="setArrWhen">{% for m, label in [('after_copy', 'Right after the copy'), ('with_source_delete', 'When the source is deleted')] %}<option value="{{ m }}"{% if m == cleanup.arr_when %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+                    <div class="form-text">Sonarr cannot forget a single episode without deleting its file, so for TV &ldquo;stop tracking&rdquo; means &ldquo;stop monitoring&rdquo;. A rename inside a share always passes on the new location. Set each share's Radarr and Sonarr path on the Storage page.</div>
+                </div>
                 <button type="submit" class="btn btn-sm btn-outline-success">Save settings</button>
                 <div class="form-text">A new destination or folder name changes which files count as already in place.</div>
             </form>
         </div>
     </div>
 </div>
-{% endblock %}
 
-{% block scripts %}
-<script src="{{ url_for('static', filename='js/library.js') }}"></script>
-<script>
-(() => {
-    const $ = (id) => document.getElementById(id);
-    const live = $('libraryLive');
-    let timer = null;
-    async function refresh() {
-        try {
-            const res = await fetch('/library/fragment');
-            if (res.ok && !document.querySelector('.modal.show')) live.innerHTML = await res.text();
-        } catch (e) { /* next time */ }
-        schedule();
-    }
-    function schedule() {
-        clearTimeout(timer);
-        const active = live.querySelector('#libraryActive')?.dataset.active === '1';
-        timer = setTimeout(refresh, active ? 4000 : 30000);
-    }
-    schedule();
-
-    $('scanForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const data = await libraryPost('/api/library/scan', { root: $('scanRoot').value, prefix: $('scanPrefix').value, integrity: $('scanIntegrity').value, force: $('scanForce').checked, exclude: $('scanExclude').value });
-        librarySay(data.message || (data.ok ? 'Scan queued.' : 'Failed.'), data.ok);
-        if (data.ok) refresh();
-    });
-    $('dupBtn').addEventListener('click', async () => {
-        const data = await libraryPost('/api/library/duplicates');
-        librarySay(data.message || (data.ok ? 'Done.' : 'Failed.'), data.ok);
-        if (data.ok) refresh();
-    });
-    $('librarySettingsForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const data = await libraryPost('/api/library/settings', { library_destination_root: $('setDest').value, library_movie_folder: $('setMovies').value, library_tv_folder: $('setTv').value,
-            library_integrity_mode: $('setIntegrity').value, library_tail_seconds: $('setTail').value, library_exclude_folders: $('setExclude').value,
-            download_pipeline: $('setDownloads').value, originals_retention_days: $('setOriginals').value });
-        librarySay(data.message || (data.ok ? 'Saved.' : 'Failed.'), data.ok);
-        if (data.ok) setTimeout(() => location.reload(), 600);
-    });
-    document.addEventListener('click', async (e) => {
-        if (e.target.closest('[data-queue-approved]')) {
-            const data = await libraryPost('/api/library/queue-approved');
-            librarySay(data.message || (data.ok ? 'Queued.' : 'Failed.'), data.ok);
-            refresh();
-            return;
-        }
-        const download = e.target.closest('[data-download]');
-        if (download) {
-            const data = await libraryPost(`/api/downloads/${download.dataset.id}/${download.dataset.download}`);
-            librarySay(data.message || (data.ok ? 'Done.' : 'Failed.'), data.ok);
-            refresh();
-            return;
-        }
-        const cancel = e.target.closest('[data-cancel-run]');
-        if (!cancel) return;
-        if (cancel.dataset.confirm && !confirm(cancel.dataset.confirm)) return;
-        const data = await libraryPost(`/api/library/runs/${encodeURIComponent(cancel.dataset.cancelRun)}/cancel`);
-        librarySay(data.message || 'Done.', data.ok);
-        refresh();
-    });
-})();
-</script>
-{% endblock %}
+<div class="panel p-3 p-md-4 mb-5" id="profilesPanel">
+    <h5>Conversion profiles</h5>
+    <p class="small text-body-secondary">A profile says how a file is converted: the video codec and quality, and what happens to subtitles. Choose one per file when you approve it, or set the default under Settings. The built-in profiles cannot be changed; make your own below.</p>
+    <div class="table-responsive"><table class="table table-sm align-middle">
+        <thead><tr><th>Name</th><th>What it does</th><th class="text-end"></th></tr></thead>
+        <tbody>{% for p in profiles %}<tr><td class="small fw-bold">{{ p.name }}{% if p.id == default_profile_id %} <span class="badge bg-success">default</span>{% endif %}{% if p.builtin %} <span class="badge bg-secondary">built in</span>{% endif %}</td>
+            <td class="small">{{ p.summary }}{% if p.audio_kbps != 192 and not p.move_only %} Audio {{ p.audio_kbps }} kbps.{% endif %}</td>
+            <td class="text-end text-nowrap"><button type="button" class="btn btn-sm btn-outline-secondary" data-profile-edit="{{ p|tojson|forceescape }}">{{ 'Copy' if p.builtin else 'Edit' }}</button>
+                {% if not p.builtin %}<button type="button" class="btn btn-sm btn-outline-danger" data-profile-delete="{{ p.id }}">Delete</button>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+    <form id="profileForm" class="row g-2">
+        <input type="hidden" id="pfId">
+        <div class="col-md-4"><label for="pfName" class="form-label small mb-1">Name</label><input class="form-control form-control-sm" id="pfName" maxlength="60" required></div>
+        <div class="col-md-4"><label for="pfCodec" class="form-label small mb-1">Video</label>
+            <select class="form-select form-select-sm" id="pfCodec"><option value="keep">Keep as it is</option><option value="hevc">HEVC (H.265)</option><option value="h264">H.264</option></select></div>
+        <div class="col-md-4"><label for="pfSubs" class="form-label small mb-1">Subtitles</label>
+            <select class="form-select form-select-sm" id="pfSubs">{% for k, label in profile_options.subtitles.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select></div>
+        <div class="col-6 col-md-3"><label for="pfCrf" class="form-label small mb-1">Quality (CRF)</label><input type="number" class="form-control form-control-sm" id="pfCrf" min="12" max="35" placeholder="23" title="Lower is better and larger. About 20 to 28 for HEVC."></div>
+        <div class="col-6 col-md-3"><label for="pfPreset" class="form-label small mb-1">Encoder speed</label>
+            <select class="form-select form-select-sm" id="pfPreset">{% for p in profile_options.presets %}<option value="{{ p }}"{% if p == 'medium' %} selected{% endif %}>{{ p }}</option>{% endfor %}</select></div>
+        <div class="col-6 col-md-3"><label for="pfAudio" class="form-label small mb-1">Audio (kbps)</label><input type="number" class="form-control form-control-sm" id="pfAudio" min="64" max="640" value="192"></div>
+        <div class="col-6 col-md-3 d-flex flex-column justify-content-end gap-1">
+            <div class="form-check"><input class="form-check-input" type="checkbox" id="pfTenBit" checked><label class="form-check-label small" for="pfTenBit">10-bit (HEVC)</label></div>
+            <div class="form-check"><input class="form-check-input" type="checkbox" id="pfMoveOnly"><label class="form-check-label small" for="pfMoveOnly">Move only: change nothing</label></div></div>
+        <div class="col-12"><label for="pfDesc" class="form-label small mb-1">Note (optional)</label><input class="form-control form-control-sm" id="pfDesc" maxlength="300"></div>
+        <div class="col-12"><button type="submit" class="btn btn-sm btn-outline-success">Save profile</button> <button type="button" class="btn btn-sm btn-outline-secondary" id="pfClear">Clear</button></div>
+    </form>
+</div>

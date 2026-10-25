@@ -210,7 +210,7 @@ def _radarr(ctx, client=None):
 def _sonarr(ctx, client=None):
     from synchub.clients.arr import SonarrClient
     client = client or SonarrClient()
-    series = next((s for s in client.series() if _inside(ctx["source"], s.get("path"))), None)
+    series = next((s for s in client.series() if _inside(ctx["source"], s.get("path")) or _inside(ctx["dest"], s.get("path"))), None)
     if series is None:
         return "skipped", "Sonarr does not have a series for this file, so there was nothing to update."
     if ctx["mode"] in ("unmonitor", "remove") and ctx["how"] != "rename":

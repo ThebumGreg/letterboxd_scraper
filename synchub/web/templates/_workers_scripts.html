@@ -1,141 +1,3 @@
-<!-- synchub/web/templates/workers.html -->
-{% extends "base.html" %}
-{% block title %}Workers{% endblock %}
-
-{% block content %}
-<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
-    <div>
-        <h2 class="mb-2">Workers</h2>
-        <p class="text-body-secondary mb-0">The PCs that do the heavy work (scanning, copying, encoding). They ask SyncHub for jobs, so nothing needs opening on them. Each has its own token.</p>
-    </div>
-    <div class="d-flex gap-2">
-        <button type="button" class="btn btn-outline-info" id="testCopyBtn" title="Copy one file between two shares to prove a worker's mounts, permissions and speed"><i class="bi bi-files" aria-hidden="true"></i> Test copy</button>
-        <button type="button" class="btn btn-success" id="addWorkerBtn"><i class="bi bi-plus-lg" aria-hidden="true"></i> Add worker</button>
-    </div>
-</div>
-<div id="fleetMessage" class="alert d-none" role="status"></div>
-
-<div id="fleet">{% include "_fleet.html" %}</div>
-
-<!-- Add / edit -->
-<div class="modal fade" id="workerModal" tabindex="-1" aria-labelledby="workerModalTitle" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-        <form class="modal-content" id="workerForm">
-            <div class="modal-header"><h5 class="modal-title" id="workerModalTitle">Add worker</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
-            <div class="modal-body">
-                <div class="mb-3"><label for="workerName" class="form-label">Name</label><input class="form-control" id="workerName" required maxlength="60" placeholder="encoder-1"></div>
-                <div class="row">
-                    <div class="col-8 mb-3"><label for="workerTags" class="form-label">Tags</label><input class="form-control" id="workerTags" placeholder="gpu fast"><div class="form-text">A job can require tags. Optional.</div></div>
-                    <div class="col-4 mb-3"><label for="workerSlots" class="form-label">Slots</label><input type="number" class="form-control" id="workerSlots" min="1" max="16" value="1"><div class="form-text">Jobs at once</div></div>
-                </div>
-                <div class="small text-danger" id="workerError" role="alert"></div>
-            </div>
-            <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-success">Save</button></div>
-        </form>
-    </div>
-</div>
-
-<!-- The setup files for a worker; right after a token is made they hold it, and it is shown only now -->
-<div class="modal fade" id="setupModal" tabindex="-1" aria-labelledby="setupTitle" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
-        <div class="modal-content">
-            <div class="modal-header"><h5 class="modal-title" id="setupTitle">Set up the worker</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
-            <div class="modal-body">
-                <p class="small mb-2" id="setupToken"></p>
-                <div class="row mb-3">
-                    <div class="col-md-6"><label for="setupUrl" class="form-label small mb-1">SyncHub's address, as the worker PC reaches it</label><input class="form-control form-control-sm" id="setupUrl" autocomplete="off"></div>
-                    <div class="col-md-6 small text-body-secondary align-self-end" id="setupUrlHint"></div>
-                </div>
-                <ul class="nav nav-tabs" id="setupTabs" role="tablist"></ul>
-                <p class="small text-body-secondary mt-2 mb-2" id="setupNote"></p>
-                <pre class="p-3 rounded border" id="setupText" style="white-space: pre-wrap; user-select: all; max-height: 45vh; overflow: auto;"></pre>
-                <button type="button" class="btn btn-outline-info btn-sm" id="copySetup">Copy</button> <span class="small" id="copyResult" role="status"></span>
-            </div>
-            <div class="modal-footer"><button type="button" class="btn btn-success" data-bs-dismiss="modal">Done</button></div>
-        </div>
-    </div>
-</div>
-
-<!-- A test copy -->
-<div class="modal fade" id="copyModal" tabindex="-1" aria-labelledby="copyTitle" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-        <form class="modal-content" id="copyForm">
-            <div class="modal-header"><h5 class="modal-title" id="copyTitle">Test copy</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
-            <div class="modal-body">
-                <p class="small text-body-secondary">Copies one file from a share to a path on another (or the same) share and checks it byte for byte. It never overwrites anything. Use a small file first.</p>
-                <div class="mb-3"><label for="tcWorker" class="form-label">Worker</label><select class="form-select" id="tcWorker"></select></div>
-                <div class="row">
-                    <div class="col-5 mb-2"><label for="tcSourceRoot" class="form-label">From share</label><select class="form-select" id="tcSourceRoot"></select></div>
-                    <div class="col-7 mb-2"><label for="tcSourcePath" class="form-label">File</label><input class="form-control" id="tcSourcePath" required placeholder="Movies/Heat (1995)/Heat (1995).mkv"></div>
-                </div>
-                <div class="row">
-                    <div class="col-5 mb-2"><label for="tcDestRoot" class="form-label">To share</label><select class="form-select" id="tcDestRoot"></select></div>
-                    <div class="col-7 mb-2"><label for="tcDestPath" class="form-label">Path</label><input class="form-control" id="tcDestPath" required placeholder="synchub-test/Heat.mkv"></div>
-                </div>
-                <div class="small text-danger" id="copyError" role="alert"></div>
-            </div>
-            <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-success" id="copySubmit">Queue the copy</button></div>
-        </form>
-    </div>
-</div>
-
-<!-- A decision for a job that is waiting -->
-<div class="modal fade" id="decisionModal" tabindex="-1" aria-labelledby="decisionTitle" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content">
-            <div class="modal-header"><h5 class="modal-title" id="decisionTitle">Waiting for you</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
-            <div class="modal-body">
-                <p class="mb-3" id="decisionReason"></p>
-                <label for="decisionNote" class="form-label">Note (optional)</label>
-                <input class="form-control" id="decisionNote" maxlength="500">
-                <div class="small text-danger mt-2" id="decisionError" role="alert"></div>
-            </div>
-            <div class="modal-footer flex-wrap">
-                <button type="button" class="btn btn-outline-danger" data-decision="reject">Reject</button>
-                <button type="button" class="btn btn-outline-secondary" data-decision="skip" title="Leave the file as it is and do not ask again until it changes">Skip</button>
-                <button type="button" class="btn btn-outline-info" data-decision="retry">Retry</button>
-                <button type="button" class="btn btn-success" data-decision="approve">Approve as recommended</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- A worker's own log, fetched on request for troubleshooting -->
-<div class="modal fade" id="workerLogModal" tabindex="-1" aria-labelledby="workerLogTitle" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
-        <div class="modal-content">
-            <div class="modal-header"><h5 class="modal-title" id="workerLogTitle">Worker log</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
-            <div class="modal-body">
-                <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
-                    <button type="button" class="btn btn-sm btn-info" id="wlRefresh"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i> Get the latest</button>
-                    <label class="visually-hidden" for="wlLevel">Show</label>
-                    <select class="form-select form-select-sm w-auto" id="wlLevel">
-                        <option value="0">Everything</option><option value="1">Info and above</option><option value="2">Warnings and errors</option><option value="3">Errors only</option>
-                    </select>
-                    <label class="visually-hidden" for="wlSearch">Search</label>
-                    <input type="search" class="form-control form-control-sm w-auto" id="wlSearch" placeholder="Search the log" autocomplete="off">
-                    <button type="button" class="btn btn-sm btn-outline-secondary" id="wlCopy">Copy</button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" id="wlDownload">Download</button>
-                </div>
-                <div class="small text-body-secondary mb-2" id="wlStatus" role="status"></div>
-                <pre class="p-2 rounded border mb-0" id="wlText" style="white-space: pre-wrap; word-break: break-word; height: 55vh; overflow: auto;"></pre>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Job details -->
-<div class="modal fade" id="jobModal" tabindex="-1" aria-labelledby="jobModalTitle" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
-        <div class="modal-content">
-            <div class="modal-header"><h5 class="modal-title" id="jobModalTitle">Job</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
-            <div class="modal-body" id="jobBody"></div>
-        </div>
-    </div>
-</div>
-{% endblock %}
-
-{% block scripts %}
 <script>
 (() => {
     const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
@@ -151,7 +13,7 @@
     const busy = () => document.querySelector('.modal.show, .dropdown-menu.show');
 
     async function refresh() {
-        if (busy()) return;
+        if (busy() || !document.getElementById('media-pane-workers')?.classList.contains('active')) return;
         try {
             const res = await fetch('/workers/fragment');
             if (res.ok && !busy()) { fleet.innerHTML = await res.text(); showPane(); }
@@ -508,4 +370,3 @@
     }
 })();
 </script>
-{% endblock %}

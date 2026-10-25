@@ -12,10 +12,23 @@
         <span class="badge bg-primary" title="A worker is converting or copying these now">{{ migration.running }} running</span>
         {% if migration.waiting %}<span class="badge bg-warning text-dark" title="Held for a decision on the Workers page">{{ migration.waiting }} waiting for you</span>{% endif %}
         {% if migration.failed %}<span class="badge bg-danger">{{ migration.failed }} failed</span>{% endif %}
+        {% if migration.cancelled %}<span class="badge bg-dark" title="Cancelled files stay cancelled until you queue them again">{{ migration.cancelled }} cancelled</span>{% endif %}
         <span class="badge bg-success" title="Converted, copied into the destination share and verified">{{ migration.completed }} completed</span>
         <a class="ms-auto small" href="{{ url_for('workers_page') }}">Workers and jobs</a>
     </div>
     <p class="small text-body-secondary mb-0 mt-2">Approving a file queues it; the next free worker converts it if needed, brings it into the destination share and only then is it counted as completed. Jellyfin is asked to scan after each one arrives.</p>
+    {% if attention %}
+    <div class="table-responsive mt-3"><table class="table table-sm align-middle mb-0">
+        <thead><tr><th>Stopped</th><th>Why</th><th class="text-end"></th></tr></thead>
+        <tbody>{% for a in attention %}<tr><td class="small"><a href="{{ url_for('library_record', record_id=a.id) }}">{{ a.file_name }}</a><div class="text-body-secondary">{{ a.root_name }}</div></td>
+            <td class="small"><span class="badge bg-{{ 'dark' if a.migration_cancelled_at else 'danger' }}">{{ 'cancelled' if a.migration_cancelled_at else 'failed' }}</span> {{ a.migration_last_error or '' }}</td>
+            <td class="text-end"><button type="button" class="btn btn-sm btn-outline-primary" data-requeue="{{ a.id }}">Queue again</button></td></tr>{% endfor %}</tbody></table></div>
+    {% endif %}
+    {% if cleanup.days or cleanup.waiting or cleanup.queued or cleanup.failed %}
+    <p class="small text-body-secondary mt-3 mb-0"><i class="bi bi-trash3" aria-hidden="true"></i> Source clean-up: {% if cleanup.days %}sources are deleted {{ cleanup.days }} days after a verified copy.{% else %}switched off.{% endif %}
+        {{ cleanup.waiting }} waiting{% if cleanup.next_due %} (next on {{ cleanup.next_due[:10] }}){% endif %}, {{ cleanup.deleted }} deleted, {{ cleanup.held }} kept{% if cleanup.failed %}, <span class="text-danger">{{ cleanup.failed }} could not be deleted</span>{% endif %}.
+        {% if cleanup.arr_mode != 'none' %}Radarr/Sonarr: {{ {'update_location': 'told the new location', 'unmonitor': 'stop monitoring', 'remove': 'stop tracking'}[cleanup.arr_mode] }}{% if cleanup.arr_failed %}, <span class="text-danger">{{ cleanup.arr_failed }} failed</span>{% endif %}.{% endif %}</p>
+    {% endif %}
     {% if migration.unqueued %}
     <div class="alert alert-warning mt-3 mb-0 d-flex flex-wrap align-items-center gap-2">
         <span>{{ migration.unqueued }} approved file{{ '' if migration.unqueued == 1 else 's' }} {{ 'has' if migration.unqueued == 1 else 'have' }} no job yet.</span>
