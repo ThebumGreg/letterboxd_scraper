@@ -4,7 +4,7 @@ import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from synchub import ddns, settings, tasks
-from synchub.notifications import dispatch
+from synchub.notifications import dispatch, watch
 
 logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
@@ -67,6 +67,7 @@ def configure():
     scheduler.add_job(_reap_jobs, "interval", seconds=REAPER_SECONDS, id="job_reaper", max_instances=1, coalesce=True)
     scheduler.add_job(_prune_jellyfin_events, "interval", hours=24, id="job_prune_jellyfin_events", max_instances=1, coalesce=True)
     scheduler.add_job(dispatch.run_due, "interval", seconds=NOTIFY_SECONDS, id="job_notify", max_instances=1, coalesce=True)
+    scheduler.add_job(watch.check, "interval", seconds=NOTIFY_SECONDS, id="job_notify_watch", max_instances=1, coalesce=True)
     scheduler.add_job(dispatch.prune_history, "interval", hours=24, id="job_notify_prune", max_instances=1, coalesce=True)
     from synchub import backup
     if backup.keep_count():

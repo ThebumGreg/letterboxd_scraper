@@ -29,6 +29,10 @@ def validate_setting(key, value):
     """Returns (ok, cleaned_value_or_error_message) for a submitted setting."""
     value = (value or "").strip()
 
+    if key == "notify_admin_profiles":
+        parts = [p.strip() for p in value.split(",") if p.strip()]
+        return (True, ",".join(parts)) if all(p.isdigit() for p in parts) else (False, "Choose administrators from the list.")
+
     if key in _SWITCH_KEYS:
         return (True, value) if value in ("0", "1") else (False, f"{key} must be 0 or 1.")
 

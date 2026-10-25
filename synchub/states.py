@@ -5,6 +5,7 @@ The strongest signal wins (highest state_def.rank), per movie and per episode:
   monitored with no file -> queued;  otherwise missing.
 Radarr/Sonarr queue entries are turned into processing events, the same mechanism future transfer/encode scripts use.
 """
+import logging
 from datetime import date
 
 from synchub import db
@@ -135,6 +136,8 @@ def compute(conn, now=None, only=None, changed=None):
         results.append(("episode", r["id"], _decide(r, events.get(("episode", r["id"])), ranks)))
 
     changed_count = 0
+    before = {(r["target_type"], r["target_id"]): r["state_code"] for r in conn.execute("SELECT target_type, target_id, state_code FROM item_state")}
+    arrived = []
     for target_type, target_id, (code, progress) in results:
         cur = conn.execute(
             """INSERT INTO item_state (target_type, target_id, state_code, progress, updated_at) VALUES (?, ?, ?, ?, ?)
@@ -145,6 +148,15 @@ def compute(conn, now=None, only=None, changed=None):
             changed_count += 1
             if changed is not None:
                 changed.add((target_type, target_id))
+            old = before.get((target_type, target_id))
+            if code == "in_library" and old is not None and old != "in_library":
+                arrived.append((target_type, target_id))
+    if arrived:
+        from synchub.notifications import arrivals
+        try:
+            arrivals.announce(conn, arrived, now)
+        except Exception as exc:                                       # telling people must never break working out states
+            logging.getLogger(__name__).error(f"Could not announce arrivals: {exc.__class__.__name__}: {exc}")
     return {"movies": len(movies), "episodes": len(episodes), "changed": changed_count}
 
 
