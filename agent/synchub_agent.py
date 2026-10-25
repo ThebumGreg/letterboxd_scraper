@@ -45,7 +45,7 @@ except ImportError:                        # pragma: no cover - exercised by tes
 __version__ = "0.4.0"
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
-OPS = ["copy"]                     # the operations (plan.op) every agent can do; scan and hash are added when the analysis module is there
+OPS = ["copy"]                     # the operations (plan.op) every agent can do; scan, hash and convert are added when the analysis module and ffmpeg are there
 MANIFEST_VERSION = 1
 HASH_BUFFER = 8 * 1024 * 1024
 SPACE_MARGIN = 1024 ** 3           # room left over on a disk after a copy
@@ -572,6 +572,50 @@ TESTED_ENCODERS = ("libx265", "libx264", "libsvtav1", "hevc_nvenc", "h264_nvenc"
 OTHER_ENCODERS = ("libaom-av1", "librav1e", "libvpx-vp9", "hevc_amf", "h264_amf", "av1_amf", "hevc_videotoolbox", "h264_videotoolbox")
 
 
+
+def media_duration(probe):
+    """Seconds of a file from ffprobe's JSON, or None."""
+    try:
+        return float((probe.get("format") or {}).get("duration"))
+    except (TypeError, ValueError):
+        return None
+
+
+def build_convert_command(ffmpeg, src, out, change):
+    """The ffmpeg command for a conversion plan (SyncHub's approved `change`: tracks to keep, codecs to convert, the default audio track).
+    Anything the plan does not change is copied bit for bit."""
+    command = [ffmpeg, "-nostdin", "-hide_banner", "-y", "-v", "error", "-progress", "pipe:1", "-nostats", "-i", src, "-map_metadata", "0", "-map_chapters", "0", "-map", "0:V?"]
+    keep_audio, keep_subtitle = change.get("keep_audio"), change.get("keep_subtitle")
+    for indexes, everything in ((keep_audio, "0:a?"), (keep_subtitle, "0:s?")):
+        command += [part for i in indexes for part in ("-map", f"0:{int(i)}")] if isinstance(indexes, list) else ["-map", everything]
+    video = change.get("video") or {}
+    command += ["-c:v", "libx264", "-crf", "20", "-preset", "medium", "-pix_fmt", "yuv420p"] if video.get("action") == "transcode" else ["-c:v", "copy"]
+    command += ["-c:a", "copy", "-c:s", "copy"]
+    converting = change.get("audio_convert") or {}
+    for position, index in enumerate(keep_audio if isinstance(keep_audio, list) else []):
+        if str(index) in converting:
+            command += [f"-c:a:{position}", converting[str(index)].get("codec") or "aac", f"-b:a:{position}", "192k"]
+    default = change.get("default_audio")
+    if default is not None and isinstance(keep_audio, list) and default in keep_audio:
+        command += ["-disposition:a", "0", f"-disposition:a:{keep_audio.index(default)}", "default"]
+    container = "mp4" if change.get("container") == "mp4" else "matroska"
+    command += ["-f", container] + (["-movflags", "+faststart"] if container == "mp4" else []) + [out]
+    return command
+
+
+def parse_ffmpeg_progress(line, duration):
+    """(fraction done, speed) from one line of `ffmpeg -progress pipe:1`; either is None when the line does not say."""
+    key, _, value = line.strip().partition("=")
+    if key in ("out_time_us", "out_time_ms") and duration:
+        try:
+            return min(max(int(value) / 1_000_000 / duration, 0.0), 1.0), None
+        except ValueError:
+            return None, None
+    if key == "speed":
+        return None, value.strip().rstrip("x") if value.strip() not in ("", "N/A") else None
+    return None, None
+
+
 def detect_capabilities(cfg):
     """What this PC can do: ffmpeg and the encoders that really work (one test frame each), cores, space and the operations the agent knows,
     and (under "host") the hardware details the Worker Status tab shows."""
@@ -603,7 +647,7 @@ def detect_capabilities(cfg):
     if code == 0:
         caps["ffprobe"] = out.splitlines()[0] if out else "ffprobe"
         if media_analysis and caps["ffmpeg"]:
-            caps["ops"].append("scan")                       # a scan needs ffprobe to read files and ffmpeg to check them
+            caps["ops"].extend(["scan", "convert"])          # a scan needs ffprobe to read files and ffmpeg to check them; a conversion also runs ffmpeg, then checks the result
     return caps
 
 
@@ -1006,10 +1050,10 @@ class JobRunner(threading.Thread):
         self.reporter.start()
         try:
             op = (self.job.get("plan") or {}).get("op")
-            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash}.get(op)
-            if work is None or (op in ("scan", "hash") and media_analysis is None):
+            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash, "convert": self.do_convert}.get(op)
+            if work is None or (op in ("scan", "hash", "convert") and media_analysis is None):
                 raise JobFailure("unsupported_job", f"This agent ({__version__}) cannot do '{op or self.job.get('kind')}' jobs. Update the agent"
-                                 + (" (media_analysis.py must be next to synchub_agent.py)." if op in ("scan", "hash") else "."), retryable=False)
+                                 + (" (media_analysis.py must be next to synchub_agent.py)." if op in ("scan", "hash", "convert") else "."), retryable=False)
             final = ("complete", {"result": work()}, "done")
         except Interrupted:
             self.log.info("Stopping for a restart or shutdown; the job resumes from its last checkpoint", stage=self.stage)
@@ -1215,20 +1259,24 @@ class JobRunner(threading.Thread):
         return outcome
 
     # ---- the copy job: copy in, copy out, verified, never overwriting
-    def do_copy(self):
+    def endpoints(self, what):
+        """The paths of this job's source file and destination file on this PC, after checking that both shares are known and mounted."""
         source, dest = self.job.get("source"), self.job.get("dest")
         if not source or not dest:
-            raise JobFailure("bad_job", "A copy job needs a source and a destination.", retryable=False)
+            raise JobFailure("bad_job", f"A {what} job needs a source and a destination.", retryable=False)
         monitor = self.agent.monitor
         for root in (source["root"], dest["root"]):
             if self.agent.roots.path(root) is None:
                 raise JobFailure("transient", f"SyncHub's share '{root}' is not known to this agent yet. It re-reads the list of shares when it starts.")
             monitor.require(root)
         try:
-            src = safe_path(self.agent.roots.path(source["root"]), source["rel"])
-            dst = safe_path(self.agent.roots.path(dest["root"]), dest["rel"])
+            return safe_path(self.agent.roots.path(source["root"]), source["rel"]), safe_path(self.agent.roots.path(dest["root"]), dest["rel"])
         except ValueError as exc:
             raise JobFailure("bad_job", str(exc), retryable=False)
+
+    def do_copy(self):
+        source = self.job.get("source")
+        src, dst = self.endpoints("copy")
         stat = os.stat(src)
         if not os.path.isfile(src):
             raise JobFailure("source_changed", f"The source is not a file: {source['rel']}")
@@ -1246,6 +1294,125 @@ class JobRunner(threading.Thread):
                   "copy_in_mb_s": round(size / 1048576 / in_seconds, 1) if in_seconds else None, "copy_out_mb_s": round(size / 1048576 / out_seconds, 1) if out_seconds else None}
         self.log.info(f"Copied {human_bytes(size)} and verified it ({result['verified']}) in {human_duration(elapsed)}", **{k: v for k, v in result.items() if k != "op"})
         return result
+
+    # ---- a conversion: copy in, run ffmpeg on the local copy, check the result, copy the result out to the destination share
+    CONVERT_BANDS = {"copy_in": (0.0, 0.25), "copy_out": (0.85, 0.95), "verify": (0.95, 1.0)}      # the encode itself is 25 - 85 %
+
+    def do_convert(self):
+        src, dst = self.endpoints("convert")
+        change = self.job["plan"].get("change") or {}
+        stat = os.stat(src)
+        if not os.path.isfile(src):
+            raise JobFailure("source_changed", f"The source is not a file: {self.job['source']['rel']}")
+        size, mtime, name = stat.st_size, int(stat.st_mtime), os.path.basename(src)
+        local = os.path.join(self.folder, "source", name)
+        converted = os.path.join(self.folder, "output", os.path.basename(dst))
+        self.BANDS = self.CONVERT_BANDS
+        t0 = time.monotonic()
+        self.m["source"] = {"size": size, "mtime": mtime, "name": name}
+        self.copy_in(src, local, size, mtime)
+        done = self.stage_info("encode")
+        if not (done.get("done") and os.path.isfile(converted) and os.path.getsize(converted) == done.get("bytes")):
+            done.clear()
+            done.update(self.encode(local, converted, change, self.job["plan"].get("duration")))
+            self.save()
+        out_size = os.path.getsize(converted)
+        if not done.get("sha256"):
+            done["sha256"] = hash_file(converted, check=self.guard)
+            self.save()
+        out_seconds = self.copy_out(converted, dst, out_size, done["sha256"], stat.st_mtime_ns)
+        elapsed = time.monotonic() - t0
+        result = {"op": "convert", "bytes": out_size, "source_bytes": size, "sha256": done["sha256"], "verified": "sha256" if self.cfg.verify == "hash" else "size",
+                  "seconds": round(elapsed, 1), "encode_seconds": done.get("seconds"), "command": done.get("command"), "output": done.get("probe")}
+        self.log.info(f"Converted {name} ({human_bytes(size)} to {human_bytes(out_size)}) and brought it into the destination in {human_duration(elapsed)}")
+        return result
+
+    def encode(self, local, converted, change, expected_duration):
+        """Runs ffmpeg on the local copy and checks what it made. Returns what the job remembers about the encode. The output only gets its
+        real name once it has passed the checks, so a half-made file is never mistaken for a finished one."""
+        os.makedirs(os.path.dirname(converted), exist_ok=True)
+        partial = converted + ".partial"
+        for leftover in (partial, converted):
+            if os.path.exists(leftover):
+                os.remove(leftover)
+        size = os.path.getsize(local)
+        free = shutil.disk_usage(self.folder).free
+        if free < size + SPACE_MARGIN:
+            raise JobFailure("transient", f"Not enough free space on the work disk to convert this file: about {human_bytes(size)} is needed and {human_bytes(free)} is free.")
+        settings = self.media_settings({})
+        if not expected_duration:
+            expected_duration = media_duration(media_analysis.run_ffprobe(settings, local))
+        command = build_convert_command(self.cfg.ffmpeg, local, partial, change)
+        text = shlex.join(command)
+        self.log.info("Converting", command=text)
+        self.report_progress("encode", 0.25, "Starting ffmpeg", force=True)
+        started, errors, speed = time.monotonic(), os.path.join(self.folder, "ffmpeg.err"), None
+        with open(errors, "w", encoding="utf-8", errors="replace") as err:
+            proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=err, text=True, encoding="utf-8", errors="replace", start_new_session=True)
+            try:
+                for line in proc.stdout:
+                    self.reporter.check()
+                    fraction, said = parse_ffmpeg_progress(line, expected_duration)
+                    speed = said or speed
+                    if fraction is not None:
+                        low, high = 0.25, 0.85
+                        elapsed = time.monotonic() - started
+                        eta = int(elapsed * (1 - fraction) / fraction) if fraction > 0.01 else None
+                        self.report_progress("encode", low + (high - low) * fraction, f"Converting: {fraction * 100:.0f}%" + (f" at {speed}x" if speed else ""), eta)
+                proc.wait()
+            except BaseException:
+                self._stop_ffmpeg(proc)
+                self._remove(partial)
+                raise
+        if proc.returncode != 0:
+            tail = read_file(errors).strip()[-800:]
+            self._remove(partial)
+            raise JobFailure("encode_failed", f"ffmpeg stopped with exit code {proc.returncode}: {tail or 'no message'}", retryable=False)
+        self.report_progress("encode", 0.85, "Checking the converted file", force=True)
+        try:
+            probe = self.check_conversion(settings, partial, change, expected_duration)
+        except JobFailure:
+            self._remove(partial)
+            raise
+        os.replace(partial, converted)
+        return {"done": True, "bytes": os.path.getsize(converted), "seconds": round(time.monotonic() - started, 1), "command": text[-4000:], "probe": probe, "finished": iso()}
+
+    @staticmethod
+    def _remove(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _stop_ffmpeg(proc):
+        try:
+            os.killpg(proc.pid, signal.SIGKILL) if hasattr(os, "killpg") else proc.kill()
+        except (OSError, ProcessLookupError):
+            proc.kill()
+        proc.wait()
+
+    def check_conversion(self, settings, path, change, expected_duration):
+        """The converted file must be readable, as long as the source (within half a percent), have the tracks the plan kept and decode cleanly at its end."""
+        data = media_analysis.run_ffprobe(settings, path)
+        streams = [s for s in data.get("streams") or [] if isinstance(s, dict)]
+        counts = {kind: sum(1 for s in streams if s.get("codec_type") == kind) for kind in ("video", "audio", "subtitle")}
+        problems = []
+        if counts["video"] < 1:
+            problems.append("it has no video")
+        for kind, key in (("audio", "keep_audio"), ("subtitle", "keep_subtitle")):
+            if isinstance(change.get(key), list) and counts[kind] != len(change[key]):
+                problems.append(f"it has {counts[kind]} {kind} track(s) but {len(change[key])} were planned")
+        got = media_duration(data)
+        if expected_duration and got is not None and abs(got - expected_duration) > max(1.0, expected_duration * 0.005):
+            problems.append(f"it is {got:.0f} s long but the source is {expected_duration:.0f} s")
+        if not problems:
+            status, detail = media_analysis.decode_check(settings, path)
+            if status == media_analysis.INT_DECODE_ERROR:
+                problems.append(f"it does not decode cleanly: {detail[:300]}")
+        if problems:
+            raise JobFailure("verification_failed", "The converted file failed its checks: " + "; ".join(problems))
+        return {"duration": got, **counts}
 
     # progress: copy in 0 - 45 %, copy out 45 - 90 %, reading the copy back to verify it 90 - 100 %
     BANDS = {"copy_in": (0.0, 0.45), "copy_out": (0.45, 0.90), "verify": (0.90, 1.0)}

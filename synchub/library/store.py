@@ -160,6 +160,8 @@ def _upsert_one(conn, rec, source_dir, run_id, tolerance, now, tally):
         values.update(size_bytes=rec["size_bytes"], mtime=rec["mtime"], sha256=new_hash, partial_signature=rec.get("partial_signature"),
                       source_revision=row["source_revision"] + 1, signature_changed_at=now, review_status=new_review, **_RESET_REVIEW, **_RESET_APPROVAL)
         resets += ["review", "approval"]
+        from synchub.library import migrate
+        migrate.cancel_waiting(conn, record_id)
         if row["migration_status"] != v.MIGRATION_PENDING or row["migration_verification_status"] is not None:
             values.update(_RESET_MIGRATION)
             resets.append(f"migration (was {row['migration_status']})")
@@ -277,6 +279,8 @@ def set_approval(conn, record_id, status, by, action=None, note=None, mark_revie
             raise v.StateError(f"no record {record_id}")
         if row["migration_status"] == v.MIGRATION_IN_PROGRESS:
             raise v.StateError("cannot change approval while migration is in progress")
+        from synchub.library import migrate
+        migrate.cancel_active(conn, record_id, by)                  # a decision that changes the plan takes the waiting job back; the caller queues a new one
         values = {"approval_status": status, "approval_decided_at": now, "approval_decided_by": by, "approval_note": note,
                   "approved_action": None, "approved_name": None, "approved_track_changes_json": None}   # every decision starts clean
         if status == v.APPROVAL_PENDING:

@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -163,7 +164,7 @@ def test_the_agent_reports_what_it_can_do_and_how_its_shares_are(rig):
     rig.start()
     with rig.db.connection() as conn:
         w = wait(lambda: (x := workers.get(conn, rig.worker_id)) and x["status"].get("roots", {}).get("tfiles") and x, what="the first status")
-    assert w["capabilities"]["ops"] == ["copy", "hash", "scan"] and w["version"] == agent.__version__ and w["hostname"]
+    assert w["capabilities"]["ops"] == ["copy", "hash", "scan", "convert"] and w["version"] == agent.__version__ and w["hostname"]
     assert w["status"]["roots"]["media"]["ok"] and w["status"]["roots"]["media"]["state"] == "ok" and w["status"]["work_free_bytes"] > 0
 
 
@@ -563,3 +564,93 @@ def test_the_hardware_and_live_figures_reach_synchub_and_the_status_tab(rig, cli
 def _status_has_host(rig):
     with rig.db.connection() as conn:
         return workers.get(conn, rig.worker_id)["status"].get("host") is not None
+
+
+# ---------------------------------------------------------------- conversions (real ffmpeg)
+def make_avi(path, audio_tracks=2, seconds=2):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    command = ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc=duration={seconds}:size=160x120:rate=10"]
+    for n in range(audio_tracks):
+        command += ["-f", "lavfi", "-i", f"sine=frequency={440 * (n + 1)}:duration={seconds}"]
+    command += ["-map", "0"] + [x for n in range(audio_tracks) for x in ("-map", str(n + 1))] + ["-c:v", "mpeg4", "-c:a", "mp3", str(path)]
+    subprocess.run(command, check=True)
+
+
+def probe(path):
+    out = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-show_format", str(path)], check=True, capture_output=True, text=True).stdout
+    return json.loads(out)
+
+
+def queue_convert(rig, change, duration=2.0, src="Old/Heat.avi", dst="Movies/Heat (1995)/Heat (1995).mkv"):
+    with rig.db.connection() as conn:
+        return jobs.create(conn, "library", title="Convert", source=("tfiles", src), dest=("media", dst), plan={"op": "convert", "change": change, "duration": duration},
+                           pinned_worker_id=rig.worker_id)
+
+
+needs_ffmpeg = pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="ffmpeg is not installed")
+
+
+@needs_ffmpeg
+def test_a_conversion_remuxes_to_mkv_drops_the_tracks_and_lands_in_the_destination(rig):
+    make_avi(rig.roots["tfiles"] / "Old/Heat.avi")
+    change = {"op": "convert", "container": "matroska", "keep_audio": [1], "remove_audio": [{"index": 2, "language": "ita", "title": ""}], "keep_subtitle": [], "remove_subtitle": [],
+              "default_audio": 1, "target_extension": ".mkv", "video": {"action": "copy", "from": "mpeg4", "codec": "h264"}, "audio_convert": {}}
+    job_id = queue_convert(rig, change)
+    rig.start()
+    job = wait(lambda: (j := rig.job(job_id))["status"] in ("done", "failed", "needs_review") and j, timeout=60, what="the conversion")
+    assert job["status"] == "done", job["error"]
+    dest = rig.roots["media"] / "Movies/Heat (1995)/Heat (1995).mkv"
+    data = probe(dest)
+    kinds = [s["codec_type"] for s in data["streams"]]
+    assert kinds.count("video") == 1 and kinds.count("audio") == 1 and "matroska" in data["format"]["format_name"]
+    assert abs(float(data["format"]["duration"]) - 2.0) < 0.2
+    assert job["result"]["op"] == "convert" and job["result"]["bytes"] == dest.stat().st_size and job["result"]["sha256"] == sha(dest) and job["result"]["verified"] == "sha256"
+    assert "-map 0:1" in job["result"]["command"] and "0:2" not in job["result"]["command"]
+    assert not list(dest.parent.glob("*partial*")) and (rig.roots["tfiles"] / "Old/Heat.avi").exists()          # the source is left alone
+
+
+@needs_ffmpeg
+def test_a_conversion_that_does_not_match_the_source_is_refused_and_nothing_reaches_the_destination(rig):
+    make_avi(rig.roots["tfiles"] / "Old/Heat.avi", audio_tracks=1)
+    change = {"op": "convert", "container": "matroska", "keep_audio": [1], "remove_audio": [], "keep_subtitle": [], "remove_subtitle": [],
+              "video": {"action": "copy"}, "audio_convert": {}}
+    job_id = queue_convert(rig, change, duration=60.0)                               # SyncHub believes the film is a minute long; the result is 2 s
+    rig.start()
+    job = wait(lambda: rig.job(job_id)["error_class"] == "verification_failed" and rig.job(job_id), timeout=60, what="the check to fail")
+    assert "source is 60 s" in job["error"]
+    assert not (rig.roots["media"] / "Movies").exists()
+
+
+def test_the_ffmpeg_command_follows_the_plan():
+    change = {"container": "matroska", "keep_audio": [1, 3], "keep_subtitle": [4], "default_audio": 3, "video": {"action": "transcode"}, "audio_convert": {"3": {"from": "ac3", "codec": "aac"}}}
+    command = agent.build_convert_command("ffmpeg", "/in.avi", "/out.partial", change)
+    text = " ".join(command)
+    assert "-map 0:V? -map 0:1 -map 0:3 -map 0:4" in text and "-c:v libx264" in text and "-c:a:1 aac" in text and "-disposition:a:1 default" in text
+    assert command[-3:] == ["-f", "matroska", "/out.partial"]
+    plain = " ".join(agent.build_convert_command("ffmpeg", "/in.mp4", "/out.partial", {"container": "mp4", "video": {"action": "copy"}}))
+    assert "-map 0:a? -map 0:s?" in plain and "-c:v copy" in plain and "-movflags +faststart" in plain
+    assert agent.parse_ffmpeg_progress("out_time_us=1000000\n", 4.0) == (0.25, None) and agent.parse_ffmpeg_progress("speed=2.5x\n", 4.0) == (None, "2.5")
+    assert agent.parse_ffmpeg_progress("out_time_us=N/A\n", 4.0) == (None, None) and agent.parse_ffmpeg_progress("progress=end\n", 4.0) == (None, None)
+
+
+@needs_ffmpeg
+def test_approving_a_file_gets_it_converted_by_the_worker_and_the_library_record_completes(rig, conn, monkeypatch):
+    """The whole path: approve on the Library page's logic -> queued job -> the worker's poll hands it out -> ffmpeg -> destination -> record completed -> Jellyfin told."""
+    from synchub.library import migrate, recommend as rc
+    from .library_helpers import CFG, add, plan
+    from .test_library_findings import rec_of
+    told = []
+    monkeypatch.setattr(migrate, "tell_jellyfin", lambda count=1: told.append(count) or True)
+    make_avi(rig.roots["tfiles"] / "Old/Heat.avi", audio_tracks=1)
+    record_id = add(conn, rel="Old/Heat.avi", name="Heat (1995).mkv", container="avi", video="mpeg4", action="remux_copy", size=(rig.roots["tfiles"] / "Old/Heat.avi").stat().st_size,
+                    proposals=[plan(convert={"remux": True}, keep_audio=(1,))])
+    conn.execute("UPDATE library_file SET duration_seconds = 2.0 WHERE id = ?", (record_id,))
+    rc.apply_recommendation(conn, record_id, "Greg", cfg=CFG)
+    conn.commit()
+    assert rec_of(conn, record_id)["migration_status"] == "pending" and migrate.queue_summary(conn)["queued"] == 1
+    rig.start()
+    wait(lambda: (conn.commit() or True) and rec_of(conn, record_id)["migration_status"] == "completed", timeout=60, what="the record to complete")
+    rec = rec_of(conn, record_id)
+    dest = rig.roots["media"] / "Movies/Heat (1995)/Heat (1995).mkv"
+    assert dest.exists() and rec["migration_destination_path"] == "media:Movies/Heat (1995)/Heat (1995).mkv" and rec["migration_verification_status"] == "verified"
+    assert migrate.queue_summary(conn)["completed"] == 1 and told == [1]

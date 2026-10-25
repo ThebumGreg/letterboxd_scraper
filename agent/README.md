@@ -2,7 +2,7 @@
 
 The agent runs on a worker PC. It asks SyncHub for jobs over HTTP, does them, and reports back. SyncHub never connects to the PC, so nothing needs to be opened or forwarded on it. Two Python files, standard library only: `synchub_agent.py` (the agent) and `media_analysis.py` (what it knows about media files; without it the agent still copies, it just cannot scan).
 
-What it does today: **verified copies** between your shares (SyncHub's *Test copy* button), **library scans** (it lists the video files on a share, looks at the ones SyncHub does not know yet or that changed with ffprobe and ffmpeg, and reports what it found) and **duplicate searches** (it reads files of the same size to see whether they are the same). Encoding jobs arrive in a later phase; the agent already detects ffmpeg and the encoders that work.
+What it does today: **verified copies** between your shares (SyncHub's *Test copy* button), **library scans** (it lists the video files on a share, looks at the ones SyncHub does not know yet or that changed with ffprobe and ffmpeg, and reports what it found) and **duplicate searches** (it reads files of the same size to see whether they are the same). It also runs **conversions** for approved Library files (copy in, ffmpeg remux or re-encode, check, copy out to the destination share); this needs ffmpeg and ffprobe and `media_analysis.py` next to the agent.
 
 ## What it tells SyncHub
 
