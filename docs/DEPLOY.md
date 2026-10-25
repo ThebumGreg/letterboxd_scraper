@@ -126,7 +126,7 @@ Run **one** copy of the app. The scheduler runs inside it; a second copy against
 1. **If you moved a database:** the log says `The database is older than this version: a copy was saved as /data/backups/premigrate-v6-....db before upgrading it.` That copy is yours to keep until you are happy.
 2. **Settings:** a yellow banner appears if any service address still says `localhost` or `127.0.0.1` (inside Docker that means the container itself). Change **Jellyfin**, **Radarr** and **Sonarr** to the address other devices use, for example `http://192.168.1.10:8096`, and use *Test connection*.
 3. **Live updates (webhooks)** (Settings → Automation): set *SyncHub's address* to `http://UNRAID_IP:5001`, then press **Set up in Radarr / Sonarr / Jellyfin**. Webhooks left over from the old machine point at it: delete them in Radarr and Sonarr.
-4. **Access:** give the profiles that matter a PIN (System → Access). Lost them all? `docker exec synchub python -m synchub.access reset-all`.
+4. **People:** give the profiles that matter a PIN (System → People). Lost them all? `docker exec synchub python -m synchub.access reset-all`.
 5. **Tools:** *Run all* once to refresh everything from the new address.
 
 ## 4. Tell SyncHub about the shares (Storage page)
@@ -206,7 +206,7 @@ docker start synchub
 
 The database that was there is kept beside it as `synchub.db.before-restore-<time>`. A copy from a *newer* SyncHub than the one running is refused.
 
-**Look at things.** `docker logs synchub` (start-up), the **Logs** page and `/data/logs/app.log` (everything, rotated), **Tools & Operations** and `/diagnostics` when a task looks stuck. On a worker: `docker compose logs -f`, and the **Fetch full log** button on a job in SyncHub.
+**Look at things.** `docker logs synchub` (start-up), the **Logs** page and `/data/logs/app.log` (everything, rotated), **Tools & Operations** and **System → Monitor → What it's doing now** (`/activity`) when a task looks stuck. On a worker: `docker compose logs -f`, and the **Fetch full log** button on a job in SyncHub.
 
 **Move to another server later:** the same three commands: `backup create`, `backup check`, copy, start.
 
@@ -218,7 +218,7 @@ The database that was there is kept beside it as `synchub.db.before-restore-<tim
 | Container `unhealthy`, or restarting | `docker logs synchub`. `cannot write to /data`: start it as root with `PUID`/`PGID` (the command above), or make the folder writable for the user you chose. `database is locked` or a WAL warning: the data folder is on a network or FUSE path; use `/mnt/cache/...`. |
 | Banner "These addresses will not work from inside Docker" | A service address says `localhost`/`127.0.0.1`: use the real IP (Settings). |
 | Radarr/Sonarr/Jellyfin webhook says it cannot reach SyncHub | The *SyncHub address* is wrong for where that service runs: use `http://UNRAID_IP:5001`, not `localhost`. |
-| A page answers "This is not open to ..." | Permissions (System → Access). Lost PINs: `docker exec synchub python -m synchub.access reset-all`. |
+| A page answers "This is not open to ..." | Permissions (System → People). Lost PINs: `docker exec synchub python -m synchub.access reset-all`. |
 | Worker will not mount a share | `cifs-utils` missing on the PC; wrong IP, share name, user or password in `.env`; for SMB try `vers=3.1.1` or `vers=2.1` in the share's options (Storage page), then regenerate the files. |
 | Worker online but a share says "no marker file" | Mounted but not set up: `docker compose run --rm worker --init-roots`. Or **not mounted** and you are looking at an empty folder: fix the mount first. |
 | Share says "wrong share" | The mounts are mixed up (`Media` mounted where `TFiles` belongs). |
