@@ -34,7 +34,7 @@ GitHub builds the image for you. Every push to `main` runs the tests and then pu
 
 ```
 ghcr.io/thebumgreg/synchub:latest      the newest main (what Unraid's "apply update" follows)
-ghcr.io/thebumgreg/synchub:1.1.0       a release (made by tagging v1.1.0; see docs/RELEASING.md); also :1.1
+ghcr.io/thebumgreg/synchub:1.1.0       the newest build of release 1.1.0 (the number in synchub/__init__.py; see docs/RELEASING.md)
 ghcr.io/thebumgreg/synchub:sha-abc1234 one exact commit
 ```
 
