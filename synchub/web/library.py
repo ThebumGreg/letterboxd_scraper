@@ -108,9 +108,8 @@ def queue_rows(conn, cfg, group, f):
 def register(app):
     @app.route("/library")
     def library_page():
-        with db.connection() as conn:
-            data = overview(conn)
-        return render_template("library.html", **data)
+        from synchub.web import media
+        return media.render_media("library")
 
     @app.route("/library/fragment")
     def library_fragment():

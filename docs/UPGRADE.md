@@ -55,7 +55,27 @@ If a job is running, Docker's stop waits up to 90 seconds for the agent to stop 
 2. `sudo ./agent/update-worker.sh --dir /opt/synchub-worker --report` once more: health `healthy`, mounts present, no restarts.
 3. Run a small job or *Check* on the Workers page.
 
-### If something goes wrong
+### If the worker does not come online
+
+Collect, in this order, and send it with the `--report` output:
+
+```
+cd /opt/synchub-worker
+sudo docker compose ps
+sudo docker compose logs --tail 80
+sudo docker compose run --rm worker --check        # says in plain words what fails
+mount | grep /mnt/tower
+docker logs --tail 100 synchub                      # on Unraid: migration errors, tracebacks near /api/worker/poll
+```
+
+| The log or `--check` says | Cause and fix |
+|---|---|
+| `SyncHub does not accept this worker's token` / `[!!] SyncHub accepts the token` | SyncHub only keeps a hash of each token, so a replaced, revoked or re-added worker's old token is refused. On the Workers page use Worker-1, **More, New token** (shown once), put it in `SYNCHUB_TOKEN=` in `/opt/synchub-worker/.env`, then `sudo docker compose up -d` and run `--check` again. This happened on the first upgrade of worker-1. |
+| Connection refused / timed out | wrong `SYNCHUB_URL` in `.env`, or SyncHub is down: `curl http://UNRAID_IP:5001/healthz` from the worker should print `{"ok":true,...}` |
+| a share is "not mounted" / "stale file handle" | `sudo umount -f -l /mnt/tower/media`, `sudo mount -a`, `sudo docker compose restart` |
+| "Update the agent" in a failed job | the worker is older than SyncHub expects: update it (section 2) |
+
+### If something goes wrong after the update
 
 Send the thread the output of `--report` and `~/worker-update.log`. To go back to the previous code:
 

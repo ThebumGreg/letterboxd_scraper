@@ -1,11 +1,7 @@
-<!-- synchub/web/templates/storage.html -->
-{% extends "base.html" %}
-{% block title %}Storage{% endblock %}
-
-{% block content %}
+<!-- synchub/web/templates/_storage_tab.html: the Storage tab of the Media page -->
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
     <div>
-        <h2 class="mb-2">Storage</h2>
+        <h3 class="h4 mb-2">Storage</h3>
         <p class="text-body-secondary mb-0">The Unraid shares the workers read from and write to. Each gets a short name that jobs use, and every worker mounts it at the same folder, so a path means the same thing everywhere.</p>
     </div>
     <button type="button" class="btn btn-success" id="addShareBtn"><i class="bi bi-plus-lg" aria-hidden="true"></i> Add share</button>
@@ -93,78 +89,3 @@
         </form>
     </div>
 </div>
-{% endblock %}
-
-{% block scripts %}
-<script>
-(() => {
-    const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
-    const defaults = {{ defaults|tojson }};
-    const $ = (id) => document.getElementById(id);
-    const modal = bootstrap.Modal.getOrCreateInstance($('shareModal'));
-    const post = async (url, body) => {
-        try {
-            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf }, body: JSON.stringify(body || {}) });
-            return await res.json();
-        } catch (e) { return { ok: false, message: 'Could not reach the server.' }; }
-    };
-    let editing = null, optionsTouched = false;
-
-    const hints = {
-        smb: ['Share name', 'The name under Shares in Unraid, for example Media.', 'Media'],
-        nfs: ['Export path', 'The path Unraid exports, for example /mnt/user/Media.', '/mnt/user/Media'],
-        local: ['Folder on the worker PC', 'A folder you have already mounted yourself; Docker passes it through.', '/mnt/tower/Media'],
-    };
-    function adjust() {
-        const protocol = $('shareProtocol').value, [label, hint, example] = hints[protocol];
-        $('shareShareLabel').textContent = label;
-        $('shareShareHint').textContent = hint;
-        $('shareShare').placeholder = example;
-        document.querySelectorAll('[data-network]').forEach((el) => el.classList.toggle('d-none', protocol === 'local'));
-        if (!optionsTouched) $('shareOptions').value = defaults[protocol] || '';
-    }
-    $('shareProtocol').addEventListener('change', adjust);
-    $('shareOptions').addEventListener('input', () => { optionsTouched = true; });
-
-    function open(title, v) {
-        $('shareModalTitle').textContent = title;
-        $('shareName').value = v.name || ''; $('shareLabel').value = v.label || '';
-        $('shareProtocol').value = v.protocol || 'smb'; $('shareHost').value = v.host || '';
-        $('shareShare').value = v.share || ''; $('shareMount').value = v.mount_point || '';
-        optionsTouched = v.options !== undefined; $('shareOptions').value = v.options || '';
-        $('shareJellyfin').value = v.jellyfin_path || ''; $('shareRadarr').value = v.radarr_path || ''; $('shareSonarr').value = v.sonarr_path || '';
-        $('shareError').textContent = '';
-        adjust();
-        modal.show();
-    }
-    // Suggest a mount point from the share name until one is typed.
-    $('shareShare').addEventListener('input', () => {
-        if ($('shareMount').dataset.touched) return;
-        const tail = $('shareShare').value.split('/').filter(Boolean).pop() || '';
-        $('shareMount').value = tail ? '/mnt/tower/' + tail : '';
-    });
-    $('shareMount').addEventListener('input', () => { $('shareMount').dataset.touched = '1'; });
-
-    $('addShareBtn').addEventListener('click', () => { editing = null; delete $('shareMount').dataset.touched; open('Add share', {}); });
-    document.addEventListener('click', async (e) => {
-        const edit = e.target.closest('[data-edit-share]');
-        if (edit) { editing = edit.dataset.editShare; $('shareMount').dataset.touched = '1'; open('Edit share', JSON.parse(edit.dataset.values)); return; }
-        const del = e.target.closest('[data-delete-share]');
-        if (del) {
-            if (!confirm(`Remove the share '${del.dataset.name}'? Workers keep their mounts until you change their setup files.`)) return;
-            const data = await post(`/api/storage/${del.dataset.deleteShare}/delete`);
-            if (data.ok) location.reload();
-            else { const box = $('shareMessage'); box.className = 'alert alert-danger'; box.textContent = data.message || 'Failed.'; }
-        }
-    });
-    $('shareForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const body = { name: $('shareName').value, label: $('shareLabel').value, protocol: $('shareProtocol').value, host: $('shareHost').value, share: $('shareShare').value,
-                       mount_point: $('shareMount').value, options: $('shareOptions').value, jellyfin_path: $('shareJellyfin').value, radarr_path: $('shareRadarr').value, sonarr_path: $('shareSonarr').value };
-        const data = await post(editing ? `/api/storage/${editing}/update` : '/api/storage', body);
-        if (!data.ok) { $('shareError').textContent = data.message || 'Failed.'; return; }
-        location.reload();
-    });
-})();
-</script>
-{% endblock %}

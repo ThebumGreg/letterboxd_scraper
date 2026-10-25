@@ -200,9 +200,8 @@ def _fail(message, status=400):
 def register(app):
     @app.route("/workers")
     def workers_page():
-        with db.connection() as conn:
-            data = snapshot(conn)
-        return render_template("workers.html", **data)
+        from synchub.web import media
+        return media.render_media("workers")
 
     @app.route("/workers/fragment")
     def workers_fragment():

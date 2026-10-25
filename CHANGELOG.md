@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+**One Media page.** Library, Workers and Storage are now tabs of one page (the menu entries and the /library, /workers and /storage addresses still work and open their own tab). On the Workers tab the *More* menu now opens above the table instead of being cut off by it, and the inner Workers/Jobs/Worker Status switch is drawn as pills. Troubleshooting: a worker whose token SyncHub no longer accepts (docs/DEPLOY.md, docs/UPGRADE.md).
+
 **Worker upgrades.** `agent/update-worker.sh --report` prints a worker's current state without changing anything, and `docs/UPGRADE.md` is the step-by-step upgrade guide (SyncHub first, then each worker; report, dry run, update, check, roll back).
 
 **Download pipeline (off by default).** A file Radarr or Sonarr imports can now be checked and, where the rules call for it, replaced in place. Switch it on under Library, Settings, *New Radarr/Sonarr downloads*: *Ask me first* lists each import on the Library page with a **Replace it** button, *Replace when safe* converts files whose plan is plain (tracks removed, lossless remux, English audio confirmed) and still asks about the rest.
