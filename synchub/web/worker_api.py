@@ -8,7 +8,7 @@ from functools import wraps
 
 from flask import Response, g, jsonify, request
 
-from synchub import downloads, db, jobs, pipeline_events, states, storage, tasks, workers
+from synchub import downloads, db, jobs, pipeline_events, previews, states, storage, tasks, workers
 from synchub.library import cleanup, migrate, scan
 
 logger = logging.getLogger(__name__)
@@ -114,6 +114,7 @@ def register(app):
             claimed = jobs.claim(conn, worker, data.get("free_slots") or 0, free_bytes if isinstance(free_bytes, (int, float)) else None)
             downloads.process(conn)
             finished = migrate.sync_active(conn) + downloads.sync_active(conn)
+            previews.sync_active(conn)
             cleanup.sync_active(conn)
             for job in claimed:
                 logger.info(f"[jobs] job {job['id']} ({job['kind']}: {job['title']}) went to {worker['name']}, attempt {job['attempt']}")
@@ -147,6 +148,7 @@ def register(app):
         with db.connection() as conn:
             jobs.complete(conn, job_id, g.worker["id"], data.get("result"), command=_text(data.get("command"), 8000))
             arrived = migrate.sync(conn, job_id) or downloads.sync(conn, job_id)
+            previews.sync(conn, job_id)
             cleanup.sync(conn, job_id)
         logger.info(f"[jobs] job {job_id} completed by {g.worker['name']}")
         _dashboard([job_id])
@@ -166,6 +168,7 @@ def register(app):
                                 command=_text(data.get("command"), 8000), keep_state=data.get("keep_state") is not False)
             migrate.sync(conn, job_id)
             downloads.sync(conn, job_id)
+            previews.sync(conn, job_id)
             cleanup.sync(conn, job_id)
         _dashboard([job_id])
         logger.warning(f"[jobs] job {job_id} failed on {g.worker['name']} ({data.get('error_class')}): {_text(data.get('message'), 300)} -> {outcome}")
@@ -179,10 +182,17 @@ def register(app):
                               data.get("detail"), keep_state=data.get("keep_state") is not False)
             migrate.sync(conn, job_id)
             downloads.sync(conn, job_id)
+            previews.sync(conn, job_id)
             cleanup.sync(conn, job_id)
         _dashboard([job_id])
         logger.info(f"[jobs] job {job_id} is waiting for review: {_text(data.get('reason'), 200)}")
         return jsonify(ok=True)
+
+    @route("/jobs/<int:job_id>/preview/<name>", "preview_clip")
+    def job_preview_clip(job_id, name):
+        with db.connection() as conn:
+            written = previews.store_clip(conn, job_id, g.worker["id"], name, request.stream, request.content_length)
+        return jsonify(ok=True, bytes=written)
 
     @route("/jobs/<int:job_id>/cleaned", "cleaned")
     def job_cleaned(job_id):

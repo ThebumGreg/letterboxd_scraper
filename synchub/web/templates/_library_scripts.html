@@ -36,6 +36,7 @@
             download_pipeline: $('setDownloads').value, originals_retention_days: $('setOriginals').value,
             size_policy: $('setSizePolicy').checked ? '1' : '0', movie_max_gb: $('setMaxGb').value, movie_target_gb: $('setTargetGb').value, size_crf: $('setSizeCrf').value,
             dolby_vision_profile_5: $('setDv5').value, dolby_vision_profile_7_8: $('setDv78').value,
+            review_first: $('setReviewFirst').value, trust_after: $('setTrustAfter').value, preview_seconds: $('setPreviewSeconds').value, preview_auto: $('setPreviewAuto').checked ? '1' : '0',
             library_default_profile: $('setProfile').value, source_delete_after_days: $('setSourceDelete').value, arr_after_migration: $('setArr').value, arr_apply_when: $('setArrWhen').value });
         librarySay(data.message || (data.ok ? 'Saved.' : 'Failed.'), data.ok);
         if (data.ok) setTimeout(() => location.reload(), 600);
@@ -76,6 +77,14 @@
             const data = await libraryPost('/api/library/queue-approved');
             librarySay(data.message || (data.ok ? 'Queued.' : 'Failed.'), data.ok);
             refresh();
+            return;
+        }
+        const make = e.target.closest('[data-make-preview]');
+        if (make) {
+            make.disabled = true;
+            const data = await libraryPost('/api/library/previews', { subject_type: make.dataset.makePreview, subject_id: make.dataset.id });
+            librarySay(data.message || (data.ok ? 'Queued.' : 'Failed.'), data.ok);
+            if (data.ok && data.url) setTimeout(() => { location.href = data.url; }, 600); else make.disabled = false;
             return;
         }
         const download = e.target.closest('[data-download]');

@@ -4,11 +4,12 @@ Scan the shares, see every file's plain-language recommendation sorted into queu
 confirmation), and export the lot as a CSV. Nothing here touches a file: approvals are decisions, recorded with who made them; what is done
 with approved files is a later step.
 """
+import os
 from datetime import datetime, timezone
 
-from flask import Response, jsonify, redirect, render_template, request, url_for
+from flask import Response, jsonify, redirect, render_template, request, send_file, url_for
 
-from synchub import db, downloads, jobs, settings, storage
+from synchub import db, downloads, jobs, previews, settings, storage
 from synchub.library import cleanup, findings, migrate, profiles, recommend as rc, report, scan, size_policy, store
 from synchub.library import vocab as v
 from settings_validation import validate_setting
@@ -22,6 +23,14 @@ def _who(conn):
     from synchub.web import current_profile
     profile = current_profile(conn)
     return profile["name"] if profile else "guest"
+
+
+def _with_previews(conn, rows):
+    """Each import with the newest preview made for it, so the row can link to it."""
+    for row in rows:
+        found = previews.latest_for(conn, "download_import", row["id"])
+        row["preview"] = previews.describe(found) if found else None
+    return rows
 
 
 def _fail(message, status=400):
@@ -75,7 +84,8 @@ def overview(conn):
     migration = migrate.queue_summary(conn)
     return {"cfg": cfg, "groups": groups, "total": len(rows), "shares": shares_summary(conn, cfg), "runs": runs, "active": any(r["active"] for r in runs) or bool(migration["queued"] or migration["running"]) or bool(downloads.summary(conn)["working"]), "options": options,
             "roots": [r["name"] for r in storage.list_all(conn)], "migration": migration,
-            "downloads": downloads.recent(conn, 15), "download_summary": downloads.summary(conn), "originals_days": downloads.retention_days(conn), "size": size_policy.load(conn), "lookups": {"confidence": CONFIDENCE_FLOORS},
+            "downloads": _with_previews(conn, downloads.recent(conn, 15)), "preview_summary": previews.summary(conn), "review_first": previews.review_first(conn), "trust_after": previews.trust_after(conn),
+            "preview_seconds": previews.clip_seconds(conn), "preview_keep_days": previews.keep_days(conn), "preview_auto": previews.auto_make(conn), "download_summary": downloads.summary(conn), "originals_days": downloads.retention_days(conn), "size": size_policy.load(conn), "lookups": {"confidence": CONFIDENCE_FLOORS},
             "profiles": profiles.all_profiles(conn), "default_profile_id": profiles.default(conn)["id"], "cleanup": cleanup.summary(conn), "attention": migrate.attention(conn),
             "profile_options": {"codecs": profiles.VIDEO_CODECS, "presets": profiles.PRESETS, "subtitles": profiles.SUBTITLE_LABELS}}
 
@@ -168,7 +178,11 @@ def register(app):
             all_profiles = profiles.all_profiles(conn)
         group = request.args.get("group") or rcm.group
         data = describe_record(rec, rcm, cfg)
-        data.update(cfg=cfg, profiles=all_profiles, chosen_profile=chosen, rename_to=rc.rename_path(rec, cfg), source_cleanup=cleanup.source_days())
+        with db.connection() as conn:
+            size = size_policy.decide(rec, previews.plans_of(rec, approved=rec["approval_status"] == v.APPROVAL_APPROVED), size_policy.load(conn))
+            latest = previews.latest_for(conn, "library_file", record_id)
+        preview_info = {"summary": size.summary or "The size rules would compress this file; watch a short window first.", "latest": previews.describe(latest) if latest else None} if size.profile is not None else None
+        data.update(preview_info=preview_info, cfg=cfg, profiles=all_profiles, chosen_profile=chosen, rename_to=rc.rename_path(rec, cfg), source_cleanup=cleanup.source_days())
         return render_template("library_record.html", group=group, group_title=rc.GROUP_TITLES.get(group, group), events=events, siblings=siblings, f=_filters(), **data)
 
     # ---- decisions
@@ -313,6 +327,7 @@ def register(app):
         data = request.get_json(silent=True) or {}
         keys = ("library_destination_root", "library_tv_folder", "library_movie_folder", "library_integrity_mode", "library_tail_seconds", "library_exclude_folders", "download_pipeline", "originals_retention_days",
                 "size_policy", "movie_max_gb", "movie_target_gb", "size_crf", "dolby_vision_profile_5", "dolby_vision_profile_7_8",
+                "review_first", "trust_after", "preview_seconds", "preview_keep_days", "preview_auto",
                 "library_default_profile", "source_delete_after_days", "arr_after_migration", "arr_apply_when")
         cleaned, errors = {}, []
         for key in keys:
@@ -353,6 +368,62 @@ def register(app):
         if action == "rescan":
             downloads.rescan_due()
         return jsonify(ok=True, message={"approve": "Queued for a worker.", "skip": "Left as it is.", "retry": "Looking at it again.", "rescan": "Asked to rescan."}[action])
+
+    # ---- preview clips (docs/DESIGN_ENCODING.md section 12)
+    @app.route("/library/previews/<int:preview_id>")
+    def library_preview(preview_id):
+        with db.connection() as conn:
+            row = previews.get(conn, preview_id)
+            if row is None:
+                return redirect(url_for("library_page"))
+            rec = store.get_record(conn, row["record_id"]) if row["record_id"] else None
+            data = previews.describe(row)
+            data["seen_before"] = previews.approved_count(conn, row["signature"]) if row["signature"] else 0
+            data["trust_after"] = previews.trust_after(conn)
+            data["rule"] = previews.review_first(conn)
+            data["size_gb"] = round((rec["size_bytes"] or 0) / previews.GIB, 1) if rec else None
+            data["live"] = previews.live_for(conn, row["subject_type"], row["subject_id"])
+            data["other"] = [previews.describe(r) for r in conn.execute("SELECT * FROM preview WHERE subject_type = ? AND subject_id = ? AND id != ? ORDER BY id DESC LIMIT 8",
+                                                                         (row["subject_type"], row["subject_id"], preview_id))]
+        return render_template("library_preview.html", p=data, rec=rec)
+
+    @app.route("/library/previews/<int:preview_id>/clip/<name>")
+    def library_preview_clip(preview_id, name):
+        if name not in previews.CLIP_NAMES:
+            return _fail("Unknown clip.", 404)
+        path = previews.clip_path(preview_id, name)
+        if not os.path.isfile(path):
+            return _fail("That clip is not there (it may have expired).", 404)
+        download = request.args.get("download") == "1"
+        return send_file(path, mimetype="video/mp4", conditional=True, as_attachment=download, download_name=f"preview-{preview_id}-{name}.mp4", max_age=0)
+
+    @app.route("/api/library/previews", methods=["POST"])
+    def api_library_preview_create():
+        data = request.get_json(silent=True) or {}
+        try:
+            subject_id = int(data.get("subject_id"))
+        except (TypeError, ValueError):
+            return _fail("Say which file to preview.")
+        try:
+            with db.connection() as conn:
+                preview_id = previews.create(conn, data.get("subject_type") or "library_file", subject_id, _who(conn), mode=data.get("mode") or "random")
+        except previews.PreviewError as exc:
+            return _fail(str(exc))
+        return jsonify(ok=True, id=preview_id, url=url_for("library_preview", preview_id=preview_id), message="A worker will make the clips; this takes a few minutes.")
+
+    @app.route("/api/library/previews/<int:preview_id>/<action>", methods=["POST"])
+    def api_library_preview_action(preview_id, action):
+        if action not in ("approve", "retarget", "another", "skip", "reject"):
+            return _fail("Unknown action.", 404)
+        data = request.get_json(silent=True) or {}
+        try:
+            with db.connection() as conn:
+                message = previews.decide(conn, preview_id, action, _who(conn), target_gb=data.get("target_gb"))
+                row = previews.get(conn, preview_id)
+                newest = previews.latest_for(conn, row["subject_type"], row["subject_id"]) if row else None
+        except previews.PreviewError as exc:
+            return _fail(str(exc))
+        return jsonify(ok=True, message=message, next=url_for("library_preview", preview_id=newest["id"]) if action in ("retarget", "another") and newest else None)
 
     # ---- the report
     @app.route("/library/export.csv")

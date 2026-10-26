@@ -1,0 +1,112 @@
+<!-- synchub/web/templates/library_preview.html -->
+{% extends "base.html" %}
+{% block title %}Preview: {{ p.name }}{% endblock %}
+
+{% block content %}
+{% set answered = p.decision is not none %}
+<p class="mb-2"><a href="{{ url_for('library_page') }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> Library</a>
+    <span class="text-body-secondary small ms-2">preview #{{ p.id }}</span></p>
+<h2 class="mb-1" style="overflow-wrap: anywhere;">{{ p.name }}</h2>
+<div class="small text-body-secondary mb-3">
+    {% if p.size_gb %}{{ p.size_gb }} GB now{% endif %}{% if p.plan.target_gb %} &middot; target {{ '%g' % p.plan.target_gb }} GB{% endif %}
+    {% if p.plan.duration %} &middot; {{ (p.plan.duration // 60)|int }} min{% endif %}
+    &middot; {{ 'the most demanding part' if p.mode == 'worst' else 'a random part' }}, {{ p.seconds }} s
+</div>
+<div id="libMessage" class="alert d-none" role="status"></div>
+
+{% if p.status in ('queued', 'making') %}
+<div class="panel p-4 mb-3">
+    <h5 class="mb-1"><span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>{{ 'Waiting for a worker' if p.status == 'queued' else 'A worker is making the clips' }}</h5>
+    <p class="small text-body-secondary mb-0">It cuts a short window, compresses it with the settings the real job would use and makes the matching original. This page refreshes by itself.</p>
+</div>
+{% elif p.status in ('failed', 'cancelled') %}
+<div class="panel p-4 mb-3 border-danger">
+    <h5 class="mb-1">No clips were made</h5>
+    <p class="small mb-2">{{ p.message }}</p>
+    {% if not answered %}<button type="button" class="btn btn-sm btn-outline-primary" data-act="another">Try again</button>{% endif %}
+</div>
+{% elif p.status == 'expired' %}
+<div class="panel p-4 mb-3"><p class="mb-0">These clips were removed after {{ p.expires_at[:10] if p.expires_at else 'a while' }}. Make a new preview from the Library.</p></div>
+{% else %}
+<div class="row g-3 mb-3">
+    <div class="col-lg-6"><div class="panel p-2 h-100">
+        <div class="d-flex justify-content-between px-2 pt-1"><strong>Original</strong><span class="small text-body-secondary">{{ p.clip.source_video_kbps }} kbps video</span></div>
+        <video class="w-100 rounded" controls preload="metadata" playsinline src="{{ url_for('library_preview_clip', preview_id=p.id, name='source') }}" id="vidSource"></video>
+        <div class="small px-2 pb-1"><a href="{{ url_for('library_preview_clip', preview_id=p.id, name='source', download=1) }}">Download</a></div>
+    </div></div>
+    <div class="col-lg-6"><div class="panel p-2 h-100">
+        <div class="d-flex justify-content-between px-2 pt-1"><strong>Compressed</strong><span class="small text-body-secondary">{{ p.clip.encoded_video_kbps }} kbps video{% if p.clip.hdr %} &middot; {{ p.clip.hdr|upper }}{% endif %}</span></div>
+        <video class="w-100 rounded" controls preload="metadata" playsinline src="{{ url_for('library_preview_clip', preview_id=p.id, name='encoded') }}" id="vidEncoded"></video>
+        <div class="small px-2 pb-1"><a href="{{ url_for('library_preview_clip', preview_id=p.id, name='encoded', download=1) }}">Download</a></div>
+    </div></div>
+</div>
+<div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" id="syncPlay" checked><label class="form-check-label small" for="syncPlay">Play both together</label></div>
+
+<div class="panel p-3 mb-3">
+    <h6>The numbers</h6>
+    <dl class="row small mb-0">
+        <dt class="col-sm-4 text-body-secondary fw-normal">This window</dt><dd class="col-sm-8">{{ p.clip.start|int // 60 }}:{{ '%02d' % (p.clip.start|int % 60) }} for {{ p.clip.length|round|int }} s</dd>
+        <dt class="col-sm-4 text-body-secondary fw-normal">Video bits</dt><dd class="col-sm-8">{{ p.clip.source_video_kbps }} &rarr; {{ p.clip.encoded_video_kbps }} kbps{% if p.ratio %} ({{ (p.ratio * 100)|round|int }}% of the original){% endif %}</dd>
+        {% if p.predicted_gb %}<dt class="col-sm-4 text-body-secondary fw-normal">Whole film, estimated</dt><dd class="col-sm-8">about {{ p.predicted_gb }} GB (from this window alone: a busier or calmer part will differ){% if p.size_gb %}, now {{ p.size_gb }} GB{% endif %}</dd>{% endif %}
+        <dt class="col-sm-4 text-body-secondary fw-normal">Settings</dt><dd class="col-sm-8">HEVC, quality {{ p.clip.crf }}{% if p.plan.target_video_kbps %}, capped near {{ p.plan.target_video_kbps }} kbps{% endif %}</dd>
+    </dl>
+    {% if p.notes or p.reasons %}<ul class="small mt-2 mb-0">{% for r in p.reasons %}<li class="text-warning-emphasis">{{ r }}</li>{% endfor %}{% for n in p.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
+    <p class="form-text mb-0 mt-2">If a clip will not play, your browser may not decode HEVC: use Download and open it in a video player. The clips are removed after {{ p.expires_at[:10] if p.expires_at else 'a few days' }}.</p>
+</div>
+{% endif %}
+
+{% if answered %}
+<div class="alert alert-secondary">Answered by {{ p.decided_by }}: <strong>{{ p.decision }}</strong>. {{ p.message }}
+    {% if p.live and p.live.id != p.id %} <a href="{{ url_for('library_preview', preview_id=p.live.id) }}">Newest preview</a>{% endif %}</div>
+{% elif p.status in ('ready', 'failed', 'expired') %}
+<div class="panel p-3 mb-3">
+    <h6>What now?</h6>
+    <div class="row g-2 align-items-end mb-2">
+        <div class="col-6 col-md-3"><label for="targetGb" class="form-label small mb-1">Size target (GB)</label><input type="number" min="1" max="200" step="0.5" class="form-control form-control-sm" id="targetGb" value="{{ '%g' % p.target_gb if p.target_gb else '' }}"></div>
+        <div class="col-12 col-md-9 d-flex flex-wrap gap-2">
+            <button type="button" class="btn btn-success btn-sm" data-act="approve">Looks good{% if p.subject_type == 'download_import' %}: compress it{% endif %}</button>
+            <button type="button" class="btn btn-outline-primary btn-sm" data-act="retarget" title="Make a new clip at the target typed here">Try this target</button>
+            <button type="button" class="btn btn-outline-primary btn-sm" data-act="another" title="A different part of the film{{ ', the busiest part' if p.mode == 'random' else ', a random part' }}">Another clip</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-act="skip">Leave the file alone</button>
+            <button type="button" class="btn btn-outline-danger btn-sm" data-act="reject" title="Leave it alone and ask again for files like this">Not good enough</button>
+        </div>
+    </div>
+    <div class="form-text">If you change the target above, &ldquo;Looks good&rdquo; compresses at that new size without making a new clip.
+        Files like this one ({{ p.signature.replace('|', ', ') if p.signature }}): {{ p.seen_before }} approved so far{% if p.rule == 'until_trusted' %}; previews stop after {{ p.trust_after }}{% endif %}.</div>
+</div>
+{% endif %}
+
+{% if p.other %}
+<div class="panel p-3 mb-3"><h6>Other previews of this file</h6>
+    <ul class="small list-unstyled mb-0">{% for o in p.other %}<li><a href="{{ url_for('library_preview', preview_id=o.id) }}">#{{ o.id }}</a> &middot; {{ o.when }} &middot; {{ o.status }}{% if o.decision %} &middot; {{ o.decision }}{% endif %}</li>{% endfor %}</ul></div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/library.js') }}"></script>
+<script>
+(() => {
+    const id = {{ p.id }}, status = {{ p.status|tojson }};
+    if (status === 'queued' || status === 'making') setTimeout(() => location.reload(), 5000);
+    const a = document.getElementById('vidSource'), b = document.getElementById('vidEncoded'), sync = document.getElementById('syncPlay');
+    if (a && b && sync) {
+        const link = (x, y) => {
+            x.addEventListener('play', () => { if (sync.checked && y.paused) y.play().catch(() => {}); });
+            x.addEventListener('pause', () => { if (sync.checked && !y.paused) y.pause(); });
+            x.addEventListener('seeked', () => { if (sync.checked && Math.abs(y.currentTime - x.currentTime) > 0.2) y.currentTime = x.currentTime; });
+        };
+        link(a, b); link(b, a);
+    }
+    document.querySelectorAll('[data-act]').forEach((button) => button.addEventListener('click', async () => {
+        const act = button.dataset.act, target = document.getElementById('targetGb');
+        if (act === 'retarget' && !(target && target.value)) { librarySay('Type the size target in GB first.', false); return; }
+        if (act === 'reject' && !confirm('Leave this file alone and ask again for files like it?')) return;
+        document.querySelectorAll('[data-act]').forEach((x) => { x.disabled = true; });
+        const data = await libraryPost(`/api/library/previews/${id}/${act}`, { target_gb: target ? target.value : null });
+        librarySay(data.message || (data.ok ? 'Done.' : 'Failed.'), data.ok);
+        if (data.ok) setTimeout(() => { location.href = data.next || location.pathname; }, 700);
+        else document.querySelectorAll('[data-act]').forEach((x) => { x.disabled = false; });
+    }));
+})();
+</script>
+{% endblock %}

@@ -164,7 +164,7 @@ def test_the_agent_reports_what_it_can_do_and_how_its_shares_are(rig):
     rig.start()
     with rig.db.connection() as conn:
         w = wait(lambda: (x := workers.get(conn, rig.worker_id)) and x["status"].get("roots", {}).get("tfiles") and x, what="the first status")
-    assert w["capabilities"]["ops"] == ["copy", "rename", "delete_source", "hash", "scan", "convert"] and w["version"] == agent.__version__ and w["hostname"]
+    assert w["capabilities"]["ops"] == ["copy", "rename", "delete_source", "hash", "scan", "convert", "preview"] and w["version"] == agent.__version__ and w["hostname"]
     assert w["status"]["roots"]["media"]["ok"] and w["status"]["roots"]["media"]["state"] == "ok" and w["status"]["work_free_bytes"] > 0
 
 
@@ -819,3 +819,84 @@ def test_an_hdr_picture_is_never_squeezed_into_h264(rig):
     rig.start()
     job = wait(lambda: rig.job(job_id)["status"] in ("needs_review", "failed") and rig.job(job_id), timeout=60, what="the refusal")
     assert "HDR" in (job["error"] or job["review_reason"] or "") and not (rig.roots["media"] / "Movies").exists()
+
+
+# ---------------------------------------------------------------- preview clips (real ffmpeg)
+def make_long(path, seconds=100, hdr=False):
+    """A film long enough for a 30 s window, with two audio tracks, small enough to encode in a moment."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if hdr:
+        make_hdr(path, seconds=seconds)
+        return
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc2=duration={seconds}:size=320x240:rate=12", "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}",
+                    "-f", "lavfi", "-i", f"sine=frequency=880:duration={seconds}", "-map", "0", "-map", "1", "-map", "2", "-c:v", "libx264", "-preset", "ultrafast", "-g", "24",
+                    "-c:a", "aac", str(path)], check=True)
+
+
+def queue_preview(rig, src, profile, mode="random", seconds=30, duration=100.0, change=None):
+    with rig.db.connection() as conn:
+        preview_id = conn.execute("INSERT INTO preview (subject_type, subject_id, title, mode, seconds, status, stats_json) VALUES ('library_file', 1, 'Heat', ?, ?, 'queued', ?)",
+                                  (mode, seconds, json.dumps({"plan": {"duration": duration, "audio_kbps": 128}}))).lastrowid
+        change = change or {"op": "convert", "container": "matroska", "keep_audio": [1, 2], "default_audio": 2, "video": {"action": "transcode", "codec": "hevc"}, "audio_convert": {}}
+        job_id = jobs.create(conn, "preview", title="Preview", ref=("preview", preview_id), source=("tfiles", src), pinned_worker_id=rig.worker_id,
+                             plan={"op": "preview", "needs": ["profiles", "preview"], "change": change, "profile": profile, "seconds": seconds, "mode": mode, "seed": 5, "duration": duration,
+                                   "preview_id": preview_id})
+        conn.execute("UPDATE preview SET job_id = ? WHERE id = ?", (job_id, preview_id))
+    return preview_id, job_id
+
+
+@needs_ffmpeg
+def test_a_preview_makes_a_compressed_clip_and_the_matching_original_and_uploads_both(rig):
+    from synchub import previews
+    make_long(rig.roots["tfiles"] / "Old/Heat.mkv")
+    profile = {"video_codec": "hevc", "crf": 28, "preset": "ultrafast", "ten_bit": False, "audio_kbps": 192, "maxrate_kbps": 400, "bufsize_kbps": 800}
+    preview_id, job_id = queue_preview(rig, "Old/Heat.mkv", profile)
+    rig.start()
+    job = wait(lambda: (j := rig.job(job_id))["status"] in ("done", "failed", "needs_review") and j, timeout=120, what="the preview")
+    assert job["status"] == "done", job["error"]
+    with rig.db.connection() as conn:
+        row = previews.describe(previews.get(conn, preview_id))
+    assert row["status"] == "ready" and row["files"] == {"encoded": True, "source": True}
+    encoded, source = probe(previews.clip_path(preview_id, "encoded")), probe(previews.clip_path(preview_id, "source"))
+    video = lambda data: next(s for s in data["streams"] if s["codec_type"] == "video")          # noqa: E731
+    assert video(encoded)["codec_name"] == "hevc" and video(source)["codec_name"] == "h264"
+    assert sum(1 for s in encoded["streams"] if s["codec_type"] == "audio") == 1 and sum(1 for s in source["streams"] if s["codec_type"] == "audio") == 1
+    assert next(s for s in encoded["streams"] if s["codec_type"] == "audio")["channels"] == 2
+    assert abs(float(encoded["format"]["duration"]) - float(source["format"]["duration"])) < 1.5 and 25 <= float(encoded["format"]["duration"]) <= 35
+    clip = row["clip"]
+    assert 10 <= clip["start"] <= 60 and clip["encoded_video_kbps"] < clip["source_video_kbps"] and row["ratio"] < 1 and row["predicted_gb"] is not None
+    assert not (rig.work / "jobs").exists() or not any(p.name == "preview" for p in (rig.work / "jobs").rglob("preview"))          # the work files are cleared
+
+
+@needs_ffmpeg
+def test_the_worst_case_window_and_an_hdr_film_keep_their_colours(rig):
+    from synchub import previews
+    make_long(rig.roots["tfiles"] / "Old/Dune.mkv", hdr=True)
+    profile = {"video_codec": "hevc", "crf": 28, "preset": "ultrafast", "ten_bit": True, "audio_kbps": 192, "maxrate_kbps": 600, "bufsize_kbps": 1200}
+    preview_id, job_id = queue_preview(rig, "Old/Dune.mkv", profile, mode="worst", change={"op": "convert", "container": "matroska", "video": {"action": "transcode", "codec": "hevc"}, "audio_convert": {}})
+    rig.start()
+    job = wait(lambda: (j := rig.job(job_id))["status"] in ("done", "failed", "needs_review") and j, timeout=180, what="the HDR preview")
+    assert job["status"] == "done", job["error"]
+    assert job["result"]["mode"] == "worst" and job["result"]["hdr"] == "hdr10"
+    video = next(s for s in probe(previews.clip_path(preview_id, "encoded"))["streams"] if s["codec_type"] == "video")
+    assert video["color_transfer"] == "smpte2084" and video["pix_fmt"] == "yuv420p10le"
+    original = next(s for s in probe(previews.clip_path(preview_id, "source"))["streams"] if s["codec_type"] == "video")
+    assert original["codec_name"] == "hevc" and original["color_transfer"] == "smpte2084"
+
+
+@needs_ffmpeg
+def test_a_preview_of_a_file_that_changed_is_refused_and_an_old_format_is_re_encoded_for_the_original(rig):
+    from synchub import previews
+    make_avi(rig.roots["tfiles"] / "Old/Old.avi", audio_tracks=1, seconds=40)
+    profile = {"video_codec": "hevc", "crf": 30, "preset": "ultrafast", "ten_bit": False, "audio_kbps": 192}
+    preview_id, job_id = queue_preview(rig, "Old/Old.avi", profile, duration=40.0, change={"op": "convert", "container": "matroska", "video": {"action": "transcode", "codec": "hevc"}, "audio_convert": {}})
+    rig.start()
+    job = wait(lambda: (j := rig.job(job_id))["status"] in ("done", "failed", "needs_review") and j, timeout=120, what="the preview of an AVI")
+    assert job["status"] == "done", job["error"]
+    original = next(s for s in probe(previews.clip_path(preview_id, "source"))["streams"] if s["codec_type"] == "video")
+    assert original["codec_name"] == "h264"                                                      # mpeg4 cannot go into an MP4 for a browser, so it is re-encoded cleanly
+    with rig.db.connection() as conn:
+        other_id, other_job = queue_preview(rig, "Old/Old.avi", profile, duration=40.0)
+        conn.execute("UPDATE job SET plan = json_set(plan, '$.source_size', 12345) WHERE id = ?", (other_job,))
+    failed = wait(lambda: (j := rig.job(other_job))["status"] in ("failed", "needs_review") and j, timeout=60, what="the refusal")
+    assert "not the file SyncHub analysed" in (failed["error"] or failed["review_reason"] or "")

@@ -13,7 +13,7 @@ import logging
 import os
 import posixpath
 
-from synchub import db, jobs, settings, storage
+from synchub import db, jobs, previews, settings, storage
 from synchub.library import scan, size_policy, store
 from synchub.library import vocab as v
 
@@ -230,13 +230,16 @@ def decide(conn, row, rec, now=None):
     reasons = risks(rec, plans) if plans else []
     if size.action == size_policy.REVIEW:
         reasons += size.reasons
-    if mode(conn) == "auto" and not reasons:
+    preview_why = previews.must_review_first(conn, rec, size) if size.profile is not None else ""
+    if mode(conn) == "auto" and not reasons and not preview_why:
         _set(conn, row["id"], now, record_id=rec["id"], message="")
         return queue(conn, row["id"], "downloads (automatic)", now)
-    why = " ".join(reasons) or "Waiting for your approval (review mode)."
+    why = " ".join(reasons) or preview_why or "Waiting for your approval (review mode)."
     if size.action == size_policy.COMPRESS:
-        why = f"{size.summary} {why}" if reasons else f"{size.summary} Waiting for your approval (review mode)."
+        why = f"{size.summary} {why}" if reasons or preview_why else f"{size.summary} Waiting for your approval (review mode)."
     _set(conn, row["id"], now, record_id=rec["id"], status="awaiting_approval", message=why)
+    if size.profile is not None:                         # a compression waits for a person, so give them a clip to watch
+        previews.maybe_make_for(conn, "download_import", row["id"])
 
 
 def queue(conn, intake_id, by, now=None):

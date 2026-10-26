@@ -57,6 +57,8 @@
                 <td class="small"><span class="badge bg-{{ color }}{% if color == 'warning' %} text-dark{% endif %}">{{ d.status.replace('_', ' ') }}</span> {{ d.message or '' }}
                     {% if d.status == 'replaced' %}<div class="text-body-secondary">{{ d.rescan_message or 'Waiting to ask ' ~ d.service|title ~ ' to rescan.' }}</div>{% endif %}</td>
                 <td class="text-end text-nowrap">
+                    {% if d.preview %}<a class="btn btn-sm btn-{{ 'primary' if d.preview.status == 'ready' and not d.preview.decision else 'outline-secondary' }}" href="{{ url_for('library_preview', preview_id=d.preview.id) }}">{{ 'Watch the preview' if d.preview.status == 'ready' and not d.preview.decision else 'Preview' ~ (' (making)' if d.preview.status in ('queued', 'making') else '') }}</a>
+                    {% elif d.status == 'awaiting_approval' and d.record_id %}<button type="button" class="btn btn-sm btn-outline-primary" data-make-preview="download_import" data-id="{{ d.id }}">Make a preview</button>{% endif %}
                     {% if d.status == 'awaiting_approval' %}<button type="button" class="btn btn-sm btn-success" data-download="approve" data-id="{{ d.id }}">Replace it</button>
                         <button type="button" class="btn btn-sm btn-outline-secondary" data-download="skip" data-id="{{ d.id }}">Leave it</button>{% endif %}
                     {% if d.status in ('blocked', 'failed', 'skipped', 'nothing_to_do') %}<button type="button" class="btn btn-sm btn-outline-secondary" data-download="retry" data-id="{{ d.id }}">Check again</button>{% endif %}

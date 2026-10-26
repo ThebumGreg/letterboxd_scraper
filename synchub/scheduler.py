@@ -37,6 +37,11 @@ def _reap_jobs():
         jobs.reap(conn)
 
 
+def _purge_previews():
+    from synchub import previews
+    previews.purge()
+
+
 def _prune_jellyfin_events():
     from synchub import jellyfin_events
     removed = jellyfin_events.prune()
@@ -66,6 +71,7 @@ def configure():
             scheduler.add_job(fn, "interval", hours=hours, id=job_id, max_instances=1, coalesce=True)
     scheduler.add_job(_reap_jobs, "interval", seconds=REAPER_SECONDS, id="job_reaper", max_instances=1, coalesce=True)
     scheduler.add_job(_prune_jellyfin_events, "interval", hours=24, id="job_prune_jellyfin_events", max_instances=1, coalesce=True)
+    scheduler.add_job(_purge_previews, "interval", hours=6, id="job_purge_previews", max_instances=1, coalesce=True)
     scheduler.add_job(dispatch.run_due, "interval", seconds=NOTIFY_SECONDS, id="job_notify", max_instances=1, coalesce=True)
     scheduler.add_job(watch.check, "interval", seconds=NOTIFY_SECONDS, id="job_notify_watch", max_instances=1, coalesce=True)
     scheduler.add_job(dispatch.prune_history, "interval", hours=24, id="job_notify_prune", max_instances=1, coalesce=True)
