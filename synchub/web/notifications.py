@@ -1,5 +1,5 @@
 """A person's own notification settings: the delivery methods they add (such as Pushover), a test message, and what was sent to them."""
-from flask import jsonify, render_template, request
+from flask import jsonify, redirect, request, url_for
 
 from synchub import access, db
 from synchub.notifications import dispatch, providers, store
@@ -48,18 +48,25 @@ def _provider_and_config(data):
     return provider, provider.validate(config)
 
 
+def panels_context(conn):
+    """What the notification panels (shown on a person's own page under People) are built from, for the person using this request."""
+    profile, problem = _person(conn)
+    channels = store.list_channels(conn, profile["id"]) if profile else []
+    history = store.history(conn, profile["id"]) if profile else []
+    is_admin = bool(profile) and profile["id"] in store.admin_ids(conn)
+    rules = [r for r in store.rules(conn, profile["id"]) if is_admin or r["audience"] == "user"] if profile else []
+    pref = store.pref(conn, profile["id"]) if profile else store.DEFAULT_PREF
+    return {"profile": profile, "problem": problem, "channels": channels, "history": history, "forms": _forms(), "state": dispatch.state(),
+            "rules": rules, "pref": pref, "is_admin": is_admin}
+
+
 def register(app):
     @app.route("/notifications")
     def notifications_page():
+        """Kept for old links and bookmarks: a person's notifications are now on their own page under People."""
         with db.connection() as conn:
-            profile, problem = _person(conn)
-            channels = store.list_channels(conn, profile["id"]) if profile else []
-            history = store.history(conn, profile["id"]) if profile else []
-            is_admin = bool(profile) and profile["id"] in store.admin_ids(conn)
-            rules = [r for r in store.rules(conn, profile["id"]) if is_admin or r["audience"] == "user"] if profile else []
-            pref = store.pref(conn, profile["id"]) if profile else store.DEFAULT_PREF
-        return render_template("notifications.html", profile=profile, problem=problem, channels=channels, history=history, forms=_forms(), state=dispatch.state(),
-                               rules=rules, pref=pref, is_admin=is_admin)
+            profile = current_profile(conn)
+        return redirect(url_for("profile_page", profile_id=profile["id"], _anchor="notifications") if profile else url_for("who", next="/notifications"))
 
     @app.route("/api/notifications/verify", methods=["POST"])
     def api_notifications_verify():
@@ -173,4 +180,31 @@ def register(app):
             except ValueError as exc:
                 return _fail(str(exc))
             return jsonify(ok=True, message="Saved.")
+        return _owned(save)
+
+    @app.route("/api/notifications/episodes", methods=["POST"])
+    def api_notifications_episodes():
+        """Saves when the person using this request hears about new episodes, and for which shows."""
+        data = request.get_json(silent=True) or {}
+
+        def save(conn, profile):
+            try:
+                store.set_episode_pref(conn, profile["id"], data.get("episode_when"), data.get("episode_source"))
+            except ValueError as exc:
+                return _fail(str(exc))
+            return jsonify(ok=True, message="Saved.")
+        return _owned(save)
+
+    @app.route("/api/notifications/shows/<int:media_id>/mute", methods=["POST"])
+    def api_notifications_mute_show(media_id):
+        """Stops (or resumes) new-episode notices about one show for the person using this request."""
+        muted = (request.get_json(silent=True) or {}).get("muted")
+        if not isinstance(muted, bool):
+            return _fail("Say whether the show should be muted.")
+
+        def save(conn, profile):
+            if conn.execute("SELECT 1 FROM media WHERE id = ? AND kind = 'show'", (media_id,)).fetchone() is None:
+                return _fail("That show does not exist.", 404)
+            store.set_muted(conn, profile["id"], media_id, muted)
+            return jsonify(ok=True, muted=muted, message="Muted." if muted else "Unmuted.")
         return _owned(save)

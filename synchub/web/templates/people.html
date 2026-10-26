@@ -1,14 +1,16 @@
 <!-- synchub/web/templates/people.html -->
 {% extends "base.html" %}
 {% from "_macros.html" import csrf_field, profile_modal, jellyfin_import_modal with context %}
+{% from "_access_macros.html" import grid, rating_picker with context %}
 {% block title %}People{% endblock %}
 
 {% block content %}
 <div class="mb-4">
     <h2 class="mb-1">People</h2>
-    <p class="text-body-secondary mb-0">Who uses SyncHub: each person's Letterboxd, Serializd and Jellyfin identities, a PIN, and which pages they may open. <a href="#access" class="text-decoration-none">Jump to PINs and pages</a>.</p>
+    <p class="text-body-secondary mb-0">Who uses SyncHub. Open a person to change their Letterboxd, Serializd and Jellyfin identities, their PIN and the pages they may open, how SyncHub notifies them and whether they get administrator alerts. <a href="#access" class="text-decoration-none">Jump to guests</a>.</p>
 </div>
 
+{% set ov = {} %}{% for p in overview.people %}{% set _ = ov.update({p.id: p}) %}{% endfor %}
 <div class="mb-4" id="profiles">
     <div class="panel p-3 p-md-4 mb-0">
         <div class="d-flex justify-content-between align-items-center mb-3">
@@ -35,7 +37,7 @@
                         <th>Letterboxd Username</th>
                         <th>Serializd Username</th>
                         <th>Jellyfin User ID</th>
-                        <th style="width: 140px;" class="text-end">Actions</th>
+                        <th style="width: 220px;" class="text-end">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -46,11 +48,18 @@
                                 <input class="form-check-input profile-toggle" type="checkbox" role="switch" data-id="{{ prof.id }}" {% if prof.is_active %}checked{% endif %} title="Include this profile in scraping and requests">
                             </div>
                         </td>
-                        <td><strong>{{ prof.name }}</strong>{% if prof.has_pin %} <i class="bi bi-lock-fill small text-success" title="Has a PIN" aria-label="Has a PIN"></i>{% endif %}<div class="small"><a class="text-decoration-none" href="#person-{{ prof.id }}">PIN and pages</a></div></td>
+                        <td>{% set o = ov.get(prof.id) %}<a class="fw-bold text-decoration-none" href="{{ url_for('profile_page', profile_id=prof.id) }}" id="person-{{ prof.id }}">{{ prof.name }}</a>
+                            <div class="d-flex flex-wrap gap-1 mt-1">
+                            {% if o %}{% if o.has_pin %}<span class="badge bg-success"><i class="bi bi-lock-fill" aria-hidden="true"></i> PIN set</span>{% else %}<span class="badge bg-warning text-dark">No PIN</span>{% endif %}
+                            {% if o.as_guest %}<span class="badge bg-secondary" title="Anyone on the network can choose a profile that has no PIN, so until it has one it gets the Guests pages and rating limit, whatever is set on its page.">guest limits apply</span>{% endif %}
+                            {% if o.locked_for %}<span class="badge bg-danger">locked for {{ o.locked_for }} s after wrong tries</span>{% endif %}{% endif %}
+                            {% if prof.id == me %}<span class="badge bg-info text-dark">you</span>{% endif %}
+                            {% if prof.id in admin_ids %}<span class="badge bg-dark" title="Gets administrator alerts">admin alerts</span>{% endif %}</div></td>
                         <td>{{ prof.letterboxd_username or '—' }}</td>
                         <td>{{ prof.serializd_username or '—' }}</td>
                         <td><code class="small">{{ prof.jellyfin_user_id or '—' }}</code></td>
                         <td class="text-end">
+                            <a class="btn btn-sm btn-success" href="{{ url_for('profile_page', profile_id=prof.id) }}">Open</a>
                             <button type="button" class="btn btn-sm btn-outline-secondary profile-edit"
                                 data-id="{{ prof.id }}" data-name="{{ prof.name }}" data-lb="{{ prof.letterboxd_username or '' }}"
                                 data-sz="{{ prof.serializd_username or '' }}" data-jf="{{ prof.jellyfin_user_id or '' }}">Edit</button>
@@ -72,8 +81,8 @@
 </div>
 
 <div class="mb-3" id="access">
-    <h4 class="mb-1">PINs and pages</h4>
-    <p class="text-body-secondary mb-0">Give a profile a PIN and choose which pages it may open and which ratings it may see. Anyone can choose a profile that has no PIN, so once any profile has a PIN, a profile without one is treated as a guest: the pages and rating limit below only take effect when it has a PIN.</p>
+    <h4 class="mb-1">Guests and PINs</h4>
+    <p class="text-body-secondary mb-0">Each person's PIN, pages and rating limit are on their own page (press Open). Anyone can choose a profile that has no PIN, so once any profile has a PIN, a profile without one is treated as a guest: the pages and rating limit below only take effect when it has a PIN.</p>
 </div>
 <div id="accessMessage" class="alert d-none" role="status" aria-live="polite"></div>
 
@@ -84,32 +93,6 @@
 <div class="alert alert-success" id="accessWarnings">{% if overview.locked_down %}Restrictions are on: guests, and any profile without a PIN, get only what the Guests card allows.{% else %}There are no profiles yet.{% endif %}</div>
 {% endif %}
 
-{% macro grid(owner, perms, all_perms) %}
-    <div class="row row-cols-1 row-cols-sm-2 row-cols-xl-3 g-1 mb-2" data-perm-grid="{{ owner }}">
-        {% for key, label, help in permissions %}
-        <div class="col"><div class="form-check">
-            <input class="form-check-input" type="checkbox" id="perm-{{ owner }}-{{ key }}" value="{{ key }}" {% if key in perms %}checked{% endif %}>
-            <label class="form-check-label" for="perm-{{ owner }}-{{ key }}" title="{{ help }}">{{ label }}</label>
-        </div></div>
-        {% endfor %}
-    </div>
-    <div class="d-flex flex-wrap gap-2 align-items-center mb-1">
-        <button type="button" class="btn btn-success btn-sm" data-save-perms="{{ owner }}">Save pages</button>
-        <span class="small text-body-secondary">Quick pick:</span>
-        {% for name, keys in presets.items() %}<button type="button" class="btn btn-outline-secondary btn-sm" data-preset="{{ owner }}" data-keys="{{ keys|join(',') }}">{{ name|capitalize }}</button>{% endfor %}
-    </div>
-{% endmacro %}
-
-{% macro rating_picker(owner, current) %}
-    <div class="d-flex flex-wrap gap-2 align-items-center mt-2" data-rating-box="{{ owner }}">
-        <label for="rating-{{ owner }}" class="small mb-0"><i class="bi bi-shield-check" aria-hidden="true"></i> Most mature rating they may see</label>
-        <select class="form-select form-select-sm w-auto" id="rating-{{ owner }}">
-            {% for level, name, covers in levels %}<option value="{{ level }}" {% if current == level %}selected{% endif %}>{{ name }} ({{ covers }})</option>{% endfor %}
-            <option value="" {% if current is none %}selected{% endif %}>No limit (everything, unrated titles too)</option>
-        </select>
-        <button type="button" class="btn btn-success btn-sm" data-save-rating="{{ owner }}">Save rating limit</button>
-    </div>
-{% endmacro %}
 
 <div class="panel p-3 p-md-4 mb-3" data-card="guest">
     <div class="d-flex align-items-center gap-2 mb-2"><h5 class="mb-0">Guests</h5><span class="badge bg-secondary">&ldquo;Just looking&rdquo;</span></div>
@@ -120,34 +103,6 @@
     {{ rating_picker('guest', overview.guest.max_rating) }}
 </div>
 
-{% for p in overview.people %}
-<div class="panel p-3 p-md-4 mb-3" data-card="{{ p.id }}" id="person-{{ p.id }}">
-    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
-        <h5 class="mb-0">{{ p.name }}</h5>
-        {% if p.has_pin %}<span class="badge bg-success"><i class="bi bi-lock-fill" aria-hidden="true"></i> PIN set</span>{% else %}<span class="badge bg-warning text-dark">No PIN</span>{% endif %}
-        {% if p.as_guest %}<span class="badge bg-secondary" title="Anyone on the network can choose a profile that has no PIN, so until it has one it gets the Guests pages and rating limit, whatever is set below.">guest limits apply</span>{% endif %}
-        {% if p.id == me %}<span class="badge bg-info text-dark">you</span>{% endif %}
-        {% if p.locked_for %}<span class="badge bg-danger">locked for {{ p.locked_for }} s after wrong tries</span>{% endif %}
-    </div>
-    {{ grid(p.id, p.permissions, p.all) }}
-    {{ rating_picker(p.id, p.max_rating) }}
-    <hr>
-    <div class="row g-2 align-items-end">
-        <div class="col-sm-5 col-md-4">
-            <label for="pin-{{ p.id }}" class="form-label small mb-1">{{ 'New PIN' if p.has_pin else 'Set a PIN' }} (4 to 8 digits)</label>
-            <input type="password" class="form-control form-control-sm" id="pin-{{ p.id }}" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8" autocomplete="new-password" placeholder="e.g. 4821">
-        </div>
-        <div class="col-auto d-flex flex-wrap gap-2">
-            <button type="button" class="btn btn-outline-success btn-sm" data-set-pin="{{ p.id }}">{{ 'Change PIN' if p.has_pin else 'Set PIN' }}</button>
-            {% if p.has_pin %}<button type="button" class="btn btn-outline-danger btn-sm" data-clear-pin="{{ p.id }}" data-name="{{ p.name }}">Remove PIN</button>
-            <button type="button" class="btn btn-outline-secondary btn-sm" data-signout="{{ p.id }}" title="Ask for the PIN again on every device">Sign out everywhere</button>{% endif %}
-            {% if p.locked_for or p.failures %}<button type="button" class="btn btn-outline-warning btn-sm" data-unlock="{{ p.id }}">Unlock</button>{% endif %}
-        </div>
-    </div>
-</div>
-{% else %}
-<div class="alert alert-secondary">There are no profiles yet. Add one above, then come back to give it a PIN.</div>
-{% endfor %}
 
 <div class="panel p-3 p-md-4 mb-4">
     <h5 class="mb-2">Remembering a PIN</h5>
@@ -228,48 +183,5 @@
             });
     }
 </script>
-<script>
-(() => {
-    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
-    const box = document.getElementById('accessMessage');
-    const say = (text, ok) => { box.className = 'alert ' + (ok ? 'alert-success' : 'alert-danger'); box.textContent = text; box.scrollIntoView({ block: 'nearest' }); };
-    async function post(url, body) {
-        try {
-            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(body || {}) });
-            return await res.json();
-        } catch (e) { return { ok: false, message: 'Could not reach the server.' }; }
-    }
-    const after = (data, reload) => { say(data.message || (data.ok ? 'Done.' : 'Failed.'), data.ok); if (data.ok && reload) setTimeout(() => location.reload(), 900); };
-    const ticked = (owner) => [...document.querySelectorAll(`[data-perm-grid="${owner}"] input:checked`)].map((i) => i.value);
-
-    document.addEventListener('click', async (e) => {
-        const t = e.target.closest('button');
-        if (!t) return;
-        if (t.dataset.preset) {
-            const keys = t.dataset.keys ? t.dataset.keys.split(',') : [];
-            document.querySelectorAll(`[data-perm-grid="${t.dataset.preset}"] input`).forEach((i) => { i.checked = keys.includes(i.value); });
-        } else if (t.dataset.savePerms) {
-            const owner = t.dataset.savePerms;
-            after(await post(owner === 'guest' ? '/api/access/guest' : `/api/access/profile/${owner}/permissions`, { permissions: ticked(owner) }), true);
-        } else if (t.dataset.saveRating) {
-            const owner = t.dataset.saveRating;
-            after(await post(owner === 'guest' ? '/api/access/guest-rating' : `/api/access/profile/${owner}/rating`, { max_rating: document.getElementById(`rating-${owner}`).value }), true);
-        } else if (t.dataset.setPin) {
-            const input = document.getElementById(`pin-${t.dataset.setPin}`);
-            const data = await post(`/api/access/profile/${t.dataset.setPin}/pin`, { pin: input.value });
-            if (data.ok) input.value = '';
-            after(data, true);
-        } else if (t.dataset.clearPin) {
-            if (!confirm(`Remove the PIN of ${t.dataset.name}? Anyone on your network will be able to choose this profile.`)) return;
-            after(await post(`/api/access/profile/${t.dataset.clearPin}/pin/clear`), true);
-        } else if (t.dataset.signout) {
-            after(await post(`/api/access/profile/${t.dataset.signout}/signout`), false);
-        } else if (t.dataset.unlock) {
-            after(await post(`/api/access/profile/${t.dataset.unlock}/unlock`), true);
-        } else if (t.id === 'saveSessionDays') {
-            after(await post('/api/access/session-days', { days: document.getElementById('sessionDays').value }), false);
-        }
-    });
-})();
-</script>
+<script src="{{ url_for('static', filename='js/access.js') }}"></script>
 {% endblock %}

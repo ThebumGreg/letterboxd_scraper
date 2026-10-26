@@ -564,15 +564,15 @@ def alice(app, conn):
 
 
 def test_a_guest_is_asked_to_choose_a_profile(client, conn):
-    page = text(client.get("/notifications"))
-    assert "Choose your profile first" in page and 'id="channelsPanel"' not in page
+    r = client.get("/notifications")
+    assert r.status_code == 302 and r.headers["Location"].startswith("/who")
     assert client.post("/api/notifications/verify", json={"provider": "pushover", "config": {"user_key": USER}}).status_code == 403
 
 
 def test_the_page_shows_a_persons_delivery_methods_with_keys_masked(alice, conn, push):
     pid, browser = alice
     add_channel(conn, pid, device="ipad", label="My iPad")
-    page = text(browser.get("/notifications"))
+    page = text(browser.get("/notifications", follow_redirects=True))
     assert "My iPad" in page and USER[-4:] in page and USER not in page and TOKEN not in page
     assert 'data-act="test"' in page and "Not tried yet" in page and 'id="addChannel"' in page and "Nothing has been sent to you yet." in page
 
@@ -580,11 +580,11 @@ def test_the_page_shows_a_persons_delivery_methods_with_keys_masked(alice, conn,
 def test_the_page_says_what_the_administrator_still_has_to_do(alice, push):
     _, browser = alice
     settings.set_value("pushover_app_token", "")
-    page = text(browser.get("/notifications"))
+    page = text(browser.get("/notifications", follow_redirects=True))
     assert "Sending is switched off by the administrator" in page and "Pushover is not set up yet" in page
     switch_on()
     settings.set_value("pushover_app_token", TOKEN)
-    page = text(browser.get("/notifications"))
+    page = text(browser.get("/notifications", follow_redirects=True))
     assert "switched off" not in page and "not set up yet" not in page
 
 
@@ -641,7 +641,7 @@ def test_a_test_message_goes_to_the_persons_own_device_and_shows_in_the_history(
     assert push.sent[0]["data"]["user"] == USER
     history = browser.get("/api/notifications/history").get_json()["history"]
     assert [(h["title"], h["status"]) for h in history] == [("SyncHub test", "sent")]
-    assert "SyncHub test" in text(browser.get("/notifications"))
+    assert "SyncHub test" in text(browser.get("/notifications", follow_redirects=True))
     push.replies = [Reply(400, {"user": "invalid", "errors": ["user identifier is invalid"], "status": 0})]
     r = browser.post(f"/api/notifications/channels/{cid}/test")
     assert r.status_code == 200 and not r.get_json()["ok"] and "invalid" in r.get_json()["message"]
@@ -655,7 +655,7 @@ def test_nobody_can_touch_or_test_someone_elses_delivery_methods(app, conn, push
     assert bob.post(f"/api/notifications/channels/{cid}/enabled", json={"enabled": False}).status_code == 404
     assert bob.post(f"/api/notifications/channels/{cid}/delete").status_code == 404
     assert conn.execute("SELECT enabled FROM notification_channel WHERE id = ?", (cid,)).fetchone()[0] == 1
-    page = text(bob.get("/notifications"))
+    page = text(bob.get("/notifications", follow_redirects=True))
     assert USER[-4:] not in page and store.history(conn, b) == []
 
 
@@ -664,7 +664,7 @@ def test_switching_off_and_removing_a_channel_from_the_page(alice, conn):
     cid = add_channel(conn, pid)
     assert browser.post(f"/api/notifications/channels/{cid}/enabled", json={"enabled": "yes"}).status_code == 400
     assert browser.post(f"/api/notifications/channels/{cid}/enabled", json={"enabled": False}).get_json()["message"] == "Switched off."
-    assert "Switch on" in text(browser.get("/notifications"))
+    assert "Switch on" in text(browser.get("/notifications", follow_redirects=True))
     assert browser.post(f"/api/notifications/channels/{cid}/delete").get_json()["ok"]
     assert browser.post(f"/api/notifications/channels/{cid}/delete").status_code == 404
 
@@ -698,7 +698,7 @@ def test_once_someone_has_a_pin_a_profile_without_one_cannot_manage_notification
     lock_down(conn)
     dan = add_profile(conn, "Dan")
     browser = browser_for(app, dan)
-    page = text(browser.get("/notifications"))
+    page = text(browser.get("/notifications", follow_redirects=True))
     assert "has no PIN" in page and 'id="channelsPanel"' not in page
     for call in (lambda: browser.post("/api/notifications/verify", json={"provider": "pushover", "config": {"user_key": USER}}),
                  lambda: browser.post("/api/notifications/channels", json={"provider": "pushover", "config": {"user_key": USER}}),
@@ -712,7 +712,7 @@ def test_a_profile_with_a_pin_that_was_entered_here_can(app, conn, push):
     browser = app.test_client()
     assert browser.post("/who", data={"profile_id": str(owner), "pin": "4821"}).status_code == 302
     add_channel(conn, owner)
-    page = text(browser.get("/notifications"))
+    page = text(browser.get("/notifications", follow_redirects=True))
     assert 'id="channelsPanel"' in page and "has no PIN" not in page
     assert browser.post(f"/api/notifications/channels/{store.list_channels(conn, owner)[0]['id']}/test").get_json()["ok"]
 
@@ -722,18 +722,18 @@ def test_the_notifications_permission_decides_who_may_open_the_page(app, conn):
     settings.set_value("access_guest_permissions", "dashboard,tv")
     browser = app.test_client()
     browser.post("/who", data={"profile_id": str(owner), "pin": "4821"})
-    assert browser.get("/notifications").status_code == 200                             # everything, until limited
+    assert browser.get("/notifications", follow_redirects=True).status_code == 200                             # everything, until limited
     access.set_permissions(conn, owner, ["access", "dashboard"])
     conn.commit()
-    assert browser.get("/notifications").status_code == 403 and browser.get("/api/notifications/history").status_code == 403
+    assert browser.get("/notifications", follow_redirects=True).status_code == 403 and browser.get("/api/notifications/history").status_code == 403
     access.set_permissions(conn, owner, ["access", "notifications"])
     conn.commit()
-    assert browser.get("/notifications").status_code == 200
+    assert browser.get("/notifications", follow_redirects=True).status_code == 200
 
 
 def test_the_menu_offers_notifications_to_those_who_may_open_them(alice):
     _, browser = alice
-    assert 'href="/notifications"' in text(browser.get("/"))
+    assert 'href="/my-profile"' in text(browser.get("/"))
 
 
 # ================================================================ Settings
@@ -786,7 +786,7 @@ def test_a_hold_is_shown_to_the_administrator_and_to_people(alice, client, v2):
     with db.connection() as c:
         dispatch.pause(c, "pushover", "2999-01-01 00:00:00", "the allowance is used up")
     assert "Pushover is on hold: the allowance is used up" in text(client.get("/settings"))
-    assert "Sending through Pushover is on hold: the allowance is used up" in text(alice[1].get("/notifications"))
+    assert "Sending through Pushover is on hold: the allowance is used up" in text(alice[1].get("/notifications", follow_redirects=True))
 
 
 def test_the_apprise_test_button_still_works(client, v2, monkeypatch):

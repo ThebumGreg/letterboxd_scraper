@@ -61,6 +61,14 @@
             </div>
             {% endif %}
 
+            {% if follow %}
+            <div class="form-check form-switch mb-3" id="episodeAlerts">
+                <input class="form-check-input" type="checkbox" role="switch" id="episodeAlertsSwitch"{% if not follow.muted %} checked{% endif %}>
+                <label class="form-check-label small" for="episodeAlertsSwitch">Tell me about new episodes of this show</label>
+                <span class="small ms-2" id="episodeAlertsResult" role="status"></span>
+            </div>
+            {% endif %}
+
             {% set mine = progress.status if progress and progress.linked and progress.status and progress.status.total else none %}
             {% set go = mine.continue if mine else none %}
             {% if progress %}
@@ -179,6 +187,13 @@
     }
 
     document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((el) => window.bootstrap && new bootstrap.Tooltip(el));
+    const alerts = document.getElementById('episodeAlertsSwitch');
+    if (alerts) alerts.addEventListener('change', async () => {
+        const data = await post(`/api/notifications/shows/${mediaId}/mute`, { muted: !alerts.checked }, null, false);
+        const out = document.getElementById('episodeAlertsResult');
+        out.textContent = data.ok ? (alerts.checked ? 'On' : 'Muted') : (data.message || 'Could not save.');
+        if (!data.ok) alerts.checked = !alerts.checked;
+    });
     document.getElementById('refreshBtn').addEventListener('click', (e) => post(`/api/show/${mediaId}/refresh`, {}, e.currentTarget, true));
     const all = document.getElementById('requestAllBtn');
     if (all) all.addEventListener('click', () => post(`/api/request/show/${mediaId}/all`, {}, all, true));

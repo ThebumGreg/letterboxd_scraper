@@ -1,13 +1,5 @@
-<!-- synchub/web/templates/notifications.html -->
-{% extends "base.html" %}
-
-{% block title %}Notifications{% endblock %}
-
-{% block content %}
 {% set badge = {'sent': 'bg-success', 'pending': 'bg-warning text-dark', 'held': 'bg-info text-dark', 'failed': 'bg-danger', 'dropped': 'bg-secondary'} %}
-<div id="notifyPage">
-    <h2 class="mb-3">Notifications</h2>
-
+{# A person's notification settings: delivery methods, what to tell them, new episodes, quiet hours and what was sent. Shown on their page under People. #}
     {% if problem %}<div class="alert alert-warning" role="alert" id="notifyProblem">{{ problem }}</div>{% endif %}
     {% if not state.enabled %}<div class="alert alert-info" role="status">Sending is switched off by the administrator (Settings, Connections), so nothing is sent on its own yet. A test message still goes out.</div>{% endif %}
     {% if not state.pushover_ready %}<div class="alert alert-info" role="status">Pushover is not set up yet: the administrator has to enter the Pushover application token in Settings, Connections.</div>{% endif %}
@@ -96,6 +88,31 @@
         <span class="small" id="ruleResult" role="status"></span>
     </div>
 
+    <div class="panel p-3 p-md-4 mb-4" id="episodesPanel">
+        <h5 class="text-success mb-1">New episodes</h5>
+        <p class="small text-body-secondary">For shows on your watchlist or that you requested. Switch the notices on or off under <em>What to tell me about</em>; you can also mute a single show from its page.</p>
+        <div class="row g-3" style="max-width: 36rem;">
+            <div class="col-12 col-md-6">
+                <label for="episodeWhen" class="form-label">Tell me</label>
+                <select class="form-select" id="episodeWhen">
+                    <option value="library"{% if pref.episode_when == 'library' %} selected{% endif %}>When an episode reaches the library</option>
+                    <option value="aired"{% if pref.episode_when == 'aired' %} selected{% endif %}>When an episode airs</option>
+                    <option value="both"{% if pref.episode_when == 'both' %} selected{% endif %}>Both</option>
+                </select>
+            </div>
+            <div class="col-12 col-md-6">
+                <label for="episodeSource" class="form-label">For</label>
+                <select class="form-select" id="episodeSource">
+                    <option value="both"{% if pref.episode_source == 'both' %} selected{% endif %}>My watchlist and my requests</option>
+                    <option value="watchlist"{% if pref.episode_source == 'watchlist' %} selected{% endif %}>My watchlist</option>
+                    <option value="requested"{% if pref.episode_source == 'requested' %} selected{% endif %}>Only what I requested</option>
+                </select>
+            </div>
+        </div>
+        <button type="button" class="btn btn-success btn-sm mt-3" id="episodeSave">Save</button>
+        <span class="small ms-2" id="episodeResult" role="status"></span>
+    </div>
+
     <div class="panel p-3 p-md-4 mb-4" id="quietPanel">
         <h5 class="text-success mb-1">Quiet hours and grouping</h5>
         <p class="small text-body-secondary">During quiet hours, ordinary notifications wait and arrive when they end. Urgent ones (a worker offline, a share not mounted) still come through.</p>
@@ -142,9 +159,3 @@
         </div>
     </div>
     {% endif %}
-</div>
-{% endblock %}
-
-{% block scripts %}
-<script src="{{ url_for('static', filename='js/notifications.js') }}"></script>
-{% endblock %}

@@ -202,7 +202,7 @@ def test_rules_and_quiet_hours_are_saved_from_the_page(app, client, conn):
     pid = admin(conn)
     conn.commit()
     client.set_cookie("synchub_profile", str(pid))
-    page = client.get("/notifications")
+    page = client.get(f"/people/{pid}")
     assert b"What to tell me about" in page.data and b"A job failed" in page.data
     assert client.post("/api/notifications/rules", json={"event_type": "job_failed", "enabled": False}).get_json()["ok"]
     assert client.post("/api/notifications/rules", json={"event_type": "nope", "enabled": True}).status_code == 404
@@ -218,15 +218,17 @@ def test_a_profile_that_is_not_an_administrator_does_not_see_admin_choices(app, 
     other = add_profile(conn, "Bob")
     conn.commit()
     client.set_cookie("synchub_profile", str(other))
-    assert b"A job failed" not in client.get("/notifications").data
+    assert b"A job failed" not in client.get("/notifications", follow_redirects=True).data
 
 
-def test_administrators_are_chosen_in_settings(app, client, conn):
+def test_administrators_are_chosen_on_the_persons_page(app, client, conn):
     pid = add_profile(conn, "Greg")
     conn.commit()
-    client.post("/tools/update-settings", data={"notify_admin_present": "1", "admin_profile": [str(pid)]})
+    assert client.post(f"/api/access/profile/{pid}/admin-alerts", json={"enabled": True}).get_json()["ok"]
     assert settings.get("notify_admin_profiles") == str(pid)
-    client.post("/tools/update-settings", data={"notify_admin_present": "1"})
+    assert client.post(f"/api/access/profile/{pid}/admin-alerts", json={"enabled": "yes"}).status_code == 400
+    assert client.post("/api/access/profile/999/admin-alerts", json={"enabled": True}).status_code == 404
+    assert client.post(f"/api/access/profile/{pid}/admin-alerts", json={"enabled": False}).get_json()["ok"]
     assert settings.get("notify_admin_profiles") == ""
 
 

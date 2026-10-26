@@ -59,7 +59,7 @@ RULES = (
     ("api_tasks", OPEN),
     ("index", "dashboard"), ("movie_details", "dashboard"), ("show_details", "dashboard"), ("api_season", "dashboard"), ("stream_events", "dashboard"),
     ("search_page", "search"), ("api_search_seasons", "search"),
-    ("notifications_page", "notifications"), ("api_notifications_*", "notifications"),
+    ("notifications_page", "notifications"), ("api_notifications_*", "notifications"), ("profile_page", "notifications"), ("my_profile", "notifications"),
     ("api_search_add_*", "requests"), ("api_request_*", "requests"), ("api_refresh", "requests"),
     ("resolution_center", "resolution"), ("api_resolution_*", "resolution"),
     ("ddns_*", "ddns"), ("api_ddns_*", "ddns"),

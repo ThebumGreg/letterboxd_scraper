@@ -335,10 +335,11 @@ def test_the_people_page_offers_a_limit_for_guests_and_every_profile(app, v2, co
     admin, kid = add_profile(conn, "Admin"), add_profile(conn, "Kid")
     access.set_max_rating(conn, kid, 2)
     conn.commit()
-    page = text(as_profile(app, admin).get("/people"))
-    assert page.count("data-save-rating=") == 3
+    browser = as_profile(app, admin)
+    page, person = text(browser.get("/people")), text(browser.get(f"/people/{kid}"))
+    assert page.count("data-save-rating=") == 1 and person.count("data-save-rating=") == 1
     assert re.search(r'id="rating-guest".*?<option value="1" selected>PG ', page, re.S)
-    assert re.search(r'id="rating-%d".*?<option value="2" selected>PG-13 ' % kid, page, re.S)
+    assert re.search(r'id="rating-%d".*?<option value="2" selected>PG-13 ' % kid, person, re.S)
 
 
 def test_the_people_page_warns_when_guests_have_no_limit(v2, conn):

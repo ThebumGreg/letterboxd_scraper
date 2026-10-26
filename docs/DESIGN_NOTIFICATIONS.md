@@ -89,6 +89,6 @@ The tests use a pretend Pushover, so the first real send needs you:
 
 1. **Foundation** (this phase): migration, registry, providers, outbox and dispatcher, the Pushover token and its test, "Notifications" page (add and verify a delivery method, send a test, history).
 2. Request events, rules per person, quiet hours, batching, rating filter.
-3. Episode events.
+3. Episode events (built: later-episode and 'aired' notices with per-person timing, source and a mute per show; request progress and failure notices are still to do).
 4. Administrator events, check-ins, recovery messages, security alerts.
 5. Digests, further ideas, polish.

@@ -74,12 +74,6 @@ def register(app):
     @app.route("/tools/update-settings", methods=["POST"])
     def update_settings():
         errors = settings.save_form(request.form)
-        if request.form.get("notify_admin_present"):
-            ok, chosen = validate_setting("notify_admin_profiles", ",".join(request.form.getlist("admin_profile")))
-            if ok:
-                settings.set_value("notify_admin_profiles", chosen)
-            else:
-                errors.append(chosen)
         if (request.form.get("pushover_app_token") or "").strip():
             from synchub.notifications import dispatch
             dispatch.clear_pause("pushover")                # a new token ends the hold put on by the old one
@@ -116,7 +110,8 @@ def register(app):
             flash(f"Profile '{(form.get('profile_name') or '').strip()}' saved.", "success")
         except ProfileError as exc:
             flash(str(exc), "danger")
-        return redirect(url_for("people_page"))
+        back = form.get("return_to") or ""
+        return redirect(back if back.startswith("/people/") and not back.startswith("//") else url_for("people_page"))
 
     @app.route("/settings/profiles/delete/<int:profile_id>", methods=["POST"])
     def delete_profile(profile_id):
