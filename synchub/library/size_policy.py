@@ -123,6 +123,8 @@ def decide(rec, plans=(), cfg=None):
         return Decision(NONE)
     movie = (rec.get("media_type") or "").lower().startswith("movie")
     ceiling, target_gb = (cfg.movie_max_gb, cfg.movie_target_gb) if movie else (cfg.tv_max_gb, cfg.tv_target_gb)
+    if rec.get("size_target_gb") and ceiling > 0:                       # a target chosen for this one film on the review screen
+        target_gb = float(rec["size_target_gb"])
     size = rec.get("size_bytes") or 0
     if ceiling <= 0 or target_gb <= 0 or size <= 0:
         return Decision(NONE)

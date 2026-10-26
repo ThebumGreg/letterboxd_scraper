@@ -112,6 +112,15 @@
                 <dt class="col-5 text-body-secondary fw-normal">{{ label }}</dt><dd class="col-7" style="overflow-wrap: anywhere;">{{ value }}</dd>{% endfor %}
             </dl>
         </div>
+        {% if preview_info %}
+        <div class="panel p-3 mb-3"><h6>Preview the compression</h6>
+            <p class="small mb-2">{{ preview_info.summary }}</p>
+            <div class="d-flex flex-wrap gap-2">
+                {% if preview_info.latest %}<a class="btn btn-sm btn-outline-primary" href="{{ url_for('library_preview', preview_id=preview_info.latest.id) }}">{{ 'Watch the latest preview' if preview_info.latest.status == 'ready' else 'Latest preview (' ~ preview_info.latest.status ~ ')' }}</a>{% endif %}
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="makePreview">Make a preview</button>
+            </div>
+        </div>
+        {% endif %}
         {% if siblings %}
         <div class="panel p-3 mb-3"><h6>Identical copies</h6>
             <ul class="small mb-0 list-unstyled">{% for s in siblings %}<li><a href="{{ url_for('library_record', record_id=s.id, group=group) }}">{{ s.root_name }}: {{ s.relative_path }}</a><span class="text-body-secondary"> &middot; {{ s.duplicate_status.replace('Exact duplicate ', '') }}{% if s.approval_status != 'pending' %} &middot; {{ s.approval_status }}{% endif %}</span></li>{% endfor %}</ul></div>
@@ -136,6 +145,13 @@
         const qs = new URLSearchParams({ after: id }); Object.entries(filters).forEach(([k, v]) => { if (v) qs.set(k, v); });
         location.href = `/library/review/${encodeURIComponent(group)}?${qs}`;
     };
+    const makePreview = document.getElementById('makePreview');
+    if (makePreview) makePreview.addEventListener('click', async () => {
+        makePreview.disabled = true;
+        const data = await libraryPost('/api/library/previews', { subject_type: 'library_file', subject_id: id });
+        librarySay(data.message || (data.ok ? 'Queued.' : 'Failed.'), data.ok);
+        if (data.ok && data.url) setTimeout(() => { location.href = data.url; }, 600); else makePreview.disabled = false;
+    });
     async function act(kind) {
         const body = {};
         if (kind === 'approve') {

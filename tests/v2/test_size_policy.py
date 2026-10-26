@@ -202,7 +202,7 @@ def test_the_settings_can_be_saved_from_the_library_page_and_are_validated(app, 
 def test_a_download_of_a_big_film_is_compressed_automatically_when_the_policy_and_the_pipeline_are_on(conn):
     from synchub import downloads
     storage.create(conn, {"name": "media", "protocol": "local", "share": "/mnt/media", "mount_point": "/mnt/media", "radarr_path": "/movies"})
-    for key, value in (("download_pipeline", "auto"), ("size_policy", "1")):
+    for key, value in (("download_pipeline", "auto"), ("size_policy", "1"), ("review_first", "never")):
         settings.set_value(key, value, conn=conn)
     payload = {"eventType": "Download", "movie": {"id": 7, "title": "Heat", "folderPath": "/movies/Heat (1995)"},
                "movieFile": {"path": "/movies/Heat (1995)/Heat.1995.mkv", "size": 45 * GIB}}

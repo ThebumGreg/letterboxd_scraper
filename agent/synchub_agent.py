@@ -402,6 +402,17 @@ class Api:
         request = urllib.request.Request(self.base + path, data=json.dumps(body or {}, default=str).encode("utf-8"), method="POST",
                                          headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json",
                                                   "User-Agent": f"synchub-agent/{__version__}"})
+        return self._send(request)
+
+    def upload(self, path, filepath):
+        """Sends a file as the raw body of a POST (a preview clip). The file is streamed, never read into memory."""
+        with open(filepath, "rb") as handle:
+            request = urllib.request.Request(self.base + path, data=handle, method="POST",
+                                             headers={"Authorization": f"Bearer {self.token}", "Content-Type": "video/mp4", "Content-Length": str(os.path.getsize(filepath)),
+                                                      "User-Agent": f"synchub-agent/{__version__}"})
+            return self._send(request)
+
+    def _send(self, request):
         try:
             with self.opener.open(request, timeout=self.timeout) as response:
                 raw = response.read()
@@ -700,6 +711,59 @@ def build_convert_command(ffmpeg, src, out, change, profile=None):
     return command
 
 
+PREVIEW_PROBE_SECONDS = 10         # how much of the film one "most demanding part" sample reads
+PREVIEW_SAMPLES = 16
+PREVIEW_COPY_LIMIT = 450 * 1024 ** 2     # a copied (unmodified) clip bigger than this is re-encoded at a high quality instead, so it stays under SyncHub's upload limit
+
+
+def choose_window(duration, seconds, mode, seed, measure=None):
+    """(start, length) in seconds of the part of a film to preview. 'random' picks a window away from the first and last 10 %; 'worst' samples the film and takes
+    the stretch that needs the most bits (`measure(start)` returns the bytes of video in a short stretch from `start`)."""
+    seconds = max(1.0, float(seconds))
+    if duration <= seconds * 1.5:
+        return 0.0, round(float(duration), 1)
+    length = seconds
+    low, high = duration * 0.10, duration * 0.90 - length
+    if high <= low:
+        return round(max(0.0, (duration - length) / 2), 1), float(length)
+    if mode == "worst" and measure is not None:
+        spots = [low + (high - low) * i / (PREVIEW_SAMPLES - 1) for i in range(PREVIEW_SAMPLES)]
+        start = max(spots, key=lambda spot: measure(max(0.0, spot + length / 2 - PREVIEW_PROBE_SECONDS / 2)))
+    else:
+        start = random.Random(seed).uniform(low, high)
+    return round(start, 1), float(length)
+
+
+def segment_command(ffmpeg, src, out, start, length, audio_index=None):
+    """Cuts a window out of the film without re-encoding: its first video track and one audio track (the planned default, else the first)."""
+    audio = ["-map", f"0:{int(audio_index)}"] if audio_index is not None else ["-map", "0:a:0?"]
+    return [ffmpeg, "-nostdin", "-hide_banner", "-y", "-v", "error", "-ss", f"{start:.3f}", "-i", src, "-t", f"{length:.3f}", "-map", "0:v:0", *audio,
+            "-c", "copy", "-avoid_negative_ts", "make_zero", "-f", "matroska", out]
+
+
+def preview_audio_index(change):
+    keep, default = change.get("keep_audio"), change.get("default_audio")
+    if isinstance(keep, list) and keep:
+        return default if default in keep else keep[0]
+    return default if isinstance(default, int) else None
+
+
+def clip_command(ffmpeg, src, out, video_args):
+    """An MP4 a browser can play: the given video arguments, one stereo AAC track, the index at the front."""
+    return [ffmpeg, "-nostdin", "-hide_banner", "-y", "-v", "error", "-progress", "pipe:1", "-nostats", "-i", src, "-map", "0:v:0", "-map", "0:a:0?", *video_args,
+            "-c:a", "aac", "-b:a", "160k", "-ac", "2", "-sn", "-dn", "-movflags", "+faststart", "-f", "mp4", out]
+
+
+def source_clip_arguments(codec, hdr, capped=False):
+    """How the unmodified clip's picture is carried into the MP4: copied when MP4 can hold it, otherwise re-encoded at a high quality (HEVC for HDR so the colours stay)."""
+    if codec in ("h264", "hevc") and not capped:
+        return ["-c:v", "copy"] + (["-tag:v", "hvc1"] if codec == "hevc" else [])
+    cap = {"maxrate_kbps": 40000, "bufsize_kbps": 80000}
+    if hdr or codec == "hevc":
+        return video_arguments({}, {"video_codec": "hevc", "crf": 14, "preset": "fast", "ten_bit": True, **({"hdr": hdr} if hdr else {}), **cap})
+    return video_arguments({}, {"video_codec": "h264", "crf": 16, "preset": "fast"}) + (["-maxrate", "40M", "-bufsize", "80M"] if capped else [])
+
+
 def parse_ffmpeg_progress(line, duration):
     """(fraction done, speed) from one line of `ffmpeg -progress pipe:1`; either is None when the line does not say."""
     key, _, value = line.strip().partition("=")
@@ -744,7 +808,8 @@ def detect_capabilities(cfg):
     if code == 0:
         caps["ffprobe"] = out.splitlines()[0] if out else "ffprobe"
         if media_analysis and caps["ffmpeg"]:
-            caps["ops"].extend(["scan", "convert"])          # a scan needs ffprobe to read files and ffmpeg to check them; a conversion also runs ffmpeg, then checks the result
+            caps["ops"].extend(["scan", "convert", "preview"])          # a scan needs ffprobe to read files and ffmpeg to check them; a conversion also runs ffmpeg, then checks the result
+            caps["features"].append("preview")
     return caps
 
 
@@ -1147,10 +1212,10 @@ class JobRunner(threading.Thread):
         self.reporter.start()
         try:
             op = (self.job.get("plan") or {}).get("op")
-            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash, "convert": self.do_convert, "rename": self.do_rename, "delete_source": self.do_delete_source}.get(op)
-            if work is None or (op in ("scan", "hash", "convert") and media_analysis is None):
+            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash, "convert": self.do_convert, "preview": self.do_preview, "rename": self.do_rename, "delete_source": self.do_delete_source}.get(op)
+            if work is None or (op in ("scan", "hash", "convert", "preview") and media_analysis is None):
                 raise JobFailure("unsupported_job", f"This agent ({__version__}) cannot do '{op or self.job.get('kind')}' jobs. Update the agent"
-                                 + (" (media_analysis.py must be next to synchub_agent.py)." if op in ("scan", "hash", "convert") else "."), retryable=False)
+                                 + (" (media_analysis.py must be next to synchub_agent.py)." if op in ("scan", "hash", "convert", "preview") else "."), retryable=False)
             final = ("complete", {"result": work()}, "done")
         except Interrupted:
             self.log.info("Stopping for a restart or shutdown; the job resumes from its last checkpoint", stage=self.stage)
@@ -1188,13 +1253,13 @@ class JobRunner(threading.Thread):
         self.agent.deliver(self.job["id"], self.folder)
 
     # ---- reports SyncHub must accept
-    def tell(self, path, body, patience=300.0):
+    def tell(self, path, body, patience=300.0, poster=None):
         """A batch of results for this job. Retried through a short outage (and a busy SyncHub); never silently dropped."""
         deadline, delay = time.monotonic() + patience, 2.0
         while True:
             self.reporter.check()
             try:
-                return self.api.post(f"/jobs/{self.job['id']}{path}", body)
+                return (poster or self.api.post)(f"/jobs/{self.job['id']}{path}", body)
             except ApiError as exc:
                 if exc.status == 409 or exc.body.get("stop"):
                     raise JobLost()
@@ -1539,6 +1604,111 @@ class JobRunner(threading.Thread):
             return result
         self.log.info(f"Converted {name} ({human_bytes(size)} to {human_bytes(out_size)}) and brought it into the destination in {human_duration(elapsed)}")
         return result
+
+    def do_preview(self):
+        """Makes the two clips of a preview (docs/DESIGN_ENCODING.md section 12) and uploads them: a window of the film encoded with the planned settings, and the same
+        window unmodified. Reads the film where it is; only the short window is ever copied to the work disk."""
+        plan = self.job["plan"]
+        if not self.job.get("source"):
+            raise JobFailure("bad_job", "A preview job needs a source.", retryable=False)
+        src = self.folder_in(self.job["source"]["root"], self.job["source"]["rel"])
+        if not os.path.isfile(src):
+            raise JobFailure("source_changed", f"The film is not there any more: {self.job['source']['rel']}")
+        stat = os.stat(src)
+        if plan.get("source_size") and stat.st_size != plan["source_size"]:
+            raise JobFailure("source_changed", f"{self.job['source']['rel']} is not the file SyncHub analysed (its size differs). It will be looked at again.", retryable=False)
+        change = plan.get("change") or {}
+        profile = clean_profile(plan.get("profile"))
+        if not profile or profile["video_codec"] == "keep":
+            raise JobFailure("bad_job", "This preview has no compression settings to show.", retryable=False)
+        free = shutil.disk_usage(self.folder).free
+        if free < SPACE_MARGIN:
+            raise JobFailure("transient", f"Not enough free space on the work disk to make a preview: {human_bytes(free)} is free.")
+        work = os.path.join(self.folder, "preview")
+        shutil.rmtree(work, ignore_errors=True)
+        os.makedirs(work)
+        settings = self.media_settings({})
+        self.report_progress("preview", 0.02, "Reading the film", force=True)
+        data = media_analysis.run_ffprobe(settings, src)
+        duration = media_duration(data) or plan.get("duration")
+        if not duration:
+            raise JobFailure("bad_job", "The film's length could not be read, so a window cannot be chosen.", retryable=False)
+        video = next((st for st in data.get("streams") or [] if isinstance(st, dict) and st.get("codec_type") == "video"), None) or {}
+        profile = self.with_source_colours(settings, src, profile)
+        seconds = min(60, max(30, int(plan.get("seconds") or 45)))
+        mode = plan.get("mode") if plan.get("mode") in ("random", "worst") else "random"
+        if mode == "worst":
+            self.report_progress("preview", 0.05, "Looking for the most demanding part", force=True)
+
+        def measure(start):
+            return self.video_packet_bytes(settings, src, start, PREVIEW_PROBE_SECONDS)
+
+        start, length = choose_window(float(duration), seconds, mode, plan.get("seed") or 0, measure)
+        self.log.info(f"Preview window: {start:.0f} s to {start + length:.0f} s of {duration:.0f} s ({mode})")
+        segment = os.path.join(work, "segment.mkv")
+        self.run_clip(segment_command(self.cfg.ffmpeg, src, segment, start, length, preview_audio_index(change)), None, 0.08, 0.18, "Cutting the window")
+        got = media_duration(media_analysis.run_ffprobe(settings, segment)) or length
+        encoded, original = os.path.join(work, "encoded.mp4"), os.path.join(work, "source.mp4")
+        command = clip_command(self.cfg.ffmpeg, segment, encoded, video_arguments({"action": "transcode"}, profile))
+        self.log.info("Encoding the preview clip", command=shlex.join(command))
+        self.run_clip(command, got, 0.18, 0.70, "Compressing the window")
+        codec = str(video.get("codec_name") or "").lower()
+        hdr = profile.get("hdr")
+        self.run_clip(clip_command(self.cfg.ffmpeg, segment, original, source_clip_arguments(codec, hdr)), got, 0.70, 0.80, "Making the matching original")
+        if os.path.getsize(original) > PREVIEW_COPY_LIMIT:
+            self.log.info("The unmodified clip is large; making it again at a high quality")
+            self.run_clip(clip_command(self.cfg.ffmpeg, segment, original, source_clip_arguments(codec, hdr, capped=True)), got, 0.70, 0.80, "Making the matching original")
+        for name, path in (("encoded", encoded), ("source", original)):
+            if os.path.getsize(path) > PREVIEW_COPY_LIMIT + 100 * 1024 ** 2:
+                raise JobFailure("preview_too_large", f"The {name} clip came out at {human_bytes(os.path.getsize(path))}, too big to send. Try a shorter clip.", retryable=False)
+        encoded_video = self.video_packet_bytes(settings, encoded, 0, None)
+        source_video = self.video_packet_bytes(settings, segment, 0, None)
+        enc_dur = media_duration(media_analysis.run_ffprobe(settings, encoded)) or got
+        result = {"start": start, "length": round(got, 1), "mode": mode, "encoded_bytes": os.path.getsize(encoded), "source_clip_bytes": os.path.getsize(original),
+                  "encoded_video_kbps": round(encoded_video * 8 / enc_dur / 1000), "source_video_kbps": round(source_video * 8 / got / 1000),
+                  "crf": profile.get("crf"), "hdr": (profile.get("hdr") or {}).get("kind"), "source_codec": codec}
+        for index, (name, path) in enumerate((("encoded", encoded), ("source", original))):
+            self.report_progress("preview", 0.82 + 0.08 * index, f"Sending the {name} clip", force=True)
+            self.tell(f"/preview/{name}", path, poster=self.api.upload)
+        shutil.rmtree(work, ignore_errors=True)
+        self.report_progress("preview", 1.0, "Preview ready", force=True)
+        self.log.info(f"Preview clips sent ({human_bytes(result['encoded_bytes'])} compressed, {human_bytes(result['source_clip_bytes'])} original)")
+        return result
+
+    def video_packet_bytes(self, settings, path, start, seconds):
+        """Bytes of video in `seconds` from `start` (the whole file when `seconds` is None), summed from the packet sizes."""
+        command = [settings.ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=size", "-of", "csv=p=0"]
+        if seconds:
+            command += ["-read_intervals", f"{start:.2f}%+{seconds}"]
+        result, outcome = media_analysis.run_tool(settings, command + [path], 300, f"ffprobe packets {path}")
+        if outcome != "ok" or result is None or result.returncode != 0:
+            return 0
+        total = 0
+        for line in result.stdout.splitlines():
+            line = line.strip().split(",")[0]
+            if line.isdigit():
+                total += int(line)
+        return total
+
+    def run_clip(self, command, duration, low, high, label):
+        """Runs one ffmpeg command for a preview, reporting progress between `low` and `high`; a failure ends the job with ffmpeg's own words."""
+        errors = os.path.join(self.folder, "ffmpeg.err")
+        started = time.monotonic()
+        with open(errors, "w", encoding="utf-8", errors="replace") as err:
+            proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=err, text=True, encoding="utf-8", errors="replace", start_new_session=True)
+            try:
+                for line in proc.stdout:
+                    self.reporter.check()
+                    fraction, _ = parse_ffmpeg_progress(line, duration)
+                    if fraction is not None:
+                        elapsed = time.monotonic() - started
+                        self.report_progress("preview", low + (high - low) * fraction, f"{label}: {fraction * 100:.0f}%", int(elapsed * (1 - fraction) / fraction) if fraction > 0.01 else None)
+                proc.wait()
+            except BaseException:
+                self._stop_ffmpeg(proc)
+                raise
+        if proc.returncode != 0:
+            raise JobFailure("encode_failed", f"ffmpeg stopped with exit code {proc.returncode} ({label.lower()}): {read_file(errors).strip()[-800:] or 'no message'}", retryable=False)
 
     def remove_replaced_source(self, src, dst):
         """When the converted file has a different name (an .avi that became an .mkv), the old file is removed once the new one is in place."""

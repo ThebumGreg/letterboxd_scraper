@@ -77,6 +77,17 @@
                             <select class="form-select form-select-sm" id="setDv78">{% for m, label in [('hdr10', 'Compress as HDR10 (Dolby layer lost)'), ('review', 'Ask me first')] %}<option value="{{ m }}"{% if m == size.dv_profile_7_8 %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
                     </div>
                 </div>
+                <div class="border rounded p-2 mb-2">
+                    <div class="fw-bold small mb-1">Preview clips before compressing</div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-8"><label for="setReviewFirst" class="form-label small mb-1">Ask me to watch a preview</label>
+                            <select class="form-select form-select-sm" id="setReviewFirst">{% for m, label in [('always', 'Every time (while I learn to trust it)'), ('until_trusted', 'Until I have approved a few like it'), ('low_confidence_only', 'Only when it is close to the edge'), ('never', 'Never, compress as soon as the rules say so')] %}<option value="{{ m }}"{% if m == review_first %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+                        <div class="col-2"><label for="setTrustAfter" class="form-label small mb-1">Trust after</label><input type="number" min="1" max="50" class="form-control form-control-sm" id="setTrustAfter" value="{{ trust_after }}" title="Similar files approved without changes: resolution, codec, HDR type, bit depth and size band"></div>
+                        <div class="col-2"><label for="setPreviewSeconds" class="form-label small mb-1">Clip (s)</label><input type="number" min="30" max="60" class="form-control form-control-sm" id="setPreviewSeconds" value="{{ preview_seconds }}"></div>
+                    </div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="setPreviewAuto"{% if preview_auto %} checked{% endif %}><label class="form-check-label small" for="setPreviewAuto">Make the preview for me when a compression is waiting</label></div>
+                    <div class="form-text">A worker cuts a short window, compresses it exactly as the real job would and makes the matching original; you watch both side by side. The clips are removed after {{ preview_keep_days }} days. This applies to new Radarr/Sonarr downloads; for a file already in the Library, press Preview on its page.</div>
+                </div>
                 <div class="mb-2"><label for="setProfile" class="form-label small mb-1">Convert with (default profile)</label>
                     <select class="form-select form-select-sm" id="setProfile">{% for p in profiles %}<option value="{{ p.id }}"{% if p.id == default_profile_id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select>
                     <div class="form-text">Used for every file unless you pick another when approving it. Profiles are listed below.</div></div>

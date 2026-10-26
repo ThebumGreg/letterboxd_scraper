@@ -425,7 +425,7 @@ def test_an_outage_is_survived_and_reporting_resumes(monkeypatch):
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg is not installed")
 def test_capabilities_list_only_encoders_that_really_work(tmp_path):
     caps = agent.detect_capabilities(config(tmp_path))
-    assert caps["ops"] == ["copy", "rename", "delete_source", "hash", "scan", "convert"] and caps["features"] == ["profiles"] and caps["ffmpeg"].startswith("ffmpeg version") and caps["ffprobe"].startswith("ffprobe version") and caps["cores"] >= 1
+    assert caps["ops"] == ["copy", "rename", "delete_source", "hash", "scan", "convert", "preview"] and caps["features"] == ["profiles", "preview"] and caps["ffmpeg"].startswith("ffmpeg version") and caps["ffprobe"].startswith("ffprobe version") and caps["cores"] >= 1
     assert set(caps["encoders"]) <= set(agent.TESTED_ENCODERS)
     assert "libx264" in caps["encoders"] or "libx265" in caps["encoders"]
     assert not any(e.endswith(("_nvenc", "_qsv", "_vaapi")) for e in caps["encoders"])           # no GPU here: those encoders exist in ffmpeg but do not work, and are not offered
@@ -592,3 +592,54 @@ def test_an_arm_board_is_named_by_its_model_line(monkeypatch):
     monkeypatch.setattr(agent, "read_file", lambda path, limit=0: "processor\t: 0\nFeatures\t: fp asimd evtstrm aes crc32\nHardware\t: BCM2835\nModel\t\t: Raspberry Pi 4 Model B Rev 1.4\n" if path == "/proc/cpuinfo" else "")
     cpu = agent.cpu_details()
     assert cpu["model"] == "BCM2835" and cpu["flags"] == ["aes", "asimd"] and cpu["cores"] is None
+
+
+# ---------------------------------------------------------------- preview clips
+def test_a_random_window_stays_away_from_the_ends_and_the_same_seed_gives_the_same_window():
+    for seed in range(40):
+        start, length = agent.choose_window(7200, 45, "random", seed)
+        assert length == 45 and 720 <= start <= 6480 - 45
+    assert agent.choose_window(7200, 45, "random", 7) == agent.choose_window(7200, 45, "random", 7)
+    assert len({agent.choose_window(7200, 45, "random", seed)[0] for seed in range(20)}) > 10
+
+
+def test_the_worst_case_window_is_where_the_most_video_bytes_are():
+    busiest = 4000.0
+    measure = lambda start: 10_000_000 - abs(start - busiest) * 1000                # noqa: E731
+    start, length = agent.choose_window(7200, 45, "worst", 1, measure)
+    assert abs((start + length / 2) - busiest) < 250                                  # the sampled spots are about 300 s apart
+    assert agent.choose_window(7200, 45, "worst", 1) [1] == 45                        # without a way to measure it falls back to a random window
+
+
+def test_a_short_film_is_previewed_whole_and_a_medium_one_from_the_middle():
+    assert agent.choose_window(40, 45, "random", 1) == (0.0, 40.0)
+    start, length = agent.choose_window(100, 60, "random", 1)
+    assert length == 60 and 10 <= start <= 30
+    assert agent.choose_window(90, 60, "random", 1) == (0.0, 90.0)
+
+
+def test_the_cut_keeps_one_video_and_the_planned_audio_without_re_encoding():
+    command = agent.segment_command("ffmpeg", "/m/Heat.mkv", "/w/seg.mkv", 612.5, 45, 3)
+    assert command[command.index("-ss") + 1] == "612.500" and command[command.index("-t") + 1] == "45.000"
+    assert command[command.index("-map"):command.index("-map") + 6] == ["-map", "0:v:0", "-map", "0:3", "-c", "copy"]
+    plain = agent.segment_command("ffmpeg", "a", "b", 0, 30)
+    assert plain[plain.index("0:v:0") + 1:plain.index("0:v:0") + 3] == ["-map", "0:a:0?"]
+    assert agent.preview_audio_index({"keep_audio": [2, 4], "default_audio": 4}) == 4
+    assert agent.preview_audio_index({"keep_audio": [2, 4], "default_audio": 9}) == 2
+    assert agent.preview_audio_index({}) is None
+
+
+def test_the_unmodified_clip_is_copied_when_mp4_can_hold_it_and_re_encoded_otherwise():
+    assert agent.source_clip_arguments("h264", None) == ["-c:v", "copy"]
+    assert agent.source_clip_arguments("hevc", None) == ["-c:v", "copy", "-tag:v", "hvc1"]
+    mpeg = agent.source_clip_arguments("mpeg4", None)
+    assert "libx264" in mpeg and "copy" not in mpeg
+    hdr = agent.source_clip_arguments("vc1", {"kind": "hdr10", "master_display": "G(1,2)B(3,4)R(5,6)WP(7,8)L(9,1)"})
+    assert "libx265" in hdr and any("master-display" in part for part in hdr)
+    capped = agent.source_clip_arguments("h264", None, capped=True)
+    assert "libx264" in capped and "-maxrate" in capped
+
+
+def test_the_browser_clip_has_stereo_aac_and_the_index_up_front():
+    command = agent.clip_command("ffmpeg", "in.mkv", "out.mp4", ["-c:v", "copy"])
+    assert command[-1] == "out.mp4" and "+faststart" in command and command[command.index("-ac") + 1] == "2" and command[command.index("-c:a") + 1] == "aac" and "-sn" in command

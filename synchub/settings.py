@@ -23,6 +23,7 @@ DEFAULTS = {
     # downloads Radarr/Sonarr import: off, review (a person approves each one), auto (high-confidence plans run on their own); the original is kept on the worker this long
     "size_policy": "0", "movie_max_gb": "30", "movie_target_gb": "25", "tv_episode_max_gb": "0", "tv_episode_target_gb": "0", "size_crf": "22", "size_preset": "medium",
     "dolby_vision_profile_5": "review", "dolby_vision_profile_7_8": "hdr10",
+    "review_first": "always", "trust_after": "3", "preview_seconds": "45", "preview_keep_days": "7", "preview_auto": "1",
     "download_pipeline": "off", "originals_retention_days": "30",
     # conversion profile used when none is chosen for a file; the source file is deleted this many days after a verified migration (0 = never);
     # what Radarr/Sonarr are told about the move (none, update_location, unmonitor, remove) and when (right after the copy, or only when the source is deleted)

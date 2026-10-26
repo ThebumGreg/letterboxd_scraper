@@ -32,7 +32,7 @@ ANALYSIS_COLUMNS = [
 DERIVED_COLUMNS = ["recommended_action", "base_action", "action_reason", "naming_flags", "review_categories", "review_reason", "review_reasons_json",
                    "duplicate_group", "duplicate_status"]
 
-_RESET_APPROVAL = {"approval_status": v.APPROVAL_PENDING, "approved_action": None, "approved_name": None, "approved_track_changes_json": None,
+_RESET_APPROVAL = {"size_target_gb": None, "approval_status": v.APPROVAL_PENDING, "approved_action": None, "approved_name": None, "approved_track_changes_json": None,
                    "approved_profile_id": None, "approved_mode": None, "approval_decided_at": None, "approval_decided_by": None, "approval_note": None}
 _RESET_REVIEW = {"review_decided_at": None, "review_decided_by": None, "review_note": None}
 _RESET_MIGRATION = {"migration_status": v.MIGRATION_PENDING, "migration_last_error": None, "migration_started_at": None, "migration_finished_at": None,

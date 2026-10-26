@@ -87,7 +87,7 @@ def test_scheduler_jobs_follow_settings_and_survive_bad_values(v2):
     settings.set_value("jellyfin_interval_hours", "12")
     scheduler.configure()
     jobs = {j.id: j.trigger.interval.total_seconds() / 3600 for j in scheduler.scheduler.get_jobs() if hasattr(j.trigger, "interval")}
-    assert jobs == {"job_ddns": 1 / 60, "job_scrape": 24, "job_jellyfin": 12, "job_sonarr": 6, "job_queue_poll": 30 / 3600, "job_reaper": 30 / 3600, "job_prune_jellyfin_events": 24,
+    assert jobs == {"job_ddns": 1 / 60, "job_scrape": 24, "job_jellyfin": 12, "job_sonarr": 6, "job_queue_poll": 30 / 3600, "job_reaper": 30 / 3600, "job_prune_jellyfin_events": 24, "job_purge_previews": 6,
                     "job_notify": 30 / 3600, "job_notify_watch": 30 / 3600, "job_notify_prune": 24}      # radarr off, bad values -> defaults
 
 
