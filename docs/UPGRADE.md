@@ -77,6 +77,18 @@ If a job is running, Docker's stop waits up to 90 seconds for the agent to stop 
 
 ### Step 4: check
 
+Docker's own health check (it asks the agent whether its loop is alive) is the quickest test:
+
+```
+cd /opt/synchub-worker
+sudo docker compose ps                                   # STATUS should say "Up ... (healthy)"
+sudo docker inspect --format '{{.State.Health.Status}}  restarts: {{.RestartCount}}' synchub-worker    # healthy  restarts: 0
+sudo docker compose logs --tail 30                       # the agent's own words
+sudo docker compose run --rm worker --check              # tests the token, SyncHub, ffmpeg and every share
+```
+
+"starting" for the first minute is normal; "unhealthy", or a restart count that keeps growing, is not (see "If the worker does not come online" below). Then:
+
 1. Workers page: the worker is online with the new agent version, and lists the job types you expect (for example `convert`, `replace`).
 2. `sudo ./agent/update-worker.sh --dir /opt/synchub-worker --report` once more: health `healthy`, mounts present, no restarts.
 3. Run a small job or *Check* on the Workers page.
