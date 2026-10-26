@@ -95,14 +95,20 @@ def scan_options_for_page(conn):
     return {**options, "exclude_text": "\n".join(options["exclude"]), "destination": cfg.destination_root, "tv_folder": cfg.tv_folder, "movie_folder": cfg.movie_folder}
 
 
-def describe_record(rec, rcm, cfg):
-    """A record and its recommendation as the record page shows them."""
+def describe_record(rec, rcm, cfg, profile=None):
+    """A record and its recommendation as the record page shows them. Once a decision is made the tracks are read-only and show what the job does."""
     streams = [s for s in v.json_list(rec.get("streams_json")) if isinstance(s, dict)]
     removals = {r["index"]: r for r in rcm.removals}
+    decided = rec["approval_status"] == v.APPROVAL_APPROVED or rec["migration_status"] != v.MIGRATION_PENDING
+    gone = migrate.approved_removals(rec, profile) if decided else {}
     for s in streams:
+        s["language_name"] = rc.language_name(s.get("lang"))
+        if decided:
+            s["remove"], s["locked"] = False, False
+            s["state"] = ("dropped" if gone[s["index"]] else "removed") if s["index"] in gone else "kept"
+            continue
         s["remove"] = s["index"] in removals
         s["locked"] = bool(removals.get(s["index"], {}).get("locked"))
-        s["language_name"] = rc.language_name(s.get("lang"))
     plans = [p for p in v.json_list(rec.get("proposed_track_changes_json")) if isinstance(p, dict)]
     return {"rec": rec, "r": rcm, "streams": streams, "plans": plans, "size": _size(rec.get("size_bytes")), "duration": _duration(rec.get("duration_seconds")),
             "warnings": v.json_list(rec.get("warnings_json")), "errors": v.json_list(rec.get("errors_json")), "reasons": v.json_list(rec.get("review_reasons_json")),
@@ -177,7 +183,7 @@ def register(app):
             chosen = migrate.profile_for(conn, rec)
             all_profiles = profiles.all_profiles(conn)
         group = request.args.get("group") or rcm.group
-        data = describe_record(rec, rcm, cfg)
+        data = describe_record(rec, rcm, cfg, chosen)
         with db.connection() as conn:
             size = size_policy.decide(rec, previews.plans_of(rec, approved=rec["approval_status"] == v.APPROVAL_APPROVED), size_policy.load(conn))
             latest = previews.latest_for(conn, "library_file", record_id)
@@ -206,6 +212,16 @@ def register(app):
                 elif action == "requeue":
                     migrate.requeue(conn, record_id, cfg, by)
                     message = "Queued again."
+                elif action == "redo":
+                    migrate.redo(conn, record_id, by, dest_removed=bool(data.get("dest_removed")))
+                    message = "Back to pending: choose the settings and approve it again."
+                    if data.get("rescan"):
+                        rec = store.get_record(conn, record_id)
+                        try:
+                            scan.start_scan(conn, rec["root_name"], os.path.dirname(rec["relative_path"]), by, force=True)
+                            message += " The folder is being scanned again."
+                        except v.LibraryError as exc:
+                            message += f" It was not scanned again: {exc}"
                 elif action == "keep-source":
                     cleanup.hold(conn, record_id, by)
                     message = "The source will be kept."
@@ -221,7 +237,7 @@ def register(app):
 
     @app.route("/api/library/record/<int:record_id>/<action>", methods=["POST"])
     def api_library_decide(record_id, action):
-        if action not in ("approve", "reject", "undo", "tested", "requeue", "keep-source", "release-source"):
+        if action not in ("approve", "reject", "undo", "tested", "requeue", "redo", "keep-source", "release-source"):
             return _fail("Unknown action.", 404)
         return _decide(record_id, action)
 

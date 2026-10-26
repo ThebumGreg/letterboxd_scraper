@@ -650,3 +650,57 @@ def test_the_jobs_list_shows_the_lifecycle_label_not_the_raw_status(client, conn
     conn.commit()
     page = client.get("/workers").get_data(as_text=True)
     assert "Converting" in page
+
+
+# ---------------------------------------------------------------- showing and redoing a decision
+def test_an_approved_record_lists_what_the_job_removes_for_each_track(conn):
+    from synchub.web.library import describe_record
+    record_id = subs_record(conn)
+    rec = store.get_record(conn, record_id)
+    tracks = {s["index"]: s["state"] for s in describe_record(rec, rc.recommend(rec, CFG), CFG, profiles.get(conn, 1))["streams"]}
+    assert tracks[2] == "removed" and tracks[4] == "removed" and tracks[1] == "kept" and tracks[3] == "kept"
+    tracks = {s["index"]: s["state"] for s in describe_record(rec, rc.recommend(rec, CFG), CFG, profiles.get(conn, 2))["streams"]}
+    assert tracks[4] == "kept" and tracks[2] == "removed"             # keep every subtitle puts the French one back
+    assert describe_record(rec, rc.recommend(rec, CFG), CFG, profiles.get(conn, 2))["streams"][0]["remove"] is False
+
+
+def test_redo_takes_a_file_back_to_pending_and_ignores_the_old_job(conn):
+    record_id = subs_record(conn)
+    job_id = migrate.queue(conn, record_id, CFG)
+    migrate.redo(conn, record_id, "Greg")
+    rec = rec_of(conn, record_id)
+    assert rec["approval_status"] == "pending" and rec["approved_track_changes_json"] is None and rec["migration_status"] == "pending"
+    assert jobs.get(conn, job_id)["status"] == "cancelled" and migrate.active_job(conn, record_id) is None
+    assert migrate.queue(conn, record_id, CFG) is None                  # not approved any more
+    store.set_approval(conn, record_id, v.APPROVAL_APPROVED, "Greg", accept_track_changes=True, profile_id=2)
+    assert migrate.queue(conn, record_id, CFG) is not None
+
+
+def test_redo_of_a_finished_copy_needs_the_copy_removed_and_never_without_the_source(conn):
+    record_id = subs_record(conn)
+    job_id = migrate.queue(conn, record_id, CFG)
+    jobs_done(conn, job_id, {"verified": "size", "bytes": 5})
+    migrate.sync(conn, job_id)
+    assert rec_of(conn, record_id)["migration_status"] == "completed"
+    with pytest.raises(ValueError, match="remove that copy first"):
+        migrate.redo(conn, record_id, "Greg")
+    conn.execute("UPDATE library_file SET source_delete_status = 'deleted' WHERE id = ?", (record_id,))
+    with pytest.raises(ValueError, match="nothing left"):
+        migrate.redo(conn, record_id, "Greg", dest_removed=True)
+    conn.execute("UPDATE library_file SET source_delete_status = NULL WHERE id = ?", (record_id,))
+    migrate.redo(conn, record_id, "Greg", dest_removed=True)
+    assert rec_of(conn, record_id)["migration_status"] == "pending" and migrate.sync_active(conn) == 0
+    assert rec_of(conn, record_id)["migration_status"] == "pending"     # the old finished job does not bring it back
+
+
+def test_the_record_page_shows_removed_tracks_after_approval_and_can_redo(client, conn):
+    from .test_library_web import post
+    web_shares(conn)
+    record_id = subs_record(conn)
+    conn.commit()
+    page = client.get(f"/library/record/{record_id}").get_data(as_text=True)
+    assert page.count('badge bg-danger">removed') == 2 and "Do it again with other settings" in page and 'data-remove=' not in page
+    r = post(client, f"/api/library/record/{record_id}/redo", {})
+    assert r.get_json()["ok"] and rec_of(conn, record_id)["approval_status"] == "pending"
+    page = client.get(f"/library/record/{record_id}").get_data(as_text=True)
+    assert 'data-remove="2"' in page and "Do it again with other settings" not in page

@@ -47,6 +47,14 @@
         {% elif rec.migration_status == 'failed' and rec.approval_status == 'approved' %}
         <div class="alert alert-danger d-flex flex-wrap align-items-center gap-2"><span>The last attempt failed: {{ rec.migration_last_error or 'see the Workers tab' }}</span><button type="button" class="btn btn-sm btn-primary" data-act="requeue">Queue again</button></div>
         {% endif %}
+        {% if rec.migration_status != 'in_progress' and (rec.approval_status == 'approved' or rec.migration_status != 'pending') and rec.source_delete_status != 'deleted' and not missing %}
+        <div class="panel p-3 mb-3" id="redo"><h6 class="mb-1">Do it again with other settings</h6>
+            <p class="small text-body-secondary mb-2">Takes this file back to pending so you can pick another conversion profile or other tracks and approve it again. The source file is not touched.</p>
+            {% if rec.migration_status == 'completed' %}<div class="form-check mb-2"><input class="form-check-input" type="checkbox" id="redoDest"><label class="form-check-label small" for="redoDest">I removed the converted copy at <code>{{ rec.migration_destination_path }}</code> (a worker never overwrites a file)</label></div>{% endif %}
+            <div class="form-check mb-2"><input class="form-check-input" type="checkbox" id="redoScan"><label class="form-check-label small" for="redoScan">Scan its folder again first</label></div>
+            <button type="button" class="btn btn-sm btn-outline-primary" data-act="redo">Redo with new settings</button>
+        </div>
+        {% endif %}
         {% if rec.source_delete_status or rec.arr_status %}
         <div class="panel p-3 mb-3"><h6>After the migration</h6>
             {% if rec.source_delete_status %}<p class="small mb-1"><i class="bi bi-trash3" aria-hidden="true"></i> Source: <span class="badge bg-{{ {'waiting': 'warning text-dark', 'queued': 'primary', 'deleted': 'success', 'held': 'secondary', 'failed': 'danger'}[rec.source_delete_status] }}">{{ rec.source_delete_status }}</span> {{ rec.source_delete_message or '' }}{% if rec.source_delete_status == 'waiting' and rec.source_delete_due_at %} Due {{ rec.source_delete_due_at[:10] }}.{% endif %}
@@ -66,13 +74,13 @@
 
         {% if streams and plans %}
         <div class="panel p-0 overflow-hidden mb-3">
-            <div class="p-3 pb-2"><h6 class="mb-1">Tracks</h6><p class="small text-body-secondary mb-0">Untick <em>Remove</em> to keep a track anyway. You can keep more than we suggest, never remove more.</p></div>
+            <div class="p-3 pb-2"><h6 class="mb-1">Tracks</h6><p class="small text-body-secondary mb-0">{% if decided or rec.migration_status != 'pending' %}This is what the approved job does with each track{% if chosen_profile %} (conversion profile: {{ chosen_profile.name }}){% endif %}.{% else %}Untick <em>Remove</em> to keep a track anyway. You can keep more than we suggest, never remove more.{% endif %}</p></div>
             <div class="table-responsive"><table class="table table-sm align-middle mb-0" id="tracks">
-                <thead class="table-light"><tr><th class="ps-3">#</th><th>Type</th><th>Language</th><th>Codec</th><th>Notes</th><th class="pe-3 text-end">Remove</th></tr></thead>
+                <thead class="table-light"><tr><th class="ps-3">#</th><th>Type</th><th>Language</th><th>Codec</th><th>Notes</th><th class="pe-3 text-end">{{ 'Result' if streams and streams[0].state else 'Remove' }}</th></tr></thead>
                 <tbody>{% for s in streams %}<tr>
                     <td class="ps-3">{{ s.index }}</td><td>{{ s.type }}</td><td>{{ s.language_name }}{% if s.lang_source %} <span class="text-body-secondary" title="Worked out from the track's title">(inferred)</span>{% endif %}</td><td>{{ s.codec }}{% if s.channels and s.type == 'audio' %} {{ s.channels }}ch{% endif %}</td>
                     <td class="small text-body-secondary">{{ ['default' if s.default, 'forced' if s.forced, 'SDH' if s.hearing_impaired, 'commentary' if s.comment, s.title]|select|join(', ') }}</td>
-                    <td class="pe-3 text-end">{% if s.remove %}<input type="checkbox" class="form-check-input" data-remove="{{ s.index }}" aria-label="Remove track {{ s.index }}" checked{% if s.locked %} disabled title="MKV cannot hold this subtitle format"{% endif %}>{% else %}<span class="text-body-secondary">keep</span>{% endif %}</td></tr>{% endfor %}</tbody>
+                    <td class="pe-3 text-end">{% if s.remove %}<input type="checkbox" class="form-check-input" data-remove="{{ s.index }}" aria-label="Remove track {{ s.index }}" checked{% if s.locked %} disabled title="MKV cannot hold this subtitle format"{% endif %}>{% elif s.state == 'removed' %}<span class="badge bg-danger">removed</span>{% elif s.state == 'dropped' %}<span class="badge bg-secondary" title="MKV cannot hold this subtitle format">dropped</span>{% else %}<span class="text-body-secondary">keep</span>{% endif %}</td></tr>{% endfor %}</tbody>
             </table></div>
         </div>
         {% endif %}
@@ -161,11 +169,12 @@
             if (handling) { body.mode = handling.value === 'rename' ? 'rename_only' : 'copy'; if (handling.value === 'profile') body.profile_id = document.getElementById('profilePick')?.value; }
             body.keep_streams = [...document.querySelectorAll('[data-remove]')].filter((c) => !c.checked && !c.disabled).map((c) => parseInt(c.dataset.remove, 10));
         }
+        if (kind === 'redo') { body.dest_removed = !!document.getElementById('redoDest')?.checked; body.rescan = !!document.getElementById('redoScan')?.checked; }
         if (kind === 'tested') body.note = document.getElementById('testNote')?.value || '';
-        document.querySelectorAll('#actions button').forEach((b) => { b.disabled = true; });
+        document.querySelectorAll('#actions button, #redo button').forEach((b) => { b.disabled = true; });
         const data = await libraryPost(`/api/library/record/${id}/${kind}`, body);
-        if (!data.ok) { librarySay(data.message || 'Failed.', false); document.querySelectorAll('#actions button').forEach((b) => { b.disabled = false; }); return; }
-        if (['undo', 'requeue', 'keep-source', 'release-source'].includes(kind)) { location.reload(); return; }
+        if (!data.ok) { librarySay(data.message || 'Failed.', false); document.querySelectorAll('#actions button, #redo button').forEach((b) => { b.disabled = false; }); return; }
+        if (['undo', 'requeue', 'redo', 'keep-source', 'release-source'].includes(kind)) { location.reload(); return; }
         next();
     }
     document.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => act(b.dataset.act)));

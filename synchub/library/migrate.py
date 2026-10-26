@@ -42,6 +42,18 @@ def apply_subtitle_policy(change, policy):
     return change
 
 
+def approved_removals(rec, profile=None):
+    """{track index: True when MKV cannot hold it} for the tracks an approved record's job removes: the approved track changes with the chosen profile's
+    subtitle policy applied. A rename, or a profile that only moves the file, removes nothing."""
+    if (rec.get("approved_mode") == "rename_only") or (profile and profile["move_only"]):
+        return {}
+    changes = [p for p in _json_list(rec.get("approved_track_changes_json")) if isinstance(p, dict) and p.get("op") in ("keep_tracks", "convert")]
+    if not changes:
+        return {}
+    change = apply_subtitle_policy(changes[0], profile["subtitles"] if profile else "remove_non_english")
+    return {t["index"]: bool(t.get("reason")) for t in (change.get("remove_audio") or []) + (change.get("remove_subtitle") or [])}
+
+
 def _changes_nothing(change):
     return change.get("op") != "convert" and not change.get("remove_audio") and not change.get("remove_subtitle") and change.get("default_audio") is None
 
@@ -164,6 +176,29 @@ def queue_approved(conn, cfg, by="someone"):
         except ValueError as exc:
             skipped.append((r["id"], str(exc)))
     return queued, skipped
+
+
+def redo(conn, record_id, by="someone", dest_removed=False):
+    """Takes a decided file back to pending so it can be approved again with other settings (another profile, other tracks). The file itself is not
+    touched. Needs the source: once it is deleted, only the converted copy is left. A finished copy stays where it is and the worker never overwrites it,
+    so the person must say they removed it (`dest_removed`). Raises ValueError with a message for the page."""
+    rec = store.get_record(conn, record_id)
+    if rec is None:
+        raise ValueError("There is no such file.")
+    if rec["migration_status"] == v.MIGRATION_IN_PROGRESS:
+        raise v.StateError("A worker is converting this file. Cancel the job on the Workers page first.")
+    if rec["source_delete_status"] == "deleted":
+        raise ValueError("The source was deleted after the copy was verified, so there is nothing left to convert again.")
+    if rec.get("missing_since"):
+        raise ValueError("The source file is not where it was at the last scan. Scan again first.")
+    if rec["migration_status"] == v.MIGRATION_COMPLETED and not dest_removed:
+        raise ValueError(f"The converted copy is already at {rec.get('migration_destination_path') or 'its destination'}. A worker never overwrites a file, so remove that copy first, then confirm.")
+    store.begin(conn)
+    with store.savepoint(conn, "redo"):
+        cancel_active(conn, record_id, by)
+        # a new revision, so the outcome of the old job can never make this record look finished again
+        store._update(conn, record_id, {**store._RESET_APPROVAL, **store._RESET_MIGRATION, "source_revision": rec["source_revision"] + 1})
+        store.event(conn, record_id, "user", "redo_requested", None, {"by": by, "was": rec["migration_status"], "profile": rec.get("approved_profile_id")})
 
 
 def cancel_active(conn, record_id, by="someone"):
