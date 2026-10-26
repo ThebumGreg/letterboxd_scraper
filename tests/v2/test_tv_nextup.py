@@ -48,8 +48,9 @@ def tv(tmp_path, monkeypatch):
     RecordingTV.played = []
     from synchub.tv import orchestrator
 
-    def fake_play_deeplink(driver, jf, logbook, item_id, start_ticks=None, timeout=45):
+    def fake_play_deeplink(driver, jf, logbook, item_id, start_ticks=None, timeout=45, **how):
         RecordingTV.played.append((item_id, start_ticks))
+        RecordingTV.how = how
         return {"ok": True, "steps": [f"Asked the Jellyfin app to play {item_id}"], "confirmed": True, "retryable": False}
     monkeypatch.setattr(orchestrator, "play_deeplink", fake_play_deeplink)
     yield rt

@@ -20,7 +20,7 @@ from synchub import db, ratings, settings
 # key, name in the menu, what it lets a person do
 PERMISSIONS = (
     ("dashboard", "Dashboard", "See the dashboard and open movie and show pages"),
-    ("search", "Search", "Search for titles to add"),
+    ("search", "Search", "Search for titles to add, and see what is new and trending"),
     ("requests", "Requests", "Request or add titles (the buttons on the Search page and on movie and show pages)"),
     ("notifications", "Notifications", "Set up your own way of being notified (such as Pushover) and see what was sent to you"),
     ("resolution", "Resolution Center", "Approve or dismiss title matches"),
@@ -29,7 +29,7 @@ PERMISSIONS = (
     ("workers", "Workers", "Add, pause and remove workers and see their jobs"),
     ("storage", "Storage", "Define the shares the workers use"),
     ("tv", "TV remote", "Use the TV remote, choose which apps each TV shows and see what the TVs are playing"),
-    ("tv_setup", "TV setup", "Add, change and remove TVs, find them on the network and use the advanced TV tools"),
+    ("tv_setup", "TV setup", "Add, change and remove TVs, find them on the network and use the advanced Remote Tools"),
     ("tools", "Tools & Operations", "Run syncs and tasks, send a test notification, export"),
     ("logs", "Logs", "Read the log and the Jellyfin events that were kept"),
     ("payloads", "Payloads", "Read and clear the API payload log"),
@@ -58,7 +58,8 @@ RULES = (
     ("who", PUBLIC), ("login", PUBLIC), ("logout", PUBLIC), ("static", PUBLIC), ("poster", PUBLIC), ("healthz", PUBLIC), ("api_webhook", PUBLIC), ("worker_api_*", PUBLIC),     # webhooks and workers have their own ways in
     ("api_tasks", OPEN),
     ("index", "dashboard"), ("movie_details", "dashboard"), ("show_details", "dashboard"), ("api_season", "dashboard"), ("stream_events", "dashboard"),
-    ("search_page", "search"), ("api_search_seasons", "search"),
+    ("search_page", "search"), ("api_search_seasons", "search"), ("discover_page", "search"),
+    ("status_page", "logs"),
     ("notifications_page", "notifications"), ("api_notifications_*", "notifications"), ("profile_page", "notifications"), ("my_profile", "notifications"),
     ("api_search_add_*", "requests"), ("api_request_*", "requests"), ("api_refresh", "requests"),
     ("resolution_center", "resolution"), ("api_resolution_*", "resolution"),

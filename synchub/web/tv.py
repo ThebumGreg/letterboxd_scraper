@@ -1,6 +1,6 @@
 """The TV menu: a remote for each TV, which apps it shows, the TVs themselves, and the advanced testing tools.
 
-Pages are Remote (/tv/remote) and TV apps (/tv/settings), which need the "tv" permission, and TVs (/tv/devices) and TV tools (/tv/advanced), which need "tv_setup". The script on those pages
+Pages are Remote (/tv/remote) and Remote Apps (/tv/settings), which need the "tv" permission, and TVs (/tv/devices) and Remote Tools (/tv/advanced), which need "tv_setup". The script on those pages
 talks to /api/tv/... . Endpoint names matter: access.RULES gives every `tv_setup*` / `api_tv_setup*` endpoint the TV setup permission and every other
 `tv_*` / `api_tv_*` endpoint the TV permission.
 """
@@ -171,6 +171,20 @@ def register(app):
     def api_tv_prefs_apps_reset(dev_id):
         rt().update_prefs(lambda p: p["apps"].pop(dev_id, None))
         return reply(True, "showing the default apps")
+
+    @app.put("/api/tv/prefs/resume/<dev_id>")
+    def api_tv_prefs_resume(dev_id):
+        """How a title is resumed on a TV that can only be sent a deep link (see Driver.resume_mode)."""
+        r = rt()
+        d = r.device(dev_id)
+        mode = str(json_body().get("mode") or "")
+        if mode not in runtime.RESUME_MODES:
+            raise DeviceError("mode must be one of " + ", ".join(runtime.RESUME_MODES))
+        if "deeplink" not in d.capabilities:
+            raise DeviceError(f"{d.name} resumes through its Jellyfin session, so there is nothing to choose")
+        r.update_prefs(lambda p: p["resume"].__setitem__(dev_id, mode))
+        r.apply_overrides()
+        return reply(True, "saved", mode=mode)
 
     @app.put("/api/tv/setup/prefs/session/<dev_id>")
     def api_tv_setup_prefs_session(dev_id):
@@ -423,7 +437,8 @@ def register(app):
             raise DeviceError("A deep link starts playback straight away; there is no queue")
         ids, index = body["itemIds"], int(body.get("startIndex") or 0)
         item_id = ids[index] if index < len(ids) else ids[0]
-        result = orchestrator.play_deeplink(d, r.jf(), r.logbook, item_id, body.get("startPositionTicks"))
+        result = orchestrator.play_deeplink(d, r.jf(), r.logbook, item_id, body.get("startPositionTicks"),
+                                            resume_mode=d.resume_mode() or "b", user_id=body.get("_jellyfinUser"))
         if not result["ok"] and result.get("retryable") and fallback:
             note = "The deep link request failed, so the movie is streamed directly instead"
             r.logbook.add("system", d.id, "play", response=note, ok=True)
@@ -460,15 +475,26 @@ def register(app):
 
     def resume_point(r, jellyfin_user_id, item_id):
         """Where this viewer stopped in an item, in ticks (0: nowhere). Jellyfin is asked now, which is the freshest; if it cannot be reached, what
-        SyncHub last copied from it is used."""
+        SyncHub last copied from it is used. When Jellyfin kept no place (it drops anything before about 5% of the runtime), the Jellyfin events
+        log may still know."""
+        user = watch.user_of({"jellyfin_user_id": jellyfin_user_id})
+        ticks = None
         try:
-            return watch.resume_ticks(r.jf().user_data(item_id, jellyfin_user_id))
+            ticks = watch.resume_ticks(r.jf().user_data(item_id, jellyfin_user_id))
         except Exception as exc:                          # not being able to find the place must never stop the title from playing
             logger.warning(f"Could not ask Jellyfin where {jellyfin_user_id} stopped in {item_id} ({exc.__class__.__name__}); using the copy SyncHub has")
             with db.connection() as conn:
                 row = conn.execute("SELECT position_ticks FROM src_jellyfin_userdata WHERE jellyfin_user_id = ? AND item_id = ? AND removed_at IS NULL",
-                                   (watch.user_of({"jellyfin_user_id": jellyfin_user_id}), watch.norm(item_id))).fetchone()
-            return int(row["position_ticks"]) if row else 0
+                                   (user, watch.norm(item_id))).fetchone()
+            ticks = int(row["position_ticks"]) if row else 0
+        if ticks:
+            return ticks
+        try:
+            with db.connection() as conn:
+                return watch.event_ticks(watch.event_progress(conn, user, [item_id]).get(watch.norm(item_id)))
+        except Exception as exc:
+            logger.warning(f"Could not read the Jellyfin events log for {item_id} ({exc.__class__.__name__})")
+            return 0
 
     def resolve_resume(r, body):
         """Playing a title picks up where the person using this page left off (their Jellyfin user, set on People), unless the request already
@@ -506,6 +532,7 @@ def register(app):
             body["startPositionTicks"] = 0 if asked == 0 else None        # a position given for a show means nothing: the episode has its own
         if resumed := resolve_resume(r, body):
             notes.append(resumed)
+        body["_jellyfinUser"] = ((getattr(g, "profile", None) or {}).get("jellyfin_user_id")) or None
         response = play_dispatch(r, d, body)
         if not notes:
             return response
@@ -524,6 +551,10 @@ def register(app):
         if mode == "auto" and can_link:
             mode = "deeplink+"   # deep link first; stream only if the request itself fails
         if mode in ("deeplink", "deeplink+"):
+            if can_stream and d.resume_mode() == "a" and (body.get("startPositionTicks") or 0) > 0:
+                # option a: the app cannot start part-way, so this title is streamed from the saved place (Jellyfin then records no progress)
+                r.logbook.add("system", d.id, "play", response="Resuming by streaming from the saved place (Remote Apps, 'When a title is resumed')", ok=True)
+                return play_by_url(d, body, ["Resuming by streaming from the saved place; Jellyfin will not record progress for this viewing"])
             return play_by_deeplink(d, body, fallback=(mode == "deeplink+" and can_stream))
         if mode == "url" and not can_stream:
             raise DeviceError(f"{d.name} cannot play from a stream URL")

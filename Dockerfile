@@ -14,7 +14,7 @@ ENV PYTHONUNBUFFERED=1 \
     SYNCHUB_IN_DOCKER=1
 
 # adb: the Google TV / Android TV pages open apps and read what is playing through it (the TV pairing key it makes is kept under /data/tv).
-# ping: the TV tools' network probe. Both are small.
+# ping: the Remote Tools' network probe. Both are small.
 RUN apt-get update \
     && (apt-get install -y --no-install-recommends adb iputils-ping || apt-get install -y --no-install-recommends android-tools-adb iputils-ping) \
     && rm -rf /var/lib/apt/lists/*

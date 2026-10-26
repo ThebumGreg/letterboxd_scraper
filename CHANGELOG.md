@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+**Watching: honest progress, Continue buttons, and a choice for how a Roku resumes.** No database migration.
+- **Opening a title is not watching it.** Jellyfin adds to a title's play count every time it is opened, even for a second (a TV's deep link opens at 0:01). SyncHub counted that as *Watched*, which is how Reno 911! episode 1 read as watched. Now only Jellyfin's own played flag counts, and an open under 15 seconds reads as *Not watched*.
+- **Started watching.** The movie and episode states are *Not watched*, *Started watching*, *Watching again* and *Watched*. Jellyfin throws away a place before about 5% of the runtime; the Jellyfin events log (the webhook) still has it, so SyncHub reads it back: "Started watching, 2:00 of 1:58:00", with Resume. A last event at 90% or more reads as finished without waiting for Jellyfin.
+- **Webhook that only sends progress.** Playback progress events now also refresh a person's watch record (at most every 90 seconds per title). Ticking *Playback Stop* and *User Data Saved* in the Jellyfin webhook plugin is still better.
+- **Start over, and Continue.** A title you are part-way through shows **Resume at 12:30** and a **Start over** button. A show's button says **Continue S2E4** (or **Start S1E1**) and plays that exact episode on a TV, from where you stopped.
+- **Continue Watching** row on the dashboard: your unfinished movies and shows, newest first, with a progress bar and one button.
+- **How a Roku resumes** (Remote Apps, *When a title is resumed*, per TV). The official Jellyfin Roku app reads only an item id and type from a deep link, so it starts from the beginning. The choices: **save the place in Jellyfin, then open the title** (default; the play steps say whether the app picked it up), **stream it from the place** (exact, but Jellyfin records no progress), **open it and say where to skip to**, and **press Right to skip ahead** (experimental, `resume_key_seconds` per TV, default 10).
+
+**Finding things, and what is new.**
+- **Dashboard search** has visible labels (*Find in my library*, *Type*, *Requested or watched by*, *Library status*, *My progress*, *Age rating*, *Released from/to*, *Sort by*), searches the title, year, requesters and age rating, and shows the filters in force as removable chips. The top bar's **Search** is now **Find & request** (it searches TMDB to add a title).
+- **Discover** (*New & trending*): Trending Today, Popular Movies, Popular TV Shows and Upcoming Releases from TMDB (kept for three hours), Recently Added from Jellyfin, and Coming Up in Your Library from the Radarr and Sonarr calendars. Each TMDB card shows where the title stands and the usual request buttons; each person's age limit applies.
+- **Daily picks** notification (off until a person switches it on under their Notifications): each morning at 08:00, the day's trending and upcoming titles.
+- **System status** page (System menu) with connections, workers, the queue, jobs waiting for you and disk space. The dashboard keeps one dot ("All systems OK") for people who may read the logs, and its count cards are now In Library, In Progress, Queued and Missing (Partial when there is one).
+
+**A simpler menu.** Dashboard, **Discover**, Remote, Media (Library, Resolution Center; Workers and Storage are tabs of Library), System, Settings. Your name at the right opens *My profile* and *Switch profile*. *TV apps* is now **Remote Apps** and *TV tools* is **Remote Tools**, everywhere.
+
 **A worker recovers from a network outage by itself.** Agent files only; no database migration.
 - **`agent/mount-watchdog.sh`**: install it once on a worker PC (`sudo ./agent/mount-watchdog.sh --install`) and a timer checks the shares' marker files every minute. A stale or unmounted share is mounted again from `/etc/fstab`; a worker container that cannot see the shares afterwards is restarted (at most once in ten minutes), and one that failed to start for want of a share is started. It never creates a marker and never touches a share that is mounted but unmarked. Tests: `tests/v2/test_mount_watchdog.py`.
 - **Mount options.** `agent/README.md` has a "Surviving a network outage" section: add `x-systemd.automount` and a wait for the network to the shares' `/etc/fstab` lines, so a mount that fails at boot with "Network is unreachable" is tried again on first use. SyncHub's generated lines are unchanged.

@@ -89,6 +89,7 @@ class Driver:
 
     session_override = None   # set from the UI ("Use for this TV"); wins over devices.json
     play_learned = None       # "url" once the device's Jellyfin app turned out not to accept remote commands
+    resume_override = None    # how a title is resumed on a device that can only be sent a deep link (see resume_mode), chosen on the Remote Apps page
 
     def play_mode(self):
         """session | url | auto. Devices that can stream a URL default to auto: try the Jellyfin app, else stream."""
@@ -100,6 +101,18 @@ class Driver:
         if "url_play" in self.capabilities:
             return "url" if self.play_learned == "url" else "auto"
         return "session"
+
+    def resume_mode(self):
+        """How a title picks up where the viewer stopped when this device is sent a deep link (the app starts from the beginning by itself):
+        e = save the place in Jellyfin first, then send the link (the app may resume from it); a = stream the title from the place instead
+        (Jellyfin then records no progress); b = send the link and say where to skip to; c = send the link, then skip ahead with the remote's
+        keys (experimental). Only devices with a deep link have a choice."""
+        if "deeplink" not in self.capabilities:
+            return None
+        for choice in (self.resume_override, self.cfg.get("resume")):
+            if choice in ("a", "b", "c", "e"):
+                return choice
+        return "e"
 
     def session_rule(self):
         return self.session_override or self.jellyfin.get("session") or self.default_session_rule
@@ -260,6 +273,7 @@ class Driver:
             "sessionRule": self.session_rule(),
             "sessionOverride": bool(self.session_override),
             "playVia": self.play_mode(),
+            "resumeMode": self.resume_mode(),
             "playLearned": self.play_learned == "url" and not self.cfg.get("play") and "deeplink" not in self.capabilities,
             "hasMac": bool(self.mac),
             "sleepMode": self.cfg.get("sleep") or "standby",

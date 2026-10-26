@@ -9,6 +9,11 @@
     const typeSel = $("mediaTypeFilter");
     const userSel = $("userFilter");
     const statusSel = $("statusFilter");
+    const watchSel = $("watchFilter");
+    const certSel = $("certFilter");
+    const yearFrom = $("yearFrom");
+    const yearTo = $("yearTo");
+    const chipBox = $("activeFilters");
     const sortSel = $("sortOrder");
     const perSel = $("itemsPerPage");
 
@@ -23,7 +28,13 @@
     const emptyState = $("emptyState");
     const rows = Array.from(tbody ? tbody.querySelectorAll(".item-row") : []);
 
-    const FIELDS = { q: searchInput, type: typeSel, user: userSel, status: statusSel, sort: sortSel, per: perSel };
+    const FIELDS = { q: searchInput, type: typeSel, user: userSel, status: statusSel, watch: watchSel, cert: certSel, yfrom: yearFrom, yto: yearTo, sort: sortSel, per: perSel };
+    const FILTERS = [   // what each filter is called on its chip, and how to show its value
+        [searchInput, "Search", (e) => `"${e.value.trim()}"`], [typeSel, "Type", (e) => e.selectedOptions[0].textContent],
+        [userSel, "Requested or watched by", (e) => e.selectedOptions[0].textContent], [statusSel, "Status", (e) => e.selectedOptions[0].textContent],
+        [watchSel, "My progress", (e) => e.selectedOptions[0].textContent], [certSel, "Age rating", (e) => e.value],
+        [yearFrom, "From year", (e) => e.value], [yearTo, "To year", (e) => e.value],
+    ];
     let page = 1;
     let view = "list";
 
@@ -132,18 +143,28 @@
     function render() {
         if (!searchInput) return;
 
-        const q = searchInput.value.trim().toLowerCase();
+        const words = searchInput.value.trim().toLowerCase().split(/\s+/).filter(Boolean);     // every word must appear in the title, year, requester or rating
         const type = typeSel.value;
         const user = userSel.value.toLowerCase();
         const status = statusSel.value;
+        const seen = watchSel ? watchSel.value : "";
+        const cert = certSel ? certSel.value : "";
+        const from = yearFrom ? parseInt(yearFrom.value, 10) : NaN;
+        const to = yearTo ? parseInt(yearTo.value, 10) : NaN;
 
         const visible = rows.filter((r) => {
             const d = r.dataset;
-            return d.title.includes(q)
+            const year = parseInt(d.year, 10);
+            return words.every((w) => d.search.includes(w))
                 && (!type || d.kind === type)
                 && (!user || d.users.includes("|" + user + "|"))
-                && (!status || (status === "in_flight" ? IN_FLIGHT.includes(d.state) : d.state === status));
+                && (!status || (status === "in_flight" ? IN_FLIGHT.includes(d.state) : d.state === status))
+                && (!seen || d.watch === seen)
+                && (!cert || d.cert === cert)
+                && (isNaN(from) || (year && year >= from))
+                && (isNaN(to) || (year && year <= to));
         });
+        renderChips();
 
         visible.sort((a, b) => {
             if (sortSel.value === "title-asc") return titleCmp(a, b);
@@ -186,14 +207,39 @@
         persist();
     }
 
+    function clearFilter(el) {
+        if (el) el.value = "";
+    }
+
     function resetFilters() {
         if(!searchInput) return;
-        searchInput.value = "";
-        typeSel.value = "";
-        userSel.value = "";
-        statusSel.value = "";
+        FILTERS.forEach(([el]) => clearFilter(el));
         page = 1;
         render();
+    }
+
+    // The filters in force as removable chips, so it is clear why a title is missing.
+    function renderChips() {
+        if (!chipBox) return;
+        const chips = FILTERS.filter(([el]) => el && el.value.trim() !== "").map(([el, name, show]) => {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = "btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1";
+            b.setAttribute("aria-label", `Remove filter ${name}: ${show(el)}`);
+            b.append(`${name}: ${show(el)} `, Object.assign(document.createElement("i"), { className: "bi bi-x-lg" }));
+            b.addEventListener("click", () => { clearFilter(el); rerenderFromStart(); });
+            return b;
+        });
+        if (chips.length > 1) {
+            const all = document.createElement("button");
+            all.type = "button";
+            all.className = "btn btn-sm btn-link";
+            all.textContent = "Clear all";
+            all.addEventListener("click", resetFilters);
+            chips.push(all);
+        }
+        chipBox.replaceChildren(...chips);
+        chipBox.classList.toggle("d-none", chips.length === 0);
     }
 
     const rerenderFromStart = () => { page = 1; render(); };
@@ -201,7 +247,8 @@
 
     if (searchInput) {
         searchInput.addEventListener("input", () => { clearTimeout(debounce); debounce = setTimeout(rerenderFromStart, 150); });
-        [typeSel, userSel, statusSel, sortSel, perSel].forEach((s) => s.addEventListener("change", rerenderFromStart));
+        [typeSel, userSel, statusSel, watchSel, certSel, sortSel, perSel].forEach((s) => s && s.addEventListener("change", rerenderFromStart));
+        [yearFrom, yearTo].forEach((s) => s && s.addEventListener("input", () => { clearTimeout(debounce); debounce = setTimeout(rerenderFromStart, 300); }));
 
         btnList.addEventListener("click", () => { view = "list"; render(); });
         btnGrid.addEventListener("click", () => { view = "grid"; render(); });
@@ -223,8 +270,7 @@
 
     function applyPreset(card) {
         if(!searchInput) return;
-        searchInput.value = "";
-        userSel.value = "";
+        FILTERS.forEach(([el]) => clearFilter(el));
         typeSel.value = card.dataset.setType || "";
         statusSel.value = card.dataset.setStatus || "";
         rerenderFromStart();

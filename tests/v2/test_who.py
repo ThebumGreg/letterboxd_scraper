@@ -94,7 +94,8 @@ def test_the_nav_names_who_you_are_and_offers_a_switch(newcomer, two_profiles):
     newcomer.post("/who", data={"profile_id": str(alice)})
     page = newcomer.get("/settings").get_data(as_text=True)
     link = re.search(r'<a [^>]*id="whoAmI"[^>]*>(.*?)</a>', page, re.S)
-    assert "Alice" in link.group(1) and "switch" in link.group(1) and 'href="/who?next=/settings"' in link.group(0)
+    assert "Alice" in link.group(1)
+    assert 'href="/who?next=/settings">Switch profile</a>' in page and ">My profile</a>" in page          # both live in the name's menu
 
 
 def test_the_chosen_profile_decides_which_jellyfin_user_opens_the_app(newcomer, two_profiles):

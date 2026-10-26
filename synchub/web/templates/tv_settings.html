@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}TV apps{% endblock %}
+{% block title %}Remote Apps{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='tv/tv.css') }}">{% endblock %}
 
 {% block content %}
 <div class="tvr">
 <div class="tv-head">
-  <h1>TV apps</h1>
+  <h1>Remote Apps</h1>
   <div id="devbar"></div>
 </div>
 <div id="banner" hidden></div>
@@ -26,6 +26,12 @@
     <div id="appsHint" class="small dim"></div>
   </section>
 
+  <section id="resumeCard">
+    <h2>When a title is resumed</h2>
+    <div id="resumeFor" class="small dim"></div>
+    <div id="resumeBody"></div>
+  </section>
+
   <section id="quickCard">
     <h2>Quick launch</h2>
     <div id="quickStrip" class="qstrip"></div>
@@ -34,7 +40,7 @@
   <section id="deviceCard">
     <h2>On this device</h2>
     <label class="small"><input type="checkbox" id="kbd"> Keyboard control on the Remote page (arrows, Enter, Esc, Space, m, +/−)</label>
-    <div class="small dim" style="margin-top:6px">Remembered by this browser only. Add or edit TVs on the <a href="{{ url_for('tv_setup_devices_page') }}">TVs</a> page; testing tools are on <a href="{{ url_for('tv_setup_advanced_page') }}">TV tools</a>.</div>
+    <div class="small dim" style="margin-top:6px">Remembered by this browser only. Add or edit TVs on the <a href="{{ url_for('tv_setup_devices_page') }}">TVs</a> page; testing tools are on <a href="{{ url_for('tv_setup_advanced_page') }}">Remote Tools</a>.</div>
   </section>
 
   <section id="newsCard">

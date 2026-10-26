@@ -31,13 +31,13 @@
         slot.textContent = "";
         if (!cfg.tv) {                                    // nothing to choose between
             const a = deviceLink(slot, size);
-            a.append(icon("play-circle"), "Watch now");
-            a.setAttribute("aria-label", `Watch ${slot.dataset.title || "this title"} now`);
+            a.append(icon("play-circle"), slot.dataset.label || "Watch now");
+            a.setAttribute("aria-label", `${slot.dataset.label || "Watch"} ${slot.dataset.title || "this title"}`);
             slot.appendChild(a);
             return;
         }
         const wrap = make("div", "dropdown watch-now-menu" + (slot.dataset.size === "card" ? " w-100" : " d-inline-block"));
-        wrap.dataset.item = slot.dataset.item;
+        wrap.dataset.item = slot.dataset.playItem || slot.dataset.item;     // a show can name the episode to play on a TV
         wrap.dataset.title = slot.dataset.title || "this title";
         const resume = slot.dataset.resume || "";                // where this person stopped ("at 42:10", "S2E4 at 12:30"), when they are part-way through
         const toggle = make("button", size + " dropdown-toggle");
@@ -49,7 +49,7 @@
         toggle.setAttribute("aria-label", resume ? `Resume ${wrap.dataset.title} ${resume}: choose where` : `Watch ${wrap.dataset.title} now: choose where`);
         if (resume) toggle.title = `Resume ${resume}`;
         const wide = !slot.dataset.size || slot.dataset.size === "lg";        // a big button has room for where; a row or a card only says Resume
-        toggle.append(icon("play-circle"), !resume ? "Watch now" : wide ? `Resume ${resume}` : "Resume");
+        toggle.append(icon("play-circle"), resume ? (wide ? `Resume ${resume}` : "Resume") : (slot.dataset.label || "Watch now"));
         const menu = make("ul", "dropdown-menu dropdown-menu-end");
         const here = make("li");
         const a = deviceLink(slot, "dropdown-item");
@@ -76,6 +76,18 @@
         menu.append(header, loading);
         wrap.append(toggle, menu);
         slot.appendChild(wrap);
+        if (resume && wide) {                                     // one tap to the TV list with "Start from the beginning" already ticked
+            const over = make("button", "btn btn-outline-secondary ms-2");
+            over.type = "button";
+            over.append(icon("arrow-counterclockwise"), "Start over");
+            over.setAttribute("aria-label", `Start ${wrap.dataset.title} over from the beginning`);
+            over.addEventListener("click", () => {
+                const box = wrap.querySelector("input[data-start-over]");
+                if (box) box.checked = true;
+                if (window.bootstrap) bootstrap.Dropdown.getOrCreateInstance(toggle).show(); else toggle.click();
+            });
+            wrap.after(over);
+        }
     }
 
     // ---- the TVs (asked for once per page, the first time a menu opens)
