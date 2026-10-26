@@ -44,3 +44,8 @@ def test_the_workflows_and_the_unraid_template_name_the_same_image():
 def test_the_unraid_template_is_valid_xml():
     import xml.dom.minidom
     xml.dom.minidom.parse(str(ROOT / "unraid/synchub.xml"))
+
+
+def test_the_worker_agent_and_synchub_share_one_version():
+    agent = re.search(r'^__version__ = "([^"]+)"', (ROOT / "agent/synchub_agent.py").read_text(), re.M).group(1)
+    assert agent == synchub.__version__

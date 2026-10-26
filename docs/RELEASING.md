@@ -16,7 +16,7 @@ branch ──► pull request (tests + image build) ──► main ──► Git
 
 ## Making a numbered release
 
-1. Change `__version__` in `synchub/__init__.py` (for example `1.2.0`; the version is shown at the bottom of every page and is the image's label).
+1. Change `__version__` in `synchub/__init__.py` **and** in `agent/synchub_agent.py` (both always carry the same number, for example `1.2.0`; the version is shown at the bottom of every page and is the image's label).
 2. Add a section to `CHANGELOG.md`.
 3. Commit, merge to `main`, wait for the publish run to go green (GitHub, *Actions*). That publishes `:1.2.0` and `:latest`.
 4. Optional: tag it so GitHub lists a release: `git tag v1.2.0 && git push origin v1.2.0` (or *Releases, Draft a new release* on GitHub with a new tag `v1.2.0`). The workflow then also publishes `:1.2`.
