@@ -5,12 +5,13 @@ from datetime import date, datetime
 from synchub import ratings, settings, states
 
 
-def demand(conn):
+def demand(conn, sources=False):
     """{media_id: {'wanted_by': [...], 'watched_by': [...]}} from the entries of active profiles.
 
     Someone *wants* a title when it is on their watchlist (and not removed from it) and they have not watched it, or when
     they asked for it from the search page (that stands even if they have watched it: they asked).
     Entries are never deleted, so a title dropped from a list keeps its row but stops counting as wanted.
+    With `sources=True` each entry also says who has it on a watchlist (`watchlisted_by`) and who asked for it (`requested_by`).
     """
     rows = conn.execute("""
         SELECT l.entity_id AS media_id, e.list AS list, p.name AS name, e.removed_at AS removed_at
@@ -34,6 +35,8 @@ def demand(conn):
     for media_id in set(watchlist) | set(watched) | set(asked):
         result[media_id] = {"wanted_by": sorted((watchlist[media_id] - watched[media_id]) | asked[media_id], key=str.lower),
                             "watched_by": sorted(watched[media_id], key=str.lower)}
+        if sources:                                                    # which of the two reasons applies, for people who treat them differently
+            result[media_id].update(watchlisted_by=sorted(watchlist[media_id] - watched[media_id], key=str.lower), requested_by=sorted(asked[media_id], key=str.lower))
     return result
 
 

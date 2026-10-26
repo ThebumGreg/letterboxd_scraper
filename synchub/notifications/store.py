@@ -131,7 +131,10 @@ def secret_values(conn):
 # ---------------------------------------------------------------- what a person wants to hear about, and when
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 BATCH_CHOICES = (0, 15, 60)
-DEFAULT_PREF = {"quiet_on": False, "quiet_start": "22:00", "quiet_end": "07:00", "timezone": "UTC", "batch_minutes": 0}
+EPISODE_WHEN = ("library", "aired", "both")
+EPISODE_SOURCE = ("both", "watchlist", "requested")
+DEFAULT_PREF = {"quiet_on": False, "quiet_start": "22:00", "quiet_end": "07:00", "timezone": "UTC", "batch_minutes": 0,
+                "episode_when": "library", "episode_source": "both"}
 
 
 def rules(conn, profile_id):
@@ -157,7 +160,7 @@ def set_rule(conn, profile_id, event_type, enabled):
 def pref(conn, profile_id):
     row = conn.execute("SELECT * FROM notification_pref WHERE profile_id = ?", (profile_id,)).fetchone()
     return {**DEFAULT_PREF, "quiet_on": bool(row["quiet_on"]), "quiet_start": row["quiet_start"], "quiet_end": row["quiet_end"], "timezone": row["timezone"],
-            "batch_minutes": row["batch_minutes"]} if row else dict(DEFAULT_PREF)
+            "batch_minutes": row["batch_minutes"], "episode_when": row["episode_when"], "episode_source": row["episode_source"]} if row else dict(DEFAULT_PREF)
 
 
 def set_pref(conn, profile_id, quiet_on, quiet_start, quiet_end, timezone_name, batch_minutes=0):
@@ -178,6 +181,25 @@ def set_pref(conn, profile_id, quiet_on, quiet_start, quiet_end, timezone_name, 
                  (profile_id, 1 if quiet_on else 0, quiet_start, quiet_end, str(timezone_name), batch_minutes))
 
 
+def set_episode_pref(conn, profile_id, when, source):
+    """Saves when and for which shows a person hears about new episodes. Raises ValueError for a choice that is not on offer."""
+    if when not in EPISODE_WHEN or source not in EPISODE_SOURCE:
+        raise ValueError("Choose from the lists.")
+    conn.execute("INSERT INTO notification_pref (profile_id, episode_when, episode_source) VALUES (?, ?, ?) "
+                 "ON CONFLICT (profile_id) DO UPDATE SET episode_when = excluded.episode_when, episode_source = excluded.episode_source", (profile_id, when, source))
+
+
+def is_muted(conn, profile_id, media_id):
+    return conn.execute("SELECT 1 FROM notification_show_mute WHERE profile_id = ? AND media_id = ?", (profile_id, media_id)).fetchone() is not None
+
+
+def set_muted(conn, profile_id, media_id, muted):
+    if muted:
+        conn.execute("INSERT OR IGNORE INTO notification_show_mute (profile_id, media_id) VALUES (?, ?)", (profile_id, media_id))
+    else:
+        conn.execute("DELETE FROM notification_show_mute WHERE profile_id = ? AND media_id = ?", (profile_id, media_id))
+
+
 def quiet_until(prefs, now):
     """When quiet hours end (database UTC text) if `now` falls inside them, else None. Handles a window that crosses midnight."""
     if not prefs["quiet_on"]:
@@ -196,8 +218,16 @@ def quiet_until(prefs, now):
     return ends.astimezone(timezone.utc).strftime(FORMAT)
 
 
+def set_admin(conn, profile_id, on):
+    """Makes a profile one of those who get administrator alerts, or not (the choice is on the person's page under People)."""
+    ids = [i for i in admin_ids(conn) if i != profile_id]
+    if on:
+        ids.append(profile_id)
+    settings.set_value("notify_admin_profiles", ",".join(str(i) for i in sorted(set(ids))), conn=conn)
+
+
 def admin_ids(conn):
-    """The profiles the administrator chose to receive administrator alerts (Settings)."""
+    """The profiles that receive administrator alerts (set on each person's page under People)."""
     ids = []
     for part in str(settings.get("notify_admin_profiles", conn=conn) or "").split(","):
         if part.strip().isdigit():

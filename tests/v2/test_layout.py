@@ -88,8 +88,10 @@ def test_people_has_profiles_and_access_on_one_page(client, v2, conn):
     pid = conn.execute("INSERT INTO profile (name) VALUES ('Alice')").lastrowid
     conn.commit()
     page = text(client.get("/people"))
-    assert 'id="profiles"' in page and 'id="access"' in page and f'id="person-{pid}"' in page and f'href="#person-{pid}"' in page
-    assert "Add Profile" in page and "PINs and pages" in page and "Remembering a PIN" in page
+    assert 'id="profiles"' in page and 'id="access"' in page and f'id="person-{pid}"' in page and f'href="/people/{pid}"' in page
+    assert "Add Profile" in page and "Guests and PINs" in page and "Remembering a PIN" in page
+    person = text(client.get(f"/people/{pid}"))                  # identity, access and notifications for one person, together
+    assert all(x in person for x in ('id="pane-identity"', 'id="pane-access"', 'id="pane-notifications"', 'id="adminAlerts"'))
 
 
 def test_saving_or_deleting_a_profile_returns_to_people(client, v2, conn):
@@ -114,7 +116,7 @@ def test_workers_jobs_and_worker_status_are_tabs_of_the_live_fragment(client, v2
 
 # ---------------------------------------------------------------- headings match the menu
 @pytest.mark.parametrize("path, heading", [("/tools", "Tools &amp; Operations"), ("/logs", "Logs"), ("/payloads", "Payloads"), ("/ddns", "Dynamic DNS"),
-                                           ("/settings", "Settings"), ("/notifications", "Notifications"), ("/people", "People"), ("/activity", "What it&#39;s doing now"), ("/jellyfin-events", "Jellyfin events")])
+                                           ("/settings", "Settings"), ("/people", "People"), ("/activity", "What it&#39;s doing now"), ("/jellyfin-events", "Jellyfin events")])
 def test_each_page_is_headed_with_its_menu_name(client, v2, path, heading):
     page = text(client.get(path))
     wanted = htmllib.unescape(heading)

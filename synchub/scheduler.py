@@ -42,6 +42,13 @@ def _purge_previews():
     previews.purge()
 
 
+def _announce_aired():
+    from synchub import db
+    from synchub.notifications import arrivals
+    with db.connection() as conn:
+        arrivals.announce_aired(conn)
+
+
 def _prune_jellyfin_events():
     from synchub import jellyfin_events
     removed = jellyfin_events.prune()
@@ -74,6 +81,7 @@ def configure():
     scheduler.add_job(_purge_previews, "interval", hours=6, id="job_purge_previews", max_instances=1, coalesce=True)
     scheduler.add_job(dispatch.run_due, "interval", seconds=NOTIFY_SECONDS, id="job_notify", max_instances=1, coalesce=True)
     scheduler.add_job(watch.check, "interval", seconds=NOTIFY_SECONDS, id="job_notify_watch", max_instances=1, coalesce=True)
+    scheduler.add_job(_announce_aired, "interval", hours=1, id="job_notify_aired", max_instances=1, coalesce=True)
     scheduler.add_job(dispatch.prune_history, "interval", hours=24, id="job_notify_prune", max_instances=1, coalesce=True)
     from synchub import backup
     if backup.keep_count():

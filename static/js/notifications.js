@@ -166,4 +166,14 @@
             say(document.getElementById("quietResult"), got.message, got.ok);
         });
     }
+    const episodeSave = document.getElementById("episodeSave");
+    if (episodeSave) {
+        episodeSave.addEventListener("click", async () => {
+            const got = await post("/api/notifications/episodes", {
+                episode_when: document.getElementById("episodeWhen").value,
+                episode_source: document.getElementById("episodeSource").value,
+            });
+            say(document.getElementById("episodeResult"), got.message, got.ok);
+        });
+    }
 })();

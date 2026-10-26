@@ -84,12 +84,13 @@
 {% macro watch_unlinked(progress) %}<div class="small text-body-secondary" id="watchUnlinked"><i class="bi bi-person-badge" aria-hidden="true"></i> To see {{ progress.name }}'s watch progress here, set their Jellyfin user{% if can('access') %} on <a href="{{ url_for('people_page') }}" class="text-decoration-none">People</a>{% endif %}.</div>{% endmacro %}
 
 {# Settings: Add/Edit profile modal. Fields are filled by editProfile() from the row's data attributes. #}
-{% macro profile_modal(save_url) %}
+{% macro profile_modal(save_url, return_to='') %}
 <div class="modal fade" id="profileModal" tabindex="-1" aria-labelledby="profileModalLabel" aria-hidden="true">
     <div class="modal-dialog">
         <form action="{{ save_url }}" method="POST" class="modal-content">
             {{ csrf_field() }}
             <input type="hidden" name="profile_id" id="modal_profile_id" value="">
+            <input type="hidden" name="return_to" value="{{ return_to }}">
             <div class="modal-header">
                 <h5 class="modal-title" id="profileModalLabel">Profile</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>

@@ -18,7 +18,7 @@ PIN_COOKIE = "synchub_pin"              # signed proof that this profile's PIN w
 # The main menu. An (endpoint, label) is a link; a (label, [items]) is a dropdown, whose items are links or (None, heading) group titles.
 # What a person sees is what their permissions allow, and a heading with nothing under it is left out.
 NAV = (
-    ("index", "Dashboard"), ("tv_remote_page", "Remote"), ("search_page", "Search"), ("notifications_page", "Notifications"),
+    ("index", "Dashboard"), ("tv_remote_page", "Remote"), ("search_page", "Search"), ("my_profile", "My profile"),
     ("Media", (("library_page", "Library"), ("resolution_center", "Resolution Center"), ("workers_page", "Workers"), ("storage_page", "Storage"))),
     ("System", (
         (None, "Run"), ("tools", "Tools & Operations"),

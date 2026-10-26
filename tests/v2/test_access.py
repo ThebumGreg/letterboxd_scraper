@@ -459,7 +459,7 @@ def test_the_menu_groups_workers_library_and_storage_and_tools_logs_and_payloads
     conn.commit()
     sign_in(browser, pid)
     shown = menu(text(browser.get("/")))
-    assert shown["links"] == ["Dashboard", "Remote", "Search", "Notifications", "Settings"]
+    assert shown["links"] == ["Dashboard", "Remote", "Search", "My profile", "Settings"]
     assert shown["dropdowns"] == {"Media": ["Library", "Resolution Center", "Workers", "Storage"],
                                   "System": ["Tools &amp; Operations", "What it&#39;s doing now", "Logs", "Jellyfin events", "Payloads", "Dynamic DNS", "People", "TV apps", "TVs", "TV tools"]}
     page = text(browser.get("/"))
@@ -495,7 +495,7 @@ def test_the_dropdowns_work_on_a_phone_menu(browser, v2, conn):
 def test_people_holds_profile_management_for_those_with_access_and_never_prints_a_pin(browser, v2, conn, people):
     sign_in(browser, people["alice"], "4821")
     page = text(browser.get("/people"))
-    assert "Import Jellyfin Users" in page and 'id="profileModal"' in page and 'href="#person-%d"' % people["bob"] in page and "bi-lock-fill" in page
+    assert "Import Jellyfin Users" in page and 'id="profileModal"' in page and 'href="/people/%d"' % people["bob"] in page and "bi-lock-fill" in page
     assert "scrypt:" not in page and "pbkdf2:" not in page
     settings_page = text(browser.get("/settings"))
     assert "Import Jellyfin Users" not in settings_page and 'id="profileModal"' not in settings_page      # Settings no longer holds profiles
@@ -559,9 +559,10 @@ def admin(browser, people):
 def test_the_access_page_lists_everyone_with_their_pin_state_and_permissions(admin, people):
     page = text(admin.get("/people"))
     assert "PIN set" in page and "No PIN" in page and ">you<" in page and 'data-card="guest"' in page
+    person = text(admin.get(f"/people/{people['bob']}"))
     for key in access.KEYS:
-        assert f'id="perm-guest-{key}"' in page and f'id="perm-{people["bob"]}-{key}"' in page
-    assert re.search(r'id="perm-%d-dashboard" value="dashboard" checked' % people["bob"], page) and not re.search(r'id="perm-%d-settings" value="settings" checked' % people["bob"], page)
+        assert f'id="perm-guest-{key}"' in page and f'id="perm-{people["bob"]}-{key}"' in person
+    assert re.search(r'id="perm-%d-dashboard" value="dashboard" checked' % people["bob"], person) and not re.search(r'id="perm-%d-settings" value="settings" checked' % people["bob"], person)
     assert "python -m synchub.access reset-all" in page
 
 

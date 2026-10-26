@@ -1,7 +1,9 @@
 """The People page: who has a PIN and who may open what (the profiles themselves are in admin.py)."""
-from flask import current_app, g, jsonify, redirect, render_template, request, url_for
+from flask import current_app, flash, g, jsonify, redirect, render_template, request, url_for
 
 from synchub import access, db, profiles, ratings, settings
+from synchub.notifications import store as notification_store
+from synchub.web.notifications import panels_context
 
 PRESETS = {"everything": list(access.KEYS), "viewer": ["dashboard", "search"], "dashboard + remote": ["dashboard", "tv"], "nothing": []}
 
@@ -27,7 +29,46 @@ def register(app):
         with db.connection() as conn:
             overview = access.overview(conn)
             profile_list = profiles.list_all(conn)
-        return render_template("people.html", overview=overview, profiles=profile_list, permissions=access.PERMISSIONS, presets=PRESETS, levels=ratings.LEVELS, me=(g.profile or {}).get("id"))
+            return render_template("people.html", overview=overview, profiles=profile_list, permissions=access.PERMISSIONS, presets=PRESETS, levels=ratings.LEVELS, me=(g.profile or {}).get("id"),
+                               admin_ids=notification_store.admin_ids(conn))
+
+    @app.route("/people/<int:profile_id>")
+    def profile_page(profile_id):
+        """One person's own page: who they are, what they may open, and how SyncHub reaches them. Anyone may open their own; another person's needs the People permission."""
+        me = (g.profile or {}).get("id")
+        can_manage = access.allowed(g.permissions, "access")
+        if profile_id != me and not can_manage:
+            from synchub.web import _deny
+            return _deny("People")
+        with db.connection() as conn:
+            overview = access.overview(conn)
+            person = next((p for p in overview["people"] if p["id"] == profile_id), None)
+            if person is None:
+                flash("That person no longer exists.", "warning")
+                return redirect(url_for("people_page") if can_manage else url_for("index"))
+            identity = next(p for p in profiles.list_all(conn) if p["id"] == profile_id)
+            panels = panels_context(conn) if profile_id == me else {}
+            is_admin = profile_id in notification_store.admin_ids(conn)
+            channels = notification_store.list_channels(conn, profile_id)
+            pref = notification_store.pref(conn, profile_id)
+        return render_template("profile.html", overview=overview, person=person, identity=identity, is_me=profile_id == me, can_manage=can_manage, person_is_admin=is_admin,
+                               channel_count=len(channels), person_pref=pref, permissions=access.PERMISSIONS, presets=PRESETS, levels=ratings.LEVELS, me=me, **panels)
+
+    @app.route("/my-profile")
+    def my_profile():
+        profile = g.profile
+        return redirect(url_for("profile_page", profile_id=profile["id"]) if profile else url_for("who", next="/my-profile"))
+
+    @app.route("/api/access/profile/<int:profile_id>/admin-alerts", methods=["POST"])
+    def api_access_admin_alerts(profile_id):
+        enabled = (request.get_json(silent=True) or {}).get("enabled")
+        if not isinstance(enabled, bool):
+            return _fail("Say whether this person should get administrator alerts.")
+        with db.connection() as conn:
+            if conn.execute("SELECT 1 FROM profile WHERE id = ?", (profile_id,)).fetchone() is None:
+                return _fail("That person no longer exists.", 404)
+            notification_store.set_admin(conn, profile_id, enabled)
+        return jsonify(ok=True, message="They will get administrator alerts." if enabled else "They will not get administrator alerts.")
 
     @app.route("/access")
     def access_page():

@@ -1,0 +1,139 @@
+<!-- synchub/web/templates/profile.html -->
+{% extends "base.html" %}
+{% from "_macros.html" import csrf_field, profile_modal with context %}
+{% from "_access_macros.html" import grid, rating_picker with context %}
+{% block title %}{{ person.name }}{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+    {% if can_manage %}<a href="{{ url_for('people_page') }}" class="small text-decoration-none"><i class="bi bi-arrow-left" aria-hidden="true"></i> People</a>{% endif %}
+    <div class="d-flex flex-wrap align-items-center gap-2 mt-1">
+        <h2 class="mb-0">{{ person.name }}</h2>
+        {% if is_me %}<span class="badge bg-info text-dark">you</span>{% endif %}
+        {% if person.has_pin %}<span class="badge bg-success"><i class="bi bi-lock-fill" aria-hidden="true"></i> PIN set</span>{% else %}<span class="badge bg-warning text-dark">No PIN</span>{% endif %}
+        {% if person.as_guest %}<span class="badge bg-secondary" title="Anyone on the network can choose a profile that has no PIN, so until it has one it gets the Guests pages and rating limit, whatever is set below.">guest limits apply</span>{% endif %}
+        {% if person.locked_for %}<span class="badge bg-danger">locked for {{ person.locked_for }} s after wrong tries</span>{% endif %}
+        {% if person_is_admin %}<span class="badge bg-dark">admin alerts</span>{% endif %}
+    </div>
+</div>
+
+<ul class="nav nav-tabs mb-3" id="profileTabs" role="tablist">
+    {% if can_manage %}
+    <li class="nav-item" role="presentation"><button class="nav-link active" id="tab-identity" data-bs-toggle="tab" data-bs-target="#pane-identity" type="button" role="tab" aria-controls="pane-identity" aria-selected="true">Profile</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link" id="tab-access" data-bs-toggle="tab" data-bs-target="#pane-access" type="button" role="tab" aria-controls="pane-access" aria-selected="false">Access</button></li>
+    {% endif %}
+    <li class="nav-item" role="presentation"><button class="nav-link{% if not can_manage %} active{% endif %}" id="tab-notifications" data-bs-toggle="tab" data-bs-target="#pane-notifications" type="button" role="tab" aria-controls="pane-notifications" aria-selected="{{ 'true' if not can_manage else 'false' }}">Notifications</button></li>
+</ul>
+
+<div class="tab-content">
+    {% if can_manage %}
+    <div class="tab-pane fade show active" id="pane-identity" role="tabpanel" aria-labelledby="tab-identity" tabindex="0">
+        <div class="panel p-3 p-md-4 mb-4">
+            <h5 class="text-success mb-3">Who they are</h5>
+            <dl class="row mb-3">
+                <dt class="col-sm-3">Display name</dt><dd class="col-sm-9">{{ identity.name }}</dd>
+                <dt class="col-sm-3">Letterboxd</dt><dd class="col-sm-9">{{ identity.letterboxd_username or '—' }}</dd>
+                <dt class="col-sm-3">Serializd</dt><dd class="col-sm-9">{{ identity.serializd_username or '—' }}</dd>
+                <dt class="col-sm-3">Jellyfin user ID</dt><dd class="col-sm-9"><code class="small">{{ identity.jellyfin_user_id or '—' }}</code></dd>
+                <dt class="col-sm-3">Included in syncs</dt><dd class="col-sm-9">{{ 'Yes' if identity.is_active else 'No (switch on from the People list)' }}</dd>
+            </dl>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="editIdentity"
+                data-id="{{ identity.id }}" data-name="{{ identity.name }}" data-lb="{{ identity.letterboxd_username or '' }}"
+                data-sz="{{ identity.serializd_username or '' }}" data-jf="{{ identity.jellyfin_user_id or '' }}">Edit</button>
+        </div>
+        <div class="panel p-3 p-md-4 mb-4">
+            <h5 class="text-success mb-1">Administrator alerts</h5>
+            <p class="small text-body-secondary">Worker, share, job and TV alerts go to the people who have this switched on, through their own delivery methods. They can still switch individual alerts off.</p>
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="adminAlerts" data-profile="{{ person.id }}"{% if person_is_admin %} checked{% endif %}>
+                <label class="form-check-label" for="adminAlerts">{{ person.name }} gets administrator alerts</label>
+            </div>
+            <span class="small" id="adminAlertsResult" role="status"></span>
+        </div>
+    </div>
+
+    <div class="tab-pane fade" id="pane-access" role="tabpanel" aria-labelledby="tab-access" tabindex="0">
+        <div id="accessMessage" class="alert d-none" role="status" aria-live="polite"></div>
+        <div class="panel p-3 p-md-4 mb-4" data-card="{{ person.id }}" id="person-{{ person.id }}">
+            <h5 class="text-success mb-2">Pages they may open</h5>
+            {{ grid(person.id, person.permissions, person.all) }}
+            {{ rating_picker(person.id, person.max_rating) }}
+            <hr>
+            <h5 class="text-success mb-2">PIN</h5>
+            <div class="row g-2 align-items-end">
+                <div class="col-sm-5 col-md-4">
+                    <label for="pin-{{ person.id }}" class="form-label small mb-1">{{ 'New PIN' if person.has_pin else 'Set a PIN' }} (4 to 8 digits)</label>
+                    <input type="password" class="form-control form-control-sm" id="pin-{{ person.id }}" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8" autocomplete="new-password" placeholder="e.g. 4821">
+                </div>
+                <div class="col-auto d-flex flex-wrap gap-2">
+                    <button type="button" class="btn btn-outline-success btn-sm" data-set-pin="{{ person.id }}">{{ 'Change PIN' if person.has_pin else 'Set PIN' }}</button>
+                    {% if person.has_pin %}<button type="button" class="btn btn-outline-danger btn-sm" data-clear-pin="{{ person.id }}" data-name="{{ person.name }}">Remove PIN</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-signout="{{ person.id }}" title="Ask for the PIN again on every device">Sign out everywhere</button>{% endif %}
+                    {% if person.locked_for or person.failures %}<button type="button" class="btn btn-outline-warning btn-sm" data-unlock="{{ person.id }}">Unlock</button>{% endif %}
+                </div>
+            </div>
+            <p class="small text-body-secondary mt-3 mb-0">Anyone can choose a profile with no PIN, so once any profile has a PIN, a profile without one is treated as a guest. Guest pages and rating limit are on the <a href="{{ url_for('people_page') }}#access">People</a> page.</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="tab-pane fade{% if not can_manage %} show active{% endif %}" id="pane-notifications" role="tabpanel" aria-labelledby="tab-notifications" tabindex="0">
+        {% if is_me %}
+        <div id="notifyPage">
+            {% include "_notify_panels.html" %}
+        </div>
+        {% else %}
+        <div class="panel p-3 p-md-4 mb-4">
+            <h5 class="text-success mb-2">How {{ person.name }} is notified</h5>
+            <ul class="mb-3">
+                <li>{{ channel_count }} delivery method{{ '' if channel_count == 1 else 's' }}</li>
+                <li>Quiet hours {% if person_pref.quiet_on %}{{ person_pref.quiet_start }} to {{ person_pref.quiet_end }} ({{ person_pref.timezone }}){% else %}off{% endif %}; {% if person_pref.batch_minutes %}grouped every {{ person_pref.batch_minutes }} minutes{% else %}each notice sent as it happens{% endif %}</li>
+                <li>New episodes: {{ {'library': 'when they reach the library', 'aired': 'when they air', 'both': 'when they air and when they reach the library'}[person_pref.episode_when] }}, for {{ {'both': 'the watchlist and requests', 'watchlist': 'the watchlist', 'requested': 'requests only'}[person_pref.episode_source] }}</li>
+            </ul>
+            <p class="small text-body-secondary mb-0">Delivery methods hold private keys, so each person sets up their own. To change these, choose this profile (the link at the top right) and open this page again.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if can_manage %}{{ profile_modal(url_for('save_profile'), url_for('profile_page', profile_id=person.id)) }}{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/access.js') }}"></script>
+{% if is_me %}<script src="{{ url_for('static', filename='js/notifications.js') }}"></script>{% endif %}
+<script>
+(() => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    // open the tab named in the address (for example #notifications)
+    const name = location.hash.replace('#', '');
+    const button = name && document.getElementById('tab-' + name);
+    if (button) bootstrap.Tab.getOrCreateInstance(button).show();
+
+    document.querySelectorAll('#profileTabs [data-bs-toggle="tab"]').forEach((b) => b.addEventListener('shown.bs.tab', () => history.replaceState(null, '', '#' + b.id.replace('tab-', ''))));
+
+    const edit = document.getElementById('editIdentity');
+    if (edit) edit.addEventListener('click', () => {
+        const d = edit.dataset;
+        document.getElementById('modal_profile_id').value = d.id || '';
+        document.getElementById('modal_profile_name').value = d.name || '';
+        document.getElementById('modal_lb_user').value = d.lb || '';
+        document.getElementById('modal_sz_user').value = d.sz || '';
+        document.getElementById('modal_jf_id').value = d.jf || '';
+        new bootstrap.Modal(document.getElementById('profileModal')).show();
+    });
+
+    const admin = document.getElementById('adminAlerts');
+    if (admin) admin.addEventListener('change', async () => {
+        const out = document.getElementById('adminAlertsResult');
+        try {
+            const res = await fetch(`/api/access/profile/${admin.dataset.profile}/admin-alerts`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify({ enabled: admin.checked }) });
+            const data = await res.json();
+            out.textContent = data.message || (data.ok ? 'Saved.' : 'Failed.');
+            out.className = 'small ms-2 ' + (data.ok ? 'text-success' : 'text-danger');
+            if (!data.ok) admin.checked = !admin.checked;
+        } catch (e) { out.textContent = 'Could not reach the server.'; out.className = 'small ms-2 text-danger'; admin.checked = !admin.checked; }
+    });
+})();
+</script>
+{% endblock %}

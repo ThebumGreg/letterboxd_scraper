@@ -5,10 +5,11 @@ import os
 from flask import abort, flash, g, jsonify, redirect, render_template, request, send_file, send_from_directory, url_for
 
 from config import BASE_DIR
-from synchub import backup, catalog, db, ddns, posters, profiles, ratings, search, settings, states, tasks, watch, webhooks
+from synchub import access, backup, catalog, db, ddns, posters, profiles, ratings, search, settings, states, tasks, watch, webhooks
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.tmdb import TmdbClient
 from synchub.notifications import dispatch
+from synchub.notifications import store as notification_store
 from synchub.web import current_limit, title_allowed
 
 logger = logging.getLogger(__name__)
@@ -63,7 +64,9 @@ def register(app):
             defs = states.definitions(conn)
             defs["partial"] = {"code": "partial", "label": "Partial", "color": "warning", "icon": "bi-pie-chart"}
             progress = _progress(conn, "show", media_id)
-        return render_template("show_details.html", show=show, summary=summary, defs=defs, progress=progress)
+            me = (g.profile or {}).get("id")
+            follow = {"muted": notification_store.is_muted(conn, me, media_id)} if me and access.allowed(g.permissions, "notifications") else None
+        return render_template("show_details.html", show=show, summary=summary, defs=defs, progress=progress, follow=follow)
 
     @app.route("/healthz")
     def healthz():
