@@ -39,17 +39,40 @@ Options: `--mode native` (python3, ffmpeg and a systemd service instead of Docke
 
 To update a worker later: run the same script again. It needs no arguments the second time (the address and token are read from the `.env` it wrote).
 
-### Updating a worker with a hand-made setup
+## Upgrading a worker
 
-If you set the worker up yourself (your own `/etc/fstab` lines, a customised `docker-compose.yml`, bind-mounted host paths), do **not** run `setup-worker.sh` again: it rewrites `/etc/fstab` and the compose file. Use `update-worker.sh` instead. It only pulls the latest code, copies the agent files into the folder your compose file builds from, and runs `docker compose up -d --build`. It never touches `/etc/fstab`, the compose file, `.env` or your mounts.
+If you set the worker up yourself (your own `/etc/fstab` lines, a customised `docker-compose.yml`, bind-mounted host paths), do **not** run `setup-worker.sh` again: it rewrites `/etc/fstab` and the compose file. Use `update-worker.sh`, which only pulls the latest code and rebuilds the container. It never touches `/etc/fstab`, the compose file, `.env` or your mounts.
+
+### Two folders, two jobs
+
+| Folder (worker-1) | What it is | What you run there |
+|---|---|---|
+| `/opt/synchub-worker` | the **Docker folder**: `docker-compose.yml`, `.env`, `work/`. **Not a git repository.** | `docker compose` commands: `ps`, `logs`, `up -d`, `run --rm worker --check` (with `sudo`) |
+| `~/letterboxd_scraper` (`/home/greg/letterboxd_scraper`) | the **git checkout** the compose file builds from (`build: context: ~/letterboxd_scraper/agent`) | `git pull` and `update-worker.sh` (run as yourself, `sudo` only on the script) |
+
+Never run `git` in `/opt/synchub-worker` ("fatal: not a git repository"), never run `git clone` again if `~/letterboxd_scraper` exists, and never use `sudo git`. A second, root-owned clone under `/opt/synchub-worker/letterboxd_scraper` is not used by the worker: ignore it. To check which checkout a worker builds from: `cd /opt/synchub-worker && sudo docker compose config | grep -A2 build`.
+
+### The commands, in order
 
 ```
-[ -d ~/letterboxd_scraper ] || git clone https://github.com/ThebumGreg/letterboxd_scraper.git ~/letterboxd_scraper
-sudo ~/letterboxd_scraper/agent/update-worker.sh --dir /opt/synchub-worker --dry-run  # look first
-sudo ~/letterboxd_scraper/agent/update-worker.sh --dir /opt/synchub-worker
+# 1. In the git checkout: look at the worker, then update it
+cd ~/letterboxd_scraper
+git pull --ff-only origin main
+sudo ./agent/update-worker.sh --dir /opt/synchub-worker --report      # read-only snapshot
+sudo ./agent/update-worker.sh --dir /opt/synchub-worker --dry-run     # shows what it would do
+sudo ./agent/update-worker.sh --dir /opt/synchub-worker               # rebuilds and restarts
+
+# 2. In the Docker folder: check it is healthy
+cd /opt/synchub-worker
+sudo docker compose ps                                                # want: Up ... (healthy)
+sudo docker inspect --format '{{.State.Health.Status}}  restarts: {{.RestartCount}}' synchub-worker
+sudo docker compose logs --tail 30
+sudo docker compose run --rm worker --check                           # token, SyncHub, ffmpeg, shares
 ```
 
-Options: `--dir` (the folder with the worker's compose file, default `/opt/synchub-worker`), `--branch`, `--no-pull`, `--dry-run`, `--report` (prints the worker's current state and changes nothing). The full upgrade procedure is in [docs/UPGRADE.md](../docs/UPGRADE.md). The agent code is baked into the image, so a plain `docker compose restart` does not update it; this script rebuilds.
+If `git pull` complains about local changes, see `git diff` first, then `git stash push -m "worker local edits" <file>`. If the log says "SyncHub does not accept this worker's token", make a new token on SyncHub's Workers page (More, New token) and put it in `SYNCHUB_TOKEN=` in `/opt/synchub-worker/.env`, then `sudo docker compose up -d`. The first-time clone, once, only if the folder is missing: `git clone https://github.com/ThebumGreg/letterboxd_scraper.git ~/letterboxd_scraper`.
+
+Options of `update-worker.sh`: `--dir` (the Docker folder, default `/opt/synchub-worker`), `--branch`, `--no-pull`, `--dry-run`, `--report`. The agent code is baked into the image, so a plain `docker compose restart` does not update it. The full procedure, with a table of what each message means and how to roll back, is in [docs/UPGRADE.md](../docs/UPGRADE.md).
 
 ## Install on Ubuntu with Docker, by hand
 
