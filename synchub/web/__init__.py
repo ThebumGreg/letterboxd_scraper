@@ -19,7 +19,7 @@ PIN_COOKIE = "synchub_pin"              # signed proof that this profile's PIN w
 # What a person sees is what their permissions allow, and a heading with nothing under it is left out.
 NAV = (
     ("index", "Dashboard"),
-    ("Discover", (("discover_page", "New & trending"), ("search_page", "Find & request"))),
+    ("Discover", (("discover_page", "New & trending"), ("search_page", "Find & request"), ("watchlist_page", "My watchlist"))),
     ("tv_remote_page", "Remote"),
     ("Media", (("library_page", "Library"), ("resolution_center", "Resolution Center"))),     # Workers and Storage are tabs of the Library page
     ("System", (
@@ -210,8 +210,8 @@ def create_app(start_scheduler=False, csrf=True):
                 "profile_link": link("my_profile", "My profile"),
                 "max_rating": getattr(g, "max_rating", None), "app_version": __version__}
 
-    from synchub.web import admin, api, fleet, library, notifications, pages, security, shares, tv, worker_api, originals
-    for module in (pages, api, admin, fleet, library, notifications, shares, security, tv, worker_api, originals):
+    from synchub.web import admin, api, fleet, library, notifications, pages, security, shares, tv, watchlist, worker_api, originals
+    for module in (pages, api, admin, fleet, library, notifications, shares, security, tv, watchlist, worker_api, originals):
         module.register(app)
     if csrf:
         csrf.exempt(app.view_functions["api_webhook"])

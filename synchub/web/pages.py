@@ -5,7 +5,7 @@ import os
 from flask import abort, flash, g, jsonify, redirect, render_template, request, send_file, send_from_directory, url_for
 
 from config import BASE_DIR
-from synchub import access, backup, catalog, db, ddns, discover, posters, profiles, ratings, search, settings, states, status, tasks, watch, webhooks
+from synchub import access, backup, catalog, db, ddns, discover, posters, profiles, ratings, search, settings, states, status, tasks, watch, watchlist, webhooks
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.tmdb import TmdbClient
 from synchub.notifications import dispatch
@@ -78,6 +78,10 @@ def register(app):
             snapshot = status.snapshot(conn)
         return render_template("status.html", snapshot=snapshot)
 
+    def _on_watchlist(conn, media_id):
+        me = (g.profile or {}).get("id")
+        return bool(me) and watchlist.on_list(conn, me, media_id)
+
     @app.route("/movie/<int:media_id>")
     def movie_details(media_id):
         with db.connection() as conn:
@@ -88,7 +92,8 @@ def register(app):
             state = states.movie_state(conn, media_id)
             defs = states.definitions(conn)
             progress = _progress(conn, "movie", media_id)
-        return render_template("movie_details.html", movie=movie, state=state, state_info=defs.get(state["state"], defs["missing"]), progress=progress)
+            on_watchlist = _on_watchlist(conn, media_id)
+        return render_template("movie_details.html", movie=movie, state=state, state_info=defs.get(state["state"], defs["missing"]), progress=progress, on_watchlist=on_watchlist)
 
     @app.route("/show/<int:media_id>")
     def show_details(media_id):
@@ -103,7 +108,8 @@ def register(app):
             progress = _progress(conn, "show", media_id)
             me = (g.profile or {}).get("id")
             follow = {"muted": notification_store.is_muted(conn, me, media_id)} if me and access.allowed(g.permissions, "notifications") else None
-        return render_template("show_details.html", show=show, summary=summary, defs=defs, progress=progress, follow=follow)
+            on_watchlist = _on_watchlist(conn, media_id)
+        return render_template("show_details.html", show=show, summary=summary, defs=defs, progress=progress, follow=follow, on_watchlist=on_watchlist)
 
     @app.route("/healthz")
     def healthz():

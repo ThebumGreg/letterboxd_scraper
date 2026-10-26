@@ -1,6 +1,6 @@
 # SyncHub
 
-**Version 1.2.0** ([what changed](CHANGELOG.md)). Keeps Letterboxd/Serializd watchlists, Jellyfin, Radarr and Sonarr in one place, shows what you have, what is on its way and what is missing, and can add wanted titles to Radarr/Sonarr. It is also a whole-house TV remote (Roku, Google TV / Android TV) that plays Jellyfin titles, and has profiles with PINs, page permissions and parental controls.
+**Version 1.4.0** ([what changed](CHANGELOG.md)). Keeps Letterboxd/Serializd watchlists, Jellyfin, Radarr and Sonarr in one place, shows what you have, what is on its way and what is missing, and can add wanted titles to Radarr/Sonarr. It is also a whole-house TV remote (Roku, Google TV / Android TV) that plays Jellyfin titles, and has profiles with PINs, page permissions and parental controls.
 
 **Documentation**
 
@@ -95,7 +95,7 @@ The worker side is a small API (`/api/worker/v1/...`, token per worker, document
 
 ## The menu
 
-**Dashboard, Discover, Remote, Media, System** and **Settings** are in the top bar, and your name at the right opens **My profile** and **Switch profile**. **Discover** is a dropdown with **New & trending** (TMDB's trending, popular and upcoming lists, what was added to Jellyfin lately, and what Radarr and Sonarr expect in the next three weeks; each person's age limit applies) and **Find & request** (search TMDB and add a title to Radarr or Sonarr). The Dashboard list can be sorted by **Date Added** (when Jellyfin added the title to the library; a show counts as new as its newest episode) and shows that date under each title. The dates come from Jellyfin's next sync after an upgrade. While a TV is playing something through Jellyfin, a **Playing now** strip at the top of the Dashboard names it and links to its remote. **Media** is a dropdown with Library and Resolution Center (Workers and Storage are tabs of the Library page). **System** is a dropdown in four headed groups:
+**Dashboard, Discover, Remote, Media, System** and **Settings** are in the top bar, and your name at the right opens **My profile** and **Switch profile**. **Discover** is a dropdown with **New & trending** (TMDB's trending, popular and upcoming lists, what was added to Jellyfin lately, and what Radarr and Sonarr expect in the next three weeks; each person's age limit applies) **Find & request** (search TMDB and add a title to Radarr or Sonarr) and **My watchlist** (your own list, seeded from your Letterboxd and Serializd watchlists; add or remove films and shows, and optionally have watched titles come off; it never requests or downloads anything, and auto-add works as before). The Dashboard list can be sorted by **Date Added** (when Jellyfin added the title to the library; a show counts as new as its newest episode) and shows that date under each title. The dates come from Jellyfin's next sync after an upgrade. While a TV is playing something through Jellyfin, a **Playing now** strip at the top of the Dashboard names it and links to its remote. **Media** is a dropdown with Library and Resolution Center (Workers and Storage are tabs of the Library page). **System** is a dropdown in four headed groups:
 
 | Group | Pages |
 |---|---|

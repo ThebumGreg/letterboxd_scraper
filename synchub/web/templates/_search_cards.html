@@ -27,6 +27,7 @@
                     {% elif r.kind == 'show' and (r.addable or r.state != 'in_library') %}
                     <button type="button" class="btn btn-sm btn-outline-info" data-add-show><i class="bi bi-cloud-download" aria-hidden="true"></i> {{ 'Add to Sonarr...' if r.addable and not r.in_sonarr else 'Request seasons...' }}</button>
                     {% endif %}
+                    {% if can('watchlist') %}<button type="button" class="btn btn-sm btn-outline-secondary" data-watchlist title="Keep it on your own list. This does not request or download anything."><i class="bi bi-bookmark-plus" aria-hidden="true"></i> Watchlist</button>{% endif %}
                 </div>
                 <div class="small mt-2" data-result role="status"></div>
             </div>

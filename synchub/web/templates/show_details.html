@@ -1,6 +1,6 @@
 <!-- synchub/web/templates/show_details.html -->
 {% extends "base.html" %}
-{% from "_macros.html" import rating_facts, state_badge, watch_now, watch_unlinked with context %}
+{% from "_macros.html" import rating_facts, state_badge, watchlist_button, watch_now, watch_unlinked with context %}
 
 {% block title %}{{ show.title }} - Details{% endblock %}
 
@@ -22,6 +22,7 @@
         <div class="flex-grow-1 min-w-0">
             <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
                 <span class="badge badge-tv">TV SHOW</span>
+                {{ watchlist_button(show.id, on_watchlist) }}
                 {{ state_badge(roll.label, roll.color, roll.icon) }}
                 {% if show.status %}<span class="badge bg-dark border">{{ show.status }}</span>{% endif %}
             </div>

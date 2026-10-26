@@ -31,6 +31,15 @@
         if (data.ok) done(card, data); else { say(out, data.message || 'Failed.', false); button.disabled = false; }
     }));
 
+    document.querySelectorAll('[data-watchlist]').forEach((button) => button.addEventListener('click', async () => {
+        const card = button.closest('.search-result');
+        const out = card.querySelector('[data-result]');
+        button.disabled = true;
+        const data = await call('/api/watchlist/add', { method: 'POST', headers, body: JSON.stringify({ kind: card.dataset.kind, tmdb_id: card.dataset.tmdbId }) });
+        say(out, data.message || 'Failed.', !!data.ok);
+        if (data.ok) button.innerHTML = '<i class="bi bi-bookmark-check" aria-hidden="true"></i> On your watchlist'; else button.disabled = false;
+    }));
+
     // Shows: ask TMDB for the seasons, let the person choose, then send.
     const modalEl = document.getElementById('seasonModal');
     const modal = window.bootstrap ? bootstrap.Modal.getOrCreateInstance(modalEl) : null;

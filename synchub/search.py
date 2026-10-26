@@ -105,7 +105,8 @@ def _existing(conn, kind, tmdb_id):
 def _discard_if_unused(conn, media_id):
     """Removes a title created for a request that then failed, so a failed add leaves nothing behind (unless something else uses it)."""
     in_use = (conn.execute("SELECT 1 FROM link WHERE entity_type = 'media' AND entity_id = ?", (media_id,)).fetchone()
-              or conn.execute("SELECT 1 FROM manual_request WHERE media_id = ?", (media_id,)).fetchone())
+              or conn.execute("SELECT 1 FROM manual_request WHERE media_id = ?", (media_id,)).fetchone()
+              or conn.execute("SELECT 1 FROM watchlist_item WHERE media_id = ?", (media_id,)).fetchone())
     if in_use:
         return False
     conn.execute("DELETE FROM item_state WHERE target_type = 'episode' AND target_id IN (SELECT id FROM episode WHERE media_id = ?)", (media_id,))

@@ -21,6 +21,7 @@ from synchub import db, ratings, settings
 PERMISSIONS = (
     ("dashboard", "Dashboard", "See the dashboard and open movie and show pages"),
     ("search", "Search", "Search for titles to add, and see what is new and trending"),
+    ("watchlist", "Watchlist", "Keep your own watchlist: add titles to it and take them off"),
     ("requests", "Requests", "Request or add titles (the buttons on the Search page and on movie and show pages)"),
     ("notifications", "Notifications", "Set up your own way of being notified (such as Pushover) and see what was sent to you"),
     ("resolution", "Resolution Center", "Approve or dismiss title matches"),
@@ -59,6 +60,7 @@ RULES = (
     ("api_tasks", OPEN),
     ("index", "dashboard"), ("movie_details", "dashboard"), ("show_details", "dashboard"), ("api_season", "dashboard"), ("stream_events", "dashboard"),
     ("search_page", "search"), ("api_search_seasons", "search"), ("discover_page", "search"),
+    ("watchlist_page", "watchlist"), ("api_watchlist_*", "watchlist"),
     ("status_page", "logs"),
     ("notifications_page", "notifications"), ("api_notifications_*", "notifications"), ("profile_page", "notifications"), ("my_profile", "notifications"),
     ("api_search_add_*", "requests"), ("api_request_*", "requests"), ("api_refresh", "requests"),
