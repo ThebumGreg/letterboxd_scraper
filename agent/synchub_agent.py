@@ -20,6 +20,7 @@ import hashlib
 import json
 import logging
 import logging.handlers
+import math
 import os
 import platform
 import random
@@ -42,10 +43,10 @@ try:
 except ImportError:                        # pragma: no cover - exercised by tests that remove the module
     media_analysis = None
 
-__version__ = "1.2.0"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
+__version__ = "1.3.0"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
-OPS = ["copy", "rename", "delete_source"]     # the operations (plan.op) every agent can do; scan, hash and convert are added when the analysis module and ffmpeg are there
+OPS = ["copy", "rename", "delete_source", "originals"]     # the operations (plan.op) every agent can do; scan, hash and convert are added when the analysis module and ffmpeg are there
 FEATURES = ["profiles"]            # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run)
 MANIFEST_VERSION = 1
 HASH_BUFFER = 8 * 1024 * 1024
@@ -147,7 +148,7 @@ class ConfigError(Exception):
 
 class Config:
     INTS = {"slots": (1, 16), "scan_threads": (1, 16), "scan_batch": (1, 200), "log_max_mb": (1, 1024), "log_backups": (0, 50), "copy_chunk_mb": (1, 256), "checkpoint_mb": (16, 8192),
-            "failed_retention_days": (0, 3650), "request_timeout": (5, 300)}
+            "failed_retention_days": (0, 3650), "request_timeout": (5, 300), "chunk_minutes": (0, 120), "vmaf_samples": (1, 12)}
     FLOATS = {"done_retention_hours": (0, 24 * 365), "max_copy_mb_s": (0, 100000), "scan_retry_seconds": (0, 300)}
 
     def __init__(self, path=None, env=None):
@@ -179,8 +180,10 @@ class Config:
         self.ffprobe = pick("worker", "ffprobe", "SYNCHUB_FFPROBE", "ffprobe")
         self.log_level = (pick("worker", "log_level", "SYNCHUB_LOG_LEVEL", "INFO") or "INFO").upper()
         self.verify = (pick("worker", "verify", "SYNCHUB_VERIFY", "hash") or "hash").lower()
+        self.video_encoder = (pick("worker", "video_encoder", "SYNCHUB_VIDEO_ENCODER", "auto") or "auto").lower()      # which GPU encoder to use when a plan allows GPU encoding
+        self.vaapi_device = pick("worker", "vaapi_device", "SYNCHUB_VAAPI_DEVICE", "/dev/dri/renderD128") or "/dev/dri/renderD128"
         self.use_proxy = (pick("synchub", "use_proxy", "SYNCHUB_USE_PROXY", "no") or "no").lower() in ("1", "yes", "true", "on")
-        defaults = {"scan_threads": 2, "scan_batch": 25, "slots": 1, "log_max_mb": 10, "log_backups": 5, "copy_chunk_mb": 8, "checkpoint_mb": 256, "failed_retention_days": 14, "request_timeout": 30}
+        defaults = {"scan_threads": 2, "scan_batch": 25, "slots": 1, "log_max_mb": 10, "log_backups": 5, "copy_chunk_mb": 8, "checkpoint_mb": 256, "failed_retention_days": 14, "request_timeout": 30, "chunk_minutes": 10, "vmaf_samples": 5}
         for key, (low, high) in self.INTS.items():
             raw = pick("worker", key, "SYNCHUB_" + key.upper(), str(defaults[key]))
             try:
@@ -213,6 +216,8 @@ class Config:
             raise ConfigError("The worker token is missing. Set token in the [synchub] section (or SYNCHUB_TOKEN); add the worker on SyncHub's Workers page to get one.")
         if self.verify not in ("hash", "size"):
             raise ConfigError("verify must be 'hash' (read every copy back and compare checksums) or 'size'.")
+        if self.video_encoder not in ("auto", "cpu", "nvenc", "qsv", "vaapi"):
+            raise ConfigError("video_encoder must be auto, cpu, nvenc, qsv or vaapi.")
         if self.log_level not in ("DEBUG", "INFO", "WARNING", "ERROR"):
             raise ConfigError("log_level must be DEBUG, INFO, WARNING or ERROR.")
         return self
@@ -624,6 +629,8 @@ def clean_profile(profile):
         out.update(crf=crf, preset=preset, ten_bit=bool(profile.get("ten_bit")) and codec == "hevc")
     if codec == "hevc":
         out.update(clean_size_cap(profile))
+        out["gpu"] = bool(profile.get("gpu"))
+        out["vmaf_mode"] = profile.get("vmaf_mode") if profile.get("vmaf_mode") in ("off", "warn", "hold") else "off"
     return out
 
 
@@ -687,28 +694,132 @@ def video_arguments(video, profile):
     return ["-c:v", "libx264", "-crf", str((profile or {}).get("crf") or 20), "-preset", (profile or {}).get("preset") or "medium", "-pix_fmt", "yuv420p"]
 
 
-def build_convert_command(ffmpeg, src, out, change, profile=None):
-    """The ffmpeg command for a conversion plan (SyncHub's approved `change`: tracks to keep, codecs to convert, the default audio track).
-    Anything the plan does not change is copied bit for bit. `profile` (see clean_profile) sets the video codec and quality and the audio bitrate."""
-    profile = clean_profile(profile)
-    command = [ffmpeg, "-nostdin", "-hide_banner", "-y", "-v", "error", "-progress", "pipe:1", "-nostats", "-i", src, "-map_metadata", "0", "-map_chapters", "0", "-map", "0:V?"]
+GPU_ENCODERS = {"nvenc": "hevc_nvenc", "qsv": "hevc_qsv", "vaapi": "hevc_vaapi"}
+GPU_ORDER = ("nvenc", "qsv", "vaapi")
+NVENC_PRESETS = {"ultrafast": "p1", "superfast": "p2", "veryfast": "p3", "faster": "p3", "fast": "p4", "medium": "p5", "slow": "p6", "slower": "p7", "veryslow": "p7"}
+QSV_PRESETS = {"ultrafast": "veryfast", "superfast": "veryfast", "veryfast": "veryfast", "faster": "faster", "fast": "fast", "medium": "medium", "slow": "slow", "slower": "slower", "veryslow": "veryslow"}
+
+
+def choose_encoder(profile, working, preference="auto"):
+    """'cpu', or the GPU kind (nvenc, qsv, vaapi) a plan that allows it should use on this worker. HDR stays on the CPU: the GPU encoders cannot write the
+    mastering-display data that x265 does, and a size-capped HDR encode is the one that has to be right."""
+    if not profile or not profile.get("gpu") or profile.get("video_codec") != "hevc" or profile.get("hdr") or preference == "cpu":
+        return "cpu"
+    for kind in (GPU_ORDER if preference == "auto" else (preference,)):
+        if GPU_ENCODERS[kind] in (working or ()):
+            return kind
+    return "cpu"
+
+
+def gpu_video_arguments(kind, profile, device):
+    """(options before the input, options after it) for an HEVC encode on a GPU. The quality number is the profile's CRF used as the encoder's own constant-quality
+    value; a size-capped encode (the size policy) is an average-bitrate encode at the target bitrate, because the GPU encoders cannot be held under a size any other way."""
+    crf, ten = int(profile.get("crf") or 23), bool(profile.get("ten_bit"))
+    preset, maxrate = profile.get("preset") or "medium", profile.get("maxrate_kbps")
+    bufsize = profile.get("bufsize_kbps") or (maxrate or 0) * 2
+    deinterlace = ["yadif"] if profile.get("deinterlace") else []
+    target = int(maxrate / MAXRATE_HEADROOM) if maxrate else None
+    if kind == "nvenc":
+        args = ["-c:v", "hevc_nvenc", "-preset", NVENC_PRESETS[preset], "-tune", "hq", "-rc", "vbr", "-cq", str(crf), "-b:v", f"{target}k" if target else "0"]
+        args += ["-maxrate", f"{maxrate}k", "-bufsize", f"{bufsize}k"] if maxrate else []
+        args += ["-pix_fmt", "p010le" if ten else "yuv420p", "-tag:v", "hvc1"] + (["-profile:v", "main10"] if ten else [])
+        return [], (["-vf", ",".join(deinterlace)] if deinterlace else []) + args
+    chain = deinterlace + ["format=p010le" if ten else "format=nv12"]
+    if kind == "qsv":
+        args = ["-c:v", "hevc_qsv", "-preset", QSV_PRESETS[preset]] + (["-b:v", f"{target}k", "-maxrate", f"{maxrate}k", "-bufsize", f"{bufsize}k"] if maxrate else ["-global_quality", str(crf)])
+        return ["-init_hw_device", f"vaapi=va:{device}", "-init_hw_device", "qsv=hw@va", "-filter_hw_device", "hw"], \
+            ["-vf", ",".join(chain + ["hwupload=extra_hw_frames=64"])] + args + ["-tag:v", "hvc1"] + (["-profile:v", "main10"] if ten else [])
+    args = ["-c:v", "hevc_vaapi"] + (["-rc_mode", "VBR", "-b:v", f"{target}k", "-maxrate", f"{maxrate}k", "-bufsize", f"{bufsize}k"] if maxrate else ["-rc_mode", "CQP", "-qp", str(crf)])
+    return ["-vaapi_device", device], ["-vf", ",".join(chain + ["hwupload"])] + args + ["-tag:v", "hvc1"] + (["-profile:v", "main10"] if ten else [])
+
+
+def video_plan(video, profile, encoder="cpu", device="/dev/dri/renderD128"):
+    """(options before the input, video options) for re-encoding a video with `encoder` ('cpu' or a GPU kind)."""
+    if encoder in GPU_ENCODERS:
+        return gpu_video_arguments(encoder, profile, device)
+    return [], video_arguments(video, profile)
+
+
+def _track_arguments(change, profile, n):
+    """The -map options for the audio and subtitle tracks the plan keeps and the codec options for them, with the source as ffmpeg input number `n`."""
     keep_audio, keep_subtitle = change.get("keep_audio"), change.get("keep_subtitle")
-    for indexes, everything in ((keep_audio, "0:a?"), (keep_subtitle, "0:s?")):
-        command += [part for i in indexes for part in ("-map", f"0:{int(i)}")] if isinstance(indexes, list) else ["-map", everything]
-    video = change.get("video") or {}
-    command += video_arguments(video, profile) if video.get("action") == "transcode" else ["-c:v", "copy"]
-    command += ["-c:a", "copy", "-c:s", "copy"]
+    maps = []
+    for indexes, everything in ((keep_audio, f"{n}:a?"), (keep_subtitle, f"{n}:s?")):
+        maps += [part for i in indexes for part in ("-map", f"{n}:{int(i)}")] if isinstance(indexes, list) else ["-map", everything]
+    codecs = ["-c:a", "copy", "-c:s", "copy"]
     converting = change.get("audio_convert") or {}
     bitrate = (profile or {}).get("audio_kbps") or 192
     for position, index in enumerate(keep_audio if isinstance(keep_audio, list) else []):
         if str(index) in converting:
-            command += [f"-c:a:{position}", converting[str(index)].get("codec") or "aac", f"-b:a:{position}", f"{bitrate}k"]
+            codecs += [f"-c:a:{position}", converting[str(index)].get("codec") or "aac", f"-b:a:{position}", f"{bitrate}k"]
     default = change.get("default_audio")
     if default is not None and isinstance(keep_audio, list) and default in keep_audio:
-        command += ["-disposition:a", "0", f"-disposition:a:{keep_audio.index(default)}", "default"]
+        codecs += ["-disposition:a", "0", f"-disposition:a:{keep_audio.index(default)}", "default"]
+    return maps, codecs
+
+
+def _container_arguments(change, out):
     container = "mp4" if change.get("container") == "mp4" else "matroska"
-    command += ["-f", container] + (["-movflags", "+faststart"] if container == "mp4" else []) + [out]
-    return command
+    return ["-f", container] + (["-movflags", "+faststart"] if container == "mp4" else []) + [out]
+
+
+def build_convert_command(ffmpeg, src, out, change, profile=None, encoder="cpu", device="/dev/dri/renderD128", chunk_list=None):
+    """The ffmpeg command for a conversion plan (SyncHub's approved `change`: tracks to keep, codecs to convert, the default audio track).
+    Anything the plan does not change is copied bit for bit. `profile` (see clean_profile) sets the video codec and quality and the audio bitrate.
+    `encoder` is 'cpu' or a GPU kind (see choose_encoder). With `chunk_list` (a concat list of already encoded video chunks) the video is taken from those
+    and everything else from `src`."""
+    profile = clean_profile(profile)
+    video = change.get("video") or {}
+    base = [ffmpeg, "-nostdin", "-hide_banner", "-y", "-v", "error", "-progress", "pipe:1", "-nostats"]
+    if chunk_list:
+        maps, codecs = _track_arguments(change, profile, 1)
+        return base + ["-f", "concat", "-safe", "0", "-i", chunk_list, "-i", src, "-map_metadata", "1", "-map_chapters", "1", "-map", "0:v"] + maps + ["-c:v", "copy"] + codecs + _container_arguments(change, out)
+    pre, video_args = video_plan(video, profile, encoder, device) if video.get("action") == "transcode" else ([], ["-c:v", "copy"])
+    maps, codecs = _track_arguments(change, profile, 0)
+    return base + pre + ["-i", src, "-map_metadata", "0", "-map_chapters", "0", "-map", "0:V?"] + maps + video_args + codecs + _container_arguments(change, out)
+
+
+def build_chunk_command(ffmpeg, src, out, change, profile, encoder, device, start, length=None):
+    """The ffmpeg command for one video-only chunk of a long encode: `length` seconds from `start` (to the end when length is None), same settings as every other chunk."""
+    profile = clean_profile(profile)
+    pre, video_args = video_plan(change.get("video") or {}, profile, encoder, device)
+    window = ["-ss", f"{start:.3f}"] + (["-t", f"{length:.3f}"] if length else [])
+    return [ffmpeg, "-nostdin", "-hide_banner", "-y", "-v", "error", "-progress", "pipe:1", "-nostats"] + pre + window + ["-i", src, "-map", "0:V?", "-an", "-sn", "-dn"] + video_args + ["-f", "matroska", out]
+
+
+MAXRATE_HEADROOM = 1.05              # the same cap as synchub.library.size_policy: maxrate is 5 % over the target video bitrate
+VMAF_FLOORS = ((2000, 95.0), (0, 93.0))     # the lowest mean VMAF score that still counts as visually clean, by picture height (see docs/DESIGN_ENCODING.md 11.2)
+VMAF_WINDOW_SECONDS = 20
+
+
+def vmaf_floor(height):
+    return next(floor for limit, floor in VMAF_FLOORS if (height or 0) >= limit)
+
+
+def vmaf_windows(duration, count, seconds=VMAF_WINDOW_SECONDS):
+    """(start, length) of `count` short windows spread over the video, skipping its first and last 5 %."""
+    if not duration or duration <= 0:
+        return []
+    length = min(float(seconds), duration)
+    if duration <= length * 2:
+        return [(0.0, round(length, 3))]
+    low, high = duration * 0.05, duration * 0.95 - length
+    if count <= 1 or high <= low:
+        return [(round((low + max(low, high)) / 2, 3), length)]
+    return [(round(low + (high - low) * i / (count - 1), 3), length) for i in range(count)]
+
+
+def vmaf_command(ffmpeg, converted, source, start, length, threads):
+    """Scores one window of the converted file against the same window of the source. Both are scaled to at most 1080p, the size the VMAF model was trained for."""
+    scale = "setpts=PTS-STARTPTS,scale=-2:'min(1080,ih)':flags=bicubic,format=yuv420p"
+    graph = f"[0:v:0]{scale}[d];[1:v:0]{scale}[r];[d][r]libvmaf=n_threads={max(1, int(threads))}"
+    return [ffmpeg, "-nostdin", "-hide_banner", "-v", "info", "-ss", f"{start:.3f}", "-t", f"{length:.3f}", "-i", converted, "-ss", f"{start:.3f}", "-t", f"{length:.3f}", "-i", source,
+            "-lavfi", graph, "-f", "null", "-"]
+
+
+def parse_vmaf(text):
+    found = re.findall(r"VMAF score[:=]\s*([0-9]+(?:\.[0-9]+)?)", text or "")
+    return float(found[-1]) if found else None
 
 
 PREVIEW_PROBE_SECONDS = 10         # how much of the film one "most demanding part" sample reads
@@ -795,7 +906,10 @@ def detect_capabilities(cfg):
                 continue
             command = [cfg.ffmpeg, "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=10"]
             if name.endswith("_vaapi"):
-                command = [cfg.ffmpeg, "-hide_banner", "-v", "error", "-vaapi_device", "/dev/dri/renderD128", "-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=10", "-vf", "format=nv12,hwupload"]
+                command = [cfg.ffmpeg, "-hide_banner", "-v", "error", "-vaapi_device", cfg.vaapi_device, "-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=10", "-vf", "format=nv12,hwupload"]
+            elif name.endswith("_qsv"):
+                command = [cfg.ffmpeg, "-hide_banner", "-v", "error", "-init_hw_device", f"vaapi=va:{cfg.vaapi_device}", "-init_hw_device", "qsv=hw@va", "-filter_hw_device", "hw",
+                           "-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=10", "-vf", "format=nv12,hwupload=extra_hw_frames=64"]
             code, _ = run_quiet(command + ["-frames:v", "5", "-c:v", name, "-f", "null", "-"], timeout=30)
             if code == 0:
                 caps["encoders"].append(name)
@@ -1069,6 +1183,14 @@ class Cancelled(Exception):
     """SyncHub asked for the job to stop."""
 
 
+class NeedsReview(Exception):
+    """The job found something a person has to decide on (a low quality score). The files stay where they are until the answer comes back."""
+
+    def __init__(self, reason, detail=None):
+        super().__init__(reason)
+        self.reason, self.detail = reason, detail or {}
+
+
 class JobLost(Exception):
     """SyncHub says the job is no longer this worker's."""
 
@@ -1212,7 +1334,7 @@ class JobRunner(threading.Thread):
         self.reporter.start()
         try:
             op = (self.job.get("plan") or {}).get("op")
-            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash, "convert": self.do_convert, "preview": self.do_preview, "rename": self.do_rename, "delete_source": self.do_delete_source}.get(op)
+            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash, "convert": self.do_convert, "preview": self.do_preview, "rename": self.do_rename, "delete_source": self.do_delete_source, "originals": self.do_originals}.get(op)
             if work is None or (op in ("scan", "hash", "convert", "preview") and media_analysis is None):
                 raise JobFailure("unsupported_job", f"This agent ({__version__}) cannot do '{op or self.job.get('kind')}' jobs. Update the agent"
                                  + (" (media_analysis.py must be next to synchub_agent.py)." if op in ("scan", "hash", "convert", "preview") else "."), retryable=False)
@@ -1221,6 +1343,9 @@ class JobRunner(threading.Thread):
             self.log.info("Stopping for a restart or shutdown; the job resumes from its last checkpoint", stage=self.stage)
             self.m["state"] = "running"
             self.save()
+        except NeedsReview as exc:
+            self.log.warning(f"Waiting for a decision: {exc.reason}", stage=self.stage)
+            final = ("needs_review", {"reason": exc.reason, "detail": exc.detail, "keep_state": True}, "review")
         except JobLost:
             self.log.warning("SyncHub says this job is no longer ours; stopping and keeping the files", stage=self.stage)
             self.m["state"] = "lost"
@@ -1248,7 +1373,7 @@ class JobRunner(threading.Thread):
         """Saves the report first, then tries to send it. A report that cannot be sent now is sent later."""
         self.m.update(state="finished", outcome=outcome, report={"kind": kind, "payload": payload, "sent": False}, finished=iso(), stage=self.stage)
         keep = self.cfg.failed_retention_days * 86400
-        self.m["keep_until"] = iso(utcnow() + timedelta(seconds=keep)) if outcome in ("failed", "cancelled") else None
+        self.m["keep_until"] = iso(utcnow() + timedelta(seconds=keep)) if outcome in ("failed", "cancelled", "review") else None
         self.save()
         self.agent.deliver(self.job["id"], self.folder)
 
@@ -1556,6 +1681,88 @@ class JobRunner(threading.Thread):
         self.log.info(f"Deleted the source {source['rel']} ({human_bytes(stat.st_size)}); the library copy is verified")
         return {"op": "delete_source", "bytes": stat.st_size, "deleted": True}
 
+    # ---- the originals kept after a file was replaced: restore one, keep one longer, or delete one now (docs/DESIGN_ENCODING.md section 9)
+    def do_originals(self):
+        plan, name = self.job["plan"], str(self.job["plan"].get("original") or "")
+        action = plan.get("action")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,120}", name) or name in (".", ".."):
+            raise JobFailure("bad_job", "That is not the name of a kept original.", retryable=False)
+        folder = os.path.join(self.cfg.originals_dir, name)
+        try:
+            with open(os.path.join(folder, "meta.json"), "r", encoding="utf-8") as handle:
+                meta = json.load(handle)
+        except (OSError, ValueError):
+            if action == "purge":
+                return {"op": "originals", "action": action, "already_gone": True}
+            raise JobFailure("source_changed", "This worker no longer holds that original (it was deleted or its time ran out).", retryable=False)
+        if action == "purge":
+            shutil.rmtree(folder, ignore_errors=True)
+            self.log.info(f"Deleted the kept original {meta.get('rel')} on request")
+            return {"op": "originals", "action": action, "bytes": meta.get("size"), "deleted": True}
+        if action == "extend":
+            try:
+                days = int(plan.get("days"))
+            except (TypeError, ValueError):
+                days = 0
+            if not 1 <= days <= 3650:
+                raise JobFailure("bad_job", "Keep for between 1 and 3650 days.", retryable=False)
+            meta.update(expires_at=iso(utcnow() + timedelta(days=days)), retention_days=days)
+            atomic_write_json(os.path.join(folder, "meta.json"), meta)
+            self.log.info(f"Keeping {meta.get('rel')} for another {days} day(s)")
+            return {"op": "originals", "action": action, "expires_at": meta["expires_at"]}
+        if action == "restore":
+            return self.restore_original(folder, meta)
+        raise JobFailure("bad_job", "Unknown action for a kept original.", retryable=False)
+
+    def restore_original(self, folder, meta):
+        """Puts a kept original back on its share under its old name. The converted file that replaced it is moved aside (never deleted) into its own kept folder, so
+        nothing is lost whichever of the two turns out to be wanted. The copy is checked against the checksum recorded when the original was kept."""
+        if (meta.get("kind") or "original") != "original":
+            raise JobFailure("bad_job", "This is a converted copy set aside by an earlier restore; it cannot be restored.", retryable=False)
+        src, dst = self.endpoints("restore")                     # src: the converted file on the share, dst: where the original goes
+        kept = os.path.join(folder, str(meta.get("name") or ""))
+        if not os.path.isfile(kept) or os.path.getsize(kept) != meta.get("size"):
+            raise JobFailure("source_changed", "The kept original is missing or incomplete on this worker, so nothing was restored.", retryable=False)
+        if os.path.exists(dst) and os.path.abspath(dst) != os.path.abspath(src):
+            raise JobFailure("dest_exists", f"{self.job['dest']['rel']} already exists, so the original was not restored over it.", retryable=False)
+        temp = dst + ".synchub-restore"
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        digest, size, done = hashlib.sha256(), meta["size"], 0
+        self.report_progress("copy_out", 0.0, "Copying the original back", force=True)
+        try:
+            with open(kept, "rb") as fin, open(temp, "wb") as fout:
+                while True:
+                    block = fin.read(self.cfg.copy_chunk_mb * 1048576)
+                    if not block:
+                        break
+                    fout.write(block)
+                    digest.update(block)
+                    done += len(block)
+                    self.guard(len(block))
+                    self.report_progress("copy_out", 0.9 * done / max(size, 1), f"Copying the original back: {done * 100 // max(size, 1)}%")
+                fout.flush()
+                os.fsync(fout.fileno())
+            if meta.get("sha256") and digest.hexdigest() != meta["sha256"]:
+                raise JobFailure("verification_failed", "The restored copy does not match the checksum recorded when the original was kept, so nothing was changed.", retryable=False)
+            aside = None
+            if os.path.isfile(src):
+                aside = folder + "-converted"
+                os.makedirs(aside, exist_ok=True)
+                shutil.move(src, os.path.join(aside, os.path.basename(src)))
+            os.replace(temp, dst)
+        except BaseException:
+            self._remove(temp)
+            raise
+        if aside:
+            days = 7
+            atomic_write_json(os.path.join(aside, "meta.json"), {"kind": "converted", "job_id": self.job["id"], "root": self.job["source"]["root"], "rel": self.job["source"]["rel"],
+                                                                "name": os.path.basename(src), "size": os.path.getsize(os.path.join(aside, os.path.basename(src))), "saved_at": iso(),
+                                                                "retention_days": days, "expires_at": iso(utcnow() + timedelta(days=days))})
+        shutil.rmtree(folder, ignore_errors=True)
+        self.report_progress("copy_out", 1.0, "Restored", force=True)
+        self.log.info(f"Restored {self.job['dest']['rel']}" + (f"; the converted file was set aside for {days} days" if aside else ""))
+        return {"op": "originals", "action": "restore", "bytes": size, "sha256": digest.hexdigest(), "converted_set_aside": bool(aside)}
+
     # ---- a conversion: copy in, run ffmpeg on the local copy, check the result, copy the result out to the destination share
     CONVERT_BANDS = {"copy_in": (0.0, 0.25), "copy_out": (0.85, 0.95), "verify": (0.95, 1.0)}      # the encode itself is 25 - 85 %
 
@@ -1585,6 +1792,7 @@ class JobRunner(threading.Thread):
             done.clear()
             done.update(self.encode(local, converted, change, self.job["plan"].get("duration"), plan.get("profile")))
             self.save()
+        quality = self.quality_check(local, converted, change, plan.get("profile"))
         out_size = os.path.getsize(converted)
         if not done.get("sha256"):
             done["sha256"] = hash_file(converted, check=self.guard)
@@ -1593,7 +1801,8 @@ class JobRunner(threading.Thread):
         out_seconds = self.copy_out(converted, dst, out_size, done["sha256"], stat.st_mtime_ns, overwrite=src if replace else None, before_swap=keep)
         elapsed = time.monotonic() - t0
         result = {"op": "convert", "bytes": out_size, "source_bytes": size, "sha256": done["sha256"], "verified": "sha256" if self.cfg.verify == "hash" else "size",
-                  "seconds": round(elapsed, 1), "encode_seconds": done.get("seconds"), "command": done.get("command"), "output": done.get("probe")}
+                  "seconds": round(elapsed, 1), "encode_seconds": done.get("seconds"), "command": done.get("command"), "output": done.get("probe"),
+                  "encoder": done.get("encoder"), "gpu_fallback": done.get("fallback"), "chunked": done.get("chunked"), "vmaf": quality}
         if replace:
             original = self.m.get("original") or {}
             result.update(replaced=True, kept_original=bool(original.get("path")), original_expires=original.get("expires_at"), path_changed=dst != src)
@@ -1744,7 +1953,8 @@ class JobRunner(threading.Thread):
 
     def encode(self, local, converted, change, expected_duration, profile=None):
         """Runs ffmpeg on the local copy and checks what it made. Returns what the job remembers about the encode. The output only gets its
-        real name once it has passed the checks, so a half-made file is never mistaken for a finished one."""
+        real name once it has passed the checks, so a half-made file is never mistaken for a finished one. A long video is encoded in chunks (see
+        encode_chunks) so an interruption loses at most one; a plan that allows the GPU uses it, and falls back to the CPU encoder if it cannot."""
         os.makedirs(os.path.dirname(converted), exist_ok=True)
         partial = converted + ".partial"
         for leftover in (partial, converted):
@@ -1758,39 +1968,32 @@ class JobRunner(threading.Thread):
         if not expected_duration:
             expected_duration = media_duration(media_analysis.run_ffprobe(settings, local))
         profile = clean_profile(profile)
-        if profile and profile["video_codec"] != "keep" and (change.get("video") or {}).get("action") == "transcode":
+        transcode = bool(profile and profile["video_codec"] != "keep" and (change.get("video") or {}).get("action") == "transcode")
+        if transcode:
             profile = self.with_source_colours(settings, local, profile)
             bump = int(self.m.get("crf_bump") or 0)
             if bump and profile.get("max_bytes"):
                 profile["crf"] = min(PROFILE_CRF["hevc"][1], profile["crf"] + 2 * bump)
                 self.log.info(f"The last attempt came out over the size limit; encoding at quality {profile['crf']} this time", crf=profile["crf"])
-        command = build_convert_command(self.cfg.ffmpeg, local, partial, change, profile)
-        text = shlex.join(command)
-        self.log.info("Converting", command=text)
-        self.report_progress("encode", 0.25, "Starting ffmpeg", force=True)
-        started, errors, speed = time.monotonic(), os.path.join(self.folder, "ffmpeg.err"), None
-        with open(errors, "w", encoding="utf-8", errors="replace") as err:
-            proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=err, text=True, encoding="utf-8", errors="replace", start_new_session=True)
+        kind = choose_encoder(profile, (self.agent.capabilities or {}).get("encoders"), self.cfg.video_encoder) if transcode else "cpu"
+        if profile and profile.get("gpu") and transcode and kind == "cpu":
+            self.log.info("The plan allows GPU encoding but this worker has no GPU encoder that works (or the picture is HDR); using the CPU encoder")
+        started, tried = time.monotonic(), []
+        while True:
             try:
-                for line in proc.stdout:
-                    self.reporter.check()
-                    fraction, said = parse_ffmpeg_progress(line, expected_duration)
-                    speed = said or speed
-                    if fraction is not None:
-                        low, high = 0.25, 0.85
-                        elapsed = time.monotonic() - started
-                        eta = int(elapsed * (1 - fraction) / fraction) if fraction > 0.01 else None
-                        self.report_progress("encode", low + (high - low) * fraction, f"Converting: {fraction * 100:.0f}%" + (f" at {speed}x" if speed else ""), eta)
-                proc.wait()
-            except BaseException:
-                self._stop_ffmpeg(proc)
+                command_text = self.encode_with(kind, local, partial, change, profile, expected_duration, transcode)
+                break
+            except JobFailure as exc:
+                if kind == "cpu" or exc.error_class not in ("encode_failed", "size_target_missed"):
+                    raise
+                tried.append(f"{kind}: {exc.message[:300]}")
+                self.log.warning(f"The {kind} GPU encoder did not work out ({exc.message[:300]}); encoding again with the CPU encoder", encoder=kind)
+                self.m["gpu_fallback"] = tried
+                self.save()
                 self._remove(partial)
-                raise
-        if proc.returncode != 0:
-            tail = read_file(errors).strip()[-800:]
-            self._remove(partial)
-            raise JobFailure("encode_failed", f"ffmpeg stopped with exit code {proc.returncode}: {tail or 'no message'}", retryable=False)
-        self.report_progress("encode", 0.85, "Checking the converted file", force=True)
+                shutil.rmtree(os.path.join(self.folder, "chunks"), ignore_errors=True)
+                self.m.pop("chunks", None)
+                kind = "cpu"
         try:
             probe = self.check_conversion(settings, partial, change, expected_duration, profile)
             produced = os.path.getsize(partial)
@@ -1803,7 +2006,139 @@ class JobRunner(threading.Thread):
             self._remove(partial)
             raise
         os.replace(partial, converted)
-        return {"done": True, "bytes": os.path.getsize(converted), "seconds": round(time.monotonic() - started, 1), "command": text[-4000:], "probe": probe, "finished": iso()}
+        shutil.rmtree(os.path.join(self.folder, "chunks"), ignore_errors=True)
+        self.m.pop("chunks", None)
+        return {"done": True, "bytes": os.path.getsize(converted), "seconds": round(time.monotonic() - started, 1), "command": command_text[-4000:], "probe": probe, "finished": iso(),
+                "encoder": kind, "fallback": tried or None, "chunked": bool(self.m.get("chunked"))}
+
+    def encode_with(self, kind, local, partial, change, profile, expected_duration, transcode):
+        """One encode of the whole video with `kind` ('cpu' or a GPU kind), into `partial`. Returns the ffmpeg command it ran (the last one, for chunks)."""
+        chunk = self.cfg.chunk_minutes * 60
+        self.m["chunked"] = bool(transcode and chunk and expected_duration and expected_duration > 2 * chunk)
+        if self.m["chunked"]:
+            return self.encode_chunks(kind, local, partial, change, profile, expected_duration, chunk)
+        command = build_convert_command(self.cfg.ffmpeg, local, partial, change, profile, kind, self.cfg.vaapi_device)
+        text = shlex.join(command)
+        self.log.info("Converting", command=text, encoder=kind)
+        self.report_progress("encode", 0.25, "Starting ffmpeg", force=True)
+        self.run_ffmpeg(command, partial, expected_duration, 0.25, 0.85, "Converting")
+        return text
+
+    def run_ffmpeg(self, command, partial, duration, low, high, label):
+        """Runs one ffmpeg command, reporting progress between `low` and `high` of the job, and raises if it fails. `partial` is removed on any failure."""
+        started, errors, speed = time.monotonic(), os.path.join(self.folder, "ffmpeg.err"), None
+        with open(errors, "w", encoding="utf-8", errors="replace") as err:
+            proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=err, text=True, encoding="utf-8", errors="replace", start_new_session=True)
+            try:
+                for line in proc.stdout:
+                    self.reporter.check()
+                    fraction, said = parse_ffmpeg_progress(line, duration)
+                    speed = said or speed
+                    if fraction is not None:
+                        elapsed = time.monotonic() - started
+                        eta = int(elapsed * (1 - fraction) / fraction) if fraction > 0.01 else None
+                        self.report_progress("encode", low + (high - low) * fraction, f"{label}: {fraction * 100:.0f}%" + (f" at {speed}x" if speed else ""), eta if high - low >= 0.5 else None)
+                proc.wait()
+            except BaseException:
+                self._stop_ffmpeg(proc)
+                self._remove(partial)
+                raise
+        if proc.returncode != 0:
+            tail = read_file(errors).strip()[-800:]
+            self._remove(partial)
+            raise JobFailure("encode_failed", f"ffmpeg stopped with exit code {proc.returncode}: {tail or 'no message'}", retryable=False)
+
+    def encode_chunks(self, kind, local, partial, change, profile, duration, seconds):
+        """Encodes the video in pieces of `seconds` (each a video-only file in the job's chunks folder), then joins them without re-encoding and adds the audio,
+        subtitles, chapters and metadata from the source in one piece. A finished chunk is never encoded again: after an interruption or a reboot this carries on
+        with the first unfinished one. The chunks are only reused when every setting that shapes them is unchanged."""
+        folder = os.path.join(self.folder, "chunks")
+        count = max(1, math.ceil(duration / seconds - 0.001))
+        key = hashlib.sha1(json.dumps({"profile": profile, "encoder": kind, "seconds": seconds, "video": (change.get("video") or {})}, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+        info = self.m.get("chunks")
+        if not isinstance(info, dict) or info.get("key") != key or info.get("count") != count:
+            shutil.rmtree(folder, ignore_errors=True)
+            info = self.m["chunks"] = {"key": key, "count": count, "done": {}}
+        os.makedirs(folder, exist_ok=True)
+        command = None
+        for index in range(count):
+            path = os.path.join(folder, f"v{index:04d}.mkv")
+            if os.path.isfile(path) and info["done"].get(str(index)) == os.path.getsize(path):
+                continue
+            start = index * seconds
+            length = None if index == count - 1 else seconds
+            expected = duration - start if length is None else length
+            command = build_chunk_command(self.cfg.ffmpeg, local, path + ".partial", change, profile, kind, self.cfg.vaapi_device, start, length)
+            self.log.info(f"Encoding chunk {index + 1} of {count}", command=shlex.join(command), encoder=kind)
+            self.run_ffmpeg(command, path + ".partial", expected, 0.25 + 0.60 * index / count, 0.25 + 0.60 * (index + 1) / count, f"Converting part {index + 1} of {count}")
+            got = media_duration(media_analysis.run_ffprobe(self.media_settings({}), path + ".partial"))
+            if got is None or abs(got - expected) > max(1.5, expected * 0.02):
+                self._remove(path + ".partial")
+                raise JobFailure("encode_failed", f"Part {index + 1} of {count} came out {'unreadable' if got is None else f'{got:.0f} s long instead of {expected:.0f} s'}.", retryable=False)
+            os.replace(path + ".partial", path)
+            info["done"][str(index)] = os.path.getsize(path)
+            self.save()
+        listing = os.path.join(folder, "chunks.txt")
+        with open(listing, "w", encoding="utf-8") as handle:
+            for index in range(count):
+                handle.write("file '" + os.path.join(folder, f"v{index:04d}.mkv").replace("'", "'\\''") + "'\n")
+        self.report_progress("encode", 0.85, "Joining the parts", force=True)
+        join = build_convert_command(self.cfg.ffmpeg, local, partial, change, profile, kind, self.cfg.vaapi_device, chunk_list=listing)
+        self.log.info("Joining the encoded parts with the source's audio, subtitles and chapters", command=shlex.join(join))
+        self.run_ffmpeg(join, partial, duration, 0.85, 0.85, "Joining")
+        return shlex.join(command or join)
+
+    def quality_check(self, local, converted, change, profile):
+        """Scores the converted video against the source with VMAF (a few short windows spread over the film) when the plan asks for it and ffmpeg has libvmaf.
+        Returns what was measured ({mean, min, samples, floor}, or {skipped: why}), remembered in the job so a restart does not measure again. In 'hold' mode a mean
+        under the floor pauses the job for a person; approving it carries on."""
+        profile = clean_profile(profile)
+        mode = (profile or {}).get("vmaf_mode") or "off"
+        if mode == "off" or not profile or profile["video_codec"] == "keep" or (change.get("video") or {}).get("action") != "transcode":
+            return None
+        size = os.path.getsize(converted)
+        info = self.m.get("vmaf")
+        if not isinstance(info, dict) or info.get("file_bytes") != size:
+            info = self.m["vmaf"] = {"file_bytes": size, **self.measure_vmaf(local, converted)}
+            self.save()
+        mean = info.get("mean")
+        if mean is None:
+            self.log.info(f"No quality score: {info.get('skipped')}")
+            return {k: v for k, v in info.items() if k != "file_bytes"}
+        self.log.info(f"Quality score (VMAF) {mean:.1f} (worst window {info['min']:.1f}; the floor is {info['floor']:g})")
+        approved = (self.job.get("decision") or {}).get("action") in ("approve", "approve_changes")
+        if mode == "hold" and mean < info["floor"] and not approved:
+            raise NeedsReview(f"The converted video scored {mean:.1f} for quality (VMAF), under {info['floor']:g}. It may look visibly worse than the original: "
+                              "approve to use it anyway, or skip or reject to keep the original.", {"vmaf": {k: v for k, v in info.items() if k != "file_bytes"}})
+        return {k: v for k, v in info.items() if k != "file_bytes"}
+
+    def measure_vmaf(self, local, converted):
+        if not (self.agent.capabilities or {}).get("vmaf"):
+            return {"skipped": "this worker's ffmpeg has no libvmaf"}
+        settings = self.media_settings({})
+        data = media_analysis.run_ffprobe(settings, local)
+        video = next((st for st in data.get("streams") or [] if isinstance(st, dict) and st.get("codec_type") == "video"), None)
+        facts = media_analysis.video_facts(video, data.get("format"))
+        if facts["hdr"] != "sdr":
+            return {"skipped": "VMAF is not meaningful for HDR pictures"}
+        height = int((video or {}).get("height") or 0)
+        windows = vmaf_windows(media_duration(data), self.cfg.vmaf_samples)
+        scores = []
+        for position, (start, length) in enumerate(windows):
+            self.report_progress("encode", 0.85, f"Checking quality {position + 1} of {len(windows)}", force=True)
+            command = vmaf_command(self.cfg.ffmpeg, converted, local, start, length, min(4, os.cpu_count() or 1))
+            try:
+                done = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", timeout=1800)
+            except (OSError, subprocess.SubprocessError) as exc:
+                return {"skipped": f"the VMAF run failed ({exc})"}
+            score = parse_vmaf(done.stdout) if done.returncode == 0 else None
+            if score is None:
+                return {"skipped": "ffmpeg could not compute a VMAF score: " + (done.stdout or "")[-300:].strip()}
+            scores.append(score)
+            self.reporter.check()
+        if not scores:
+            return {"skipped": "the video is too short to sample"}
+        return {"mean": round(sum(scores) / len(scores), 2), "min": round(min(scores), 2), "samples": len(scores), "floor": vmaf_floor(height)}
 
     def with_source_colours(self, settings, local, profile):
         """Looks at the source's picture before an HEVC or H.264 re-encode. HDR10 and HLG are kept for HEVC (10-bit, colour tags, mastering data read from the file itself,
@@ -2087,6 +2422,7 @@ class Agent:
         self.progress = {}                             # job id -> (stage, fraction), for the status summary
         self.lock = threading.Lock()
         self.capabilities = None
+        self._originals_digest, self._originals_sent = None, 0.0
         self.started = time.monotonic()
         self.poll_seconds, self.registered, self.roots_hash = 5.0, False, None
         self._cpu_sample = None
@@ -2149,6 +2485,15 @@ class Agent:
                 out.append((folder, meta))
         return out
 
+    def originals_listing(self):
+        """What SyncHub's Originals tab shows: each kept original (and each converted copy set aside by a restore) with where it came from and when it may go."""
+        out = []
+        for folder, meta in self.originals()[:400]:
+            out.append({"id": os.path.basename(folder), "kind": meta.get("kind") or "original", "root": meta.get("root"), "rel": meta.get("rel"), "name": meta.get("name"),
+                        "size": meta.get("size"), "saved_at": meta.get("saved_at"), "expires_at": meta.get("expires_at"), "retention_days": meta.get("retention_days"),
+                        "replaced_with": meta.get("replaced_with")})
+        return out
+
     def originals_held(self):
         held = self.originals()
         return len(held), sum(int(m.get("size") or 0) for _, m in held)
@@ -2175,7 +2520,13 @@ class Agent:
             active = sorted(self.active)
         body = {"free_slots": max(self.cfg.slots - len(active), 0) if not self.stopping.is_set() else 0, "free_bytes": self.work_free(),
                 "holding": sorted(set(self.store.holding()) | set(active)), "active": active, "status": self.status()}
+        listing = self.originals_listing()
+        digest = hashlib.sha1(json.dumps(listing, sort_keys=True).encode("utf-8")).hexdigest()
+        if digest != self._originals_digest or time.monotonic() - self._originals_sent > 600:        # the list rides along when it changes, and now and then so SyncHub's copy stays fresh
+            body["originals"] = listing
         answer = self.api.post("/poll", body)
+        if "originals" in body:
+            self._originals_digest, self._originals_sent = digest, time.monotonic()
         for job_id in answer.get("cancel") or []:
             runner = self.active.get(job_id)
             if runner:

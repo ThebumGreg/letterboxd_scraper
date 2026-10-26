@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 _SWITCH_KEYS = {
     "disable_jellyfin_connection", "radarr_enable_library_sync", "radarr_enable_queue_addition", "radarr_dry_run",
     "sonarr_enable_library_sync", "sonarr_enable_queue_addition", "sonarr_dry_run", "enable_notifications",
-    "payload_logging_enabled", "size_policy", "preview_auto", "log_service_jellyfin", "log_service_radarr", "log_service_sonarr",
+    "payload_logging_enabled", "size_policy", "tv_size_policy", "gpu_encoding", "preview_auto", "log_service_jellyfin", "log_service_radarr", "log_service_sonarr",
     "log_service_tmdb", "log_service_dynu",
 }
 _INT_RANGES = {
@@ -16,10 +16,10 @@ _INT_RANGES = {
     "library_tail_seconds": (5, 600), "jellyfin_events_keep_days": (0, 36500), "notify_history_keep_days": (0, 36500), "ddns_interval_minutes": (1, 60), "access_session_days": (1, 365), "backup_keep": (0, 365), "size_crf": (14, 35), "trust_after": (1, 50), "preview_seconds": (30, 60), "preview_keep_days": (1, 365), "originals_retention_days": (0, 3650),
     "library_default_profile": (1, 1_000_000),
 }
-_FLOAT_KEYS = {"request_delay_min", "request_delay_max", "user_delay_min", "user_delay_max", "movie_max_gb", "movie_target_gb", "tv_episode_max_gb", "tv_episode_target_gb"}
+_FLOAT_KEYS = {"request_delay_min", "request_delay_max", "user_delay_min", "user_delay_max", "movie_max_gb", "movie_target_gb", "tv_max_gb_per_hour", "tv_target_gb_per_hour"}
 _URL_KEYS = {"jellyfin_url", "radarr_url", "sonarr_url", "synchub_url"}
 _PATH_KEYS = {"radarr_root_folder", "sonarr_root_folder"}
-_CHOICES = {"tv_metadata_provider": {"tmdb", "sonarr"}, "library_integrity_mode": {"metadata", "tail", "full"}, "download_pipeline": {"off", "review", "auto"}, "size_preset": {"fast", "medium", "slow", "slower"}, "review_first": {"always", "until_trusted", "low_confidence_only", "never"}, "dolby_vision_profile_5": {"review", "hdr10"}, "dolby_vision_profile_7_8": {"review", "hdr10"},
+_CHOICES = {"tv_metadata_provider": {"tmdb", "sonarr"}, "library_integrity_mode": {"metadata", "tail", "full"}, "download_pipeline": {"off", "review", "auto"}, "vmaf_mode": {"off", "warn", "hold"}, "size_preset": {"fast", "medium", "slow", "slower"}, "review_first": {"always", "until_trusted", "low_confidence_only", "never"}, "dolby_vision_profile_5": {"review", "hdr10"}, "dolby_vision_profile_7_8": {"review", "hdr10"},
             "source_delete_after_days": {"0", "7", "14", "30"}, "arr_after_migration": {"none", "update_location", "unmonitor", "remove"}, "arr_apply_when": {"after_copy", "with_source_delete"}}
 _FOLDER_NAME_KEYS = {"library_tv_folder", "library_movie_folder"}
 

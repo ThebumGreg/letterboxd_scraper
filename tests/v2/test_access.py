@@ -460,7 +460,7 @@ def test_the_menu_groups_workers_library_and_storage_and_tools_logs_and_payloads
     sign_in(browser, pid)
     shown = menu(text(browser.get("/")))
     assert shown["links"] == ["Dashboard", "Remote", "Search", "My profile", "Settings"]
-    assert shown["dropdowns"] == {"Media": ["Library", "Resolution Center", "Workers", "Storage"],
+    assert shown["dropdowns"] == {"Media": ["Library", "Resolution Center", "Workers", "Originals", "Storage"],
                                   "System": ["Tools &amp; Operations", "What it&#39;s doing now", "Logs", "Jellyfin events", "Payloads", "Dynamic DNS", "People", "TV apps", "TVs", "TV tools"]}
     page = text(browser.get("/"))
     assert re.findall(r'class="dropdown-header">(.*?)</h6>', page) == ["Run", "Monitor", "Admin", "TV"]
@@ -469,7 +469,7 @@ def test_the_menu_groups_workers_library_and_storage_and_tools_logs_and_payloads
 def test_the_menu_shows_only_what_the_person_may_open(browser, people):
     sign_in(browser, people["cara"], "1357")
     shown = menu(text(browser.get("/library")))
-    assert shown == {"links": [], "dropdowns": {"Media": ["Library", "Workers"]}}
+    assert shown == {"links": [], "dropdowns": {"Media": ["Library", "Workers", "Originals"]}}
     sign_in(browser, people["bob"], "2468")
     assert menu(text(browser.get("/"))) == {"links": ["Dashboard", "Search"], "dropdowns": {}}
 

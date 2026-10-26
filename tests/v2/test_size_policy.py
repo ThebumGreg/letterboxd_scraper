@@ -33,10 +33,20 @@ def test_nothing_happens_while_the_policy_is_off_or_the_film_is_small_enough():
     assert sp.decide(movie(size_gb=10), cfg=ON).action == sp.NONE
 
 
-def test_tv_is_left_alone_unless_a_cap_is_set():
-    episode = movie(size_gb=45, media_type="TV Episode")
+def test_tv_is_left_alone_unless_its_own_switch_is_on():
+    episode = movie(size_gb=45, media_type="TV Episode")                               # two hours, so 22.5 GB per hour
     assert sp.decide(episode, cfg=ON).action == sp.NONE
-    assert sp.decide(episode, cfg=sp.Settings(on=True, tv_max_gb=10, tv_target_gb=8)).action == sp.COMPRESS
+    assert sp.decide(episode, cfg=sp.Settings(on=True, tv_on=True, tv_max_gb_per_hour=10, tv_target_gb_per_hour=8)).action == sp.COMPRESS
+    assert sp.decide(episode, cfg=sp.Settings(tv_on=True)).action == sp.NONE           # the master switch still decides
+
+
+def test_tv_limits_are_per_hour_of_runtime():
+    cfg = sp.Settings(on=True, tv_on=True, tv_max_gb_per_hour=4, tv_target_gb_per_hour=2.5)
+    long_episode = movie(size_gb=7, media_type="TV Episode", minutes=90, audio=[track(1, codec="aac", bitrate_kbps=128)], video_info={"hdr": "sdr", "video_kbps": 9000})          # 4.7 GB per hour: over
+    short_episode = movie(size_gb=2, media_type="TV Episode", minutes=30, audio=[track(1, codec="aac", bitrate_kbps=128)], video_info={"hdr": "sdr", "video_kbps": 9000})          # 4 GB per hour: at the limit, left alone
+    decision = sp.decide(long_episode, cfg=cfg)
+    assert decision.action == sp.COMPRESS and decision.numbers["target_gb"] == 3.75 and decision.numbers["max_gb"] == 6
+    assert sp.decide(short_episode, cfg=cfg).action == sp.NONE
 
 
 def test_removing_tracks_that_brings_it_under_the_limit_is_tried_first():

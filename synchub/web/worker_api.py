@@ -102,6 +102,8 @@ def register(app):
         data = _body()
         with db.connection() as conn:
             workers.touch(conn, g.worker["id"], data.get("status"))
+            if "originals" in data:
+                workers.store_originals(conn, g.worker["id"], data["originals"])
             worker = workers.get(conn, g.worker["id"])
             if isinstance(data.get("holding"), list):
                 lost = jobs.reconcile(conn, worker["id"], data["holding"])

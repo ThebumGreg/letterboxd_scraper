@@ -19,7 +19,7 @@ PIN_COOKIE = "synchub_pin"              # signed proof that this profile's PIN w
 # What a person sees is what their permissions allow, and a heading with nothing under it is left out.
 NAV = (
     ("index", "Dashboard"), ("tv_remote_page", "Remote"), ("search_page", "Search"), ("my_profile", "My profile"),
-    ("Media", (("library_page", "Library"), ("resolution_center", "Resolution Center"), ("workers_page", "Workers"), ("storage_page", "Storage"))),
+    ("Media", (("library_page", "Library"), ("resolution_center", "Resolution Center"), ("workers_page", "Workers"), ("workers_originals_page", "Originals"), ("storage_page", "Storage"))),
     ("System", (
         (None, "Run"), ("tools", "Tools & Operations"),
         (None, "Monitor"), ("activity_page", "What it's doing now"), ("logs_page", "Logs"), ("jellyfin_events_page", "Jellyfin events"), ("payloads_page", "Payloads"),
@@ -207,8 +207,8 @@ def create_app(start_scheduler=False, csrf=True):
         return {"jellyfin_app": config, "current_profile": profile, "has_profiles": getattr(g, "has_profiles", False), "can": can, "menu": menu,
                 "max_rating": getattr(g, "max_rating", None), "app_version": __version__}
 
-    from synchub.web import admin, api, fleet, library, notifications, pages, security, shares, tv, worker_api
-    for module in (pages, api, admin, fleet, library, notifications, shares, security, tv, worker_api):
+    from synchub.web import admin, api, fleet, library, notifications, pages, security, shares, tv, worker_api, originals
+    for module in (pages, api, admin, fleet, library, notifications, shares, security, tv, worker_api, originals):
         module.register(app)
     if csrf:
         csrf.exempt(app.view_functions["api_webhook"])

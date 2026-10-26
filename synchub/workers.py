@@ -77,7 +77,7 @@ def _load(text, default):
 def row(r, now=None):
     """A worker as a dict, with the JSON columns decoded and whether it is online."""
     w = dict(r)
-    for key, default in (("tags", []), ("capabilities", {}), ("status", {})):
+    for key, default in (("tags", []), ("capabilities", {}), ("status", {}), ("originals", [])):
         w[key] = _load(w.get(key), default)
     w["token_hash"] = bool(w["token_hash"])            # never hand the hash around
     w["revoked"] = bool(w.get("revoked_at"))
@@ -190,6 +190,21 @@ def register(conn, worker_id, info, now=None):
     conn.execute("UPDATE worker SET protocol = ?, version = ?, os = ?, hostname = ?, capabilities = ?, last_seen = ? WHERE id = ?",
                  (PROTOCOL, str(info.get("version") or "")[:40], str(info.get("os") or "")[:80], str(info.get("hostname") or "")[:80],
                   text, now or db.now(), worker_id))
+
+
+MAX_ORIGINALS = 400
+MAX_ORIGINALS_BYTES = 262144
+ORIGINAL_FIELDS = ("id", "kind", "root", "rel", "name", "size", "saved_at", "expires_at", "retention_days", "replaced_with")
+
+
+def store_originals(conn, worker_id, listing):
+    """Keeps the list of originals a worker says it holds (only known fields, a bounded amount)."""
+    if not isinstance(listing, list):
+        return
+    clean = [{k: (v if isinstance(v, (int, float)) or v is None else str(v)[:400]) for k, v in item.items() if k in ORIGINAL_FIELDS} for item in listing[:MAX_ORIGINALS] if isinstance(item, dict) and item.get("id")]
+    text = json.dumps(clean)
+    if len(text) <= MAX_ORIGINALS_BYTES:
+        conn.execute("UPDATE worker SET originals = ? WHERE id = ?", (text, worker_id))
 
 
 def touch(conn, worker_id, status=None, now=None):

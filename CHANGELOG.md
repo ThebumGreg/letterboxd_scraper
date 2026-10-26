@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 1.3.0
+
+Update every worker (`docs/UPGRADE.md`) and rebuild its image: the worker image moves to Debian 13 so its ffmpeg has libvmaf. One new migration (020, a column for the originals a worker holds).
+
+**Conversion batch: GPU encoding, resumable encodes, quality scores, an Originals tab and TV size limits.**
+- **GPU encoding.** *Library settings > GPU encoding* lets a plan use a worker's `hevc_nvenc`, `hevc_qsv` or `hevc_vaapi` (new agent setting `video_encoder`, default `auto`; add `agent/examples/docker-compose.gpu.yml` for an Intel GPU). It is off by default, never used for HDR, and falls back to the CPU encoder once if the GPU encode fails or is too big. The size policy uses an average-bitrate encode on a GPU.
+- **Chunked, resumable encodes.** Videos over twice `chunk_minutes` (default 10) are encoded in pieces and joined without re-encoding, so a reboot loses at most one piece (`chunk_minutes = 0` turns it off).
+- **VMAF quality score.** *Library settings > Quality score*: off, record the score, or hold a job whose mean score is under 93 (95 for 2160p) for review before the original is replaced. The worker image now has libvmaf; the build fails if it does not.
+- **Originals tab** on the Media page: every original the workers keep, with Restore (the converted file is set aside for 7 days, not deleted), Keep longer and Delete now, each queued as a job on the worker that holds the file.
+- **TV size policy** has its own switch and is per hour of runtime (`tv_max_gb_per_hour` 4, `tv_target_gb_per_hour` 2.5 by default; replaces `tv_episode_max_gb` and `tv_episode_target_gb`, which were never shown anywhere). A *How many files would this compress?* button counts what the current numbers would do without queuing anything.
+- Release notes from the mount-watchdog batch below are part of this release too.
+
 **A worker recovers from a network outage by itself.** Agent files only; no database migration.
 - **`agent/mount-watchdog.sh`**: install it once on a worker PC (`sudo ./agent/mount-watchdog.sh --install`) and a timer checks the shares' marker files every minute. A stale or unmounted share is mounted again from `/etc/fstab`; a worker container that cannot see the shares afterwards is restarted (at most once in ten minutes), and one that failed to start for want of a share is started. It never creates a marker and never touches a share that is mounted but unmarked. Tests: `tests/v2/test_mount_watchdog.py`.
 - **Mount options.** `agent/README.md` has a "Surviving a network outage" section: add `x-systemd.automount` and a wait for the network to the shares' `/etc/fstab` lines, so a mount that fails at boot with "Network is unreachable" is tried again on first use. SyncHub's generated lines are unchanged.

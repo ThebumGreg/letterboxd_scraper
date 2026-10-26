@@ -37,12 +37,15 @@ class Settings:
     on: bool = False
     movie_max_gb: float = 30.0
     movie_target_gb: float = 25.0
-    tv_max_gb: float = 0.0
-    tv_target_gb: float = 0.0
+    tv_on: bool = False                    # episodes have their own switch: the size is a limit per hour of runtime, not per file
+    tv_max_gb_per_hour: float = 4.0
+    tv_target_gb_per_hour: float = 2.5
     crf: int = 22
     preset: str = "medium"
     dv_profile_5: str = "review"           # review | hdr10
     dv_profile_7_8: str = "hdr10"          # hdr10 | review
+    gpu: bool = False                      # let a worker with a working GPU encoder use it (faster, larger files than the CPU encoder at the same quality)
+    vmaf_mode: str = "warn"                # off | warn (record the score) | hold (a low score pauses the job for review)
 
 
 @dataclasses.dataclass
@@ -76,8 +79,10 @@ def load(conn=None):
         crf = 22
     preset = settings.get("size_preset", conn=conn)
     return Settings(on=settings.get("size_policy", conn=conn) == "1", movie_max_gb=_float("movie_max_gb", 30.0, conn), movie_target_gb=_float("movie_target_gb", 25.0, conn),
-                    tv_max_gb=_float("tv_episode_max_gb", 0.0, conn), tv_target_gb=_float("tv_episode_target_gb", 0.0, conn), crf=crf,
+                    tv_on=settings.get("tv_size_policy", conn=conn) == "1", tv_max_gb_per_hour=_float("tv_max_gb_per_hour", 4.0, conn),
+                    tv_target_gb_per_hour=_float("tv_target_gb_per_hour", 2.5, conn), crf=crf,
                     preset=preset if preset in ("fast", "medium", "slow", "slower") else "medium",
+                    gpu=settings.get("gpu_encoding", conn=conn) == "1", vmaf_mode=settings.get("vmaf_mode", conn=conn) if settings.get("vmaf_mode", conn=conn) in ("off", "warn", "hold") else "warn",
                     dv_profile_5="hdr10" if settings.get("dolby_vision_profile_5", conn=conn) == "hdr10" else "review",
                     dv_profile_7_8="review" if settings.get("dolby_vision_profile_7_8", conn=conn) == "review" else "hdr10")
 
@@ -122,17 +127,22 @@ def decide(rec, plans=(), cfg=None):
     if not cfg.on:
         return Decision(NONE)
     movie = (rec.get("media_type") or "").lower().startswith("movie")
-    ceiling, target_gb = (cfg.movie_max_gb, cfg.movie_target_gb) if movie else (cfg.tv_max_gb, cfg.tv_target_gb)
-    if rec.get("size_target_gb") and ceiling > 0:                       # a target chosen for this one film on the review screen
+    if not movie and not cfg.tv_on:
+        return Decision(NONE)
+    duration = float(rec.get("duration_seconds") or 0)
+    if movie:
+        ceiling, target_gb = cfg.movie_max_gb, cfg.movie_target_gb
+    else:                                                               # TV: the limits are per hour of runtime, so a 22-minute and a 90-minute episode are judged alike
+        ceiling, target_gb = cfg.tv_max_gb_per_hour * duration / 3600, cfg.tv_target_gb_per_hour * duration / 3600
+    if rec.get("size_target_gb") and ceiling > 0:                       # a target chosen for this one title on the review screen
         target_gb = float(rec["size_target_gb"])
     size = rec.get("size_bytes") or 0
-    if ceiling <= 0 or target_gb <= 0 or size <= 0:
+    if (duration > 0 and (ceiling <= 0 or target_gb <= 0)) or size <= 0 or (movie and (ceiling <= 0 or target_gb <= 0)):
         return Decision(NONE)
     tracks = [t for t in _json(rec.get("streams_json"), []) if isinstance(t, dict)]
     kept, removed = _size(list(plans), tracks)
-    duration = float(rec.get("duration_seconds") or 0)
     if duration <= 0:
-        return Decision(BLOCKED, ["The film's length is not known, so a size budget cannot be worked out. Scan it again."])
+        return Decision(BLOCKED, ["The video's length is not known, so a size budget cannot be worked out. Scan it again."])
     removed_bytes = sum(_track_kbps(t) for t in removed) * 1000 / 8 * duration
     after = size - removed_bytes
     if after <= ceiling * GIB:
@@ -193,7 +203,7 @@ def decide(rec, plans=(), cfg=None):
     maxrate = round(target_kbps * MAXRATE_HEADROOM)
     profile = {"video_codec": "hevc", "crf": cfg.crf, "preset": cfg.preset, "ten_bit": True if keep_hdr or bit_depth >= 10 else True, "audio_kbps": None,
                "maxrate_kbps": maxrate, "bufsize_kbps": maxrate * 2, "max_bytes": int(ceiling * GIB), "target_bytes": int(target_bytes), "size_policy": True,
-               "deinterlace": bool(info.get("interlaced"))}
+               "deinterlace": bool(info.get("interlaced")), "gpu": cfg.gpu, "vmaf_mode": cfg.vmaf_mode}
     if keep_hdr:
         profile["hdr"] = {"kind": keep_hdr, **{k: info.get(k) for k in ("transfer", "primaries", "matrix", "master_display", "max_cll") if info.get(k)}}
     return Decision(REVIEW if reasons else COMPRESS, reasons, notes, profile, numbers)
@@ -229,7 +239,7 @@ def apply(plan, decision, dest_rel=None):
         change["target_extension"] = ".mkv"
         dest_rel = dest_rel.rsplit(".", 1)[0] + ".mkv" if "." in dest_rel.rsplit("/", 1)[-1] else dest_rel + ".mkv"
     chosen = out.get("profile") if isinstance(out.get("profile"), dict) and out["profile"].get("video_codec") == "hevc" else None
-    cap = {k: v for k, v in decision.profile.items() if k in ("maxrate_kbps", "bufsize_kbps", "max_bytes", "target_bytes", "size_policy", "deinterlace", "hdr")}
+    cap = {k: v for k, v in decision.profile.items() if k in ("maxrate_kbps", "bufsize_kbps", "max_bytes", "target_bytes", "size_policy", "deinterlace", "hdr", "gpu", "vmaf_mode")}
     profile = {**chosen, **cap} if chosen else dict(decision.profile)
     needs = list(out.get("needs") or [])
     if "profiles" not in needs:

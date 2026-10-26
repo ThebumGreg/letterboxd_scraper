@@ -4,6 +4,7 @@ Scan the shares, see every file's plain-language recommendation sorted into queu
 confirmation), and export the lot as a CSV. Nothing here touches a file: approvals are decisions, recorded with who made them; what is done
 with approved files is a later step.
 """
+import dataclasses
 import os
 from datetime import datetime, timezone
 
@@ -342,7 +343,7 @@ def register(app):
     def api_library_settings():
         data = request.get_json(silent=True) or {}
         keys = ("library_destination_root", "library_tv_folder", "library_movie_folder", "library_integrity_mode", "library_tail_seconds", "library_exclude_folders", "download_pipeline", "originals_retention_days",
-                "size_policy", "movie_max_gb", "movie_target_gb", "size_crf", "dolby_vision_profile_5", "dolby_vision_profile_7_8",
+                "size_policy", "movie_max_gb", "movie_target_gb", "size_crf", "tv_size_policy", "tv_max_gb_per_hour", "tv_target_gb_per_hour", "gpu_encoding", "vmaf_mode", "dolby_vision_profile_5", "dolby_vision_profile_7_8",
                 "review_first", "trust_after", "preview_seconds", "preview_keep_days", "preview_auto",
                 "library_default_profile", "source_delete_after_days", "arr_after_migration", "arr_apply_when")
         cleaned, errors = {}, []
@@ -362,6 +363,30 @@ def register(app):
             if cleaned:
                 findings.refresh(conn, scan.config(conn))                   # a different destination or layout changes what is "in place"
         return jsonify(ok=True, message="Saved.")
+
+    @app.route("/api/library/size_preview", methods=["POST"])
+    def api_library_size_preview():
+        """How many scanned files the size rules would compress with the values on the form (nothing is saved or queued)."""
+        data = request.get_json(silent=True) or {}
+        values = {}
+        for key in ("movie_max_gb", "movie_target_gb", "tv_max_gb_per_hour", "tv_target_gb_per_hour"):
+            ok, result = validate_setting(key, str(data.get(key, "")))
+            if not ok:
+                return jsonify(ok=False, error=result), 400
+            values[key] = float(result)
+        with db.connection() as conn:
+            cfg = dataclasses.replace(size_policy.load(conn), on=True, tv_on=data.get("tv_size_policy") == "1", movie_max_gb=values["movie_max_gb"], movie_target_gb=values["movie_target_gb"],
+                                      tv_max_gb_per_hour=values["tv_max_gb_per_hour"], tv_target_gb_per_hour=values["tv_target_gb_per_hour"])
+            count = {"movies": [0, 0], "episodes": [0, 0]}
+            for row in conn.execute("SELECT * FROM library_file WHERE size_bytes > 0 AND missing_since IS NULL"):
+                rec = dict(row)
+                decision = size_policy.decide(rec, [], cfg)
+                if decision.action in (size_policy.COMPRESS, size_policy.REVIEW):
+                    kind = "movies" if (rec.get("media_type") or "").lower().startswith("movie") else "episodes"
+                    count[kind][0] += 1
+                    count[kind][1] += max(0, rec["size_bytes"] - (decision.numbers.get("target_gb") or 0) * size_policy.GIB)
+        parts = [f"{n} {kind} (up to about {saved / size_policy.GIB:.0f} GB saved)" for kind, (n, saved) in count.items() if n]
+        return jsonify(ok=True, message=("Would compress " + " and ".join(parts) + ".") if parts else "Nothing in the scanned library is over these limits.")
 
     # ---- files Radarr/Sonarr imported (the download pipeline)
     @app.route("/api/downloads/<int:intake_id>/<action>", methods=["POST"])

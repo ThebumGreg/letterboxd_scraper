@@ -8,11 +8,11 @@ def tabs(page):
 
 
 def test_library_workers_and_storage_are_tabs_of_one_page(client):
-    for path, active in (("/library", "library"), ("/workers", "workers"), ("/storage", "storage")):
+    for path, active in (("/library", "library"), ("/workers", "workers"), ("/originals", "originals"), ("/storage", "storage")):
         page = client.get(path).get_data(as_text=True)
-        assert tabs(page) == ["library", "workers", "storage"]
+        assert tabs(page) == ["library", "workers", "originals", "storage"]
         assert re.search(r'class="nav-link active" id="media-tab-%s"' % active, page)
-        for key in ("library", "workers", "storage"):
+        for key in ("library", "workers", "originals", "storage"):
             assert 'id="media-pane-%s"' % key in page
         assert 'id="fleet"' in page and 'id="libraryLive"' in page and 'id="shareModal"' in page
 

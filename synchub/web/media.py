@@ -10,6 +10,7 @@ from synchub import access, db, storage
 TABS = (
     ("library", "Library", "library_page", "Every video file on your shares and what to do with it"),
     ("workers", "Workers", "workers_page", "The PCs that do the heavy work, and their jobs"),
+    ("originals", "Originals", "workers_originals_page", "Original files kept after a file was replaced: restore, keep longer or delete"),
     ("storage", "Storage", "storage_page", "The shares the workers mount"),
 )
 
@@ -21,6 +22,9 @@ def _data(key, conn):
     if key == "workers":
         from synchub.web import fleet
         return fleet.snapshot(conn)
+    if key == "originals":
+        from synchub.web import originals
+        return originals.overview(conn)
     from synchub.web import shares
     return {"roots": shares.describe(conn), "protocols": storage.PROTOCOLS, "defaults": storage.DEFAULT_OPTIONS, "marker": storage.MARKER}
 
