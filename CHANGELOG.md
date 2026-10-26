@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**A file's tracks show what really happens, and a file can be redone.** No database migration.
+- **Tracks after a decision.** Once a file is approved or migrated, its Tracks table lists each track as *keep*, *removed* or *dropped* (MKV cannot hold it), using the approved choices and the conversion profile's subtitle rule. Before, every track said *keep* because the page only knew the suggestion of a pending file.
+- **Redo with other settings.** On an approved or converted file's page, *Redo with new settings* takes it back to pending (optionally scanning its folder again) so you can pick another profile or other tracks and approve it again. It needs the source: after the source is deleted, only the converted copy is left. A worker never overwrites a file, so for an already converted file you remove the converted copy first and tick the box saying so.
+
 **One page per person, and new-episode alerts.** Everything about a person is now together: People, then *Open*. Database migration 019.
 - **A page for each person** (People, *Open*, or *My profile* in the top bar for your own): *Profile* (names, Jellyfin link, and a switch for administrator alerts), *Access* (pages they may open, rating limit, PIN) and *Notifications* (where to send them, what to tell them, new episodes, quiet hours and grouping, and what was sent). The People list now shows each person's PIN state and admin alerts at a glance. Another person's delivery methods hold private keys, so only they can change them; you see a summary.
 - **Administrator alerts are chosen on the person**, not in Settings. People who were chosen before keep it.
