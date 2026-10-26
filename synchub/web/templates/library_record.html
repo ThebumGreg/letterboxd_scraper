@@ -28,6 +28,34 @@
             {% elif r.path %}<p class="small mb-0">It will be placed at <code>{{ r.path }}</code> in the destination share.</p>{% endif %}
         </div>
 
+        {% if (r.can_approve or r.needs_name) and r.kind not in ('skip_duplicate',) and not decided %}
+        <div class="panel p-3 p-md-4 mb-3" id="handling">
+            <h6 class="mb-2">How should it be handled?</h6>
+            {% if rename_to %}
+            <div class="form-check mb-1"><input class="form-check-input" type="radio" name="handling" id="hRename" value="rename"{% if r.mode == 'rename_only' %} checked{% endif %}>
+                <label class="form-check-label" for="hRename">Rename in place: move it inside <strong>{{ rec.root_name }}</strong> to <code>{{ rename_to }}</code>. Nothing is copied and nothing in the file changes.</label></div>
+            {% endif %}
+            <div class="form-check mb-2"><input class="form-check-input" type="radio" name="handling" id="hProfile" value="profile"{% if r.mode != 'rename_only' or not rename_to %} checked{% endif %}>
+                <label class="form-check-label" for="hProfile">Bring it into <strong>{{ cfg.destination_root }}</strong> with a conversion profile</label></div>
+            <select class="form-select form-select-sm w-auto ms-4" id="profilePick" aria-label="Conversion profile">{% for p in profiles %}<option value="{{ p.id }}"{% if p.id == chosen_profile.id %} selected{% endif %}>{{ p.name }}: {{ p.summary }}</option>{% endfor %}</select>
+            {% if source_cleanup %}<p class="small text-body-secondary mt-2 mb-0">The source file is deleted {{ source_cleanup }} days after the copy is verified (you can keep it afterwards).</p>{% endif %}
+        </div>
+        {% endif %}
+
+        {% if rec.migration_cancelled_at and rec.approval_status == 'approved' %}
+        <div class="alert alert-secondary d-flex flex-wrap align-items-center gap-2"><span>This file's job was cancelled. It stays cancelled until you queue it again.</span><button type="button" class="btn btn-sm btn-primary" data-act="requeue">Queue again</button></div>
+        {% elif rec.migration_status == 'failed' and rec.approval_status == 'approved' %}
+        <div class="alert alert-danger d-flex flex-wrap align-items-center gap-2"><span>The last attempt failed: {{ rec.migration_last_error or 'see the Workers tab' }}</span><button type="button" class="btn btn-sm btn-primary" data-act="requeue">Queue again</button></div>
+        {% endif %}
+        {% if rec.source_delete_status or rec.arr_status %}
+        <div class="panel p-3 mb-3"><h6>After the migration</h6>
+            {% if rec.source_delete_status %}<p class="small mb-1"><i class="bi bi-trash3" aria-hidden="true"></i> Source: <span class="badge bg-{{ {'waiting': 'warning text-dark', 'queued': 'primary', 'deleted': 'success', 'held': 'secondary', 'failed': 'danger'}[rec.source_delete_status] }}">{{ rec.source_delete_status }}</span> {{ rec.source_delete_message or '' }}{% if rec.source_delete_status == 'waiting' and rec.source_delete_due_at %} Due {{ rec.source_delete_due_at[:10] }}.{% endif %}
+                {% if rec.source_delete_status in ('waiting', 'failed') %}<button type="button" class="btn btn-sm btn-outline-secondary ms-2" data-act="keep-source">Keep the source</button>{% endif %}
+                {% if rec.source_delete_status in ('held', 'failed') %}<button type="button" class="btn btn-sm btn-outline-secondary ms-2" data-act="release-source">Delete it after the waiting time</button>{% endif %}</p>{% endif %}
+            {% if rec.arr_status %}<p class="small mb-0"><i class="bi bi-arrow-repeat" aria-hidden="true"></i> Radarr/Sonarr: <span class="badge bg-{{ {'waiting': 'secondary', 'due': 'primary', 'done': 'success', 'skipped': 'secondary', 'failed': 'danger'}[rec.arr_status] }}">{{ rec.arr_status }}</span> {{ rec.arr_message or '' }}</p>{% endif %}
+        </div>
+        {% endif %}
+
         {% if r.can_approve or r.needs_name %}
         <div class="panel p-3 p-md-4 mb-3">
             <label for="newName" class="form-label small mb-1">File name{% if r.needs_name %} <span class="text-danger">(a valid name is needed)</span>{% endif %}</label>
@@ -113,13 +141,15 @@
         if (kind === 'approve') {
             const name = document.getElementById('newName');
             if (name) body.name = name.value;
+            const handling = document.querySelector('input[name="handling"]:checked');
+            if (handling) { body.mode = handling.value === 'rename' ? 'rename_only' : 'copy'; if (handling.value === 'profile') body.profile_id = document.getElementById('profilePick')?.value; }
             body.keep_streams = [...document.querySelectorAll('[data-remove]')].filter((c) => !c.checked && !c.disabled).map((c) => parseInt(c.dataset.remove, 10));
         }
         if (kind === 'tested') body.note = document.getElementById('testNote')?.value || '';
         document.querySelectorAll('#actions button').forEach((b) => { b.disabled = true; });
         const data = await libraryPost(`/api/library/record/${id}/${kind}`, body);
         if (!data.ok) { librarySay(data.message || 'Failed.', false); document.querySelectorAll('#actions button').forEach((b) => { b.disabled = false; }); return; }
-        if (kind === 'undo') { location.reload(); return; }
+        if (['undo', 'requeue', 'keep-source', 'release-source'].includes(kind)) { location.reload(); return; }
         next();
     }
     document.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => act(b.dataset.act)));

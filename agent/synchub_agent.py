@@ -42,10 +42,11 @@ try:
 except ImportError:                        # pragma: no cover - exercised by tests that remove the module
     media_analysis = None
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
-OPS = ["copy"]                     # the operations (plan.op) every agent can do; scan, hash and convert are added when the analysis module and ffmpeg are there
+OPS = ["copy", "rename", "delete_source"]     # the operations (plan.op) every agent can do; scan, hash and convert are added when the analysis module and ffmpeg are there
+FEATURES = ["profiles"]            # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run)
 MANIFEST_VERSION = 1
 HASH_BUFFER = 8 * 1024 * 1024
 SPACE_MARGIN = 1024 ** 3           # room left over on a disk after a copy
@@ -585,20 +586,112 @@ def media_duration(probe):
         return None
 
 
-def build_convert_command(ffmpeg, src, out, change):
+VIDEO_PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow")
+PROFILE_CRF = {"hevc": (14, 35), "h264": (12, 32)}
+
+
+def clean_profile(profile):
+    """The conversion profile of a plan, checked. Everything that ends up in the ffmpeg command is validated here: no free text reaches it."""
+    if not profile:
+        return None
+    if not isinstance(profile, dict):
+        raise JobFailure("bad_job", "The conversion profile in this job is not readable.", retryable=False)
+    codec, kbps = profile.get("video_codec") or "keep", profile.get("audio_kbps") or 192
+    try:
+        kbps = int(kbps)
+        crf = int(profile["crf"]) if profile.get("crf") is not None else None
+    except (TypeError, ValueError):
+        raise JobFailure("bad_job", "The conversion profile has a quality or bitrate that is not a number.", retryable=False)
+    if codec not in ("keep", "hevc", "h264") or not 64 <= kbps <= 640:
+        raise JobFailure("bad_job", "The conversion profile has a codec or audio bitrate this agent does not accept.", retryable=False)
+    out = {"video_codec": codec, "audio_kbps": kbps, "crf": None, "preset": None, "ten_bit": False, "name": str(profile.get("name") or "")[:60]}
+    if codec != "keep":
+        low, high = PROFILE_CRF[codec]
+        preset = profile.get("preset") or "medium"
+        if crf is None or not low <= crf <= high or preset not in VIDEO_PRESETS:
+            raise JobFailure("bad_job", f"The conversion profile's quality or encoder speed is outside what this agent accepts for {codec}.", retryable=False)
+        out.update(crf=crf, preset=preset, ten_bit=bool(profile.get("ten_bit")) and codec == "hevc")
+    if codec == "hevc":
+        out.update(clean_size_cap(profile))
+    return out
+
+
+def _positive_int(value, high):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if 0 < number <= high else None
+
+
+_HDR_TEXT = re.compile(r"^[A-Za-z0-9(),.\-]{1,200}$")
+
+
+def clean_size_cap(profile):
+    """The optional size policy fields of a profile (a bitrate cap that keeps a constant-quality encode under the target, a size to check the result against,
+    deinterlacing and the HDR facts to copy). Numbers and a short list of known words only: nothing here is free text that reaches ffmpeg."""
+    out = {}
+    maxrate = _positive_int(profile.get("maxrate_kbps"), 400_000)
+    if maxrate:
+        out.update(maxrate_kbps=maxrate, bufsize_kbps=_positive_int(profile.get("bufsize_kbps"), 800_000) or maxrate * 2)
+    if _positive_int(profile.get("max_bytes"), 1 << 50):
+        out["max_bytes"] = int(profile["max_bytes"])
+    if profile.get("deinterlace"):
+        out["deinterlace"] = True
+    hdr = profile.get("hdr")
+    if isinstance(hdr, dict) and hdr.get("kind") in ("hdr10", "hlg"):
+        clean = {"kind": hdr["kind"]}
+        for key in ("master_display", "max_cll"):
+            if isinstance(hdr.get(key), str) and _HDR_TEXT.match(hdr[key]):
+                clean[key] = hdr[key]
+        out["hdr"] = clean
+    return out
+
+
+def hevc_extra_args(profile):
+    """x265 parameters and colour tags for a size-capped or HDR HEVC encode, as the (-x265-params value, extra ffmpeg arguments)."""
+    params, extra = ["log-level=error"], []
+    if profile.get("maxrate_kbps"):
+        params += [f"vbv-maxrate={profile['maxrate_kbps']}", f"vbv-bufsize={profile.get('bufsize_kbps') or profile['maxrate_kbps'] * 2}"]
+    hdr = profile.get("hdr")
+    if hdr:
+        transfer = "arib-std-b67" if hdr["kind"] == "hlg" else "smpte2084"
+        params += ["colorprim=bt2020", f"transfer={transfer}", "colormatrix=bt2020nc", "range=limited", "hdr10-opt=1" if hdr["kind"] == "hdr10" else "hdr10=0", "repeat-headers=1"]
+        if hdr.get("master_display"):
+            params.append(f"master-display={hdr['master_display']}")
+        if hdr.get("max_cll"):
+            params.append(f"max-cll={hdr['max_cll']}")
+        extra += ["-color_primaries", "bt2020", "-color_trc", transfer, "-colorspace", "bt2020nc"]
+    return ":".join(params), extra
+
+
+def video_arguments(video, profile):
+    """The ffmpeg arguments for a video the plan says to re-encode. The profile chooses codec and quality; without one it is H.264 at CRF 20, as before."""
+    codec = (profile or {}).get("video_codec") if (profile or {}).get("video_codec") not in (None, "keep") else (video.get("codec") or "h264")
+    if codec == "hevc":
+        pix = "yuv420p10le" if (profile or {}).get("ten_bit") or (profile or {}).get("hdr") else "yuv420p"
+        params, extra = hevc_extra_args(profile or {})
+        yadif = ["-vf", "yadif"] if (profile or {}).get("deinterlace") else []
+        return yadif + ["-c:v", "libx265", "-crf", str((profile or {}).get("crf") or 23), "-preset", (profile or {}).get("preset") or "medium", "-pix_fmt", pix, "-tag:v", "hvc1", "-x265-params", params] + extra
+    return ["-c:v", "libx264", "-crf", str((profile or {}).get("crf") or 20), "-preset", (profile or {}).get("preset") or "medium", "-pix_fmt", "yuv420p"]
+
+
+def build_convert_command(ffmpeg, src, out, change, profile=None):
     """The ffmpeg command for a conversion plan (SyncHub's approved `change`: tracks to keep, codecs to convert, the default audio track).
-    Anything the plan does not change is copied bit for bit."""
+    Anything the plan does not change is copied bit for bit. `profile` (see clean_profile) sets the video codec and quality and the audio bitrate."""
+    profile = clean_profile(profile)
     command = [ffmpeg, "-nostdin", "-hide_banner", "-y", "-v", "error", "-progress", "pipe:1", "-nostats", "-i", src, "-map_metadata", "0", "-map_chapters", "0", "-map", "0:V?"]
     keep_audio, keep_subtitle = change.get("keep_audio"), change.get("keep_subtitle")
     for indexes, everything in ((keep_audio, "0:a?"), (keep_subtitle, "0:s?")):
         command += [part for i in indexes for part in ("-map", f"0:{int(i)}")] if isinstance(indexes, list) else ["-map", everything]
     video = change.get("video") or {}
-    command += ["-c:v", "libx264", "-crf", "20", "-preset", "medium", "-pix_fmt", "yuv420p"] if video.get("action") == "transcode" else ["-c:v", "copy"]
+    command += video_arguments(video, profile) if video.get("action") == "transcode" else ["-c:v", "copy"]
     command += ["-c:a", "copy", "-c:s", "copy"]
     converting = change.get("audio_convert") or {}
+    bitrate = (profile or {}).get("audio_kbps") or 192
     for position, index in enumerate(keep_audio if isinstance(keep_audio, list) else []):
         if str(index) in converting:
-            command += [f"-c:a:{position}", converting[str(index)].get("codec") or "aac", f"-b:a:{position}", "192k"]
+            command += [f"-c:a:{position}", converting[str(index)].get("codec") or "aac", f"-b:a:{position}", f"{bitrate}k"]
     default = change.get("default_audio")
     if default is not None and isinstance(keep_audio, list) and default in keep_audio:
         command += ["-disposition:a", "0", f"-disposition:a:{keep_audio.index(default)}", "default"]
@@ -623,7 +716,7 @@ def parse_ffmpeg_progress(line, duration):
 def detect_capabilities(cfg):
     """What this PC can do: ffmpeg and the encoders that really work (one test frame each), cores, space and the operations the agent knows,
     and (under "host") the hardware details the Worker Status tab shows."""
-    caps = {"ops": list(OPS), "cores": os.cpu_count(), "ffmpeg": None, "ffprobe": None, "encoders": [], "vmaf": False, "python": platform.python_version(),
+    caps = {"ops": list(OPS), "features": list(FEATURES), "cores": os.cpu_count(), "ffmpeg": None, "ffprobe": None, "encoders": [], "vmaf": False, "python": platform.python_version(),
             "analysis": media_analysis.LOGIC_VERSION if media_analysis else None}
     if media_analysis:
         caps["ops"].append("hash")
@@ -1054,7 +1147,7 @@ class JobRunner(threading.Thread):
         self.reporter.start()
         try:
             op = (self.job.get("plan") or {}).get("op")
-            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash, "convert": self.do_convert}.get(op)
+            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash, "convert": self.do_convert, "rename": self.do_rename, "delete_source": self.do_delete_source}.get(op)
             if work is None or (op in ("scan", "hash", "convert") and media_analysis is None):
                 raise JobFailure("unsupported_job", f"This agent ({__version__}) cannot do '{op or self.job.get('kind')}' jobs. Update the agent"
                                  + (" (media_analysis.py must be next to synchub_agent.py)." if op in ("scan", "hash", "convert") else "."), retryable=False)
@@ -1299,6 +1392,105 @@ class JobRunner(threading.Thread):
         self.log.info(f"Copied {human_bytes(size)} and verified it ({result['verified']}) in {human_duration(elapsed)}", **{k: v for k, v in result.items() if k != "op"})
         return result
 
+    # ---- rename: move a file to its proper place inside one share. No copy, nothing in the file changes.
+    SIDECAR = r"(\.[A-Za-z]{2,3}(-[A-Za-z]{2,4})?)?(\.(forced|sdh|hi|cc|default))*\.(srt|ass|ssa|sub|idx|vtt|nfo)"
+
+    def sidecars(self, src, dst):
+        """[(from, to)] for the subtitle and info files that sit next to the video and carry its name (Heat.mkv, Heat.en.srt, Heat.nfo)."""
+        folder, stem = os.path.dirname(src), os.path.splitext(os.path.basename(src))[0]
+        pattern = re.compile("^" + re.escape(stem) + "(" + self.SIDECAR + ")$", re.I)
+        new_stem, found = os.path.splitext(os.path.basename(dst))[0], []
+        try:
+            names = sorted(os.listdir(folder))
+        except OSError:
+            return found
+        for name in names:
+            match = pattern.match(name)
+            if match and os.path.isfile(os.path.join(folder, name)):
+                found.append((os.path.join(folder, name), os.path.join(os.path.dirname(dst), new_stem + match.group(1))))
+        return found
+
+    def prune_empty(self, folder, root_path):
+        """Removes the folders a move left empty, up to (never including) the share itself."""
+        root_path = os.path.realpath(root_path)
+        folder = os.path.realpath(folder)
+        while folder != root_path and folder.startswith(root_path + os.sep):
+            try:
+                os.rmdir(folder)
+            except OSError:
+                return
+            folder = os.path.dirname(folder)
+
+    def do_rename(self):
+        source, dest = self.job["source"], self.job["dest"]
+        src, dst = self.endpoints("rename")
+        if source["root"] != dest["root"]:
+            raise JobFailure("bad_job", "A rename stays inside one share.", retryable=False)
+        plan = self.job["plan"]
+        if not os.path.exists(src):
+            if os.path.isfile(dst) and plan.get("source_size") in (None, os.path.getsize(dst)):
+                self.log.info("The file was already renamed")
+                return {"op": "rename", "bytes": os.path.getsize(dst), "verified": "size", "already_done": True}
+            raise JobFailure("source_changed", f"The file is not at {source['rel']} any more.")
+        stat = os.stat(src)
+        if not os.path.isfile(src) or (plan.get("source_size") is not None and stat.st_size != plan["source_size"]) or abs(stat.st_mtime - float(plan.get("source_mtime") or stat.st_mtime)) > 2:
+            raise JobFailure("source_changed", f"{source['rel']} is not the file SyncHub analysed (its size or date differs). It will be looked at again.")
+        if src == dst:
+            return {"op": "rename", "bytes": stat.st_size, "verified": "size", "unchanged": True}
+        case_only = src.casefold() == dst.casefold()
+        if os.path.exists(dst) and not case_only:
+            raise JobFailure("dest_exists", f"{dest['rel']} already exists, so nothing was renamed.", retryable=False)
+        self.report_progress("publish", 0.2, "Renaming", force=True)
+        pairs = self.sidecars(src, dst)
+        try:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if case_only:                                   # a share that ignores case needs a step in between
+                os.rename(src, dst + ".synchub-rename")
+                os.rename(dst + ".synchub-rename", dst)
+            else:
+                os.rename(src, dst)
+            moved = 0
+            for old, new in pairs:
+                if not os.path.exists(new):
+                    os.rename(old, new)
+                    moved += 1
+        except OSError as exc:
+            if exc.errno == errno.EXDEV:
+                raise JobFailure("bad_job", "The two paths are on different disks, so this cannot be a rename.", retryable=False)
+            raise
+        self.prune_empty(os.path.dirname(src), self.agent.roots.path(source["root"]))
+        self.report_progress("publish", 1.0, "Renamed", force=True)
+        self.log.info(f"Renamed {source['rel']} to {dest['rel']}" + (f" with {moved} subtitle/info file(s)" if moved else ""))
+        return {"op": "rename", "bytes": stat.st_size, "verified": "size", "sidecars": moved}
+
+    # ---- delete the source of a file that was copied into the library, after checking the library copy is still whole
+    def do_delete_source(self):
+        source, dest = self.job["source"], self.job["dest"]
+        src, dst = self.endpoints("delete_source")
+        plan = self.job["plan"]
+        if source["root"] == dest["root"] and source["rel"].casefold() == dest["rel"].casefold():
+            raise JobFailure("bad_job", "The source and the library copy are the same file, so nothing was deleted.", retryable=False)
+        if not os.path.isfile(dst):
+            raise JobFailure("verification_failed", f"The library copy {dest['rel']} is not there, so the source was kept.")
+        size = os.path.getsize(dst)
+        if plan.get("dest_size") is not None and size != plan["dest_size"]:
+            raise JobFailure("verification_failed", f"The library copy is {size} bytes but {plan['dest_size']} were verified, so the source was kept.")
+        if plan.get("dest_sha256"):
+            self.report_progress("verify", 0.1, "Checking the library copy", force=True)
+            if hash_file(dst, check=self.guard) != plan["dest_sha256"]:
+                raise JobFailure("verification_failed", "The library copy no longer matches what was verified, so the source was kept.")
+        if not os.path.exists(src):
+            self.log.info("The source was already gone")
+            return {"op": "delete_source", "already_gone": True}
+        stat = os.stat(src)
+        if (plan.get("source_size") is not None and stat.st_size != plan["source_size"]) or abs(stat.st_mtime - float(plan.get("source_mtime") or stat.st_mtime)) > 2:
+            raise JobFailure("source_changed", f"{source['rel']} is not the file that was copied (its size or date differs), so it was kept.")
+        self.report_progress("publish", 0.9, "Deleting the source", force=True)
+        os.remove(src)
+        self.prune_empty(os.path.dirname(src), self.agent.roots.path(source["root"]))
+        self.log.info(f"Deleted the source {source['rel']} ({human_bytes(stat.st_size)}); the library copy is verified")
+        return {"op": "delete_source", "bytes": stat.st_size, "deleted": True}
+
     # ---- a conversion: copy in, run ffmpeg on the local copy, check the result, copy the result out to the destination share
     CONVERT_BANDS = {"copy_in": (0.0, 0.25), "copy_out": (0.85, 0.95), "verify": (0.95, 1.0)}      # the encode itself is 25 - 85 %
 
@@ -1326,7 +1518,7 @@ class JobRunner(threading.Thread):
         done = self.stage_info("encode")
         if not (done.get("done") and os.path.isfile(converted) and os.path.getsize(converted) == done.get("bytes")):
             done.clear()
-            done.update(self.encode(local, converted, change, self.job["plan"].get("duration")))
+            done.update(self.encode(local, converted, change, self.job["plan"].get("duration"), plan.get("profile")))
             self.save()
         out_size = os.path.getsize(converted)
         if not done.get("sha256"):
@@ -1380,7 +1572,7 @@ class JobRunner(threading.Thread):
         self.save()
         self.log.info(f"Kept the original in {folder} for {days} day(s)")
 
-    def encode(self, local, converted, change, expected_duration):
+    def encode(self, local, converted, change, expected_duration, profile=None):
         """Runs ffmpeg on the local copy and checks what it made. Returns what the job remembers about the encode. The output only gets its
         real name once it has passed the checks, so a half-made file is never mistaken for a finished one."""
         os.makedirs(os.path.dirname(converted), exist_ok=True)
@@ -1395,7 +1587,14 @@ class JobRunner(threading.Thread):
         settings = self.media_settings({})
         if not expected_duration:
             expected_duration = media_duration(media_analysis.run_ffprobe(settings, local))
-        command = build_convert_command(self.cfg.ffmpeg, local, partial, change)
+        profile = clean_profile(profile)
+        if profile and profile["video_codec"] != "keep" and (change.get("video") or {}).get("action") == "transcode":
+            profile = self.with_source_colours(settings, local, profile)
+            bump = int(self.m.get("crf_bump") or 0)
+            if bump and profile.get("max_bytes"):
+                profile["crf"] = min(PROFILE_CRF["hevc"][1], profile["crf"] + 2 * bump)
+                self.log.info(f"The last attempt came out over the size limit; encoding at quality {profile['crf']} this time", crf=profile["crf"])
+        command = build_convert_command(self.cfg.ffmpeg, local, partial, change, profile)
         text = shlex.join(command)
         self.log.info("Converting", command=text)
         self.report_progress("encode", 0.25, "Starting ffmpeg", force=True)
@@ -1423,12 +1622,46 @@ class JobRunner(threading.Thread):
             raise JobFailure("encode_failed", f"ffmpeg stopped with exit code {proc.returncode}: {tail or 'no message'}", retryable=False)
         self.report_progress("encode", 0.85, "Checking the converted file", force=True)
         try:
-            probe = self.check_conversion(settings, partial, change, expected_duration)
+            probe = self.check_conversion(settings, partial, change, expected_duration, profile)
+            produced = os.path.getsize(partial)
+            if profile and profile.get("max_bytes") and produced > profile["max_bytes"]:
+                self.m["crf_bump"] = int(self.m.get("crf_bump") or 0) + 1
+                self.save()
+                raise JobFailure("size_target_missed", f"The compressed file is {human_bytes(produced)}, over the {human_bytes(profile['max_bytes'])} limit"
+                                 + (" (it will be tried once more at a lower quality)." if self.m["crf_bump"] < 2 else "."))
         except JobFailure:
             self._remove(partial)
             raise
         os.replace(partial, converted)
         return {"done": True, "bytes": os.path.getsize(converted), "seconds": round(time.monotonic() - started, 1), "command": text[-4000:], "probe": probe, "finished": iso()}
+
+    def with_source_colours(self, settings, local, profile):
+        """Looks at the source's picture before an HEVC or H.264 re-encode. HDR10 and HLG are kept for HEVC (10-bit, colour tags, mastering data read from the file itself,
+        whatever SyncHub guessed); an HDR picture is never squeezed into H.264, and Dolby Vision profile 5 is never re-encoded: both would wash the colours out."""
+        data = media_analysis.run_ffprobe(settings, local)
+        video = next((st for st in data.get("streams") or [] if isinstance(st, dict) and st.get("codec_type") == "video"), None)
+        facts = media_analysis.video_facts(video, data.get("format"))
+        if facts["hdr"] != "sdr" and not (facts.get("master_display") and facts.get("max_cll")):
+            frame = media_analysis.video_facts({**(video or {}), "side_data_list": [*((video or {}).get("side_data_list") or []), *media_analysis.first_frame_side_data(settings, local)]})
+            facts = {**frame, **{k: v for k, v in facts.items() if v not in (None, "")}}
+        profile = dict(profile)
+        profile.pop("hdr", None)
+        if facts["hdr"] == "sdr":
+            if facts.get("interlaced"):
+                profile["deinterlace"] = True
+            return profile
+        if profile["video_codec"] != "hevc":
+            raise JobFailure("encode_failed", "This is an HDR video. Re-encoding it as H.264 would wash out the colours, so it was not converted. Use an HEVC, Standard or Move only profile for it.", retryable=False)
+        if facts["hdr"] == "dv" and str(facts.get("dv_profile")) == "5":
+            raise JobFailure("encode_failed", "This is Dolby Vision profile 5. Re-encoding it would turn the colours green and purple, so it was not converted.", retryable=False)
+        kind = "hlg" if facts.get("transfer") == "arib-std-b67" else "hdr10"
+        if facts["hdr"] == "dv" and facts.get("transfer") != "smpte2084":
+            raise JobFailure("encode_failed", "This Dolby Vision video has no HDR10 base layer, so it cannot be kept as HDR10. It was not converted.", retryable=False)
+        profile["hdr"] = {"kind": kind, **{k: facts[k] for k in ("master_display", "max_cll") if facts.get(k)}}
+        profile["ten_bit"] = True
+        if facts["hdr"] == "dv":
+            self.log.warning(f"Dolby Vision profile {facts.get('dv_profile')}: the Dolby layer is dropped and the HDR10 picture is kept")
+        return profile
 
     @staticmethod
     def _remove(path):
@@ -1445,7 +1678,7 @@ class JobRunner(threading.Thread):
             proc.kill()
         proc.wait()
 
-    def check_conversion(self, settings, path, change, expected_duration):
+    def check_conversion(self, settings, path, change, expected_duration, profile=None):
         """The converted file must be readable, as long as the source (within half a percent), have the tracks the plan kept and decode cleanly at its end."""
         data = media_analysis.run_ffprobe(settings, path)
         streams = [s for s in data.get("streams") or [] if isinstance(s, dict)]
@@ -1453,6 +1686,11 @@ class JobRunner(threading.Thread):
         problems = []
         if counts["video"] < 1:
             problems.append("it has no video")
+        wanted = (profile or {}).get("video_codec")
+        if wanted in ("hevc", "h264") and (change.get("video") or {}).get("action") == "transcode":
+            got_codec = next((str(st.get("codec_name")) for st in streams if st.get("codec_type") == "video"), None)
+            if got_codec and got_codec not in ({"hevc"} if wanted == "hevc" else {"h264"}):
+                problems.append(f"the video is {got_codec} but the profile asks for {wanted}")
         for kind, key in (("audio", "keep_audio"), ("subtitle", "keep_subtitle")):
             if isinstance(change.get(key), list) and counts[kind] != len(change[key]):
                 problems.append(f"it has {counts[kind]} {kind} track(s) but {len(change[key])} were planned")

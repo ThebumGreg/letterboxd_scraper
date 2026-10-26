@@ -25,9 +25,9 @@ def test_foreign_keys_are_enforced(conn):
 
 def test_state_defs_are_seeded_and_extensible(conn):
     codes = [r["code"] for r in conn.execute("SELECT code FROM state_def ORDER BY rank")]
-    assert codes == ["missing", "queued", "downloading", "downloaded", "transferring", "encoding", "in_library"]
+    assert codes == ["missing", "queued", "downloading", "downloaded", "transferring", "working", "encoding", "transferring_library", "in_library"]
     # A new state is just a row; no schema change.
-    conn.execute("INSERT INTO state_def (code, label, rank) VALUES ('verifying', 'Verifying', 45)")
+    conn.execute("INSERT INTO state_def (code, label, rank) VALUES ('verifying', 'Verifying', 47)")
     conn.execute("INSERT INTO processing_event (target_type, target_id, provider, state_code) VALUES ('movie', 1, 'script', 'verifying')")
 
 

@@ -17,7 +17,7 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-LOGIC_VERSION = 1            # bump when anything below changes what a file's analysis says: SyncHub then asks for every file to be analysed again
+LOGIC_VERSION = 2            # bump when anything below changes what a file's analysis says: SyncHub then asks for every file to be analysed again
 
 ACTION_COPY_RENAME, ACTION_REMUX_COPY, ACTION_TRANSCODE_COPY, ACTION_MANUAL_REVIEW = "copy_rename", "remux_copy", "transcode_copy", "manual_review"
 CONVERT_VIDEO, CONVERT_AUDIO = "h264", "aac"
@@ -504,6 +504,88 @@ def stream_languages(streams, kind):
     return ", ".join(values)
 
 
+def _kbps(stream):
+    """A stream's own bitrate in kbps from ffprobe (bit_rate, or the BPS tag some muxers write), or None."""
+    tags = {str(k).lower(): v for k, v in (stream.get("tags") or {}).items()}
+    for raw in (stream.get("bit_rate"), tags.get("bps"), tags.get("bps-eng")):
+        try:
+            if raw not in (None, "", "N/A") and float(raw) > 0:
+                return round(float(raw) / 1000, 1)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _ratio(value):
+    """A number from ffprobe's '13250/50000' or '1000' (side data uses fractions), or None."""
+    try:
+        text = str(value)
+        if "/" in text:
+            top, bottom = text.split("/", 1)
+            return float(top) / float(bottom) if float(bottom) else None
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def master_display(side):
+    """x265's master-display string ('G(x,y)B(x,y)R(x,y)WP(x,y)L(max,min)') from ffprobe's mastering display side data, or None."""
+    try:
+        chroma = {c: (_ratio(side[f"{c}_x"]), _ratio(side[f"{c}_y"])) for c in ("red", "green", "blue", "white_point")}
+        high, low = _ratio(side["max_luminance"]), _ratio(side["min_luminance"])
+        if None in [x for pair in chroma.values() for x in pair] + [high, low]:
+            return None
+        xy = lambda c: f"({round(chroma[c][0] / 0.00002)},{round(chroma[c][1] / 0.00002)})"      # noqa: E731
+        return f"G{xy('green')}B{xy('blue')}R{xy('red')}WP{xy('white_point')}L({round(high / 0.0001)},{round(low / 0.0001)})"
+    except (KeyError, TypeError):
+        return None
+
+
+def video_facts(stream, probe_format=None):
+    """What a size or quality decision needs to know about the main video stream: bit depth, HDR type, Dolby Vision profile, the stream's own
+    bitrate, scan type. {'hdr': 'sdr'|'hdr10'|'hlg'|'dv'} - 'dv' means a Dolby Vision RPU is present, and 'dv_profile' says which one."""
+    stream = stream or {}
+    pix_fmt = str(stream.get("pix_fmt") or "")
+    depth = None
+    try:
+        depth = int(stream.get("bits_per_raw_sample")) if stream.get("bits_per_raw_sample") else None
+    except (TypeError, ValueError):
+        depth = None
+    if depth is None:
+        match = re.search(r"(\d{2})(?:le|be)?$", pix_fmt)
+        depth = int(match.group(1)) if match and int(match.group(1)) in (9, 10, 12, 14, 16) else 8
+    transfer = str(stream.get("color_transfer") or "")
+    side = [d for d in stream.get("side_data_list") or [] if isinstance(d, dict)]
+    dovi = next((d for d in side if "dovi" in str(d.get("side_data_type", "")).lower() or "dolby vision" in str(d.get("side_data_type", "")).lower()), None)
+    mastering = next((d for d in side if "mastering" in str(d.get("side_data_type", "")).lower()), None)
+    light = next((d for d in side if "content light" in str(d.get("side_data_type", "")).lower()), None)
+    hdr = "dv" if dovi else "hdr10" if transfer == "smpte2084" else "hlg" if transfer == "arib-std-b67" else "sdr"
+    facts = {"hdr": hdr, "bit_depth": depth, "pix_fmt": pix_fmt or None, "transfer": transfer or None, "primaries": stream.get("color_primaries") or None,
+             "matrix": stream.get("color_space") or None, "video_kbps": _kbps(stream), "interlaced": str(stream.get("field_order") or "progressive") not in ("progressive", "unknown", ""),
+             "width": stream.get("width"), "height": stream.get("height")}
+    if dovi:
+        facts["dv_profile"] = dovi.get("dv_profile")
+        facts["dv_compat"] = dovi.get("dv_bl_signal_compatibility_id")
+    if mastering:
+        facts["master_display"] = master_display(mastering)
+    if light:
+        facts["max_cll"] = f"{int(light.get('max_content') or 0)},{int(light.get('max_average') or 0)}"
+    return facts
+
+
+def first_frame_side_data(settings, path):
+    """The side data of the first video frame (HDR mastering display and content light level live there when they are in the bitstream, not the container)."""
+    command = [settings.ffprobe, "-v", "error", "-print_format", "json", "-select_streams", "v:0", "-read_intervals", "%+#1", "-show_frames", "-show_entries", "frame=side_data_list", path]
+    result, outcome = run_tool(settings, command, settings.ffprobe_timeout, f"ffprobe frame {path}")
+    if outcome != "ok" or result is None or result.returncode != 0:
+        return []
+    try:
+        frames = json.loads(result.stdout).get("frames") or []
+    except (ValueError, AttributeError):
+        return []
+    return [d for d in (frames[0].get("side_data_list") if frames else None) or [] if isinstance(d, dict)]
+
+
 def summarize_streams(streams):
     """Raw audio/subtitle facts stored in the cache (policy is applied later)."""
     out = []
@@ -523,6 +605,7 @@ def summarize_streams(streams):
             "forced": bool(disposition.get("forced")),
             "hearing_impaired": bool(disposition.get("hearing_impaired")),
             "comment": bool(disposition.get("comment")),
+            "bitrate_kbps": _kbps(stream),
         })
     return out
 
@@ -1157,7 +1240,7 @@ def empty_result():
     return {
         "Container": "", "Duration (Seconds)": "", "Bitrate (kbps)": "", "Video Codec": "", "Resolution": "", "Frame Rate": "",
         "Audio Codecs": "", "Audio Languages": "", "Subtitle Languages": "", "Video Streams": 0, "Audio Streams": 0, "Subtitle Streams": 0,
-        "Integrity Status": "", "Audit Error": "", "_streams": [], "_probed": False,
+        "Integrity Status": "", "Audit Error": "", "_streams": [], "_probed": False, "_video": None,
     }
 
 
@@ -1191,6 +1274,7 @@ def inspect_file(settings, path):
             if width and height:
                 result["Resolution"] = f"{width}x{height}"
             result["Frame Rate"] = frame_rate(video)
+            result["_video"] = video_facts(video, fmt)
         try:
             integrity, integrity_error = decode_check(settings, path)
             result["Integrity Status"] = integrity
@@ -1290,6 +1374,7 @@ def analyze_file(settings, rel, path, size, mtime):
         "audio_codecs": _none(metadata["Audio Codecs"]), "audio_languages": _none(metadata["Audio Languages"]), "subtitle_languages": _none(metadata["Subtitle Languages"]),
         "video_streams": metadata["Video Streams"], "audio_streams": metadata["Audio Streams"], "subtitle_streams": metadata["Subtitle Streams"],
         "streams_json": json.dumps(metadata["_streams"], ensure_ascii=False),
+        "video_info_json": json.dumps(metadata["_video"]) if metadata.get("_video") else None,
         "media_type": media_type, "recommended_name": clean_name, "show_title": _none(naming.get("show")), "season_number": naming.get("season"),
         "naming_confidence": naming["label"], "naming_score": naming["score"],
         "default_audio_language": _none(audio_result["default_lang"]), "audio_detail": _none(audio_result["detail"]),

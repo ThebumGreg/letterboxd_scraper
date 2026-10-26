@@ -22,7 +22,7 @@ MAX_INVENTORY_BATCH, MAX_RECORD_BATCH = 5000, 200
 AGENT_FIELDS = (
     "analysis_status", "analyzed_at", "integrity_mode", "integrity_status", "integrity_scope", "audit_error",
     "container", "duration_seconds", "bitrate_kbps", "video_codec", "resolution", "frame_rate", "audio_codecs", "audio_languages", "subtitle_languages",
-    "video_streams", "audio_streams", "subtitle_streams", "streams_json", "media_type", "recommended_name", "show_title", "season_number",
+    "video_streams", "audio_streams", "subtitle_streams", "streams_json", "video_info_json", "media_type", "recommended_name", "show_title", "season_number",
     "naming_confidence", "naming_score", "default_audio_language", "audio_detail", "audio_flags", "audio_recommendation",
     "subtitle_detail", "subtitle_flags", "subtitle_recommendation", "english_audio_status", "proposed_track_changes_json", "warnings_json", "errors_json",
 )

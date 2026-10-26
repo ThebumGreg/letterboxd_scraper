@@ -2,7 +2,7 @@
 from flask import jsonify, render_template, request
 
 from synchub import db, jobs, storage, webhooks, workers
-from synchub.library import migrate
+from synchub.library import cleanup, migrate
 
 # What each worker button does: setting, new value.
 WORKER_ACTIONS = {"pause": ("paused", True), "resume": ("paused", False), "drain": ("draining", True),
@@ -145,6 +145,7 @@ def describe_worker(w, root_names=()):
 
 
 def describe_job(j):
+    j["lifecycle"] = dict(zip(("code", "label"), jobs.lifecycle(j)))
     j["percent"] = None if j["progress"] is None else round(j["progress"] * 100)
     j["eta"] = None
     if j["eta_seconds"]:
@@ -200,9 +201,8 @@ def _fail(message, status=400):
 def register(app):
     @app.route("/workers")
     def workers_page():
-        with db.connection() as conn:
-            data = snapshot(conn)
-        return render_template("workers.html", **data)
+        from synchub.web import media
+        return media.render_media("workers")
 
     @app.route("/workers/fragment")
     def workers_fragment():
@@ -326,6 +326,7 @@ def register(app):
                 if action == "cancel":
                     result = jobs.cancel(conn, job_id, by)
                     migrate.sync(conn, job_id)
+                    cleanup.sync(conn, job_id)
                     return jsonify(ok=True, message="Cancelling: the worker stops at its next report." if result == "cancelling" else "Cancelled.")
                 if action == "log":
                     holder = workers.get(conn, jobs.request_log(conn, job_id))
@@ -338,10 +339,12 @@ def register(app):
                     else:
                         jobs.retry(conn, job_id, by)
                     migrate.sync(conn, job_id)
+                    cleanup.sync(conn, job_id)
                     return jsonify(ok=True, message="Queued again.")
                 if action in ("approve", "skip", "reject"):
                     jobs.decide(conn, job_id, action, by, data.get("note"))
                     migrate.sync(conn, job_id)
+                    cleanup.sync(conn, job_id)
                     return jsonify(ok=True, message={"approve": "Approved: it carries on.", "skip": "Skipped: the file is left as it is.", "reject": "Rejected."}[action])
         except jobs.JobError as exc:
             return _fail(str(exc))

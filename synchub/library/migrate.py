@@ -4,12 +4,13 @@ Approving a file queues one `library` job (source share + path, destination shar
 (see jobs.claim), does the work, and the record's `migration_*` columns follow the job: `completed` is set only once the converted file has
 been copied into the destination share and verified. Nothing here touches a media file; the worker does that.
 """
+import copy
 import json
 import logging
 import os
 
 from synchub import db, jobs, settings
-from synchub.library import layout, store
+from synchub.library import layout, profiles, size_policy, store
 from synchub.library import vocab as v
 
 logger = logging.getLogger(__name__)
@@ -30,19 +31,69 @@ def _json_list(text):
     return value if isinstance(value, list) else []
 
 
-def plan_for(rec, cfg):
-    """(destination root, destination relative path, plan) for an approved record. Raises layout.LayoutError."""
+def apply_subtitle_policy(change, policy):
+    """The change with the subtitle policy applied. `keep_all` puts back every subtitle the analysis would have removed, except those MKV cannot hold."""
+    change = copy.deepcopy(change)
+    if policy != "keep_all":
+        return change
+    saved = [t for t in change.get("remove_subtitle") or [] if not t.get("reason")]
+    change["keep_subtitle"] = sorted(set(change.get("keep_subtitle") or []) | {t["index"] for t in saved})
+    change["remove_subtitle"] = [t for t in change.get("remove_subtitle") or [] if t.get("reason")]
+    return change
+
+
+def _changes_nothing(change):
+    return change.get("op") != "convert" and not change.get("remove_audio") and not change.get("remove_subtitle") and change.get("default_audio") is None
+
+
+def _is_video(codec, wanted):
+    codec = (codec or "").lower()
+    return codec.startswith("hevc") or codec.startswith("h265") if wanted == "hevc" else codec.startswith("h264") or codec.startswith("avc")
+
+
+def plan_for(rec, cfg, profile=None, mode=None, size=None):
+    """(destination root, destination relative path, plan) for an approved record. Raises layout.LayoutError.
+
+    `mode` 'rename_only' renames the file inside its own share and touches nothing else. Otherwise the profile decides: a move-only profile copies
+    the file exactly; the others apply their subtitle policy to the approved track changes and may re-encode the video."""
     dest_rel = layout.relative_display(rec, cfg)
-    changes = [p for p in _json_list(rec.get("approved_track_changes_json")) if isinstance(p, dict) and p.get("op") in ("keep_tracks", "convert")]
+    source_ext = os.path.splitext(rec["relative_path"])[1]
+    mode = mode if mode is not None else rec.get("approved_mode")
     plan = {"revision": rec["source_revision"], "action": rec["approved_action"], "duration": rec.get("duration_seconds")}
-    if rec["approved_action"] == v.ACTION_COPY_RENAME and not changes:
+    if mode == "rename_only":
+        dest_rel = os.path.splitext(dest_rel)[0] + source_ext
+        plan.update(op="rename", source_size=rec.get("size_bytes"), source_mtime=rec.get("mtime"))
+        return rec["root_name"], dest_rel, plan
+    if profile and profile["move_only"]:
         plan["op"] = "copy"
-    else:
-        change = changes[0] if changes else {}
-        plan.update(op="convert", change=change)
-        extension = change.get("target_extension")
-        if extension and not dest_rel.lower().endswith(extension.lower()):
-            dest_rel = os.path.splitext(dest_rel)[0] + extension
+        return cfg.destination_root, os.path.splitext(dest_rel)[0] + source_ext, plan
+    changes = [p for p in _json_list(rec.get("approved_track_changes_json")) if isinstance(p, dict) and p.get("op") in ("keep_tracks", "convert")]
+    change = apply_subtitle_policy(changes[0], profile["subtitles"] if profile else "remove_non_english") if changes else None
+    wants = profile["video_codec"] if profile else "keep"
+    if wants != "keep" and not _is_video(rec.get("video_codec"), wants):
+        change = change or {}
+        change.update(op="convert", container="matroska", video={"action": "transcode", "from": (rec.get("video_codec") or "").lower(), "codec": wants})
+        change.setdefault("audio_convert", {})
+        if not dest_rel.lower().endswith(".mkv"):
+            change["target_extension"] = ".mkv"
+    if change is not None and _changes_nothing(change):
+        change = None
+    decision = size_policy.decide(rec, [change] if change else [], size) if size is not None else None
+    compress = decision is not None and decision.action == size_policy.COMPRESS
+    if decision is not None and decision.action in (size_policy.REVIEW, size_policy.BLOCKED):
+        plan["size_policy_skipped"] = decision.summary               # not compressed; the plan says why
+    if change is None and rec["approved_action"] == v.ACTION_COPY_RENAME and not compress:
+        plan["op"] = "copy"
+        return cfg.destination_root, dest_rel, plan
+    change = change or {}
+    plan.update(op="convert", change=change)
+    extension = change.get("target_extension")
+    if extension and not dest_rel.lower().endswith(extension.lower()):
+        dest_rel = os.path.splitext(dest_rel)[0] + extension
+    if profile and (profile["video_codec"] != "keep" or profile["audio_kbps"] != 192):
+        plan.update(profile=profiles.for_plan(profile), needs=[profiles.FEATURE])
+    if compress:
+        plan, dest_rel = size_policy.apply(plan, decision, dest_rel)
     return cfg.destination_root, dest_rel, plan
 
 
@@ -51,13 +102,23 @@ def active_job(conn, record_id):
     return r["id"] if r else None
 
 
-def queue(conn, record_id, cfg, by="someone"):
+def profile_for(conn, rec):
+    """The profile an approved record is converted with: the one chosen for the file, else the default."""
+    return (profiles.get(conn, rec["approved_profile_id"]) if rec.get("approved_profile_id") else None) or profiles.default(conn)
+
+
+TITLES = {"copy": "Copy", "convert": "Convert", "rename": "Rename"}
+
+
+def queue(conn, record_id, cfg, by="someone", force=False):
     """Queues the processing job for an approved record. Returns the job id, or None when there is nothing to queue (not approved, already
-    migrated at this revision, or a job is already waiting)."""
+    migrated at this revision, cancelled and not yet approved or queued again (`force`), or a job is already waiting)."""
     rec = store.get_record(conn, record_id)
     if rec is None or rec["approval_status"] != v.APPROVAL_APPROVED:
         return None
     if rec["migration_status"] == v.MIGRATION_COMPLETED and rec["migrated_source_revision"] == rec["source_revision"]:
+        return None
+    if rec.get("migration_cancelled_at") and not force:
         return None
     if active_job(conn, record_id) is not None:
         return None
@@ -65,20 +126,37 @@ def queue(conn, record_id, cfg, by="someone"):
     if downloads.busy(conn, rec):                                # the download pipeline is replacing this very file in place
         return None
     try:
-        dest_root, dest_rel, plan = plan_for(rec, cfg)
+        dest_root, dest_rel, plan = plan_for(rec, cfg, profile_for(conn, rec), size=size_policy.load(conn))
     except layout.LayoutError as exc:
         raise ValueError(f"cannot plan the destination: {exc}")
-    job_id = jobs.create(conn, "library", title=f"{'Convert' if plan['op'] == 'convert' else 'Copy'}: {v.final_name(rec)}", ref=(REF, record_id),
-                         source=(rec["root_name"], rec["relative_path"]), dest=(dest_root, dest_rel), plan=plan,
-                         need_bytes=(rec["size_bytes"] or 0) * (2 if plan["op"] == "convert" else 1) + WORK_MARGIN_BYTES)
-    store.event(conn, record_id, "user", "migration_queued", None, {"by": by, "job": job_id, "op": plan["op"], "dest": f"{dest_root}:{dest_rel}"})
+    need = 0 if plan["op"] == "rename" else (rec["size_bytes"] or 0) * (2 if plan["op"] == "convert" else 1) + WORK_MARGIN_BYTES
+    job_id = jobs.create(conn, "library", title=f"{TITLES[plan['op']]}: {v.final_name(rec)}", ref=(REF, record_id),
+                         source=(rec["root_name"], rec["relative_path"]), dest=(dest_root, dest_rel), plan=plan, need_bytes=need)
+    if rec.get("migration_cancelled_at"):
+        store._update(conn, record_id, {"migration_cancelled_at": None})
+    store.event(conn, record_id, "user", "migration_queued", None, {"by": by, "job": job_id, "op": plan["op"], "dest": f"{dest_root}:{dest_rel}",
+                                                                     "profile": (plan.get("profile") or {}).get("name")})
+    return job_id
+
+
+def requeue(conn, record_id, cfg, by="someone"):
+    """Queues a file again that was cancelled or failed. Raises ValueError with a message when it cannot be queued."""
+    rec = store.get_record(conn, record_id)
+    if rec is None or rec["approval_status"] != v.APPROVAL_APPROVED:
+        raise ValueError("Approve the file first.")
+    if rec["migration_status"] not in (v.MIGRATION_PENDING, v.MIGRATION_FAILED):
+        raise ValueError("This file is already being handled or is finished.")
+    job_id = queue(conn, record_id, cfg, by, force=True)
+    if job_id is None:
+        raise ValueError("A job for this file is already waiting.")
     return job_id
 
 
 def queue_approved(conn, cfg, by="someone"):
-    """Queues every approved file that has no job yet (for files approved before approvals queued work). Returns (queued, [(id, why)])."""
+    """Queues every approved file that has no job yet (approved before approvals queued work). A cancelled file is left alone until someone queues it
+    again, and so is a failed one: both show on the page with their own Queue again button. Returns (queued, [(id, why)])."""
     queued, skipped = 0, []
-    rows = conn.execute("SELECT id FROM library_file WHERE approval_status = 'approved' AND migration_status IN ('pending', 'failed') AND missing_since IS NULL ORDER BY id").fetchall()
+    rows = conn.execute("SELECT id FROM library_file WHERE approval_status = 'approved' AND migration_status = 'pending' AND migration_cancelled_at IS NULL AND missing_since IS NULL ORDER BY id").fetchall()
     for r in rows:
         try:
             if queue(conn, r["id"], cfg, by) is not None:
@@ -111,21 +189,23 @@ def sync(conn, job_id, now=None):
     if rec is None or job["plan"].get("revision") != rec["source_revision"]:
         return False                                            # the file changed since: this job's outcome says nothing about it now
     target, now = RECORD_STATUS.get(job["status"], v.MIGRATION_PENDING), now or db.now()
-    if rec["migration_status"] == target:
+    cancelled = job["status"] == "cancelled"
+    if rec["migration_status"] == target and bool(rec.get("migration_cancelled_at")) == cancelled:
         return False
-    values = {"migration_status": target}
+    values = {"migration_status": target, "migration_cancelled_at": now if cancelled else None}
     if target == v.MIGRATION_IN_PROGRESS:
         values.update(migration_started_at=job["started_at"] or now, migration_finished_at=None, migration_last_error=None)
     elif target == v.MIGRATION_COMPLETED:
         result = job["result"] if isinstance(job["result"], dict) else {}
         verified = result.get("verified")
         values.update(migration_finished_at=now, migration_last_error=None, migration_destination_path=f"{job['dest_root']}:{job['dest_rel']}",
+                      migrated_dest_size=result.get("bytes"), migrated_dest_sha256=result.get("sha256"), migrated_how=job["plan"].get("op"),
                       migration_verification_status="verified" if verified in ("sha256", "size") else "not_verified", migration_verification_detail=json.dumps(result)[:2000],
                       migration_verified_at=now, migrated_source_revision=rec["source_revision"])
     elif target in (v.MIGRATION_FAILED, v.MIGRATION_MANUAL):
         values.update(migration_finished_at=now, migration_last_error=(job["error"] or job["review_reason"] or job["message"] or "")[:500])
     else:
-        values.update(migration_last_error="Cancelled." if job["status"] == "cancelled" else None)
+        values.update(migration_last_error="Cancelled. It stays cancelled until you queue it again." if cancelled else None)
     store._update(conn, rec["id"], values)
     store.event(conn, rec["id"], "worker", f"migration_{target}", None, {"job": job_id, "status": job["status"], "error": job["error"]}, now)
     if target in (v.MIGRATION_COMPLETED, v.MIGRATION_FAILED):
@@ -139,6 +219,9 @@ def sync(conn, job_id, now=None):
                       worker["name"] if worker else None, job["started_at"] or now, now, values.get("migration_destination_path"), values.get("migration_last_error"),
                       (last["command"] if last else None) or (job["result"].get("command") if isinstance(job["result"], dict) else None),
                       values.get("migration_verification_status"), values.get("migration_verification_detail")))
+    if target == v.MIGRATION_COMPLETED:
+        from synchub.library import cleanup
+        cleanup.after_migration(conn, rec["id"], job, now)
     return target == v.MIGRATION_COMPLETED
 
 
@@ -160,12 +243,20 @@ def queue_summary(conn):
     # Only a record's newest job counts as its state, so an old failed attempt that was retried is not listed twice.
     latest = {r["status"]: r["n"] for r in conn.execute(
         "SELECT j.status, COUNT(*) AS n FROM job j WHERE j.ref_type = ? AND j.id = (SELECT MAX(id) FROM job WHERE ref_type = ? AND ref_id = j.ref_id) GROUP BY j.status", (REF, REF))}
+    cancelled = conn.execute("SELECT COUNT(*) FROM library_file WHERE approval_status = 'approved' AND migration_cancelled_at IS NOT NULL AND migration_status = 'pending'").fetchone()[0]
     unqueued = conn.execute(
-        """SELECT COUNT(*) FROM library_file f WHERE f.approval_status = 'approved' AND f.migration_status IN ('pending', 'failed') AND f.missing_since IS NULL
+        """SELECT COUNT(*) FROM library_file f WHERE f.approval_status = 'approved' AND f.migration_status = 'pending' AND f.migration_cancelled_at IS NULL AND f.missing_since IS NULL
            AND NOT EXISTS (SELECT 1 FROM job j WHERE j.ref_type = 'library_file' AND j.ref_id = f.id AND j.status IN ('queued', 'running', 'needs_review'))""").fetchone()[0]
     return {"queued": counts.get("queued", 0), "running": counts.get("running", 0), "waiting": counts.get("needs_review", 0),
             "failed": latest.get("failed", 0), "completed": conn.execute("SELECT COUNT(*) FROM library_file WHERE migration_status = 'completed'").fetchone()[0],
-            "unqueued": unqueued}
+            "unqueued": unqueued, "cancelled": cancelled}
+
+
+def attention(conn, limit=20):
+    """Approved files that stopped without finishing: cancelled (they stay cancelled until queued again) or failed."""
+    return [dict(r) for r in conn.execute(
+        "SELECT id, file_name, root_name, migration_status, migration_cancelled_at, migration_last_error FROM library_file WHERE approval_status = 'approved' "
+        "AND missing_since IS NULL AND ((migration_status = 'pending' AND migration_cancelled_at IS NOT NULL) OR migration_status = 'failed') ORDER BY id LIMIT ?", (limit,))]
 
 
 def tell_jellyfin(count=1):

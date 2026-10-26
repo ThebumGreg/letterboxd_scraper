@@ -1,0 +1,32 @@
+<!-- synchub/web/templates/media.html -->
+{% extends "base.html" %}
+{% block title %}{% for key, label, endpoint, help in tabs if key == active %}{{ label }}{% endfor %}{% endblock %}
+
+{% block content %}
+<ul class="nav nav-tabs mb-4" id="mediaTabs" role="tablist">
+    {% for key, label, endpoint, help in tabs %}
+    <li class="nav-item" role="presentation">
+        <a class="nav-link{% if key == active %} active{% endif %}" id="media-tab-{{ key }}" href="{{ url_for(endpoint) }}" data-bs-toggle="tab" data-bs-target="#media-pane-{{ key }}" data-media-url="{{ url_for(endpoint) }}" role="tab" aria-controls="media-pane-{{ key }}" aria-selected="{{ 'true' if key == active else 'false' }}" title="{{ help }}">{{ label }}</a>
+    </li>
+    {% endfor %}
+</ul>
+<div class="tab-content">
+    {% for key, label, endpoint, help in tabs %}
+    <div class="tab-pane fade{% if key == active %} show active{% endif %}" id="media-pane-{{ key }}" role="tabpanel" aria-labelledby="media-tab-{{ key }}" tabindex="0">
+        {{ panes[key].tab|safe }}
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% for key, label, endpoint, help in tabs %}{{ panes[key].scripts|safe }}{% endfor %}
+<script>
+(() => {
+    // The address follows the tab, so a reload or a shared link opens the same one. Pollers on a hidden tab stand down.
+    document.querySelectorAll('#mediaTabs [data-bs-toggle="tab"]').forEach((el) => {
+        el.addEventListener('shown.bs.tab', () => { try { history.replaceState(null, '', el.dataset.mediaUrl + location.search.replace(/[?&]done=[^&]*/, '')); } catch (e) { /* the tab still works */ } });
+    });
+})();
+</script>
+{% endblock %}

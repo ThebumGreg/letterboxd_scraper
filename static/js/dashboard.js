@@ -73,7 +73,7 @@
         return node;
     }
 
-    const IN_FLIGHT = ["downloading", "downloaded", "transferring", "encoding"];
+    const IN_FLIGHT = ["downloading", "downloaded", "transferring", "working", "encoding", "transferring_library"];
 
     function buildCard(row) {
         const d = row.dataset;

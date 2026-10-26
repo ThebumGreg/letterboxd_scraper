@@ -28,7 +28,7 @@ def plan(remove_audio=(), remove_subtitle=(), keep_audio=(1,), keep_subtitle=(),
 def analysis(root="tfiles", rel="Movies/Heat.1995.1080p.mkv", name="Heat (1995).mkv", *, size=1_000_000, mtime=1_700_000_000.0, media_type="Movie/Unknown", show=None,
              season=None, action="copy_rename", action_reason="", reasons=(), naming_flags="", naming_error=False, naming_label="High", naming_score=0.9,
              integrity=v.INT_TAIL, audit_error=None, container="matroska,webm", video="h264", audio=None, subtitles=(), proposals=None, english="present",
-             status=v.ANALYSIS_COMPLETED, unreadable=None, sha256=None, run="run-1", logic=1, source_dir=None):
+             status=v.ANALYSIS_COMPLETED, unreadable=None, sha256=None, run="run-1", logic=v.ANALYSIS_LOGIC_VERSION, source_dir=None):
     """The record a worker reports for one file (before findings that depend on other files)."""
     audio = [track(1)] if audio is None else audio
     streams = audio + list(subtitles)

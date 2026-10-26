@@ -17,7 +17,7 @@ ANALYSIS_COLUMNS = [
     "integrity_mode", "integrity_status", "integrity_scope", "audit_error", "cache_status",
     "container", "duration_seconds", "bitrate_kbps", "video_codec", "resolution",
     "frame_rate", "audio_codecs", "audio_languages", "subtitle_languages",
-    "video_streams", "audio_streams", "subtitle_streams", "streams_json",
+    "video_streams", "audio_streams", "subtitle_streams", "streams_json", "video_info_json",
     "media_type", "recommended_name", "show_title", "season_number",
     "naming_confidence", "naming_score", "naming_flags",
     "duplicate_group", "duplicate_status",
@@ -33,10 +33,12 @@ DERIVED_COLUMNS = ["recommended_action", "base_action", "action_reason", "naming
                    "duplicate_group", "duplicate_status"]
 
 _RESET_APPROVAL = {"approval_status": v.APPROVAL_PENDING, "approved_action": None, "approved_name": None, "approved_track_changes_json": None,
-                   "approval_decided_at": None, "approval_decided_by": None, "approval_note": None}
+                   "approved_profile_id": None, "approved_mode": None, "approval_decided_at": None, "approval_decided_by": None, "approval_note": None}
 _RESET_REVIEW = {"review_decided_at": None, "review_decided_by": None, "review_note": None}
 _RESET_MIGRATION = {"migration_status": v.MIGRATION_PENDING, "migration_last_error": None, "migration_started_at": None, "migration_finished_at": None,
-                    "migration_verification_status": None, "migration_verification_detail": None, "migration_verified_at": None}
+                    "migration_verification_status": None, "migration_verification_detail": None, "migration_verified_at": None, "migration_cancelled_at": None,
+                    "migrated_dest_size": None, "migrated_dest_sha256": None, "migrated_how": None, "source_delete_status": None, "source_delete_due_at": None,
+                    "source_delete_message": None, "source_deleted_at": None, "arr_status": None, "arr_message": None}
 
 
 @contextmanager
@@ -92,6 +94,20 @@ def _insert(conn, rec, source_dir, run_id, now):
                   first_seen_at=now, last_seen_at=now, last_seen_run_id=run_id, decision_fingerprint=v.decision_fingerprint(rec),
                   review_status=rec.get("review_status", v.REVIEW_NOT_REQUIRED))
     return conn.execute(f"INSERT INTO library_file ({', '.join(values)}) VALUES ({', '.join(':' + c for c in values)})", values).lastrowid
+
+
+def move_record(conn, record_id, new_relative):
+    """A file was renamed inside its share: the record follows it, so it is not mistaken for a missing file and a new one."""
+    from synchub import storage
+    rec = get_record(conn, record_id)
+    row = storage.by_name(conn, rec["root_name"])
+    new_relative = v.clean_relative(new_relative)
+    key = v.record_key(rec["root_name"], new_relative)
+    taken = conn.execute("SELECT id FROM library_file WHERE path_key = ? AND id != ?", (key, record_id)).fetchone()
+    if taken:                                                   # a stale record of an earlier file sits there: it is not this file any more
+        conn.execute("UPDATE library_file SET path_key = ? WHERE id = ?", (f"replaced:{taken[0]}:{key}", taken[0]))
+    _update(conn, record_id, {"relative_path": new_relative, "path_key": key, "file_name": new_relative.rsplit("/", 1)[-1],
+                              "source_path": storage.display_path(row, new_relative) if row else f"{rec['root_name']}:{new_relative}"})
 
 
 def _update(conn, record_id, values):
@@ -265,10 +281,14 @@ def _apply_keep_streams(proposal_json, keep_streams):
     return json.dumps(result) if result else None
 
 
-def set_approval(conn, record_id, status, by, action=None, note=None, mark_reviewed=False, name=None, accept_track_changes=False, keep_streams=None):
+def set_approval(conn, record_id, status, by, action=None, note=None, mark_reviewed=False, name=None, accept_track_changes=False, keep_streams=None,
+                 profile_id=None, mode=None):
     """Records a person's decision. Approving needs a finished analysis and a migratable action; a file that needs manual review can only
     be approved together with that review (mark_reviewed). `name` edits the filename (same extension, no collision with another approved
-    file); `accept_track_changes` approves the proposed track changes; `keep_streams` keeps tracks the proposal would have removed."""
+    file); `accept_track_changes` approves the proposed track changes; `keep_streams` keeps tracks the proposal would have removed; `profile_id` is the
+    conversion profile chosen for this file (None = the default one); `mode` 'rename_only' renames the file inside its share and changes nothing else."""
+    if mode not in (None, "rename_only"):
+        raise ValueError(f"invalid mode: {mode}")
     if status not in (v.APPROVAL_PENDING, v.APPROVAL_APPROVED, v.APPROVAL_REJECTED):
         raise ValueError(f"invalid approval status: {status}")
     now = db.now()
@@ -282,7 +302,8 @@ def set_approval(conn, record_id, status, by, action=None, note=None, mark_revie
         from synchub.library import migrate
         migrate.cancel_active(conn, record_id, by)                  # a decision that changes the plan takes the waiting job back; the caller queues a new one
         values = {"approval_status": status, "approval_decided_at": now, "approval_decided_by": by, "approval_note": note,
-                  "approved_action": None, "approved_name": None, "approved_track_changes_json": None}   # every decision starts clean
+                  "approved_action": None, "approved_name": None, "approved_track_changes_json": None,
+                  "approved_profile_id": None, "approved_mode": None, "migration_cancelled_at": None}   # every decision starts clean
         if status == v.APPROVAL_PENDING:
             values.update(approval_decided_at=None, approval_decided_by=None)
         if status == v.APPROVAL_APPROVED:
@@ -297,6 +318,11 @@ def set_approval(conn, record_id, status, by, action=None, note=None, mark_revie
                     raise ValueError("record requires manual review; approve it together with the review")
                 values.update(review_status=v.REVIEW_REVIEWED, review_decided_at=now, review_decided_by=by, review_note=note)
             values["approved_action"] = chosen
+            values["approved_mode"] = mode
+            if profile_id is not None:
+                if conn.execute("SELECT 1 FROM conversion_profile WHERE id = ?", (profile_id,)).fetchone() is None:
+                    raise ValueError("that conversion profile no longer exists")
+                values["approved_profile_id"] = profile_id
             if accept_track_changes:
                 if not row["proposed_track_changes_json"] or row["proposed_track_changes_json"] == "[]":
                     raise ValueError("this record has no proposed track changes to accept")

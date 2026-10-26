@@ -125,10 +125,10 @@ def test_a_list_shows_each_file_what_we_suggest_and_how_sure_we_are(client, conn
 def test_a_list_can_be_filtered_by_text_share_and_confidence(client, conn):
     shares(conn)
     a = add(conn, root="tfiles", rel="Downloads/Heat.mkv", name="Heat (1995).mkv")
-    b = add(conn, root="media", rel="Other/Alien.mkv", name="Alien (1979).mkv")
+    b = add(conn, root="archive", rel="Other/Alien.mkv", name="Alien (1979).mkv")
     c = add(conn, root="tfiles", rel="Downloads/Weak.mkv", name="Weak (2000).mkv", naming_label="Medium", reasons=[("naming", "Naming confidence 0.7: No release year")])
     ids = lambda url: set(int(i) for i in re.findall(r'data-record="(\d+)"', client.get(url).get_data(as_text=True)))      # noqa: E731
-    assert ids("/library/queue/ready") == {a, b} and ids("/library/queue/ready?q=heat") == {a} and ids("/library/queue/ready?root=media") == {b} and ids("/library/queue/ready?conf=medium") == set()
+    assert ids("/library/queue/ready") == {a, b} and ids("/library/queue/ready?q=heat") == {a} and ids("/library/queue/ready?root=archive") == {b} and ids("/library/queue/ready?conf=medium") == set()
     assert ids("/library/queue/suggested?conf=medium") == {c} and ids("/library/queue/suggested?conf=high") == set()
     assert "Nothing here with this filter" in client.get("/library/queue/ready?q=zzz").get_data(as_text=True)
 
@@ -340,7 +340,7 @@ def test_bulk_approval_asks_first_then_approves_only_what_qualifies_and_records_
 
 def test_bulk_approval_can_be_narrowed_to_a_search_or_a_share(client, conn):
     a = add(conn, root="tfiles", rel="Show A/a.mkv", name="A (2000).mkv")
-    b = add(conn, root="media", rel="Other/b.mkv", name="B (2000).mkv")
+    b = add(conn, root="archive", rel="Other/b.mkv", name="B (2000).mkv")
     assert post(client, "/api/library/bulk/ready", {"conf": "medium", "root": "tfiles"}).get_json()["done"] == 1
     assert rec_of(conn, a)["approval_status"] == "approved" and rec_of(conn, b)["approval_status"] == "pending"
     assert post(client, "/api/library/bulk/ready", {"conf": "medium", "q": "OTHER/"}).get_json()["done"] == 1

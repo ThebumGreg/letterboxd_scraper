@@ -24,9 +24,8 @@ def describe(conn):
 def register(app):
     @app.route("/storage")
     def storage_page():
-        with db.connection() as conn:
-            roots = describe(conn)
-        return render_template("storage.html", roots=roots, protocols=storage.PROTOCOLS, defaults=storage.DEFAULT_OPTIONS, marker=storage.MARKER)
+        from synchub.web import media
+        return media.render_media("storage")
 
     @app.route("/api/storage", methods=["POST"])
     def api_storage_create():

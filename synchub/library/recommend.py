@@ -20,6 +20,7 @@ right place in the destination share is "done", because there is nothing to move
 
 import dataclasses
 import json
+import os
 from typing import List, Optional
 
 from synchub.library import findings, layout as media_layout, migrate, store
@@ -78,6 +79,7 @@ class Recommendation:
     accept_tracks: bool = False
     action: Optional[str] = None
     path: Optional[str] = None      # where it will go in the library (relative)
+    mode: Optional[str] = None      # 'rename_only': approving renames the file inside its share and changes nothing else
     needs_name: bool = False        # a valid name must be entered before approving
     override_allowed: bool = False  # "I tested it" override (integrity only)
     badges: list = dataclasses.field(default_factory=list)
@@ -166,7 +168,8 @@ def recommend(rec, cfg=None) -> Recommendation:
         notes = [rec["migration_last_error"]] if rec.get("migration_last_error") else []
         return Recommendation(G_DONE, "done", "none", label, [], notes, HIGH, False, **base)
     if rec["approval_status"] == db.APPROVAL_APPROVED:
-        steps = ["Will be copied" + (" with the approved track changes" if rec.get("approved_track_changes_json") else " unchanged")]
+        steps = (["Will be renamed inside its share. Nothing is copied and nothing in the file changes."] if rec.get("approved_mode") == "rename_only"
+                 else ["Will be copied" + (" with the approved track changes" if rec.get("approved_track_changes_json") else " unchanged") + ", using the conversion profile"])
         return Recommendation(G_DONE, "done", "none", "Approved for migration", steps, [], HIGH, False, **base)
     if rec["approval_status"] == db.APPROVAL_REJECTED:
         return Recommendation(G_DONE, "done", "none", "Rejected: will not be migrated", [], [], HIGH, False, **base)
@@ -286,6 +289,11 @@ def recommend(rec, cfg=None) -> Recommendation:
     if needs_name:
         notes.insert(0, f"No valid destination yet: {path_error}. Enter a valid name to continue.")
     confidence = _lowest(HIGH, *levels) if levels else HIGH
+    if (rec["root_name"] == cfg.destination_root and path and kind in ("plain", "naming") and not plans and action == db.ACTION_COPY_RENAME and not needs_name):
+        # already on the destination share, just not at the right path: moving it inside the share beats copying it next to itself
+        return Recommendation(G_SUGGESTED, "rename", "approve", f"Rename in place to “{db.final_name(rec)}”",
+                              [f"Move it inside {rec['root_name']} to {path}. Nothing is copied and nothing in the file changes."], notes, confidence, True,
+                              action=action, mode="rename_only", **base)
     can_approve = action in db.MIGRATABLE_ACTIONS and not (needs_name)
     return Recommendation(group, kind, "approve", headline, steps, notes, confidence, can_approve,
                           accept_tracks=accept_tracks, action=action, needs_name=needs_name,
@@ -335,10 +343,20 @@ def _validate_name(rec, name, cfg):
         raise ValueError(f"that name cannot be used: {exc}")
 
 
-def apply_recommendation(conn, record_id, by, name=None, keep_streams=None, note=None, cfg=None):
+def rename_path(rec, cfg):
+    """Where a rename-only job would put this file (inside its own share), or None when it has no valid layout path or is already there."""
+    path, error = _relative_path(rec, cfg)
+    if error or not path:
+        return None
+    path = os.path.splitext(path)[0] + os.path.splitext(rec["relative_path"])[1]
+    return None if db.clean_relative(rec["relative_path"]).casefold() == path.casefold() else path
+
+
+def apply_recommendation(conn, record_id, by, name=None, keep_streams=None, note=None, cfg=None, mode=None, profile_id=None):
     """Do what the recommendation says (approve, or reject a duplicate). `name` edits the
     filename (required when the recommendation says a valid name is needed);
-    `keep_streams` keeps tracks the plan would have removed. Raises ValueError."""
+    `keep_streams` keeps tracks the plan would have removed. `mode` 'rename_only' renames the file inside its share instead of copying it; `profile_id` is
+    the conversion profile for this file (the default one when None). Raises ValueError."""
     cfg = cfg or LibraryConfig()
     rec = store.get_record(conn, record_id)
     if rec is None:
@@ -360,16 +378,25 @@ def apply_recommendation(conn, record_id, by, name=None, keep_streams=None, note
     if r.kind == "skip_duplicate":
         store.set_approval(conn, record_id, db.APPROVAL_REJECTED, by, note="duplicate: skipped")
         return "rejected"
+    mode = r.mode if mode is None else (None if mode == "copy" else mode)       # "copy" says: not the rename the recommendation suggested
+    if mode not in (None, "rename_only"):
+        raise ValueError("unknown way of handling the file")
+    if mode == "rename_only":
+        probe = dict(rec, approved_name=name) if name else rec
+        if rename_path(probe, cfg) is None:
+            raise ValueError("this file is already at its place, or has no valid name to rename it to")
+    if profile_id is not None and conn.execute("SELECT 1 FROM conversion_profile WHERE id = ?", (profile_id,)).fetchone() is None:
+        raise ValueError("that conversion profile no longer exists")
     if r.kind == "keep_duplicate":
-        return _keep_duplicate(conn, rec, r, by, name, keep_streams, note, cfg)
+        return _keep_duplicate(conn, rec, r, by, name, keep_streams, note, cfg, mode, profile_id)
     store.set_approval(conn, record_id, db.APPROVAL_APPROVED, by, action=r.action, name=name, note=note,
                     mark_reviewed=rec["review_status"] == db.REVIEW_MANUAL,
-                    accept_track_changes=r.accept_tracks, keep_streams=keep_streams)
+                    accept_track_changes=r.accept_tracks and mode != "rename_only", keep_streams=keep_streams, profile_id=profile_id, mode=mode)
     migrate.queue(conn, record_id, cfg, by)
     return "approved"
 
 
-def _keep_duplicate(conn, rec, r, by, name, keep_streams, note, cfg):
+def _keep_duplicate(conn, rec, r, by, name, keep_streams, note, cfg, mode=None, profile_id=None):
     siblings = [dict(s) for s in conn.execute(
         "SELECT * FROM library_file WHERE duplicate_group=? AND id != ?", (rec["duplicate_group"], rec["id"]))]
     busy = [s["id"] for s in siblings if s["migration_status"] in (db.MIGRATION_IN_PROGRESS, db.MIGRATION_COMPLETED)]
@@ -380,7 +407,7 @@ def _keep_duplicate(conn, rec, r, by, name, keep_streams, note, cfg):
             store.set_approval(conn, sibling["id"], db.APPROVAL_REJECTED, by, note=f"duplicate of {rec['id']}")
     store.set_approval(conn, rec["id"], db.APPROVAL_APPROVED, by, action=r.action, name=name, note=note,
                     mark_reviewed=rec["review_status"] == db.REVIEW_MANUAL,
-                    accept_track_changes=r.accept_tracks, keep_streams=keep_streams)
+                    accept_track_changes=r.accept_tracks and mode != "rename_only", keep_streams=keep_streams, profile_id=profile_id, mode=mode)
     for sibling in siblings:
         if sibling["approval_status"] != db.APPROVAL_REJECTED:
             store.set_approval(conn, sibling["id"], db.APPROVAL_REJECTED, by, note=f"duplicate of {rec['id']}")

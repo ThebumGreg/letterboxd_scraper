@@ -48,7 +48,7 @@ STAGES = (STAGE_COPY, STAGE_TRACKS, STAGE_REMUX, STAGE_TRANSCODE)
 STAGE_TITLES = {STAGE_COPY: "Copy unchanged", STAGE_TRACKS: "Copy with audio/subtitle changes", STAGE_REMUX: "Lossless remux to MKV", STAGE_TRANSCODE: "Convert (re-encode)"}
 
 # The version of the worker's analysis logic. A record analysed by older logic is analysed again at the next scan.
-ANALYSIS_LOGIC_VERSION = 1
+ANALYSIS_LOGIC_VERSION = 2
 MTIME_TOLERANCE_SECONDS = 2.0       # SMB and FAT timestamp granularity
 
 DEFAULT_EXCLUDES = ("@eaDir", "#recycle", ".Recycle.Bin", "$RECYCLE.BIN", "System Volume Information", "lost+found", ".Trash-*")

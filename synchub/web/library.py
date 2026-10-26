@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from flask import Response, jsonify, redirect, render_template, request, url_for
 
 from synchub import db, downloads, jobs, settings, storage
-from synchub.library import findings, migrate, recommend as rc, report, scan, store
+from synchub.library import cleanup, findings, migrate, profiles, recommend as rc, report, scan, size_policy, store
 from synchub.library import vocab as v
 from settings_validation import validate_setting
 
@@ -75,7 +75,9 @@ def overview(conn):
     migration = migrate.queue_summary(conn)
     return {"cfg": cfg, "groups": groups, "total": len(rows), "shares": shares_summary(conn, cfg), "runs": runs, "active": any(r["active"] for r in runs) or bool(migration["queued"] or migration["running"]) or bool(downloads.summary(conn)["working"]), "options": options,
             "roots": [r["name"] for r in storage.list_all(conn)], "migration": migration,
-            "downloads": downloads.recent(conn, 15), "download_summary": downloads.summary(conn), "originals_days": downloads.retention_days(conn), "lookups": {"confidence": CONFIDENCE_FLOORS}}
+            "downloads": downloads.recent(conn, 15), "download_summary": downloads.summary(conn), "originals_days": downloads.retention_days(conn), "size": size_policy.load(conn), "lookups": {"confidence": CONFIDENCE_FLOORS},
+            "profiles": profiles.all_profiles(conn), "default_profile_id": profiles.default(conn)["id"], "cleanup": cleanup.summary(conn), "attention": migrate.attention(conn),
+            "profile_options": {"codecs": profiles.VIDEO_CODECS, "presets": profiles.PRESETS, "subtitles": profiles.SUBTITLE_LABELS}}
 
 
 def scan_options_for_page(conn):
@@ -108,9 +110,8 @@ def queue_rows(conn, cfg, group, f):
 def register(app):
     @app.route("/library")
     def library_page():
-        with db.connection() as conn:
-            data = overview(conn)
-        return render_template("library.html", **data)
+        from synchub.web import media
+        return media.render_media("library")
 
     @app.route("/library/fragment")
     def library_fragment():
@@ -163,8 +164,11 @@ def register(app):
             if rec.get("duplicate_group"):
                 siblings = [dict(r) for r in conn.execute("SELECT id, root_name, relative_path, duplicate_status, approval_status FROM library_file WHERE duplicate_group = ? AND id != ? ORDER BY id",
                                                            (rec["duplicate_group"], record_id))]
+            chosen = migrate.profile_for(conn, rec)
+            all_profiles = profiles.all_profiles(conn)
         group = request.args.get("group") or rcm.group
         data = describe_record(rec, rcm, cfg)
+        data.update(cfg=cfg, profiles=all_profiles, chosen_profile=chosen, rename_to=rc.rename_path(rec, cfg), source_cleanup=cleanup.source_days())
         return render_template("library_record.html", group=group, group_title=rc.GROUP_TITLES.get(group, group), events=events, siblings=siblings, f=_filters(), **data)
 
     # ---- decisions
@@ -175,7 +179,9 @@ def register(app):
                 by, cfg = _who(conn), scan.config(conn)
                 if action == "approve":
                     keep = [int(i) for i in data.get("keep_streams") or []]
-                    outcome = rc.apply_recommendation(conn, record_id, by, name=data.get("name"), keep_streams=keep or None, note=data.get("note"), cfg=cfg)
+                    profile_id = int(data["profile_id"]) if str(data.get("profile_id") or "").isdigit() else None
+                    outcome = rc.apply_recommendation(conn, record_id, by, name=data.get("name"), keep_streams=keep or None, note=data.get("note"), cfg=cfg,
+                                                      mode=data.get("mode") or None, profile_id=profile_id)
                     message = {"approved": "Approved.", "rejected": "Skipped: that copy will not be migrated."}.get(outcome, outcome[:1].upper() + outcome[1:] + ".")
                 elif action == "tested":
                     rc.approve_after_testing(conn, record_id, by, data.get("note"), cfg=cfg)
@@ -183,6 +189,15 @@ def register(app):
                 elif action == "reject":
                     rc.reject(conn, record_id, by, data.get("note"))
                     message = "Rejected: it will not be migrated."
+                elif action == "requeue":
+                    migrate.requeue(conn, record_id, cfg, by)
+                    message = "Queued again."
+                elif action == "keep-source":
+                    cleanup.hold(conn, record_id, by)
+                    message = "The source will be kept."
+                elif action == "release-source":
+                    cleanup.release(conn, record_id, by)
+                    message = "The source will be deleted when the waiting time is over."
                 else:
                     rc.undo(conn, record_id, by)
                     message = "Decision undone."
@@ -192,7 +207,7 @@ def register(app):
 
     @app.route("/api/library/record/<int:record_id>/<action>", methods=["POST"])
     def api_library_decide(record_id, action):
-        if action not in ("approve", "reject", "undo", "tested"):
+        if action not in ("approve", "reject", "undo", "tested", "requeue", "keep-source", "release-source"):
             return _fail("Unknown action.", 404)
         return _decide(record_id, action)
 
@@ -236,6 +251,27 @@ def register(app):
         left = f" {len(skipped)} could not be queued: {skipped[0][1]}." if skipped else ""
         return jsonify(ok=True, queued=queued, skipped=len(skipped), message=f"Queued {queued} file{'s' if queued != 1 else ''} for a worker.{left}")
 
+    # ---- conversion profiles
+    @app.route("/api/library/profiles", methods=["POST"])
+    def api_library_profile_save():
+        data = request.get_json(silent=True) or {}
+        try:
+            with db.connection() as conn:
+                profile_id = int(data["id"]) if str(data.get("id") or "").isdigit() else None
+                profiles.save(conn, data, _who(conn), profile_id)
+        except profiles.ProfileError as exc:
+            return _fail(str(exc))
+        return jsonify(ok=True, message="Profile saved.")
+
+    @app.route("/api/library/profiles/<int:profile_id>/delete", methods=["POST"])
+    def api_library_profile_delete(profile_id):
+        try:
+            with db.connection() as conn:
+                profiles.delete(conn, profile_id)
+        except profiles.ProfileError as exc:
+            return _fail(str(exc))
+        return jsonify(ok=True, message="Profile deleted.")
+
     # ---- scans, duplicates, settings
     @app.route("/api/library/scan", methods=["POST"])
     def api_library_scan():
@@ -275,7 +311,9 @@ def register(app):
     @app.route("/api/library/settings", methods=["POST"])
     def api_library_settings():
         data = request.get_json(silent=True) or {}
-        keys = ("library_destination_root", "library_tv_folder", "library_movie_folder", "library_integrity_mode", "library_tail_seconds", "library_exclude_folders", "download_pipeline", "originals_retention_days")
+        keys = ("library_destination_root", "library_tv_folder", "library_movie_folder", "library_integrity_mode", "library_tail_seconds", "library_exclude_folders", "download_pipeline", "originals_retention_days",
+                "size_policy", "movie_max_gb", "movie_target_gb", "size_crf", "dolby_vision_profile_5", "dolby_vision_profile_7_8",
+                "library_default_profile", "source_delete_after_days", "arr_after_migration", "arr_apply_when")
         cleaned, errors = {}, []
         for key in keys:
             if key in data:
@@ -284,6 +322,8 @@ def register(app):
         with db.connection() as conn:
             if "library_destination_root" in cleaned and storage.by_name(conn, cleaned["library_destination_root"]) is None:
                 errors.append(f"There is no share called '{cleaned['library_destination_root']}'. Add it on the Storage page first.")
+            if "library_default_profile" in cleaned and profiles.get(conn, int(cleaned["library_default_profile"])) is None:
+                errors.append("That conversion profile no longer exists.")
             if errors:
                 return _fail(" ".join(errors))
             for key, value in cleaned.items():
