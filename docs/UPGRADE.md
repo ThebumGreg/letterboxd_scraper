@@ -14,6 +14,32 @@ The code only ever comes from GitHub. SyncHub never sends code or settings to a 
 
 Do this per worker. Worker-1 (`/opt/synchub-worker`) uses a hand-made setup, so it uses `update-worker.sh`, never `setup-worker.sh` (which rewrites `/etc/fstab` and the compose file).
 
+### Worker-1: the paths, exactly
+
+Two folders matter, and they are not the same one:
+
+| Folder | What it is | Run `git` here? |
+|---|---|---|
+| `/opt/synchub-worker` | the worker's compose file (`docker-compose.yml`), `.env` and `work/` | **No.** It is not a git repository ("fatal: not a git repository"). It is only passed to the script with `--dir`. |
+| `/home/greg/letterboxd_scraper` (`~/letterboxd_scraper`) | the git checkout the compose file builds from (`build: context: /home/greg/letterboxd_scraper/agent`) | **Yes.** Pull and run the script from here. |
+
+Everything on worker-1 is therefore run from `~/letterboxd_scraper`:
+
+```
+cd ~/letterboxd_scraper
+git pull --ff-only origin main
+sudo ./agent/update-worker.sh --dir /opt/synchub-worker --dry-run
+sudo ./agent/update-worker.sh --dir /opt/synchub-worker
+```
+
+Do not run `git clone` again (the folder exists) and do not use `sudo git`; the checkout belongs to your own user. If you ever find a second clone under `/opt/synchub-worker/letterboxd_scraper` (owned by root, "dubious ownership" errors from git), it is not used by the worker: leave it alone, or move it out of the way with `sudo mv /opt/synchub-worker/letterboxd_scraper /opt/synchub-worker/letterboxd_scraper.old`.
+
+On another worker, find the checkout the same way:
+
+```
+cd /path/to/the/worker-folder && sudo docker compose config | grep -A2 build     # "context: <checkout>/agent"
+```
+
 ### Step 1: look at the current state first
 
 ```
@@ -50,6 +76,18 @@ It fast-forwards the checkout (refusing if there are local changes or diverged c
 If a job is running, Docker's stop waits up to 90 seconds for the agent to stop at a safe point; unfinished jobs resume when it starts again.
 
 ### Step 4: check
+
+Docker's own health check (it asks the agent whether its loop is alive) is the quickest test:
+
+```
+cd /opt/synchub-worker
+sudo docker compose ps                                   # STATUS should say "Up ... (healthy)"
+sudo docker inspect --format '{{.State.Health.Status}}  restarts: {{.RestartCount}}' synchub-worker    # healthy  restarts: 0
+sudo docker compose logs --tail 30                       # the agent's own words
+sudo docker compose run --rm worker --check              # tests the token, SyncHub, ffmpeg and every share
+```
+
+"starting" for the first minute is normal; "unhealthy", or a restart count that keeps growing, is not (see "If the worker does not come online" below). Then:
 
 1. Workers page: the worker is online with the new agent version, and lists the job types you expect (for example `convert`, `replace`).
 2. `sudo ./agent/update-worker.sh --dir /opt/synchub-worker --report` once more: health `healthy`, mounts present, no restarts.
