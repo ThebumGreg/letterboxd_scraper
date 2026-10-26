@@ -5,7 +5,7 @@
 {# Dashboard stat card. Pass f_type and/or f_status to make it a clickable filter preset. #}
 {# The Watch now button. watch.js turns this into a menu (This device / each TV); the plain link inside is what shows without it. #}
 {# `resume`: where this person stopped ("at 42:10"), when they are part-way through it; the button then reads Resume and a TV picks up from there. #}
-{% macro watch_now(link, item_id, title, size='lg', resume=none) %}<span data-watch-now data-link="{{ link }}" data-item="{{ item_id }}" data-title="{{ title }}" data-size="{{ size }}"{% if resume %} data-resume="{{ resume }}"{% endif %}><a href="{{ link }}" class="btn btn-success{% if size != 'lg' %} btn-sm{% endif %}" data-jellyfin-item="{{ item_id }}" target="_blank" rel="noopener noreferrer">Watch now</a></span>{% endmacro %}
+{% macro watch_now(link, item_id, title, size='lg', resume=none, label=none, play_item=none) %}<span data-watch-now data-link="{{ link }}" data-item="{{ item_id }}" data-title="{{ title }}" data-size="{{ size }}"{% if resume %} data-resume="{{ resume }}"{% endif %}{% if label %} data-label="{{ label }}"{% endif %}{% if play_item %} data-play-item="{{ play_item }}"{% endif %}><a href="{{ link }}" class="btn btn-success{% if size != 'lg' %} btn-sm{% endif %}" data-jellyfin-item="{{ item_id }}" target="_blank" rel="noopener noreferrer">{{ label or 'Watch now' }}</a></span>{% endmacro %}
 
 {% macro stat_card(label, value, color, f_type=none, f_status=none, text=none) %}
 {% set clickable = f_type is not none or f_status is not none %}

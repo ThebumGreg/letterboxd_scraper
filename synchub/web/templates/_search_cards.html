@@ -1,0 +1,34 @@
+{# One TMDB result: poster, title, rating, state and the Add buttons. Used by Find & request and Discover; the script in _search_scripts.html drives the buttons. #}
+{% from "_macros.html" import state_badge with context %}
+{% macro result_card(r) %}
+        <div class="panel h-100 p-3 d-flex gap-3 search-result" data-kind="{{ r.kind }}" data-tmdb-id="{{ r.tmdb_id }}" data-title="{{ r.title }}">
+            {% if r.poster %}
+            <img src="{{ r.poster }}" alt="" width="92" height="138" class="rounded flex-shrink-0 poster" loading="lazy" referrerpolicy="no-referrer">
+            {% else %}
+            <div class="rounded flex-shrink-0 bg-secondary bg-opacity-25 d-flex align-items-center justify-content-center text-body-secondary" style="width: 92px; height: 138px;" aria-hidden="true"><i class="bi bi-image fs-3"></i></div>
+            {% endif %}
+            <div class="min-w-0 d-flex flex-column flex-grow-1">
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                    <span class="badge {{ 'badge-tv' if r.kind == 'show' else 'badge-movie' }}">{{ 'TV' if r.kind == 'show' else 'MOVIE' }}</span>
+                    {% if r.rating %}<span class="badge bg-secondary" title="TMDB rating"><i class="bi bi-star-fill" aria-hidden="true"></i> {{ r.rating }}</span>{% endif %}
+                </div>
+                <h5 class="mb-1">
+                    <a class="text-decoration-none text-reset" target="_blank" rel="noopener noreferrer" href="https://www.themoviedb.org/{{ 'movie' if r.kind == 'movie' else 'tv' }}/{{ r.tmdb_id }}">{{ r.title }}</a>
+                    {% if r.year %}<span class="text-muted fw-normal fs-6">({{ r.year }})</span>{% endif %}{% if r.certification %} <span class="badge border text-body-secondary fw-normal fs-6" title="Age rating">{{ r.certification }}</span>{% endif %}
+                </h5>
+                {% if r.overview %}<p class="small text-body-secondary mb-2 search-overview">{{ r.overview }}</p>{% endif %}
+
+                <div class="mt-auto d-flex flex-wrap align-items-center gap-2" data-actions>
+                    {% if r.state %}{{ state_badge(r.state_label, r.state_color, r.state_icon, r.progress_pct if r.state == 'downloading' else none) }}{% endif %}
+                    {% if r.kind == 'movie' and r.in_radarr and r.state == 'missing' %}<span class="small text-body-secondary">Already in Radarr</span>{% endif %}
+                    {% if r.url %}<a href="{{ r.url }}" class="btn btn-sm btn-outline-secondary">Open</a>{% endif %}
+                    {% if r.addable and r.kind == 'movie' %}
+                    <button type="button" class="btn btn-sm btn-outline-info" data-add-movie><i class="bi bi-cloud-download" aria-hidden="true"></i> Add to Radarr</button>
+                    {% elif r.kind == 'show' and (r.addable or r.state != 'in_library') %}
+                    <button type="button" class="btn btn-sm btn-outline-info" data-add-show><i class="bi bi-cloud-download" aria-hidden="true"></i> {{ 'Add to Sonarr...' if r.addable and not r.in_sonarr else 'Request seasons...' }}</button>
+                    {% endif %}
+                </div>
+                <div class="small mt-2" data-result role="status"></div>
+            </div>
+        </div>
+{% endmacro %}

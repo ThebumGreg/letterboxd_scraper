@@ -1,5 +1,5 @@
 'use strict';
-/* Shared by every page (Remote, TV apps, TVs, TV tools): state, polling, icons, app
+/* Shared by every page (Remote, Remote Apps, TVs, Remote Tools): state, polling, icons, app
    preferences, the "Watch a movie…" dialog, notices and the log. Pages plug in through Page hooks. */
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -108,7 +108,7 @@ async function loadConfig() {
   if (fd) fd.innerHTML = '<option value="">all devices</option>' + S.devices.map(d => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('');
   renderDevBar(); selectDevice(S.devId, true);
 }
-// Re-read the device list (its session rules change when one is chosen on the TV tools page)
+// Re-read the device list (its session rules change when one is chosen on the Remote Tools page)
 async function refreshDevices() {
   const c = await api('GET', '/api/tv/config');
   if (c.devices) S.devices = c.devices;
@@ -176,7 +176,7 @@ async function resetQuick(d) {
   await api('DELETE', `/api/tv/prefs/quick/${encodeURIComponent(d.id)}`);
 }
 
-// Apps shown on the remote beyond the quick-launch row (chosen on the TV apps page; none until chosen)
+// Apps shown on the remote beyond the quick-launch row (chosen on the Remote Apps page; none until chosen)
 const visibleApps = d => S.prefs.apps[d.id] || [];
 async function setVisible(d, apps) {
   S.prefs.apps[d.id] = apps; hook('onPrefs');
@@ -252,7 +252,7 @@ function nowParts(d, s) {
 }
 function needSession() {
   const s = activeSession();
-  if (!s) alert('No Jellyfin session for this device. Use “Prepare device” on TV tools, or open the Jellyfin app on it.');
+  if (!s) alert('No Jellyfin session for this device. Use “Prepare device” on Remote Tools, or open the Jellyfin app on it.');
   return s;
 }
 function jfAct(btn, path, body) {

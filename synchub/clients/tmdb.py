@@ -60,3 +60,20 @@ class TmdbClient:
         if year:
             params["first_air_date_year"] = year
         return (self._get("/search/tv", **params) or {}).get("results", [])
+
+    # ---- lists for the Discover page (each is one page of 20 results, newest data TMDB has)
+    def trending(self, kind="all", window="day"):
+        """kind: 'all', 'movie' or 'tv'; window: 'day' or 'week'. 'all' mixes movies and shows (and people, which the caller drops)."""
+        return (self._get(f"/trending/{kind}/{window}") or {}).get("results", [])
+
+    def popular_movies(self):
+        return (self._get("/movie/popular") or {}).get("results", [])
+
+    def popular_tv(self):
+        return (self._get("/tv/popular") or {}).get("results", [])
+
+    def upcoming_movies(self):
+        return (self._get("/movie/upcoming") or {}).get("results", [])
+
+    def airing_this_week(self):
+        return (self._get("/tv/on_the_air") or {}).get("results", [])

@@ -1,0 +1,80 @@
+<script>
+(() => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const headers = { 'Content-Type': 'application/json', 'X-CSRFToken': token };
+    const call = async (url, options) => {
+        try {
+            const res = await fetch(url, options);
+            return await res.json();
+        } catch (e) { return { ok: false, message: 'Could not reach the server.' }; }
+    };
+    const say = (el, text, ok) => { el.className = 'small mt-2 ' + (ok === undefined ? 'text-body-secondary' : ok ? 'text-success' : 'text-danger'); el.textContent = text; };
+
+    // After an add: the buttons give way to the outcome and a link to the title's page.
+    function done(card, data) {
+        const actions = card.querySelector('[data-actions]');
+        actions.querySelectorAll('button').forEach((b) => b.remove());
+        const open = document.createElement('a');
+        open.href = data.url;
+        open.className = 'btn btn-sm btn-outline-secondary';
+        open.textContent = 'Open';
+        actions.appendChild(open);
+        say(card.querySelector('[data-result]'), data.message, true);
+    }
+
+    document.querySelectorAll('[data-add-movie]').forEach((button) => button.addEventListener('click', async () => {
+        const card = button.closest('.search-result');
+        const out = card.querySelector('[data-result]');
+        button.disabled = true;
+        say(out, 'Sending to Radarr...');
+        const data = await call('/api/search/add/movie', { method: 'POST', headers, body: JSON.stringify({ tmdb_id: card.dataset.tmdbId }) });
+        if (data.ok) done(card, data); else { say(out, data.message || 'Failed.', false); button.disabled = false; }
+    }));
+
+    // Shows: ask TMDB for the seasons, let the person choose, then send.
+    const modalEl = document.getElementById('seasonModal');
+    const modal = window.bootstrap ? bootstrap.Modal.getOrCreateInstance(modalEl) : null;
+    const list = document.getElementById('seasonList'), hint = document.getElementById('seasonHint');
+    const message = document.getElementById('seasonMessage'), sendButton = document.getElementById('seasonAdd');
+    let current = null;
+
+    document.querySelectorAll('[data-add-show]').forEach((button) => button.addEventListener('click', async () => {
+        const card = button.closest('.search-result');
+        current = card;
+        list.textContent = '';
+        sendButton.disabled = true;
+        hint.textContent = 'Reading the seasons from TMDB...';
+        say(message, '');
+        document.getElementById('seasonTitle').textContent = card.dataset.title;
+        modal.show();
+        const data = await call(`/api/search/show/${encodeURIComponent(card.dataset.tmdbId)}/seasons`);
+        if (!data.ok) { hint.textContent = ''; say(message, data.message || 'Could not read the seasons.', false); return; }
+        hint.textContent = 'Specials are left out unless you tick them.';
+        data.seasons.forEach((season) => {
+            const label = document.createElement('label');
+            label.className = 'form-check d-flex align-items-center gap-2 border rounded px-3 py-2';
+            const box = document.createElement('input');
+            box.type = 'checkbox';
+            box.className = 'form-check-input m-0';
+            box.value = season.number;
+            box.checked = season.number > 0 && season.episodes > 0;
+            box.addEventListener('change', () => { sendButton.disabled = !list.querySelector('input:checked'); });
+            const text = document.createElement('span');
+            text.textContent = `${season.name} · ${season.episodes} episode${season.episodes === 1 ? '' : 's'}${season.air_date ? ' · ' + season.air_date : ''}`;
+            label.append(box, text);
+            list.appendChild(label);
+        });
+        if (!data.has_tvdb) say(message, 'Sonarr needs a TVDB ID and TMDB has none for this show, so it cannot be added from here.', false);
+        else sendButton.disabled = !list.querySelector('input:checked');
+    }));
+
+    sendButton.addEventListener('click', async () => {
+        const seasons = [...list.querySelectorAll('input:checked')].map((box) => parseInt(box.value, 10));
+        if (!current || !seasons.length) return;
+        sendButton.disabled = true;
+        say(message, 'Reading every episode and sending to Sonarr...');
+        const data = await call('/api/search/add/show', { method: 'POST', headers, body: JSON.stringify({ tmdb_id: current.dataset.tmdbId, seasons }) });
+        if (data.ok) { modal.hide(); done(current, data); } else { say(message, data.message || 'Failed.', false); sendButton.disabled = false; }
+    });
+})();
+</script>

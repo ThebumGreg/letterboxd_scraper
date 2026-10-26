@@ -75,7 +75,7 @@ def test_the_dashboard_offers_date_added_and_shows_the_date(client, v2, conn):
     conn.execute("INSERT INTO item_state (target_type, target_id, state_code) VALUES ('movie', ?, 'in_library')", (got["Film"]["id"],))
     conn.commit()
     page = client.get("/").get_data(as_text=True)
-    assert '<option value="added-desc">Date Added</option>' in page
+    assert '<option value="added-desc">Date added</option>' in page
     film = re.search(r'<tr class="item-row[^>]*data-id="%d"[^>]*>.*?</tr>' % got["Film"]["id"], page, re.S).group(0)
     assert 'data-added="2026-10-21"' in film and 'data-added-label="Oct 21, 2026"' in film and "Added Oct 21, 2026" in film
     absent = re.search(r'<tr class="item-row[^>]*data-id="%d"[^>]*>.*?</tr>' % got["Absent"]["id"], page, re.S).group(0)

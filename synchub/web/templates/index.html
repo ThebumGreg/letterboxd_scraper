@@ -6,61 +6,110 @@
 
 {% block content %}
 <div id="tvNow" class="mb-3" hidden aria-live="polite"></div>
-<div class="row g-3 mb-3">
-    {{ stat_card('Movies', stats.movies, 'secondary', 'movie', '', 'text-body') }}
-    {{ stat_card('TV Shows', stats.shows, 'secondary', 'show', '', 'text-body') }}
+{% if health %}
+<a href="{{ url_for('status_page') }}" class="d-inline-flex align-items-center gap-2 mb-3 text-decoration-none small text-body-secondary" id="healthDot" title="Open System status">
+    <i class="bi bi-circle-fill text-{{ {'ok': 'success', 'warn': 'warning', 'bad': 'danger'}.get(health.state, 'success') }}" aria-hidden="true"></i> {{ health.summary }}
+</a>
+{% endif %}
+<div class="row g-3 mb-4" aria-label="Library at a glance">
     {{ stat_card('In Library', stats.in_library, 'success', '', 'in_library') }}
-    {{ stat_card('Partial', stats.partial, 'warning', '', 'partial') }}
-</div>
-<div class="row g-3 mb-4">
     {{ stat_card('In Progress', stats.in_flight, 'primary', '', 'in_flight') }}
     {{ stat_card('Queued', stats.queued, 'info', '', 'queued') }}
     {{ stat_card('Missing', stats.missing, 'danger', '', 'missing') }}
-    {{ stat_card('Profiles', stats.users, 'secondary', none, none, 'text-body') }}
+    {% if stats.partial %}{{ stat_card('Partial', stats.partial, 'warning', '', 'partial') }}{% endif %}
 </div>
 
-<div class="row g-2 mb-4 p-3 align-items-center panel mx-0" id="controls">
-    <div class="col-12 col-lg-3">
-        <label for="searchInput" class="visually-hidden">Search title</label>
-        <input type="search" id="searchInput" class="form-control" placeholder="Search title (press / to focus)" autocomplete="off">
+{% if resume %}
+<section class="mb-4" aria-labelledby="h-continue" id="continueWatching">
+    <h5 id="h-continue" class="mb-2">Continue Watching</h5>
+    <div class="d-flex gap-3 overflow-auto pb-2">
+        {% for c in resume %}
+        <div class="panel p-2 d-flex flex-column gap-1 flex-shrink-0" style="width: 150px;" data-continue="{{ c.row.id }}">
+            <a href="{{ c.row.url }}"><img src="{{ c.row.poster }}" alt="" width="130" height="195" class="rounded poster w-100 h-auto" loading="lazy"></a>
+            <div class="small fw-bold text-truncate" title="{{ c.row.title }}"><a href="{{ c.row.url }}" class="text-decoration-none text-reset">{{ c.row.title }}</a></div>
+            <div class="small text-body-secondary">{% if c.code %}{{ c.code }} · {% endif %}{{ c.position_label }}</div>
+            {% if c.percent %}<div class="progress" style="height: 4px;" role="progressbar" aria-label="How far you have watched" aria-valuenow="{{ c.percent }}" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar bg-info" style="width: {{ c.percent }}%"></div></div>{% endif %}
+            <div class="mt-auto">{{ watch_now(c.row.jellyfin_link, c.row.jellyfin_item_id, c.row.title, 'card',
+                resume=((c.code ~ ' at ' ~ c.position_label) if c.code else ('at ' ~ c.position_label)), play_item=c.item_id) }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+<form class="row g-2 mb-2 p-3 align-items-end panel mx-0" id="controls" onsubmit="return false" aria-label="Find in my library">
+    <div class="col-12 col-lg-4">
+        <label for="searchInput" class="form-label small mb-1">Find in my library</label>
+        <input type="search" id="searchInput" class="form-control" placeholder="Title, year, who requested it or rating (press / to focus)" autocomplete="off">
     </div>
     <div class="col-6 col-sm-4 col-lg-2">
-        <label for="mediaTypeFilter" class="visually-hidden">Media type</label>
+        <label for="mediaTypeFilter" class="form-label small mb-1">Type</label>
         <select id="mediaTypeFilter" class="form-select">
-            <option value="">All Media Types</option>
-            <option value="movie">Movies Only</option>
-            <option value="show">TV Shows Only</option>
+            <option value="">Movies and TV</option>
+            <option value="movie">Movies only</option>
+            <option value="show">TV shows only</option>
         </select>
     </div>
-    <div class="col-6 col-sm-4 col-lg-2">
-        <label for="userFilter" class="visually-hidden">Profile</label>
+    <div class="col-6 col-sm-4 col-lg-3">
+        <label for="userFilter" class="form-label small mb-1">Requested or watched by</label>
         <select id="userFilter" class="form-select">
-            <option value="">All Profiles</option>
+            <option value="">Anyone</option>
             {% for user in all_users %}<option value="{{ user|lower }}">{{ user }}</option>{% endfor %}
         </select>
     </div>
-    <div class="col-6 col-sm-4 col-lg-2">
-        <label for="statusFilter" class="visually-hidden">Status</label>
+    <div class="col-6 col-sm-4 col-lg-3">
+        <label for="statusFilter" class="form-label small mb-1">Library status</label>
         <select id="statusFilter" class="form-select">
-            <option value="">All Statuses</option>
+            <option value="">Any status</option>
             {% for code, label in status_options %}<option value="{{ code }}">{{ label }}</option>{% endfor %}
             <option value="in_flight">In progress (all)</option>
         </select>
     </div>
-    <div class="col-6 col-sm-12 col-lg-3 d-flex justify-content-end align-items-center gap-2">
-        <label for="sortOrder" class="visually-hidden">Sort order</label>
-        <select id="sortOrder" class="form-select flex-grow-1">
-            <option value="users-desc">Most Requested</option>
-            <option value="title-asc">Title (A-Z)</option>
-            <option value="year-desc">Release Year (Newest)</option>
-            <option value="added-desc">Date Added</option>
+    {% if can_filter_watch %}
+    <div class="col-6 col-sm-4 col-lg-3">
+        <label for="watchFilter" class="form-label small mb-1">My progress</label>
+        <select id="watchFilter" class="form-select">
+            <option value="">Any</option>
+            <option value="not_started">Not started</option>
+            <option value="in_progress">In progress</option>
+            <option value="finished">Finished</option>
         </select>
+    </div>
+    {% endif %}
+    {% if certifications %}
+    <div class="col-6 col-sm-4 col-lg-2">
+        <label for="certFilter" class="form-label small mb-1">Age rating</label>
+        <select id="certFilter" class="form-select">
+            <option value="">Any rating</option>
+            {% for c in certifications %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        </select>
+    </div>
+    {% endif %}
+    <div class="col-6 col-sm-4 col-lg-2">
+        <label for="yearFrom" class="form-label small mb-1">Released from</label>
+        <input type="number" id="yearFrom" class="form-control" inputmode="numeric" min="1888" max="2100" placeholder="Year">
+    </div>
+    <div class="col-6 col-sm-4 col-lg-2">
+        <label for="yearTo" class="form-label small mb-1">Released to</label>
+        <input type="number" id="yearTo" class="form-control" inputmode="numeric" min="1888" max="2100" placeholder="Year">
+    </div>
+    <div class="col-12 col-lg d-flex justify-content-lg-end align-items-end gap-2 flex-grow-1">
+        <div class="flex-grow-1">
+            <label for="sortOrder" class="form-label small mb-1">Sort by</label>
+            <select id="sortOrder" class="form-select">
+                <option value="users-desc">Most requested</option>
+                <option value="title-asc">Title (A-Z)</option>
+                <option value="year-desc">Release year (newest)</option>
+                <option value="added-desc">Date added</option>
+            </select>
+        </div>
         <div class="btn-group flex-shrink-0" role="group" aria-label="View mode">
             <button type="button" class="btn btn-outline-secondary active" id="btnListView" title="List view" aria-label="List view" aria-pressed="true"><i class="bi bi-list-ul" aria-hidden="true"></i></button>
             <button type="button" class="btn btn-outline-secondary" id="btnGridView" title="Grid view" aria-label="Grid view" aria-pressed="false"><i class="bi bi-grid-3x3-gap-fill" aria-hidden="true"></i></button>
         </div>
     </div>
-</div>
+</form>
+<div id="activeFilters" class="d-flex flex-wrap align-items-center gap-2 mb-3 d-none" aria-live="polite"></div>
 
 {% if not rows %}
     <div class="alert alert-info">
@@ -76,8 +125,8 @@
                 <th style="width: 60px;"><span class="visually-hidden">Poster</span></th>
                 <th>Title</th>
                 <th>Type</th>
-                <th class="d-none d-md-table-cell">Wanted By</th>
-                <th>Profiles</th>
+                <th class="d-none d-md-table-cell">Requested by</th>
+                <th>Requests</th>
                 <th>Status / Action</th>
             </tr>
         </thead>
@@ -87,6 +136,8 @@
                 data-id="{{ r.id }}" data-url="{{ r.url }}" data-poster="{{ r.poster }}"
                 data-tmdb-id="{{ r.tmdb_id or '' }}" data-tvdb-id="{{ r.tvdb_id or '' }}"
                 data-title="{{ r.title|lower }}" data-display-title="{{ r.title }}" data-year="{{ r.year or '' }}"
+                data-search="{{ ([r.title, r.year or '', r.certification or '', r.wanted_by|join(' '), r.watched_by|join(' ')]|join(' '))|lower }}"
+                data-watch="{{ r.watch }}" data-cert="{{ r.certification or '' }}"
                 data-kind="{{ r.kind }}" data-state="{{ r.state }}" data-state-label="{{ r.state_label }}" data-state-color="{{ r.state_color }}"
                 data-state-icon="{{ r.state_icon or '' }}"
                 data-progress="{{ r.progress_pct if r.progress_pct is not none else '' }}"
@@ -128,6 +179,7 @@
 <div id="emptyState" class="text-center text-body-secondary py-5 d-none">
     <p class="mb-2">No items match your filters.</p>
     <button type="button" id="btnResetFilters" class="btn btn-outline-secondary btn-sm">Reset filters</button>
+    {% if can('search') %}<p class="small mt-3 mb-0">Not in your library? <a href="{{ url_for('search_page') }}">Find &amp; request a title</a> or see <a href="{{ url_for('discover_page') }}">what is new and trending</a>.</p>{% endif %}
 </div>
 
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-4 p-3 panel">

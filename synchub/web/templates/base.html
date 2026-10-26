@@ -31,6 +31,7 @@
                         {% if item.children %}
                             {% set ns = namespace(active=false) %}
                             {% for child in item.children %}{% if child.href and path.startswith(child.href) %}{% set ns.active = true %}{% endif %}{% endfor %}
+                            {% if item.label == 'Media' and (path.startswith('/workers') or path.startswith('/storage')) %}{% set ns.active = true %}{% endif %}
                             <li class="nav-item dropdown">
                                 <a class="nav-link dropdown-toggle{% if ns.active %} active{% endif %}" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">{{ item.label }}</a>
                                 <ul class="dropdown-menu">
@@ -54,9 +55,15 @@
                     {% endfor %}
                 </ul>
                 {% if has_profiles %}
-                <a class="nav-link text-body-secondary ms-lg-auto" id="whoAmI" href="{{ url_for('who', next=request.path) }}" title="Switch profile">
-                    <i class="bi bi-person-circle" aria-hidden="true"></i> {{ current_profile.name if current_profile else 'Guest' }} <small>(switch)</small>
-                </a>
+                <div class="dropdown ms-lg-auto">
+                    <a class="nav-link dropdown-toggle text-body-secondary" id="whoAmI" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false" title="Your profile">
+                        <i class="bi bi-person-circle" aria-hidden="true"></i> {{ current_profile.name if current_profile else 'Guest' }}
+                    </a>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        {% if profile_link and current_profile %}<li><a class="dropdown-item{% if path.startswith(profile_link.href) %} active{% endif %}" href="{{ profile_link.href }}">My profile</a></li>{% endif %}
+                        <li><a class="dropdown-item" href="{{ url_for('who', next=request.path) }}">Switch profile</a></li>
+                    </ul>
+                </div>
                 {% endif %}
             </div>
         </div>

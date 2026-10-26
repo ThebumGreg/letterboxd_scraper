@@ -1,0 +1,25 @@
+<!-- synchub/web/templates/status.html -->
+{% extends "base.html" %}
+{% block title %}System status{% endblock %}
+
+{% block content %}
+{% set tone = {'ok': 'success', 'warn': 'warning', 'bad': 'danger', 'off': 'secondary'} %}
+{% set words = {'ok': 'OK', 'warn': 'Check', 'bad': 'Problem', 'off': 'Off'} %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+    <div>
+        <h2 class="mb-1">System status</h2>
+        <p class="text-body-secondary mb-0">{{ snapshot.summary }}. Connections are judged from their settings and how their last sync went.</p>
+    </div>
+    <a href="{{ url_for('activity_page') }}" class="btn btn-outline-secondary">What it's doing now</a>
+</div>
+<ul class="list-group mb-4" id="statusList">
+    {% for i in snapshot['items'] %}
+    <li class="list-group-item d-flex flex-wrap align-items-center gap-2" data-state="{{ i.state }}">
+        <span class="badge bg-{{ tone[i.state] }}{% if i.state == 'warn' %} text-dark{% endif %}" style="min-width: 4.5rem;">{{ words[i.state] }}</span>
+        <span class="fw-bold">{{ i.label }}</span>
+        <span class="text-body-secondary small flex-grow-1">{{ i.detail }}</span>
+        {% if i.href %}<a href="{{ i.href }}" class="small">Open</a>{% endif %}
+    </li>
+    {% endfor %}
+</ul>
+{% endblock %}

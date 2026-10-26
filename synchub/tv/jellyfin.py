@@ -182,6 +182,14 @@ class JellyfinClient:
         items = r.json().get("Items", [])
         return (items[0].get("UserData") or {}) if items else {}
 
+    def set_position(self, user_id, item_id, ticks):
+        """Saves where this user stopped in an item (0 clears it), so an app that resumes from Jellyfin's own record starts there. True if saved."""
+        body = {"PlaybackPositionTicks": int(ticks)}
+        r = self.request("POST", f"/UserItems/{item_id}/UserData", params={"userId": user_id}, json=body)
+        if r.status_code == 404:                                   # older servers keep it under the user
+            r = self.request("POST", f"/Users/{user_id}/Items/{item_id}/UserData", json=body)
+        return r.ok
+
     def next_up(self, series_id, user_id=None):
         """The episode of a show this user should watch next (the first one if they have not started it), or None."""
         r = self.request("GET", "/Shows/NextUp", params={"seriesId": series_id, "userId": user_id or self.lookup_user_id(), "limit": 1})

@@ -36,7 +36,7 @@ def card(page, tmdb_id, kind):
 # ---------------------------------------------------------------- the page
 def test_search_page_shows_the_form_and_is_in_the_nav(client, v2):
     page = client.get("/search").get_data(as_text=True)
-    assert 'name="q"' in page and 'name="type"' in page and 'href="/search"' in page and "Search TMDB" in page
+    assert 'name="q"' in page and 'name="type"' in page and 'href="/search"' in page and "Find &amp; request" in page
     assert 'id="results"' not in page
 
 

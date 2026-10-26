@@ -446,7 +446,7 @@ def test_everything_stays_open_when_nobody_changed_anything(browser, v2, conn):
 # ---------------------------------------------------------------- the menu
 def menu(page):
     """{'links': top-level labels, 'dropdowns': {label: [item labels]}} from the page's navigation bar."""
-    nav = re.search(r'<ul class="navbar-nav me-auto">(.*?)</ul>\s*(?:<a class="nav-link text-body-secondary|</div>)', page, re.S).group(1)
+    nav = re.search(r'<ul class="navbar-nav me-auto">(.*?)</ul>\s*(?:<div class="dropdown ms-lg-auto"|<a class="nav-link text-body-secondary|</div>)', page, re.S).group(1)
     dropdowns = {}
     for toggle, body in re.findall(r'<a class="nav-link dropdown-toggle[^"]*"[^>]*>(.*?)</a>\s*<ul class="dropdown-menu">(.*?)</ul>', nav, re.S):
         dropdowns[toggle.strip()] = re.findall(r'class="dropdown-item[^"]*"[^>]*>(.*?)</a>', body)
@@ -459,9 +459,9 @@ def test_the_menu_groups_workers_library_and_storage_and_tools_logs_and_payloads
     conn.commit()
     sign_in(browser, pid)
     shown = menu(text(browser.get("/")))
-    assert shown["links"] == ["Dashboard", "Remote", "Search", "My profile", "Settings"]
-    assert shown["dropdowns"] == {"Media": ["Library", "Resolution Center", "Workers", "Originals", "Storage"],
-                                  "System": ["Tools &amp; Operations", "What it&#39;s doing now", "Logs", "Jellyfin events", "Payloads", "Dynamic DNS", "People", "TV apps", "TVs", "TV tools"]}
+    assert shown["links"] == ["Dashboard", "Remote", "Settings"]
+    assert shown["dropdowns"] == {"Discover": ["New &amp; trending", "Find &amp; request"], "Media": ["Library", "Resolution Center"],       # Workers and Storage are tabs of Library
+                                  "System": ["Tools &amp; Operations", "System status", "What it&#39;s doing now", "Logs", "Jellyfin events", "Payloads", "Dynamic DNS", "People", "Remote Apps", "TVs", "Remote Tools"]}
     page = text(browser.get("/"))
     assert re.findall(r'class="dropdown-header">(.*?)</h6>', page) == ["Run", "Monitor", "Admin", "TV"]
 
@@ -469,9 +469,9 @@ def test_the_menu_groups_workers_library_and_storage_and_tools_logs_and_payloads
 def test_the_menu_shows_only_what_the_person_may_open(browser, people):
     sign_in(browser, people["cara"], "1357")
     shown = menu(text(browser.get("/library")))
-    assert shown == {"links": [], "dropdowns": {"Media": ["Library", "Workers", "Originals"]}}
+    assert shown == {"links": [], "dropdowns": {"Media": ["Library"]}}
     sign_in(browser, people["bob"], "2468")
-    assert menu(text(browser.get("/"))) == {"links": ["Dashboard", "Search"], "dropdowns": {}}
+    assert menu(text(browser.get("/"))) == {"links": ["Dashboard"], "dropdowns": {"Discover": ["New &amp; trending", "Find &amp; request"]}}
 
 
 def test_the_dropdown_holding_the_current_page_is_marked_active(browser, v2, conn):
@@ -480,7 +480,7 @@ def test_the_dropdown_holding_the_current_page_is_marked_active(browser, v2, con
     sign_in(browser, pid)
     page = text(browser.get("/workers"))
     assert re.search(r'dropdown-toggle active"[^>]*>Media', page) and not re.search(r'dropdown-toggle active"[^>]*>System', page)
-    assert re.search(r'dropdown-item active" href="/workers" aria-current="page"', page)
+    assert re.search(r'dropdown-toggle active"[^>]*>Media', text(browser.get("/storage")))              # the Library page's other tabs keep Media lit
     assert re.search(r'dropdown-toggle active"[^>]*>System', text(browser.get("/logs"))) and re.search(r'nav-link active" href="/settings"', text(browser.get("/settings")))
 
 
@@ -489,7 +489,7 @@ def test_the_dropdowns_work_on_a_phone_menu(browser, v2, conn):
     conn.commit()
     sign_in(browser, pid)
     page = text(browser.get("/"))
-    assert page.count('data-bs-toggle="dropdown"') == 2 and 'aria-expanded="false"' in page and 'class="collapse navbar-collapse"' in page
+    assert page.count('data-bs-toggle="dropdown"') == 4 and 'aria-expanded="false"' in page and 'class="collapse navbar-collapse"' in page
 
 
 def test_people_holds_profile_management_for_those_with_access_and_never_prints_a_pin(browser, v2, conn, people):
@@ -532,7 +532,7 @@ def test_a_menu_heading_with_nothing_under_it_is_left_out(browser, v2, conn):
     sign_in(browser, pid, "3333")
     page = text(browser.get("/logs"))
     assert re.findall(r'class="dropdown-header">(.*?)</h6>', page) == ["Monitor", "TV"]
-    assert menu(page)["dropdowns"] == {"System": ["What it&#39;s doing now", "Logs", "Jellyfin events", "TV apps"]}
+    assert menu(page)["dropdowns"] == {"System": ["System status", "What it&#39;s doing now", "Logs", "Jellyfin events", "Remote Apps"]}
 
 
 def test_the_last_person_who_can_manage_access_cannot_be_deleted(browser, v2, conn, people):

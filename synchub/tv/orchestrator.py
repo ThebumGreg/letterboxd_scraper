@@ -7,6 +7,7 @@ from .devices import DeviceError
 from .jellyfin import match_session, summarize_session
 
 TICKS = 10_000_000          # Jellyfin counts time in 100-nanosecond ticks
+MAX_SKIP_PRESSES = 90       # never press a remote key more than this many times to find a place
 JUMP_TOLERANCE = 30         # seconds short of the saved position that still counts as having jumped to it
 
 
@@ -40,7 +41,7 @@ def device_sessions(jf, driver):
         driver._warned_rule = True
         jf.logbook.add("system", driver.id, "session rule", ok=False,
                        response=f"The session rule {driver.session_rule()} matched nothing, so the default {rule} is being used. "
-                                'Fix it on TV tools under "Sessions Jellyfin can see".')
+                                'Fix it on Remote Tools under "Sessions Jellyfin can see".')
     found = [s for s in raw if match_session(rule, s)]
     return sorted(found, key=lambda s: s.get("LastActivityDate") or "", reverse=True)
 
@@ -56,7 +57,7 @@ def explain_no_session(jf, driver):
         return (f'Jellyfin has a session for {s.get("Client")} / {s.get("DeviceName")}, but it reports that it cannot be '
                 "controlled remotely (SupportsRemoteControl is false), so the app on this device ignores play commands."), "not_remote"
     seen = "; ".join(f'{s.get("Client")} / {s.get("DeviceName")}' for s in raw) or "none"
-    return (f"No Jellyfin session matched {rules[0]}. Sessions Jellyfin lists right now: {seen}. On TV tools, under "
+    return (f"No Jellyfin session matched {rules[0]}. Sessions Jellyfin lists right now: {seen}. On Remote Tools, under "
             f'"Sessions Jellyfin can see", choose "Use for {driver.name}" on the right one.'), "no_match"
 
 
@@ -273,11 +274,46 @@ def jump_to(jf, driver, item_id, ticks, step, timeout=10):
     return False
 
 
-def play_deeplink(driver, jf, logbook, item_id, start_ticks=None, timeout=45):
+def press_to(jf, driver, item_id, ticks, step, timeout=12):
+    """Option C: after a deep link has started a title from the beginning, press the remote's Right key until it should be at `ticks`, then look
+    at the session's position to see where it really got to. Each press is assumed to skip `resume_key_seconds` (10 unless the TV's settings say
+    otherwise), so this is a rough way of getting close, never exact. True if the session ended up within a minute of the place."""
+    key = driver.keymap.get("right")
+    if not key:
+        step("This device has no Right key to skip ahead with", False)
+        return False
+    seconds = max(1, int(driver.cfg.get("resume_key_seconds") or 10))
+    presses = min(MAX_SKIP_PRESSES, round(ticks / TICKS / seconds))
+    if presses < 1:
+        return True
+    try:
+        driver.send_key(key, presses)
+    except DeviceError as e:
+        step(f"Could not press Right {presses} times: {e}", False)
+        return False
+    where = _clock(ticks)
+
+    def near():
+        s = _playing_session(jf, driver, item_id) or {}
+        position = (s.get("PlayState") or {}).get("PositionTicks")
+        return position is not None and abs(position - ticks) <= 60 * TICKS or None
+    if _wait_for(near, timeout, 2):
+        step(f"Pressed Right {presses} times, and the app is now near {where}")
+        return True
+    step(f"Pressed Right {presses} times to reach about {where}, but the app does not report being near it. Check where it is, and set how many seconds one press skips ('resume_key_seconds') for this TV", False)
+    return False
+
+
+def play_deeplink(driver, jf, logbook, item_id, start_ticks=None, timeout=45, resume_mode="b", user_id=None):
     """Power the device on and send the Jellyfin app a deep link. -> {"ok", "steps", "confirmed", "retryable"}.
 
     The app plays inside itself, so Jellyfin sees the session and records progress and watched state.
-    A deep link starts from the beginning, so when `start_ticks` is given the session is sent a Seek once it is playing (see jump_to).
+    A deep link starts from the beginning, so where playback should start depends on `resume_mode` (see Driver.resume_mode):
+      b  once it is playing, the session is sent a Seek (jump_to). The official Roku app cannot be remote controlled, so there it only says where to skip to;
+      e  before the link is sent the place is saved in Jellyfin for the viewer, in case the app resumes from the server's record, and afterwards the
+         session's position says whether it did (it is not sent a Seek);
+      c  once it is playing, the remote's Right key is pressed until it should be at the place (press_to).
+    (Option a, streaming from the place, does not use a deep link at all.) `start_ticks` 0 means start over.
     `retryable` means the request itself failed (so a different route may be tried), as opposed to it being sent but not confirmed."""
     steps = []
 
@@ -301,6 +337,18 @@ def play_deeplink(driver, jf, logbook, item_id, start_ticks=None, timeout=45):
     series_id = item.get("SeriesId") if media_type == "season" else None
     if media_type == "season" and not series_id:
         return fail("A season deep link needs its series id, which Jellyfin did not give")
+    if resume_mode == "e" and start_ticks is not None:
+        if not user_id:
+            step("No Jellyfin user is set for this profile, so the place could not be saved first; the app will use its own", False)
+        else:
+            try:
+                saved = jf.set_position(user_id, item_id, start_ticks)
+            except Exception as e:                                   # the title must still play
+                saved = False
+                step(f"Could not save the place in Jellyfin: {e}", False)
+            else:
+                step(f"Saved {_clock(start_ticks) if start_ticks else 'the start'} as the place in Jellyfin so the app can pick it up" if saved
+                     else "Jellyfin would not save the place; the app will use what it has", bool(saved))
     try:
         app = driver.jellyfin_app()
         how = driver.deeplink(app, media_type, item_id, series_id, running=st.get("app") == app)
@@ -311,12 +359,33 @@ def play_deeplink(driver, jf, logbook, item_id, start_ticks=None, timeout=45):
     if playing:
         step(f'Jellyfin reports it playing: {playing.get("Name")}')
         if start_ticks:
-            jump_to(jf, driver, item_id, start_ticks, step)
+            if resume_mode == "e":
+                _report_resume(jf, driver, item_id, start_ticks, step)
+            elif resume_mode == "c":
+                press_to(jf, driver, item_id, start_ticks, step)
+            else:
+                jump_to(jf, driver, item_id, start_ticks, step)
     else:
         step("The link was sent, but Jellyfin never reported it playing. The app may still be loading, or not be signed in.", False)
         if start_ticks:
             step(f"It could not be moved to {_clock(start_ticks)} either, so it will play from the beginning", False)
     return {"ok": True, "steps": steps, "confirmed": bool(playing), "retryable": False}
+
+
+def _report_resume(jf, driver, item_id, ticks, step, timeout=10):
+    """Option e's verdict: did the app start at the saved place? Reads the session's position a few times and says what it found, so the choice
+    can be judged (or changed to another option on the Remote Apps page)."""
+    where = _clock(ticks)
+
+    def position():
+        s = _playing_session(jf, driver, item_id) or {}
+        return (s.get("PlayState") or {}).get("PositionTicks")
+    if _wait_for(lambda: (position() or 0) >= ticks - JUMP_TOLERANCE * TICKS or None, timeout, 2):
+        step(f"The app picked up at {where} by itself")
+        return True
+    step(f"The app started from the beginning even though {where} was saved in Jellyfin, so this app ignores the saved place. "
+         "Choose another option under Remote Apps, 'When a title is resumed' (the keys option is the one to try next)", False)
+    return False
 
 
 def play_url(driver, jf, logbook, item_id, start_ticks=None):

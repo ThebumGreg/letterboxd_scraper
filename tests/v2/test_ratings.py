@@ -369,7 +369,7 @@ def test_once_a_profile_exists_a_guest_can_only_open_the_dashboard_and_the_remot
     guest = app.test_client()
     guest.set_cookie("synchub_profile", "0")
     assert guest.get("/").status_code == 200 and guest.get("/tv/remote").status_code == 200
-    for path in ("/search", "/settings", "/people", "/tools", "/logs", "/payloads", "/library", "/workers", "/storage", "/ddns", "/resolution", "/tv/devices", "/tv/advanced"):       # (TV apps is part of the Remote permission)
+    for path in ("/search", "/settings", "/people", "/tools", "/logs", "/payloads", "/library", "/workers", "/storage", "/ddns", "/resolution", "/tv/devices", "/tv/advanced"):       # (Remote Apps is part of the Remote permission)
         assert guest.get(path).status_code == 403, path
     page = text(guest.get("/"))
     assert 'href="/search"' not in page and 'href="/settings"' not in page and 'href="/tv/remote"' in page
@@ -490,7 +490,7 @@ def test_the_remote_will_play_what_the_limit_allows(kid_remote, tv, monkeypatch)
     from synchub.web import tv as web_tv
     sent = []
     monkeypatch.setattr(tv.devices["bed"], "key", lambda *a, **k: None, raising=False)
-    monkeypatch.setattr("synchub.tv.orchestrator.play_deeplink", lambda d, jf, log, item, pos: sent.append(item) or {"ok": True, "steps": ["sent"], "confirmed": True})
+    monkeypatch.setattr("synchub.tv.orchestrator.play_deeplink", lambda d, jf, log, item, pos, **how: sent.append(item) or {"ok": True, "steps": ["sent"], "confirmed": True})
     for allowed in ("kid", "tmdbonly", "kidep"):
         response = kid_remote.post("/api/tv/devices/bed/play", json={"playCommand": "PlayNow", "itemIds": [allowed]})
         assert response.status_code == 200 and response.get_json()["ok"] is True, allowed
