@@ -1,5 +1,4 @@
 # Add to /etc/fstab, then:  sudo mkdir -p <each mount point>  &&  sudo mount -a
-# The x-systemd.* options mount a share when it is first used and try again on the next use, so a network that is late at boot ("mount error(101): Network is unreachable") no longer leaves the folder empty. After editing: sudo systemctl daemon-reload
 # SMB needs a credentials file (sudo nano /etc/synchub-smb.cred; sudo chmod 600 /etc/synchub-smb.cred) containing two lines:  username=...  and  password=...
-//192.168.1.10/Media  /mnt/tower/Media  cifs  credentials=/etc/synchub-smb.cred,vers=3.0,_netdev,nofail,x-systemd.automount,x-systemd.requires=network-online.target,x-systemd.mount-timeout=30,x-systemd.idle-timeout=0  0  0
-//192.168.1.10/TFiles  /mnt/tower/TFiles  cifs  credentials=/etc/synchub-smb.cred,vers=3.0,_netdev,nofail,x-systemd.automount,x-systemd.requires=network-online.target,x-systemd.mount-timeout=30,x-systemd.idle-timeout=0  0  0
+//192.168.1.10/Media  /mnt/tower/Media  cifs  credentials=/etc/synchub-smb.cred,vers=3.0,_netdev,nofail  0  0
+//192.168.1.10/TFiles  /mnt/tower/TFiles  cifs  credentials=/etc/synchub-smb.cred,vers=3.0,_netdev,nofail  0  0
