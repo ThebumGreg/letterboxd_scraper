@@ -334,11 +334,17 @@ def rescan_due():
     """Asks Radarr/Sonarr to rescan every title whose file was just replaced. Makes network calls: call it with no transaction open. Never raises."""
     with db.connection() as conn:
         due = [dict(r) for r in conn.execute("SELECT * FROM download_import WHERE rescan_status = 'due' ORDER BY id")]
+    sent = 0
     for row in due:
+        with db.connection() as conn:       # claimed first, so two requests running at once do not both ask the service
+            claimed = conn.execute("UPDATE download_import SET rescan_status = 'sending', updated_at = ? WHERE id = ? AND rescan_status = 'due'", (db.now(), row["id"])).rowcount
+        if not claimed:
+            continue
         status, message = _rescan(row)
         with db.connection() as conn:
             conn.execute("UPDATE download_import SET rescan_status = ?, rescan_message = ?, updated_at = ? WHERE id = ?", (status, message, db.now(), row["id"]))
-    return len(due)
+        sent += 1
+    return sent
 
 
 def _rescan(row):

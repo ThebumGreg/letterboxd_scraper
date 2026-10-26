@@ -760,7 +760,7 @@ def test_a_radarr_import_is_scanned_converted_in_place_and_radarr_is_asked_to_re
     wait(lambda: row()["status"] in ("awaiting_approval", "nothing_to_do", "blocked", "failed"), timeout=60, what="the scan and the decision")
     assert row()["status"] == "awaiting_approval", row()["message"]
     assert client.post(f"/api/downloads/{row()['id']}/approve").get_json()["ok"] is True
-    wait(lambda: row()["status"] in ("replaced", "failed", "blocked") and row()["rescan_status"] != "due", timeout=90, what="the replacement")
+    wait(lambda: row()["status"] in ("replaced", "failed", "blocked") and row()["rescan_status"] in ("done", "failed"), timeout=90, what="the replacement")
     final = row()
     assert final["status"] == "replaced", final["message"]
     assert final["rescan_status"] == "done" and rescans == [9] and told
