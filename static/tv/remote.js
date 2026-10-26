@@ -80,11 +80,11 @@ function renderQuick() {
   let html;
   if (list.length) html = list.map(a => `<button data-act="launch" data-app="${esc(a.id)}" class="tile ${a.id === st.app ? 'active' : ''}" title="${esc(a.name)}">${iconHtml(d, a)}<span class="n">${esc(a.name)}</span></button>`).join('');
   else if (S.appsLoading[d.id]) html = '<div class="dim small quick-note">Loading apps…</div>';
-  else html = `<div class="dim small quick-note">${S.appsError[d.id] ? esc(S.appsError[d.id]) : 'No quick-launch apps yet.'} Pick some on <a href="/tv/settings">TV apps</a>.</div>`;
+  else html = `<div class="dim small quick-note">${S.appsError[d.id] ? esc(S.appsError[d.id]) : 'No quick-launch apps yet.'} Pick some on <a href="/tv/settings">Remote Apps</a>.</div>`;
   if (el.dataset.sig !== html) { el.dataset.sig = html; el.innerHTML = html; }
 }
 
-// The apps chosen on the TV apps page, below the quick-launch row (anything already in that row is not repeated)
+// The apps chosen on the Remote Apps page, below the quick-launch row (anything already in that row is not repeated)
 function renderApps() {
   const d = dev(), el = $('#rapps'); if (!d || !el) return;
   const st = S.status[d.id] || {}, quick = new Set(quickApps(d).map(a => a.id));

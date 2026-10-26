@@ -21,7 +21,8 @@ APP_ID_RE = re.compile(r"^[\w.\-]{1,120}$")
 MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}[:-]?){5}[0-9A-Fa-f]{2}$")
 SLEEP_MODES = ("standby", "screensaver")
 APPS_TTL = 600           # seconds an installed-app list is reused
-EMPTY_PREFS = {"quick": {}, "session": {}, "play": {}, "apps": {}, "devices": []}
+EMPTY_PREFS = {"quick": {}, "session": {}, "play": {}, "apps": {}, "resume": {}, "devices": []}
+RESUME_MODES = ("a", "b", "c", "e")
 
 
 def _empty_prefs():
@@ -66,6 +67,7 @@ class Runtime:
             prefs = {"quick": {}, "apps": {},
                      "session": {k: v for k, v in (data.get("session") or {}).items() if isinstance(v, dict)},
                      "play": {k: v for k, v in (data.get("play") or {}).items() if v == "url"},
+                     "resume": {k: v for k, v in (data.get("resume") or {}).items() if v in RESUME_MODES},
                      "devices": [d for d in (data.get("devices") or []) if isinstance(d, dict)]}
             for key, limit in (("quick", QUICK_MAX), ("apps", APPS_MAX)):
                 for dev_id, apps in (data.get(key) or {}).items():
@@ -108,6 +110,7 @@ class Runtime:
         for d in self.devices.values():
             d.session_override = self.prefs["session"].get(d.id)
             d.play_learned = self.prefs["play"].get(d.id)
+            d.resume_override = self.prefs["resume"].get(d.id)
             d._warned_rule = False
 
     def device(self, dev_id):

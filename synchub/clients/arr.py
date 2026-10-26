@@ -64,6 +64,10 @@ class RadarrClient(_Arr):
     def movies(self):
         return self._get("GetLibrary", "/api/v3/movie", timeout=60)
 
+    def calendar(self, start, end):
+        """Monitored movies with a release between two dates (YYYY-MM-DD)."""
+        return self._get("GetCalendar", "/api/v3/calendar", params={"start": start, "end": end, "unmonitored": "false"}, timeout=30)
+
     def rescan_movie(self, movie_id):
         """Asks Radarr to look at the movie's folder again, so it notices the file was replaced."""
         return self._send("RescanMovie", "POST", "/api/v3/command", {"name": "RescanMovie", "movieId": int(movie_id)})
@@ -92,6 +96,10 @@ class SonarrClient(_Arr):
 
     def series(self):
         return self._get("GetLibrary", "/api/v3/series", timeout=60)
+
+    def calendar(self, start, end):
+        """Episodes of monitored series airing between two dates (YYYY-MM-DD), with the series attached."""
+        return self._get("GetCalendar", "/api/v3/calendar", params={"start": start, "end": end, "unmonitored": "false", "includeSeries": "true"}, timeout=30)
 
     def episodes(self, series_id):
         return self._get("GetEpisodes", "/api/v3/episode", params={"seriesId": series_id}, timeout=60)

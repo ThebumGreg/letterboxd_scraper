@@ -314,3 +314,110 @@ def test_a_stream_from_the_beginning_has_no_note(stream, monkeypatch):
     monkeypatch.setattr(orchestrator.casting, "stream_url", lambda jf, item, base, mode, start: ("http://jf/Videos/m1/stream?static=true", "mkv", "direct play"))
     out = orchestrator.play_url(StreamDriver(), stream, Book(), "m1", None)
     assert not any("part-way" in s or "Starting at" in s for s in out["steps"])
+
+
+# ================================================================ how a deep-link-only TV resumes (Remote Apps, "When a title is resumed")
+class SavingJellyfin:
+    """Jellyfin as option e sees it: it can be told where the viewer stopped, and says where the app is."""
+    def __init__(self, saved_ok=True):
+        self.saved, self.saved_ok = [], saved_ok
+
+    def item(self, item_id):
+        return {"Id": item_id, "Name": "Heat", "Type": "Movie"}
+
+    def set_position(self, user_id, item_id, ticks):
+        self.saved.append((user_id, item_id, ticks))
+        return self.saved_ok
+
+
+def test_option_e_saves_the_place_first_and_reports_that_the_app_picked_it_up(deeplink, monkeypatch):
+    jf = SavingJellyfin()
+    monkeypatch.setattr(orchestrator, "_playing_item", lambda jf_, driver, item_id: {"Name": "Heat"})
+    monkeypatch.setattr(orchestrator, "_playing_session", lambda jf_, driver, item_id: {"Id": "s1", "PlayState": {"PositionTicks": HOUR}})
+    monkeypatch.setattr(orchestrator, "jump_to", lambda *a, **k: pytest.fail("option e does not send a Seek"))
+    out = orchestrator.play_deeplink(Driver(), jf, Book(), "m1", HOUR, resume_mode="e", user_id=ALICE)
+    assert jf.saved == [(ALICE, "m1", HOUR)] and out["ok"]
+    assert out["steps"][0].startswith("Saved 1:00:00 as the place in Jellyfin") and "The app picked up at 1:00:00 by itself" in out["steps"]
+
+
+def test_option_e_says_plainly_when_the_app_ignored_the_saved_place(deeplink, monkeypatch):
+    jf = SavingJellyfin()
+    monkeypatch.setattr(orchestrator, "_playing_item", lambda jf_, driver, item_id: {"Name": "Heat"})
+    monkeypatch.setattr(orchestrator, "_playing_session", lambda jf_, driver, item_id: {"Id": "s1", "PlayState": {"PositionTicks": 10_000_000}})
+    out = orchestrator.play_deeplink(Driver(), jf, Book(), "m1", HOUR, resume_mode="e", user_id=ALICE)
+    assert out["ok"] and any("started from the beginning even though 1:00:00 was saved" in s for s in out["steps"])
+
+
+def test_option_e_starting_over_clears_the_saved_place_and_a_missing_user_is_said(deeplink, monkeypatch):
+    jf = SavingJellyfin()
+    monkeypatch.setattr(orchestrator, "_playing_item", lambda jf_, driver, item_id: {"Name": "Heat"})
+    monkeypatch.setattr(orchestrator, "_playing_session", lambda jf_, driver, item_id: {"PlayState": {"PositionTicks": 0}})
+    assert orchestrator.play_deeplink(Driver(), jf, Book(), "m1", 0, resume_mode="e", user_id=ALICE)["ok"] and jf.saved == [(ALICE, "m1", 0)]
+    nobody = SavingJellyfin()
+    out = orchestrator.play_deeplink(Driver(), nobody, Book(), "m1", HOUR, resume_mode="e", user_id=None)
+    assert nobody.saved == [] and any("No Jellyfin user is set for this profile" in s for s in out["steps"])
+    nothing = SavingJellyfin()
+    orchestrator.play_deeplink(Driver(), nothing, Book(), "m1", None, resume_mode="e", user_id=ALICE)
+    assert nothing.saved == []                                                                   # no place asked for: nothing to save
+
+
+class KeyDriver(Driver):
+    cfg = {}
+    keymap = {"right": "Right"}
+
+    def __init__(self):
+        self.keys = []
+
+    def send_key(self, native, count=1):
+        self.keys.append((native, count))
+
+
+def test_option_c_presses_right_about_as_often_as_the_place_needs_and_checks_where_it_landed(monkeypatch, steps):
+    monkeypatch.setattr(orchestrator, "_wait_for", lambda fn, timeout, interval=2: fn())
+    monkeypatch.setattr(orchestrator, "_playing_session", lambda jf, driver, item_id: {"PlayState": {"PositionTicks": 5 * 600_000_000}})
+    driver = KeyDriver()
+    assert orchestrator.press_to(None, driver, "m1", 5 * 600_000_000, steps) is True
+    assert driver.keys == [("Right", 30)] and "now near 5:00" in steps.got[-1][0]
+    driver.keys.clear()
+    driver.cfg = {"resume_key_seconds": 30}
+    orchestrator.press_to(None, driver, "m1", 5 * 600_000_000, steps)
+    assert driver.keys == [("Right", 10)]
+    driver.keys.clear()
+    orchestrator.press_to(None, driver, "m1", 5 * HOUR, steps)
+    assert driver.keys == [("Right", orchestrator.MAX_SKIP_PRESSES)]                              # never an endless run of key presses
+
+
+def test_option_c_reports_when_the_app_is_not_where_it_should_be(monkeypatch, steps):
+    monkeypatch.setattr(orchestrator, "_wait_for", lambda fn, timeout, interval=2: fn())
+    monkeypatch.setattr(orchestrator, "_playing_session", lambda jf, driver, item_id: {"PlayState": {"PositionTicks": 0}})
+    assert orchestrator.press_to(None, KeyDriver(), "m1", 5 * 600_000_000, steps) is False and not steps.got[-1][1] and "resume_key_seconds" in steps.got[-1][0]
+
+
+def test_the_choice_is_saved_per_tv_checked_and_handed_to_the_play_route(alice, tv, monkeypatch):
+    assert alice.get("/api/tv/config").get_json()["devices"][0]["resumeMode"] == "e"                 # a deep-link TV starts on option e
+    assert alice.put("/api/tv/prefs/resume/den", json={"mode": "c"}).get_json()["ok"]
+    assert alice.get("/api/tv/config").get_json()["devices"][0]["resumeMode"] == "c"
+    assert not alice.put("/api/tv/prefs/resume/den", json={"mode": "z"}).get_json()["ok"]
+    use(tv, monkeypatch, items={"m1": MOVIE}, data={"m1": {"PlaybackPositionTicks": HOUR}})
+    assert play(alice, "m1")["ok"] and RecordingTV.how == {"resume_mode": "c", "user_id": ALICE}
+    runtime_prefs = tv.prefs["resume"]
+    assert runtime_prefs == {"den": "c"}
+
+
+def test_option_a_streams_a_resumed_title_from_the_saved_place_but_a_fresh_one_still_uses_the_link(alice, tv, monkeypatch):
+    from synchub.tv.devices import REGISTRY
+
+    class Streamer(RecordingTV):
+        type = "streamer"
+        capabilities = frozenset({"deeplink", "url_play"})
+        streamed = []
+
+    monkeypatch.setitem(REGISTRY, "streamer", Streamer)
+    tv.prefs["devices"] = [{"id": "den", "name": "Den", "type": "streamer", "host": "10.0.0.5"}]
+    tv.reload_devices()
+    monkeypatch.setattr(orchestrator, "play_url", lambda driver, jf, logbook, item_id, start_ticks=None: Streamer.streamed.append((item_id, start_ticks)) or {"ok": True, "steps": ["streamed"], "confirmed": None})
+    use(tv, monkeypatch, items={"m1": MOVIE}, data={"m1": {"PlaybackPositionTicks": HOUR}})
+    assert alice.put("/api/tv/prefs/resume/den", json={"mode": "a"}).get_json()["ok"]
+    assert play(alice, "m1")["ok"] and Streamer.streamed == [("m1", HOUR)] and RecordingTV.played == []
+    use(tv, monkeypatch, items={"m1": MOVIE})                                                   # nothing to pick up: the normal link
+    assert play(alice, "m1")["ok"] and RecordingTV.played == [("m1", None)]

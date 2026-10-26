@@ -24,7 +24,8 @@ def row_of(item):
 
 
 def meaningful(row):
-    return bool(row["played"] or row["position_ticks"] or row["play_count"])
+    """Finished or part-way. A play count alone is not enough: Jellyfin adds one every time a title is opened, even for a second."""
+    return bool(row["played"] or row["position_ticks"])
 
 
 def sync_user(conn, client, jellyfin_user_id, now=None):

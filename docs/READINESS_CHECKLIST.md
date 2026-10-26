@@ -2,7 +2,7 @@
 
 A basic list of things to try before this branch goes to `main` as V1.1. It assumes you run the branch in WSL against a **copy** of your live database, with the live SyncHub still running in Docker on another machine.
 
-Items marked ★ could not be checked without your hardware or devices, so they matter most. If something fails, copy the matching line from the Log on **System, TV tools** and send it along.
+Items marked ★ could not be checked without your hardware or devices, so they matter most. If something fails, copy the matching line from the Log on **System, Remote Tools** and send it along.
 
 ## 0. Setup
 
@@ -17,9 +17,9 @@ Items marked ★ could not be checked without your hardware or devices, so they 
 
 ## 1. Menu and permissions
 
-- [ ] The top bar reads Dashboard, Remote, Search, Media, System, Settings.
-- [ ] **Media** has Library, Resolution Center, Workers, Storage.
-- [ ] **System** has four groups: Run (Tools & Operations), Monitor (What it's doing now, Logs, Jellyfin events, Payloads), Admin (Dynamic DNS, People), TV (TV apps, TVs, TV tools).
+- [ ] The top bar reads Dashboard, Discover, Remote, Media, System, Settings, with your name (My profile, Switch profile) at the right.
+- [ ] **Media** has Library and Resolution Center (Workers and Storage are tabs on the Library page). **Discover** has New & trending and Find & request.
+- [ ] **System** has four groups: Run (Tools & Operations), Monitor (System status, What it's doing now, Logs, Jellyfin events, Payloads), Admin (Dynamic DNS, People), TV (Remote Apps, TVs, Remote Tools).
 - [ ] ★ On an iPhone and an iPad the hamburger menu and the dropdown groups open and tap cleanly.
 - [ ] The old addresses `/access` and `/diagnostics` land on People and What it's doing now.
 - [ ] On **People**, give a profile that has a saved page list the new **TV remote** and **TV setup** permissions. A profile that has never used the page list sees everything.
@@ -53,11 +53,11 @@ Items marked ★ could not be checked without your hardware or devices, so they 
 - [ ] **System, TVs, Scan network** with your real address range finds the Roku and the Google TV. Add both from the results.
 - [ ] Press **Start pairing** on the Google TV and enter the code. Its status shows "on".
 - [ ] **Remote**: D-pad, volume (tap, and hold), power and sleep, and the quick-launch apps all work on both TVs.
-- [ ] **TV apps**: tick a few apps and see them on the Remote page below the quick-launch row.
+- [ ] **Remote Apps**: tick a few apps and see them on the Remote page below the quick-launch row.
 - [ ] ★ **Google TV from the screensaver**: open an app from the remote. It should press Home, wait about 2 seconds, then launch.
 - [ ] ★ **Roku already playing Jellyfin**: play a different title. It should go Home first and then open the new one.
 - [ ] ★ **Roku from standby**: Watch a movie wakes it and plays.
-- [ ] ★ **Google TV from standby**: run **Probe network** on TV tools with the TV on and again in standby, and note which wake method works.
+- [ ] ★ **Google TV from standby**: run **Probe network** on Remote Tools with the TV on and again in standby, and note which wake method works.
 
 ## 4. Watch now
 

@@ -117,7 +117,7 @@ def test_an_item_is_not_watched_in_progress_or_watched():
     assert watch.describe(None)["state"] == "unwatched" and watch.describe(None)["state_label"] == "Not watched" and watch.describe(None)["resume_label"] is None
     mid = watch.describe({"position_ticks": 42 * 600_000_000, "runtime_ticks": 2 * HOUR, "played": 0, "play_count": 0, "last_played_at": "2026-10-20 19:03:11"})
     assert (mid["state"], mid["state_label"], mid["percent"], mid["position_label"], mid["runtime_label"], mid["resume_label"], mid["last_played_label"]) == \
-           ("in_progress", "In progress", 35, "42:00", "2:00:00", "42:00", "Oct 20, 2026")
+           ("in_progress", "Started watching", 35, "42:00", "2:00:00", "42:00", "Oct 20, 2026")
     done = watch.describe({"position_ticks": 0, "runtime_ticks": 2 * HOUR, "played": 1, "play_count": 2, "last_played_at": "2026-10-20 19:03:11"})
     assert (done["state"], done["state_label"], done["percent"], done["play_count"], done["resume_label"]) == ("watched", "Watched", 100, 2, None)
     again = watch.describe({"position_ticks": HOUR, "runtime_ticks": 2 * HOUR, "played": 1, "play_count": 1, "last_played_at": None})
@@ -312,7 +312,7 @@ def test_when_someone_stops_playing_something_their_record_of_it_is_read_again(p
 
 def test_events_that_say_nothing_about_a_profiles_viewing_are_ignored(people, refreshes, monkeypatch):
     monkeypatch.setattr(tasks, "JellyfinClient", lambda: pytest.fail("Jellyfin must not be asked"))
-    assert tasks.watch_event(*stop_event(event="PlaybackStart")) is False and tasks.watch_event(*stop_event(event="PlaybackProgress")) is False
+    assert tasks.watch_event(*stop_event(event="PlaybackStart")) is False
     assert tasks.watch_event(*stop_event(user="c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0")) is False       # an inactive profile
     assert tasks.watch_event(*stop_event(user="d" * 32)) is False                                  # a Jellyfin user nobody has a profile for
     assert tasks.watch_event(*stop_event(kind="Audio")) is False and tasks.watch_event(*stop_event(kind="Series")) is False
@@ -327,6 +327,14 @@ def test_a_user_data_event_is_acted_on_at_most_once_in_a_while_but_a_stop_always
     assert tasks.watch_event(*saved, now=105.0) is False and tasks.watch_event(*saved, now=119.0) is False
     assert tasks.watch_event(*saved, now=121.0) is True
     assert tasks.watch_event(*stop_event(), now=122.0) is True and tasks.watch_event(*stop_event(), now=123.0) is True      # stopping is never held back
+
+
+def test_a_webhook_that_only_sends_progress_still_keeps_the_record_fresh_at_a_slower_pace(people, conn, refreshes, monkeypatch):
+    monkeypatch.setattr(tasks, "JellyfinClient", lambda: FakeJellyfin())
+    tick = stop_event(event="PlaybackProgress")
+    assert tasks.watch_event(*tick, now=100.0) is True
+    assert tasks.watch_event(*tick, now=150.0) is False and tasks.watch_event(*tick, now=189.0) is False
+    assert tasks.watch_event(*tick, now=191.0) is True
 
 
 def test_a_jellyfin_that_cannot_be_asked_does_not_break_the_event(people, refreshes, monkeypatch):
@@ -346,3 +354,37 @@ def test_the_webhook_hands_playback_stops_to_the_watch_record_and_survives_it_fa
     monkeypatch.setattr(tasks, "watch_event", lambda event, payload: seen.append("radarr"))
     client.post("/api/webhook/radarr", json={"eventType": "Test"})
     assert "radarr" not in seen                                                            # only Jellyfin's events are about viewing
+
+
+# ================================================================ clicks are not viewings, and what Jellyfin forgets the webhook remembers
+def event(conn, user, item_id, position, runtime=2 * HOUR, at="2026-10-26 05:10:16", kind="PlaybackProgress", finished=None):
+    conn.execute("INSERT INTO jellyfin_event (received_at, event_type, user_id, item_id, position_ticks, runtime_ticks, played_to_completion, payload) VALUES (?, ?, ?, ?, ?, ?, ?, '{}')",
+                 (at, kind, dashed(user), item_id, position, runtime, finished))
+    conn.commit()
+
+
+def test_a_play_count_alone_is_not_watched(v2, conn, heat):
+    """Jellyfin adds to the play count each time a title is opened, so a click must not read as Watched."""
+    got = watch.describe({"position_ticks": 0, "runtime_ticks": 2 * HOUR, "played": 0, "play_count": 3, "last_played_at": "2026-10-20 19:03:11"})
+    assert (got["state"], got["state_label"], got["watched_before"]) == ("unwatched", "Not watched", False)
+    jf = FakeJellyfin(single={"m1": item("m1", count=2)})
+    with v2.connection() as c:
+        assert ingest.refresh_item(c, jf, ALICE, "m1", now=T0) is False
+    assert "m1" not in rows(conn)
+
+
+def test_a_viewing_jellyfin_forgot_is_found_in_the_webhook_log(v2, conn, heat):
+    event(conn, ALICE, "m1", 2 * 600_000_000, at="2026-10-26 05:10:16")                       # two minutes in: below Jellyfin's 5% so it kept nothing
+    got = watch.movie_status(conn, ALICE, heat)
+    assert (got["state"], got["state_label"], got["position_label"], got["position_source"], got["percent"]) == ("in_progress", "Started watching", "2:00", "events", 2)
+    assert watch.movie_status(conn, BOB, heat)["state"] == "unwatched"                          # somebody else's viewing is not yours
+
+
+def test_a_click_a_finished_viewing_or_an_old_event_is_not_a_place_to_resume(v2, conn, heat):
+    event(conn, ALICE, "m1", 10_000_000)                                                        # opened at 0:01 by a deep link
+    assert watch.movie_status(conn, ALICE, heat)["state"] == "unwatched"
+    event(conn, ALICE, "m1", int(1.9 * HOUR), at="2026-10-26 07:00:00")                         # reached the end: finished, though Jellyfin has not said so yet
+    assert watch.movie_status(conn, ALICE, heat)["state"] == "watched"
+    event(conn, ALICE, "m1", HOUR, at="2026-10-26 08:00:00")
+    give(conn, ALICE, "m1", played=1, count=2, last="2026-10-26 12:00:00")                      # finished hours later, so that event is history
+    assert watch.movie_status(conn, ALICE, heat)["state"] == "watched"

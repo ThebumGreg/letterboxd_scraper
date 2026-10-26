@@ -118,6 +118,12 @@ register(EventType(
     expires_hours=48, default_on=True,
 ))
 register(EventType(
+    "daily_picks", "Daily picks: what is new and trending", USER,
+    render=lambda p: Message("Today's picks", p.get("text") or "Nothing new today.", priority=-1, ttl_seconds=86400),
+    description="Each morning, a short list of what is trending and coming soon, from TMDB. Nothing is sent when TMDB is not set up.",
+    expires_hours=24, default_on=False,
+))
+register(EventType(
     "digest", "Summary of several notices", USER,
     render=lambda p: Message(f"SyncHub: {p.get('count', 0)} updates", p.get("text") or "", ttl_seconds=86400),
     expires_hours=48, configurable=False,

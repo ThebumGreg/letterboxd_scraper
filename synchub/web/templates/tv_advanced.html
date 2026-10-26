@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}TV tools{% endblock %}
+{% block title %}Remote Tools{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='tv/tv.css') }}">{% endblock %}
 
 {% block content %}
 <div class="tvr">
 <div class="tv-head">
-  <h1>TV tools</h1>
+  <h1>Remote Tools</h1>
   <div id="devbar"></div>
   <span class="grow"></span>
   <span id="jfState" class="chip">Jellyfin: ...</span>
@@ -13,7 +13,7 @@
 </div>
 <div id="banner" hidden></div>
 <div id="notices"></div>
-<p class="intro">Tools for testing TV models and configurations: every key, wake and sleep method, Jellyfin sessions and commands, and the full log. Everyday choices are on <a href="{{ url_for('tv_settings_page') }}">TV apps</a> and <a href="{{ url_for('tv_setup_devices_page') }}">TVs</a>.</p>
+<p class="intro">Tools for testing TV models and configurations: every key, wake and sleep method, Jellyfin sessions and commands, and the full log. Everyday choices are on <a href="{{ url_for('tv_settings_page') }}">Remote Apps</a> and <a href="{{ url_for('tv_setup_devices_page') }}">TVs</a>.</p>
 
 <div class="tv-main">
   <section id="tools"><div class="dim">Select a device</div></section>

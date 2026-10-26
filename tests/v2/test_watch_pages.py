@@ -65,7 +65,7 @@ def test_a_movie_the_person_has_not_watched(app, conn, library):
 def test_a_movie_part_way_through_shows_where_they_stopped_and_resumes_from_there(app, conn, library):
     give(conn, ALICE, "m1", position=42 * 600_000_000, last="2026-10-20 19:03:11")
     page = text(person(app, conn).get(f"/movie/{library['movie']}"))
-    assert block(page) == "Your progress In progress 42:00 of 2:00:00 (35%) Last watched Oct 20, 2026"
+    assert block(page) == "Your progress Started watching 42:00 of 2:00:00 (35%) Last watched Oct 20, 2026"
     assert 'aria-valuenow="35"' in page and 'style="width: 35%"' in page
     assert 'data-item="m1" data-title="Heat" data-size="lg" data-resume="at 42:00"' in page
 
@@ -167,3 +167,49 @@ def test_a_guest_and_an_unlinked_profile_get_no_watch_data(client, app, conn, li
 def test_someone_elses_episodes_are_not_yours(app, conn, library):
     give(conn, BOB, "e11", played=1, count=1, last="2026-10-01 20:00:00")
     assert all(e["watch"]["state"] == "unwatched" for e in season(person(app, conn), library["show"]) if e["watch"])
+
+
+# ================================================================ the dashboard and the Continue button
+from .test_watch_state import event      # noqa: E402,F401
+
+
+def test_the_dashboard_offers_continue_watching_for_what_the_person_is_part_way_through(app, conn, library):
+    give(conn, ALICE, "m1", position=42 * 600_000_000, last="2026-10-20 19:03:11")
+    page = text(person(app, conn).get("/"))
+    assert "Continue Watching" in page and f'data-continue="{library["movie"]}"' in page
+    assert 'data-resume="at 42:00"' in page
+    assert 'id="watchFilter"' in page and f'data-watch="in_progress"' in page
+
+
+def test_a_show_row_continues_with_the_episode_left_part_way_even_when_only_the_webhook_saw_it(app, conn, library):
+    event(conn, ALICE, "e12", 2 * 600_000_000, runtime=HOUR, at="2026-10-26 05:10:16")        # two minutes in: Jellyfin kept nothing
+    page = text(person(app, conn).get("/"))
+    assert f'data-continue="{library["show"]}"' in page and 'data-resume="S1E2 at 2:00"' in page and 'data-play-item="e12"' in page
+
+
+def test_a_click_that_went_nowhere_is_not_in_continue_watching(app, conn, library):
+    event(conn, ALICE, "m1", 10_000_000, at="2026-10-26 05:10:16")
+    page = text(person(app, conn).get("/"))
+    assert "Continue Watching" not in page and 'data-watch="not_started"' in page
+
+
+def test_a_guest_sees_no_continue_row_and_no_progress_filter_but_every_label(client, library):
+    page = text(client.get("/"))
+    assert "Continue Watching" not in page and 'id="watchFilter"' not in page
+    for label in ("Find in my library", "Requested or watched by", "Library status", "Released from", "Sort by"):
+        assert label in page
+    assert 'for="searchInput"' in page and 'class="visually-hidden">Search title' not in page
+
+
+def test_the_dashboard_search_covers_year_and_requesters(client, library, conn):
+    page = text(client.get("/"))
+    assert re.search(r'data-search="[^"]*heat[^"]*"', page)
+
+
+def test_the_continue_button_names_the_episode_and_plays_that_one(app, conn, library):
+    browser = person(app, conn)
+    page = text(browser.get(f"/show/{library['show']}"))
+    assert 'data-label="Start S1E1"' in page and 'data-play-item="e11"' in page
+    give(conn, ALICE, "e11", played=1, count=1, last="2026-10-01 20:00:00")
+    page = text(browser.get(f"/show/{library['show']}"))
+    assert 'data-label="Continue S1E2"' in page and 'data-play-item="e12"' in page

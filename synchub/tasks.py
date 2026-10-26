@@ -165,6 +165,7 @@ def sync_watch_state():
 
 WATCH_SETTLE_SECONDS = 2.0        # Jellyfin saves where someone stopped a moment around the time it announces they stopped
 WATCH_EVENT_MIN_SECONDS = 20      # a user's data is saved on every progress report; one look at it per item in this long is enough
+WATCH_PROGRESS_MIN_SECONDS = 90   # a webhook that only sends progress (no stop or saved-data events) still keeps the record fresh, at this pace
 _WATCH_LAST = {}
 
 
@@ -184,7 +185,7 @@ def refresh_watch_item(jellyfin_user_id, item_id, settle=None):
 def watch_event(event, payload, now=None):
     """A Jellyfin webhook event. When someone with a profile stopped playing a movie or an episode (or their data for it changed), their
     record of it is read again, in the background. Returns True if a refresh was started."""
-    if event not in ("PlaybackStop", "UserDataSaved"):
+    if event not in ("PlaybackStop", "UserDataSaved", "PlaybackProgress"):
         return False
     from synchub import jellyfin_events
     fields = jellyfin_events.extract(payload)
@@ -195,9 +196,10 @@ def watch_event(event, payload, now=None):
         known = conn.execute("SELECT 1 FROM profile WHERE is_active = 1 AND lower(replace(jellyfin_user_id, '-', '')) = ?", (user,)).fetchone()
     if not known:
         return False
-    if event == "UserDataSaved":                         # saved on every progress report: do not read it again each time
+    if event in ("UserDataSaved", "PlaybackProgress"):    # sent on every progress report: do not read it again each time
+        gap = WATCH_EVENT_MIN_SECONDS if event == "UserDataSaved" else WATCH_PROGRESS_MIN_SECONDS
         now = time.monotonic() if now is None else now
-        if now - _WATCH_LAST.get((user, item), -WATCH_EVENT_MIN_SECONDS) < WATCH_EVENT_MIN_SECONDS:
+        if now - _WATCH_LAST.get((user, item), -gap) < gap:
             return False
         _WATCH_LAST[(user, item)] = now
     return refresh_soon(f"watch:{user}:{item}", lambda: refresh_watch_item(user, item))

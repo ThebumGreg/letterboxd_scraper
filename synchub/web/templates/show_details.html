@@ -101,7 +101,10 @@
                 </span>
                 {% endif %}
                 {% if show.jellyfin_link %}
-                    {{ watch_now(show.jellyfin_link, show.jellyfin_item_id, show.title, resume=(go.code ~ ' at ' ~ go.position_label) if go and go.kind == 'resume' else none) }}
+                    {{ watch_now(show.jellyfin_link, show.jellyfin_item_id, show.title,
+                    resume=(go.code ~ ' at ' ~ go.position_label) if go and go.kind == 'resume' else none,
+                    label=(('Continue ' ~ go.code) if mine and (mine.watched or mine.last) else ('Start ' ~ go.code)) if go and go.kind == 'next' else none,
+                    play_item=go.item_id if go else none) }}
                 {% endif %}
                 <button type="button" class="btn btn-outline-secondary" id="refreshBtn"><i class="bi bi-arrow-repeat"></i> Refresh details</button>
             </div>

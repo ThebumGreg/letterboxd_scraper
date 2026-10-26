@@ -18,13 +18,15 @@ PIN_COOKIE = "synchub_pin"              # signed proof that this profile's PIN w
 # The main menu. An (endpoint, label) is a link; a (label, [items]) is a dropdown, whose items are links or (None, heading) group titles.
 # What a person sees is what their permissions allow, and a heading with nothing under it is left out.
 NAV = (
-    ("index", "Dashboard"), ("tv_remote_page", "Remote"), ("search_page", "Search"), ("my_profile", "My profile"),
-    ("Media", (("library_page", "Library"), ("resolution_center", "Resolution Center"), ("workers_page", "Workers"), ("storage_page", "Storage"))),
+    ("index", "Dashboard"),
+    ("Discover", (("discover_page", "New & trending"), ("search_page", "Find & request"))),
+    ("tv_remote_page", "Remote"),
+    ("Media", (("library_page", "Library"), ("resolution_center", "Resolution Center"))),     # Workers and Storage are tabs of the Library page
     ("System", (
         (None, "Run"), ("tools", "Tools & Operations"),
-        (None, "Monitor"), ("activity_page", "What it's doing now"), ("logs_page", "Logs"), ("jellyfin_events_page", "Jellyfin events"), ("payloads_page", "Payloads"),
+        (None, "Monitor"), ("status_page", "System status"), ("activity_page", "What it's doing now"), ("logs_page", "Logs"), ("jellyfin_events_page", "Jellyfin events"), ("payloads_page", "Payloads"),
         (None, "Admin"), ("ddns_page", "Dynamic DNS"), ("people_page", "People"),
-        (None, "TV"), ("tv_settings_page", "TV apps"), ("tv_setup_devices_page", "TVs"), ("tv_setup_advanced_page", "TV tools"),
+        (None, "TV"), ("tv_settings_page", "Remote Apps"), ("tv_setup_devices_page", "TVs"), ("tv_setup_advanced_page", "Remote Tools"),
     )),
     ("settings_page", "Settings"),
 )
@@ -205,6 +207,7 @@ def create_app(start_scheduler=False, csrf=True):
                 if any("href" in c for c in children):
                     menu.append({"label": first, "children": children})
         return {"jellyfin_app": config, "current_profile": profile, "has_profiles": getattr(g, "has_profiles", False), "can": can, "menu": menu,
+                "profile_link": link("my_profile", "My profile"),
                 "max_rating": getattr(g, "max_rating", None), "app_version": __version__}
 
     from synchub.web import admin, api, fleet, library, notifications, pages, security, shares, tv, worker_api

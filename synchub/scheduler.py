@@ -56,6 +56,13 @@ def _prune_jellyfin_events():
         logger.info(f"Removed {removed} Jellyfin event(s) older than the retention setting.")
 
 
+def _daily_picks():
+    from synchub import discover
+    sent = discover.send_daily_picks()
+    if sent:
+        logger.info(f"Queued {sent} daily picks notification(s).")
+
+
 def _scrape_job():
     for step in (tasks.scrape_letterboxd, tasks.scrape_serializd, tasks.resolve_letterboxd_ids, tasks.reconcile):
         step()
@@ -82,6 +89,7 @@ def configure():
     scheduler.add_job(dispatch.run_due, "interval", seconds=NOTIFY_SECONDS, id="job_notify", max_instances=1, coalesce=True)
     scheduler.add_job(watch.check, "interval", seconds=NOTIFY_SECONDS, id="job_notify_watch", max_instances=1, coalesce=True)
     scheduler.add_job(_announce_aired, "interval", hours=1, id="job_notify_aired", max_instances=1, coalesce=True)
+    scheduler.add_job(_daily_picks, "cron", hour=8, minute=0, id="job_daily_picks", max_instances=1, coalesce=True, misfire_grace_time=3600)
     scheduler.add_job(dispatch.prune_history, "interval", hours=24, id="job_notify_prune", max_instances=1, coalesce=True)
     from synchub import backup
     if backup.keep_count():

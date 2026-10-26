@@ -1,0 +1,88 @@
+<!-- synchub/web/templates/discover.html -->
+{% extends "base.html" %}
+{% from "_search_cards.html" import result_card with context %}
+{% from "_macros.html" import state_badge, watch_now with context %}
+{% block title %}Discover{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+    <div>
+        <h2 class="mb-1">New &amp; trending</h2>
+        <p class="text-body-secondary mb-0">What people are watching, what is coming, and what just arrived in your library.</p>
+    </div>
+    <a href="{{ url_for('search_page') }}" class="btn btn-outline-secondary"><i class="bi bi-search" aria-hidden="true"></i> Find &amp; request a title</a>
+</div>
+
+{% if error %}
+<div class="alert alert-warning" role="alert">{{ error }} <a href="{{ url_for('settings_page') }}" class="alert-link">Open Settings</a></div>
+{% endif %}
+
+{% if recent %}
+<section class="mb-5" aria-labelledby="h-recent">
+    <h4 id="h-recent" class="mb-1">Recently Added</h4>
+    <p class="small text-body-secondary">The newest titles in your Jellyfin library.</p>
+    <div class="row row-cols-2 row-cols-md-4 row-cols-lg-6 g-3">
+        {% for r in recent %}
+        <div class="col">
+            <div class="panel h-100 p-2 d-flex flex-column gap-1">
+                <a href="{{ r.url }}"><img src="{{ r.poster }}" alt="" width="150" height="225" class="rounded poster w-100 h-auto" loading="lazy"></a>
+                <div class="small fw-bold text-truncate" title="{{ r.title }}"><a href="{{ r.url }}" class="text-decoration-none text-reset">{{ r.title }}</a></div>
+                <div class="small text-body-secondary">{{ r.year or '' }}{% if r.date_added_label %} · added {{ r.date_added_label }}{% endif %}</div>
+                <div class="mt-auto">{{ watch_now(r.jellyfin_link, r.jellyfin_item_id, r.title, 'card') }}</div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{% if coming or notes %}
+<section class="mb-5" aria-labelledby="h-coming">
+    <h4 id="h-coming" class="mb-1">Coming Up in Your Library</h4>
+    <p class="small text-body-secondary">Releases in the next three weeks from the movies and shows Radarr and Sonarr already follow.</p>
+    {% for n in notes %}<div class="alert alert-secondary py-2 small">{{ n }}</div>{% endfor %}
+    {% if coming %}
+    <ul class="list-group">
+        {% for c in coming %}
+        <li class="list-group-item d-flex flex-wrap align-items-center gap-2">
+            <span class="badge {{ 'badge-tv' if c.kind == 'show' else 'badge-movie' }}">{{ 'TV' if c.kind == 'show' else 'MOVIE' }}</span>
+            <span class="fw-bold">{% if c.url %}<a href="{{ c.url }}" class="text-decoration-none">{{ c.title }}</a>{% else %}{{ c.title }}{% endif %}</span>
+            <span class="text-body-secondary small">{{ c.detail }}</span>
+            <span class="ms-auto small">{{ c.date }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+    {% elif not notes %}
+    <p class="text-body-secondary">Nothing scheduled in the next three weeks.</p>
+    {% endif %}
+</section>
+{% endif %}
+
+{% for s in sections %}
+<section class="mb-5" aria-labelledby="h-{{ s.key }}">
+    <h4 id="h-{{ s.key }}" class="mb-1">{{ s.title }}</h4>
+    <p class="small text-body-secondary">{{ s.blurb }}</p>
+    {% if s.error %}
+    <div class="alert alert-secondary py-2 small">{{ s.error }}</div>
+    {% elif not s.cards %}
+    <p class="text-body-secondary">Nothing to show here.</p>
+    {% else %}
+    <div class="row row-cols-1 row-cols-lg-2 g-3">
+        {% for r in s.cards %}
+        <div class="col">{{ result_card(r) }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</section>
+{% endfor %}
+
+{% if sections %}
+<p class="small text-body-secondary">This product uses the TMDB API but is not endorsed or certified by TMDB. Lists are refreshed every few hours.</p>
+{% endif %}
+
+{% include "_season_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "_search_scripts.html" %}
+{% endblock %}

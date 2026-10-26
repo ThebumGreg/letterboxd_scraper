@@ -5,7 +5,7 @@ import os
 from flask import abort, flash, g, jsonify, redirect, render_template, request, send_file, send_from_directory, url_for
 
 from config import BASE_DIR
-from synchub import access, backup, catalog, db, ddns, posters, profiles, ratings, search, settings, states, tasks, watch, webhooks
+from synchub import access, backup, catalog, db, ddns, discover, posters, profiles, ratings, search, settings, states, status, tasks, watch, webhooks
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.tmdb import TmdbClient
 from synchub.notifications import dispatch
@@ -37,9 +37,46 @@ def register(app):
             rows = catalog.list_catalog(conn, max_rating=current_limit())
             defs = states.definitions(conn)
             defs["partial"] = {"label": "Partial"}
+            user = watch.user_of(getattr(g, "profile", None))
+            keep_going = watch.continue_watching(conn, user) if user else []
+            seen = watch.library_states(conn, user) if user else {}
+            health = status.snapshot(conn) if access.allowed(getattr(g, "permissions", None), "logs") else None
+        by_id = {r["id"]: r for r in rows}
+        resume = []
+        for item in keep_going:
+            row = by_id.get(item["media_id"])
+            if row and row["jellyfin_link"]:
+                resume.append({**item, "row": row})
+                seen[row["id"]] = "in_progress"
+        for r in rows:
+            r["watch"] = seen.get(r["id"], "not_started") if user else ""
         users = sorted({u for r in rows for u in r["wanted_by"] + r["watched_by"]}, key=str.lower)
         status_options = [(code, defs[code]["label"]) for code in STATUS_ORDER if code in defs]
-        return render_template("index.html", rows=rows, stats=catalog.dashboard_stats(rows), all_users=users, status_options=status_options)
+        ratings_seen = sorted({r["certification"] for r in rows if r["certification"]}, key=lambda c: (ratings.rank(c) is None, ratings.rank(c) or 0, c))
+        return render_template("index.html", rows=rows, stats=catalog.dashboard_stats(rows), all_users=users, status_options=status_options,
+                               resume=resume, can_filter_watch=bool(user), certifications=ratings_seen, health=health)
+
+    @app.route("/discover")
+    def discover_page():
+        """New and trending: TMDB's lists, what was added to the library lately, and what Radarr and Sonarr expect soon."""
+        sections, error = [], None
+        try:
+            tmdb = TmdbClient()
+        except ConfigError:
+            tmdb, error = None, "TMDB is not set up yet. Add your TMDB API key in Settings to see trending and upcoming titles."
+        limit = current_limit()
+        if tmdb:
+            sections = discover.tmdb_sections(tmdb, limit)
+        with db.connection() as conn:
+            recent = discover.recently_added(conn, discover.PER_SECTION, limit)
+            coming, notes = discover.coming_up(conn, limit)
+        return render_template("discover.html", sections=sections, recent=recent, coming=coming, notes=notes, error=error)
+
+    @app.route("/system/status")
+    def status_page():
+        with db.connection() as conn:
+            snapshot = status.snapshot(conn)
+        return render_template("status.html", snapshot=snapshot)
 
     @app.route("/movie/<int:media_id>")
     def movie_details(media_id):
