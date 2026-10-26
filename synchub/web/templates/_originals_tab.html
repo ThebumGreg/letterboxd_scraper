@@ -1,0 +1,34 @@
+<!-- synchub/web/templates/_originals_tab.html: the Originals tab of the Media page -->
+<div class="mb-3">
+    <h3 class="h4 mb-2">Originals</h3>
+    <p class="text-body-secondary mb-0">When a worker replaces a file with a converted one, it keeps the original on its own disk for a while. Restore puts the original back under its old name (the converted file is set aside for 7 days, not deleted); Keep longer pushes back the date it is removed; Delete now frees the space.
+        {% if items %}<strong>{{ items|length }}</strong> held, {{ '%.1f'|format(bytes / 1073741824) }} GB in total.{% endif %}</p>
+</div>
+<div id="originalsMessage" class="alert d-none" role="status"></div>
+{% if not items %}
+<p class="text-body-secondary">Nothing is being kept. Originals appear here after a worker replaces a file (see Keep originals under Library settings).</p>
+{% else %}
+<div class="table-responsive">
+    <table class="table table-sm align-middle">
+        <thead><tr><th>File</th><th>Worker</th><th class="text-end">Size</th><th>Goes in</th><th class="text-end"></th></tr></thead>
+        <tbody>
+        {% for o in items %}
+            <tr>
+                <td><div class="fw-semibold text-break">{{ o.name or o.id }}</div><div class="small text-body-secondary text-break">{{ o.root }}:{{ o.rel }}{% if o.kind == 'converted' %} &middot; converted copy set aside by a restore{% endif %}</div></td>
+                <td>{{ o.worker }}{% if not o.online %} <span class="badge bg-secondary">offline</span>{% endif %}</td>
+                <td class="text-end">{{ '%.2f'|format((o.size or 0) / 1073741824) }} GB</td>
+                <td>{% if o.days_left is none %}&ndash;{% elif o.days_left < 0 %}due{% else %}{{ '%g'|format(o.days_left) }} day{{ '' if o.days_left == 1 else 's' }}{% endif %}</td>
+                <td class="text-end text-nowrap">
+                    {% if o.pending %}<span class="badge bg-info text-dark">{{ o.pending.action }}: {{ o.pending.status.replace('_', ' ') }}</span>
+                    {% else %}
+                        {% if o.kind == 'original' %}<button type="button" class="btn btn-sm btn-outline-primary" data-original-action="restore" data-worker="{{ o.worker_id }}" data-id="{{ o.id }}" data-name="{{ o.name or o.id }}">Restore</button>{% endif %}
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-original-action="extend" data-worker="{{ o.worker_id }}" data-id="{{ o.id }}" data-name="{{ o.name or o.id }}">Keep longer</button>
+                        <button type="button" class="btn btn-sm btn-outline-danger" data-original-action="purge" data-worker="{{ o.worker_id }}" data-id="{{ o.id }}" data-name="{{ o.name or o.id }}">Delete now</button>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}

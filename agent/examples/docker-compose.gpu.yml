@@ -1,0 +1,14 @@
+# Lets the worker use an Intel GPU for encoding (VAAPI, or QSV on a chip that supports it). Use it next to the generated docker-compose.yml:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+#
+# Then check that the worker found it:  docker compose -f docker-compose.yml -f docker-compose.gpu.yml run --rm worker --check
+# (the agent runs as root in the container, so no extra groups are needed; look for hevc_vaapi under "encoders that work"). A plan only uses the GPU when Library settings > GPU encoding is switched on.
+# For an NVIDIA GPU use `gpus: all` here instead of `devices`, with the NVIDIA Container Toolkit installed on the PC.
+services:
+  worker:
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      SYNCHUB_VIDEO_ENCODER: ${SYNCHUB_VIDEO_ENCODER:-auto}   # auto, cpu, nvenc, qsv or vaapi
+      # SYNCHUB_VAAPI_DEVICE: /dev/dri/renderD128             # if the GPU is not the first render device

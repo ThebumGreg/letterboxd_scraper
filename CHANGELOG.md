@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 1.3.0
+
+Update every worker (`docs/UPGRADE.md`) and rebuild its image: the worker image moves to Debian 13 so its ffmpeg has libvmaf. One new migration (020, a column for the originals a worker holds).
+
+**Conversion batch: GPU encoding, resumable encodes, quality scores, an Originals tab and TV size limits.**
+- **GPU encoding.** *Library settings > GPU encoding* lets a plan use a worker's `hevc_nvenc`, `hevc_qsv` or `hevc_vaapi` (new agent setting `video_encoder`, default `auto`; add `agent/examples/docker-compose.gpu.yml` for an Intel GPU). It is off by default, never used for HDR, and falls back to the CPU encoder once if the GPU encode fails or is too big. The size policy uses an average-bitrate encode on a GPU.
+- **Chunked, resumable encodes.** Videos over twice `chunk_minutes` (default 10) are encoded in pieces and joined without re-encoding, so a reboot loses at most one piece (`chunk_minutes = 0` turns it off).
+- **VMAF quality score.** *Library settings > Quality score*: off, record the score, or hold a job whose mean score is under 93 (95 for 2160p) for review before the original is replaced. The worker image now has libvmaf; the build fails if it does not.
+- **Originals tab** on the Media page: every original the workers keep, with Restore (the converted file is set aside for 7 days, not deleted), Keep longer and Delete now, each queued as a job on the worker that holds the file.
+- **TV size policy** has its own switch and is per hour of runtime (`tv_max_gb_per_hour` 4, `tv_target_gb_per_hour` 2.5 by default; replaces `tv_episode_max_gb` and `tv_episode_target_gb`, which were never shown anywhere). A *How many files would this compress?* button counts what the current numbers would do without queuing anything.
+- Release notes from the mount-watchdog batch below are part of this release too.
+- Also in this release: the watching, Discover and menu changes below (PR #15).
+
 **Watching: honest progress, Continue buttons, and a choice for how a Roku resumes.** No database migration.
 - **Opening a title is not watching it.** Jellyfin adds to a title's play count every time it is opened, even for a second (a TV's deep link opens at 0:01). SyncHub counted that as *Watched*, which is how Reno 911! episode 1 read as watched. Now only Jellyfin's own played flag counts, and an open under 15 seconds reads as *Not watched*.
 - **Started watching.** The movie and episode states are *Not watched*, *Started watching*, *Watching again* and *Watched*. Jellyfin throws away a place before about 5% of the runtime; the Jellyfin events log (the webhook) still has it, so SyncHub reads it back: "Started watching, 2:00 of 1:58:00", with Resume. A last event at 90% or more reads as finished without waiting for Jellyfin.

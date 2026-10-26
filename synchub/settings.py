@@ -21,7 +21,7 @@ DEFAULTS = {
     "library_destination_root": "media", "library_tv_folder": "TV Shows", "library_movie_folder": "Movies",
     "library_integrity_mode": "tail", "library_tail_seconds": "30",
     # downloads Radarr/Sonarr import: off, review (a person approves each one), auto (high-confidence plans run on their own); the original is kept on the worker this long
-    "size_policy": "0", "movie_max_gb": "30", "movie_target_gb": "25", "tv_episode_max_gb": "0", "tv_episode_target_gb": "0", "size_crf": "22", "size_preset": "medium",
+    "size_policy": "0", "movie_max_gb": "30", "movie_target_gb": "25", "tv_size_policy": "0", "tv_max_gb_per_hour": "4", "tv_target_gb_per_hour": "2.5", "gpu_encoding": "0", "vmaf_mode": "warn", "size_crf": "22", "size_preset": "medium",
     "dolby_vision_profile_5": "review", "dolby_vision_profile_7_8": "hdr10",
     "review_first": "always", "trust_after": "3", "preview_seconds": "45", "preview_keep_days": "7", "preview_auto": "1",
     "download_pipeline": "off", "originals_retention_days": "30",

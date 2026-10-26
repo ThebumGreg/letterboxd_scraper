@@ -124,6 +124,22 @@ sudo ./agent/update-worker.sh --dir /opt/synchub-worker --no-pull
 git checkout main                                   # when you want to follow main again
 ```
 
+### Turning on GPU encoding on a worker (Intel UHD 630 on worker-1)
+
+The 1.3.0 image already contains ffmpeg with libvmaf and the Intel media driver; the container only needs the GPU passed in. On worker-1:
+
+```
+ls /dev/dri                                    # should list card0 and renderD128; if not, the PC has no usable GPU device
+cp ~/letterboxd_scraper/agent/examples/docker-compose.gpu.yml /opt/synchub-worker/
+cd /opt/synchub-worker
+echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml' | sudo tee -a .env     # every docker compose command here, and update-worker.sh, now includes the GPU file
+sudo docker compose up -d --build
+sudo docker compose run --rm worker --check    # "encoders that work" should now list hevc_vaapi (and maybe hevc_qsv); "VMAF: yes"
+sudo docker compose run --rm --entrypoint vainfo worker     # lists the profiles the GPU can encode (look for HEVC Main and Main10 with EncSlice)
+```
+
+Then, in SyncHub: *Library settings > GPU encoding > Use a worker's GPU when it has one*. Nothing changes until you do. Check `ffmpeg -filters | grep libvmaf` too: `sudo docker compose run --rm worker ffmpeg -hide_banner -filters | grep libvmaf` must print a line.
+
 ## 3. Rules of thumb
 
 - Update SyncHub first, workers second.

@@ -1,0 +1,23 @@
+<script>
+(() => {
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const box = document.getElementById('originalsMessage');
+    const say = (ok, text) => { box.className = 'alert alert-' + (ok ? 'success' : 'danger'); box.textContent = text; };
+    document.querySelectorAll('[data-original-action]').forEach((button) => {
+        button.addEventListener('click', async () => {
+            const action = button.dataset.originalAction, name = button.dataset.name;
+            let days = null;
+            if (action === 'restore' && !confirm('Put the original of "' + name + '" back? The converted file is moved aside (kept 7 days), not deleted. Radarr/Sonarr and Jellyfin pick the change up on their next scan.')) return;
+            if (action === 'purge' && !confirm('Delete the kept original of "' + name + '" now? This cannot be undone.')) return;
+            if (action === 'extend') { days = prompt('Keep it for how many more days (from today)?', '30'); if (days === null) return; }
+            button.disabled = true;
+            try {
+                const res = await fetch('/api/worker_originals/' + button.dataset.worker, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf }, body: JSON.stringify({ id: button.dataset.id, action, days }) });
+                const data = await res.json();
+                say(data.ok, data.message);
+                if (data.ok) setTimeout(() => location.reload(), 1200); else button.disabled = false;
+            } catch (e) { say(false, 'Could not reach the server.'); button.disabled = false; }
+        });
+    });
+})();
+</script>

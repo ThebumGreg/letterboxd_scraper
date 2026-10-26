@@ -64,7 +64,7 @@
                 </div>
                 <div class="border rounded p-2 mb-2">
                     <div class="form-check"><input class="form-check-input" type="checkbox" id="setSizePolicy"{% if size.on %} checked{% endif %}><label class="form-check-label small fw-bold" for="setSizePolicy">Compress movies that are too big</label></div>
-                    <div class="form-text mb-2">A movie over the limit is re-encoded to HEVC with a bitrate cap so it ends under the target, never padded up to it. Removing unwanted tracks is tried first. HDR10 and HLG are kept. TV episodes are never compressed.</div>
+                    <div class="form-text mb-2">A movie over the limit is re-encoded to HEVC with a bitrate cap so it ends under the target, never padded up to it. Removing unwanted tracks is tried first. HDR10 and HLG are kept. <strong>TV episodes have their own switch below.</strong></div>
                     <div class="row g-2 mb-2">
                         <div class="col-4"><label for="setMaxGb" class="form-label small mb-1">Over (GB)</label><input type="number" min="1" step="1" class="form-control form-control-sm" id="setMaxGb" value="{{ '%g' % size.movie_max_gb }}"></div>
                         <div class="col-4"><label for="setTargetGb" class="form-label small mb-1">Down to (GB)</label><input type="number" min="1" step="1" class="form-control form-control-sm" id="setTargetGb" value="{{ '%g' % size.movie_target_gb }}"></div>
@@ -76,6 +76,19 @@
                         <div class="col-6"><label for="setDv78" class="form-label small mb-1">Dolby Vision profile 7 and 8</label>
                             <select class="form-select form-select-sm" id="setDv78">{% for m, label in [('hdr10', 'Compress as HDR10 (Dolby layer lost)'), ('review', 'Ask me first')] %}<option value="{{ m }}"{% if m == size.dv_profile_7_8 %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
                     </div>
+                    <div class="form-check mt-3"><input class="form-check-input" type="checkbox" id="setTvPolicy"{% if size.tv_on %} checked{% endif %}><label class="form-check-label small fw-bold" for="setTvPolicy">Also compress TV episodes that are too big</label></div>
+                    <div class="form-text mb-2">Limits are per hour of runtime, so a 22-minute and a 90-minute episode are judged alike. Around 2 to 3 GB per hour of 1080p HEVC looks clean; typical 1080p web downloads are 3 to 5 GB per hour.</div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-6"><label for="setTvMax" class="form-label small mb-1">Over (GB per hour)</label><input type="number" min="0.5" step="0.5" class="form-control form-control-sm" id="setTvMax" value="{{ '%g' % size.tv_max_gb_per_hour }}"></div>
+                        <div class="col-6"><label for="setTvTarget" class="form-label small mb-1">Down to (GB per hour)</label><input type="number" min="0.5" step="0.5" class="form-control form-control-sm" id="setTvTarget" value="{{ '%g' % size.tv_target_gb_per_hour }}"></div>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-6"><label for="setGpu" class="form-label small mb-1">GPU encoding</label>
+                            <select class="form-select form-select-sm" id="setGpu"><option value="0"{% if not size.gpu %} selected{% endif %}>Off (CPU, best quality per GB)</option><option value="1"{% if size.gpu %} selected{% endif %}>Use a worker's GPU when it has one</option></select></div>
+                        <div class="col-6"><label for="setVmaf" class="form-label small mb-1">Quality score (VMAF)</label>
+                            <select class="form-select form-select-sm" id="setVmaf">{% for m, label in [('off', 'Off'), ('warn', 'Record the score'), ('hold', 'Hold low scores for review')] %}<option value="{{ m }}"{% if m == size.vmaf_mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+                    </div>
+                    <div class="d-flex gap-2 align-items-center"><button type="button" class="btn btn-sm btn-outline-secondary" id="sizePreviewBtn">How many files would this compress?</button><span class="small text-body-secondary" id="sizePreviewOut"></span></div>
                 </div>
                 <div class="border rounded p-2 mb-2">
                     <div class="fw-bold small mb-1">Preview clips before compressing</div>
