@@ -1,6 +1,6 @@
 <!-- synchub/web/templates/movie_details.html -->
 {% extends "base.html" %}
-{% from "_macros.html" import rating_facts, state_badge, watch_now, watch_badge, watch_unlinked with context %}
+{% from "_macros.html" import rating_facts, state_badge, watchlist_button, watch_now, watch_badge, watch_unlinked with context %}
 
 {% block title %}{{ movie.title }} - Details{% endblock %}
 
@@ -22,6 +22,7 @@
 
             <div class="mb-3 mt-2 d-flex flex-wrap gap-2 align-items-center">
                 <span class="badge badge-movie">MOVIE</span>
+                {{ watchlist_button(movie.id, on_watchlist) }}
                 {{ state_badge(state_info.label, state_info.color, state_info.icon, (state.progress * 100)|round|int if state.progress is not none and state.state == 'downloading' else none) }}
             </div>
 

@@ -18,7 +18,7 @@ Items marked ★ could not be checked without your hardware or devices, so they 
 ## 1. Menu and permissions
 
 - [ ] The top bar reads Dashboard, Discover, Remote, Media, System, Settings, with your name (My profile, Switch profile) at the right.
-- [ ] **Media** has Library and Resolution Center (Workers and Storage are tabs on the Library page). **Discover** has New & trending and Find & request.
+- [ ] **Media** has Library and Resolution Center (Workers and Storage are tabs on the Library page). **Discover** has New & trending, Find & request and My watchlist.
 - [ ] **System** has four groups: Run (Tools & Operations), Monitor (System status, What it's doing now, Logs, Jellyfin events, Payloads), Admin (Dynamic DNS, People), TV (Remote Apps, TVs, Remote Tools).
 - [ ] ★ On an iPhone and an iPad the hamburger menu and the dropdown groups open and tap cleanly.
 - [ ] The old addresses `/access` and `/diagnostics` land on People and What it's doing now.

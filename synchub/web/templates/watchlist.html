@@ -1,0 +1,100 @@
+<!-- synchub/web/templates/watchlist.html -->
+{% extends "base.html" %}
+{% block title %}My watchlist{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+    <div>
+        <h2 class="mb-1">My watchlist</h2>
+        <p class="text-body-secondary mb-0">Titles you want to watch. New ones from your Letterboxd and Serializd watchlists are added for you; add or remove anything here, films and shows alike. This list does not request or download anything.</p>
+    </div>
+    <a href="{{ url_for('search_page') }}" class="btn btn-outline-secondary"><i class="bi bi-search" aria-hidden="true"></i> Find a title to add</a>
+</div>
+
+{% if not person %}
+<div class="alert alert-info" role="alert">Choose your profile first (the link at the top right). A watchlist belongs to a profile.</div>
+{% else %}
+<div id="watchlistMessage" class="alert d-none" role="status" aria-live="polite"></div>
+
+<div class="panel p-3 mb-3">
+    <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" role="switch" id="dropWatched"{% if drop_watched %} checked{% endif %}>
+        <label class="form-check-label" for="dropWatched">Take titles off my watchlist once I have watched them</label>
+    </div>
+    <div class="small text-body-secondary mt-1">A film counts when you have played it in Jellyfin or logged it on Letterboxd. A show counts when you have played every episode that has aired. Titles taken off stay in "Removed" below, and syncs do not put them back.</div>
+</div>
+
+<div class="btn-group mb-3" role="group" aria-label="Show">
+    <button type="button" class="btn btn-sm btn-outline-secondary active" data-filter="all">All ({{ items|length }})</button>
+    <button type="button" class="btn btn-sm btn-outline-secondary" data-filter="movie">Films ({{ items|selectattr('kind', 'equalto', 'movie')|list|length }})</button>
+    <button type="button" class="btn btn-sm btn-outline-secondary" data-filter="show">Shows ({{ items|selectattr('kind', 'equalto', 'show')|list|length }})</button>
+</div>
+
+{% if items %}
+<div class="row row-cols-2 row-cols-md-4 row-cols-lg-6 g-3 mb-4" id="watchlistGrid">
+    {% for r in items %}
+    <div class="col" data-kind="{{ r.kind }}" data-media="{{ r.media_id }}">
+        <div class="panel h-100 p-2 d-flex flex-column gap-1">
+            <a href="/{{ 'movie' if r.kind == 'movie' else 'show' }}/{{ r.media_id }}"><img src="/poster/{{ r.media_id }}" alt="" width="150" height="225" class="rounded poster w-100 h-auto" loading="lazy"></a>
+            <div class="small fw-bold text-truncate" title="{{ r.title }}"><a href="/{{ 'movie' if r.kind == 'movie' else 'show' }}/{{ r.media_id }}" class="text-decoration-none text-reset">{{ r.title }}</a></div>
+            <div class="small text-body-secondary">
+                <span class="badge {{ 'badge-tv' if r.kind == 'show' else 'badge-movie' }}">{{ 'TV' if r.kind == 'show' else 'MOVIE' }}</span>
+                {{ r.year or '' }}
+            </div>
+            <div class="small text-body-secondary">{{ {'letterboxd': 'From Letterboxd', 'serializd': 'From Serializd', 'manual': 'Added here'}[r.source] }}{% if r.in_library %} · <span class="text-success">in the library</span>{% endif %}</div>
+            <button type="button" class="btn btn-sm btn-outline-danger mt-auto" data-remove="{{ r.media_id }}"><i class="bi bi-x-lg" aria-hidden="true"></i> Remove</button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<p class="text-body-secondary">Nothing on your watchlist yet. Add titles from <a href="{{ url_for('search_page') }}">Find &amp; request</a>, <a href="{{ url_for('discover_page') }}">New &amp; trending</a> or a movie or show page{% if not person.letterboxd_username %}, or set your Letterboxd username under People{% endif %}.</p>
+{% endif %}
+
+{% if removed %}
+<details class="mb-4">
+    <summary class="h5">Removed ({{ removed|length }})</summary>
+    <ul class="list-group mt-2">
+        {% for r in removed %}
+        <li class="list-group-item d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <span><a href="/{{ 'movie' if r.kind == 'movie' else 'show' }}/{{ r.media_id }}" class="text-decoration-none">{{ r.title }}</a> {% if r.year %}<span class="text-body-secondary">({{ r.year }})</span>{% endif %}
+                <span class="small text-body-secondary">· {{ 'taken off because you watched it' if r.hidden_reason == 'watched' else 'removed by you' }}</span></span>
+            <button type="button" class="btn btn-sm btn-outline-secondary" data-restore="{{ r.media_id }}">Put back</button>
+        </li>
+        {% endfor %}
+    </ul>
+</details>
+{% endif %}
+
+<script>
+(() => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const headers = { 'Content-Type': 'application/json', 'X-CSRFToken': token };
+    const box = document.getElementById('watchlistMessage');
+    const say = (text, ok) => { box.className = 'alert ' + (ok ? 'alert-success' : 'alert-danger'); box.textContent = text; };
+    const post = async (url, body) => {
+        try {
+            const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body || {}) });
+            return await res.json();
+        } catch (e) { return { ok: false, message: 'Could not reach the server.' }; }
+    };
+    document.querySelectorAll('[data-remove],[data-restore]').forEach((button) => button.addEventListener('click', async () => {
+        const restore = button.dataset.restore !== undefined;
+        button.disabled = true;
+        const data = await post(`/api/watchlist/${restore ? button.dataset.restore : button.dataset.remove}/${restore ? 'restore' : 'remove'}`);
+        if (data.ok) { say(data.message, true); setTimeout(() => location.reload(), 600); } else { say(data.message || 'Failed.', false); button.disabled = false; }
+    }));
+    document.getElementById('dropWatched').addEventListener('change', async (event) => {
+        const data = await post('/api/watchlist/settings', { drop_watched: event.target.checked });
+        say(data.message || 'Failed.', !!data.ok);
+        if (!data.ok) event.target.checked = !event.target.checked;
+        else if (data.message.includes('came off')) setTimeout(() => location.reload(), 1200);
+    });
+    document.querySelectorAll('[data-filter]').forEach((button) => button.addEventListener('click', () => {
+        document.querySelectorAll('[data-filter]').forEach((b) => b.classList.toggle('active', b === button));
+        document.querySelectorAll('#watchlistGrid > [data-kind]').forEach((card) => { card.hidden = button.dataset.filter !== 'all' && card.dataset.kind !== button.dataset.filter; });
+    }));
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 
-from synchub import automation, db, episodes, matching, metadata, posters, ratings, settings, states
+from synchub import automation, db, episodes, matching, metadata, posters, ratings, settings, states, watchlist
 from synchub.clients import ConfigError
 from synchub.clients.arr import RadarrClient, SonarrClient
 from synchub.clients.jellyfin import JellyfinClient
@@ -159,6 +159,8 @@ def sync_watch_state():
                 problems.append(f"{name}: {exc}")
         if problems and len(problems) == len(people):
             raise RuntimeError("Could not read anyone's watch history. " + "; ".join(problems))
+        with db.connection() as conn:
+            watchlist.drop_watched(conn)                     # a title just finished leaves the lists of the people who asked for that
         return f"Watch history: {seen} item(s) for {len(people) - len(problems)} profile(s)." + (f" Failed: {'; '.join(problems)}." if problems else "")
     return run("watch_state", "Reading watch history", work)
 
@@ -372,6 +374,10 @@ def reconcile_now(tmdb=None, report=lambda message, force=False: None):
         with db.connection() as conn:
             return {"jellyfin_episodes": episodes.link_jellyfin_episodes(conn), "sonarr_episodes": episodes.map_sonarr_episodes(conn)}
 
+    def watchlist_stage():
+        with db.connection() as conn:
+            return watchlist.refresh(conn)
+
     def state_stage():
         touched, changed = set(), set()
         with db.connection() as conn:
@@ -385,6 +391,7 @@ def reconcile_now(tmdb=None, report=lambda message, force=False: None):
         result["metadata"] = _stage("Fetching TMDB details and episode lists", report, metadata_stage)
     linked = _stage("Linking episodes", report, link_stage)
     result.update(linked)
+    result["watchlists"] = _stage("Updating watchlists", report, watchlist_stage)
     result.update(_stage("Working out statuses", report, state_stage))
     return result
 

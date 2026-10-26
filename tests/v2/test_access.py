@@ -460,7 +460,7 @@ def test_the_menu_groups_workers_library_and_storage_and_tools_logs_and_payloads
     sign_in(browser, pid)
     shown = menu(text(browser.get("/")))
     assert shown["links"] == ["Dashboard", "Remote", "Settings"]
-    assert shown["dropdowns"] == {"Discover": ["New &amp; trending", "Find &amp; request"], "Media": ["Library", "Resolution Center"],       # Workers and Storage are tabs of Library
+    assert shown["dropdowns"] == {"Discover": ["New &amp; trending", "Find &amp; request", "My watchlist"], "Media": ["Library", "Resolution Center"],       # Workers and Storage are tabs of Library
                                   "System": ["Tools &amp; Operations", "System status", "What it&#39;s doing now", "Logs", "Jellyfin events", "Payloads", "Dynamic DNS", "People", "Remote Apps", "TVs", "Remote Tools"]}
     page = text(browser.get("/"))
     assert re.findall(r'class="dropdown-header">(.*?)</h6>', page) == ["Run", "Monitor", "Admin", "TV"]

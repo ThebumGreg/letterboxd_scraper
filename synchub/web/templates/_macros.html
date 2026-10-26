@@ -151,3 +151,22 @@
 <div><dt>Rated</dt><dd>{% if title.certification %}<span class="badge text-bg-light" title="US age rating" data-rating="{{ title.certification }}">{{ title.certification }}</span>{% else %}<span class="text-body-secondary fw-normal" data-rating="none">Not rated</span>{% endif %}</dd></div>
 <div><dt>Audience score</dt><dd>{% if title.vote_average %}<span data-score="{{ title.vote_average }}" title="TMDB audience score, out of 10"><i class="bi bi-star-fill text-warning" aria-hidden="true"></i> {{ '%.1f'|format(title.vote_average) }}<span class="text-body-secondary fw-normal"> / 10</span></span>{% else %}<span class="text-body-secondary fw-normal">No score yet</span>{% endif %}</dd></div>
 {% endmacro %}
+{% macro watchlist_button(media_id, on_list) %}{% if can('watchlist') and current_profile %}<button type="button" class="btn btn-sm {{ 'btn-secondary' if on_list else 'btn-outline-secondary' }}" data-watchlist-toggle="{{ media_id }}" data-on="{{ 1 if on_list else 0 }}" title="Your own list. This does not request or download anything."><i class="bi {{ 'bi-bookmark-check' if on_list else 'bi-bookmark-plus' }}" aria-hidden="true"></i> <span>{{ 'On your watchlist' if on_list else 'Add to watchlist' }}</span></button>
+<script>
+document.querySelectorAll('[data-watchlist-toggle]').forEach((button) => button.addEventListener('click', async () => {
+    const on = button.dataset.on === '1', token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    button.disabled = true;
+    try {
+        const res = await fetch(on ? `/api/watchlist/${button.dataset.watchlistToggle}/remove` : '/api/watchlist/add', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token },
+            body: JSON.stringify({ media_id: parseInt(button.dataset.watchlistToggle, 10) }) });
+        const data = await res.json();
+        if (data.ok) {
+            button.dataset.on = on ? '0' : '1';
+            button.classList.toggle('btn-secondary', !on); button.classList.toggle('btn-outline-secondary', on);
+            button.querySelector('i').className = 'bi ' + (on ? 'bi-bookmark-plus' : 'bi-bookmark-check');
+            button.querySelector('span').textContent = on ? 'Add to watchlist' : 'On your watchlist';
+        } else { button.title = data.message || 'Failed.'; alert(data.message || 'Failed.'); }
+    } catch (e) { alert('Could not reach the server.'); }
+    button.disabled = false;
+}));
+</script>{% endif %}{% endmacro %}

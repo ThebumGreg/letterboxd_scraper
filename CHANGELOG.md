@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 1.4.0
+
+One new migration (021, the watchlist table and a per-person setting). Workers need no change apart from the version number.
+
+**A watchlist of your own.** *Discover > My watchlist* (a new *Watchlist* permission under People) is a list for each person that they can change in SyncHub.
+- **Seeded from Letterboxd and Serializd.** Each sync (and the reconcile step) adds the titles on a person's Letterboxd or Serializd watchlist to their list. Existing watchlists are copied in by the migration.
+- **Add and remove anything.** Films and shows both, from the list page, the *Watchlist* button on Find & request and New & trending results, or the button on a movie or show page. A removed title goes to *Removed* (with *Put back*) and later syncs do not add it back.
+- **Take watched titles off (per person, off by default).** A film counts as watched when its Jellyfin user has played it or it is in their Letterboxd *watched* list; a show when every episode that has aired (specials left out) is played in Jellyfin. Titles taken off can be put back.
+- **Separate from requests.** The list never requests, downloads or deletes anything. Auto-add to Radarr/Sonarr and the new-episode and arrival notifications still work from the Letterboxd/Serializd lists and requests exactly as before.
+
 ## 1.3.0
 
 Update every worker (`docs/UPGRADE.md`) and rebuild its image: the worker image moves to Debian 13 so its ffmpeg has libvmaf. One new migration (020, a column for the originals a worker holds).
