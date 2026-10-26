@@ -14,6 +14,32 @@ The code only ever comes from GitHub. SyncHub never sends code or settings to a 
 
 Do this per worker. Worker-1 (`/opt/synchub-worker`) uses a hand-made setup, so it uses `update-worker.sh`, never `setup-worker.sh` (which rewrites `/etc/fstab` and the compose file).
 
+### Worker-1: the paths, exactly
+
+Two folders matter, and they are not the same one:
+
+| Folder | What it is | Run `git` here? |
+|---|---|---|
+| `/opt/synchub-worker` | the worker's compose file (`docker-compose.yml`), `.env` and `work/` | **No.** It is not a git repository ("fatal: not a git repository"). It is only passed to the script with `--dir`. |
+| `/home/greg/letterboxd_scraper` (`~/letterboxd_scraper`) | the git checkout the compose file builds from (`build: context: /home/greg/letterboxd_scraper/agent`) | **Yes.** Pull and run the script from here. |
+
+Everything on worker-1 is therefore run from `~/letterboxd_scraper`:
+
+```
+cd ~/letterboxd_scraper
+git pull --ff-only origin main
+sudo ./agent/update-worker.sh --dir /opt/synchub-worker --dry-run
+sudo ./agent/update-worker.sh --dir /opt/synchub-worker
+```
+
+Do not run `git clone` again (the folder exists) and do not use `sudo git`; the checkout belongs to your own user. If you ever find a second clone under `/opt/synchub-worker/letterboxd_scraper` (owned by root, "dubious ownership" errors from git), it is not used by the worker: leave it alone, or move it out of the way with `sudo mv /opt/synchub-worker/letterboxd_scraper /opt/synchub-worker/letterboxd_scraper.old`.
+
+On another worker, find the checkout the same way:
+
+```
+cd /path/to/the/worker-folder && sudo docker compose config | grep -A2 build     # "context: <checkout>/agent"
+```
+
 ### Step 1: look at the current state first
 
 ```
