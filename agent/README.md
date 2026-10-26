@@ -134,6 +134,18 @@ A file in INI style (`--config`, or `./synchub-agent.ini`, or `/etc/synchub-agen
 | `[worker] ffmpeg`, `ffprobe` | `SYNCHUB_FFMPEG`... | `ffmpeg`, `ffprobe` | Where they are, if not on the PATH |
 | `[roots] <name>` | `SYNCHUB_ROOT_<NAME>` | SyncHub's mount point | Only if a share is mounted somewhere else on this PC |
 
+## Surviving a network outage
+
+A worker that boots before the network is up, or whose Unraid server restarts, ends up with empty or stale share folders and reports every share as "no marker file". Three layers keep that from needing you:
+
+1. **Mount on use, with retries.** Add `x-systemd.automount,x-systemd.requires=network-online.target,x-systemd.mount-timeout=30,x-systemd.idle-timeout=0` to the options of each share's `/etc/fstab` line (the lines SyncHub generates do not have them yet), then `sudo systemctl daemon-reload`. A failed mount at boot is tried again the next time the folder is used. Make sure the host waits for the network at boot: `sudo systemctl enable systemd-networkd-wait-online.service` (or `NetworkManager-wait-online.service`, whichever your PC uses).
+2. **The mount watchdog** (`agent/mount-watchdog.sh`, a host script, not part of the container). From `~/letterboxd_scraper`: `sudo ./agent/mount-watchdog.sh --install` (add `--dry-run` first to see what it writes). A systemd timer then runs one check a minute: a share whose `.synchub-root` marker cannot be read is lazily unmounted (if it hangs) and mounted again from `/etc/fstab`; once every share is back, a worker container that still cannot see the markers is restarted (at most once in ten minutes), and a container that failed to start because a share was missing is started. It never creates a marker, and a share that is mounted but has no marker (not set up yet, or the wrong share) is only logged, never remounted. Settings, if you do not use `/mnt/tower/Media` and `/mnt/tower/TFiles` or the container is not called `synchub-worker`, go in `/etc/synchub-mount-watchdog.conf` (`SYNCHUB_MOUNT_PATHS`, `SYNCHUB_CONTAINER`). Look: `sudo ./agent/mount-watchdog.sh --status` or `journalctl -t synchub-watchdog`. Remove: `--uninstall`.
+3. **The agent itself** already copes: it checks every share every 15 seconds, answers "not responding" instead of freezing on a hung mount, keeps trying to reach SyncHub with a growing pause, and a job that finds a share not ready fails as *transient* and is tried again. Nothing in the agent mounts anything; that is the host's job.
+
+If your compose file bind-mounts host folders (`/mnt/tower/Media:/mnt/tower/Media`), add `:rslave` (`/mnt/tower/Media:/mnt/tower/Media:rslave`) so a share mounted or remounted on the host after the container started shows up inside it without a restart. The watchdog's restart is the fallback.
+
+Do **not** make Docker depend on the mounts (`RequiresMountsFor=` in a `docker.service` drop-in). It is a hard dependency: with the server down at boot, Docker, and every container on the PC, would not start.
+
 ## When something is wrong
 
 | You see | Likely cause and fix |
@@ -141,6 +153,7 @@ A file in INI style (`--config`, or `./synchub-agent.ini`, or `/etc/synchub-agen
 | `docker compose up` fails mounting a volume | Wrong address, share name, user or password in `.env`; `cifs-utils` / `nfs-common` missing on the PC; for SMB try `vers=3.1.1` or `vers=2.1` in the share's options on SyncHub's Storage page. A password with `$` needs `$$`, with a comma needs two commas. |
 | Share "no marker file" | The share is mounted but not set up: `docker compose run --rm worker --init-roots`. Or it is **not mounted** and you are looking at an empty folder: fix the mount first. |
 | Share "wrong share" | The marker names a different share: the mounts are mixed up. |
+| Shares "no marker file" after a reboot or a network outage | `journalctl -b -u mnt-tower-Media.mount` shows `Network is unreachable`: the mount ran before the network. See "Surviving a network outage" above; right now: `sudo umount -f -l /mnt/tower/Media /mnt/tower/TFiles; sudo mount -a`, then `docker compose restart` in the Docker folder. Do not run `--init-roots` on a folder that is not mounted. |
 | Share "not responding" | A stale or hung mount. For NFS on Unraid, "stale file handle" reports are linked to the mover; use NFSv4 or SMB. |
 | Worker online but jobs wait | The job's shares are not "ready" on this worker (the Jobs list says which). |
 | 401 in the log | The token was replaced or revoked: use the current one and restart. |
