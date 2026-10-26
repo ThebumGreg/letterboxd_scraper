@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
+
+SyncHub and the worker agent now share one version number (agent 0.5.0 becomes 1.2.0, so update every worker: `docs/UPGRADE.md`). From here on both are raised together at each release.
 
 **A file's tracks show what really happens, and a file can be redone.** No database migration.
 - **Tracks after a decision.** Once a file is approved or migrated, its Tracks table lists each track as *keep*, *removed* or *dropped* (MKV cannot hold it), using the approved choices and the conversion profile's subtitle rule. Before, every track said *keep* because the page only knew the suggestion of a pending file.
