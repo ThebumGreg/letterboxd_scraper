@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+**A worker recovers from a network outage by itself.** Agent files only; no database migration.
+- **`agent/mount-watchdog.sh`**: install it once on a worker PC (`sudo ./agent/mount-watchdog.sh --install`) and a timer checks the shares' marker files every minute. A stale or unmounted share is mounted again from `/etc/fstab`; a worker container that cannot see the shares afterwards is restarted (at most once in ten minutes), and one that failed to start for want of a share is started. It never creates a marker and never touches a share that is mounted but unmarked. Tests: `tests/v2/test_mount_watchdog.py`.
+- **`agent/examples/fstab`** now uses `x-systemd.automount` and waits for the network, so a mount that fails at boot with "Network is unreachable" is tried again on first use.
+- **`agent/README.md`** has a "Surviving a network outage" section, with the bind-mount `:rslave` option and a warning not to make Docker depend on the mounts.
+
 ## 1.2.0
 
 SyncHub and the worker agent now share one version number (agent 0.5.0 becomes 1.2.0, so update every worker: `docs/UPGRADE.md`). From here on both are raised together at each release.
