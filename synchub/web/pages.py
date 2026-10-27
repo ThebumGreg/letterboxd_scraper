@@ -41,6 +41,7 @@ def register(app):
             keep_going = watch.continue_watching(conn, user) if user else []
             seen = watch.library_states(conn, user) if user else {}
             health = status.snapshot(conn) if access.allowed(getattr(g, "permissions", None), "logs") else None
+            reconcile = catalog.jellyfin_movie_reconcile(conn) if access.allowed(getattr(g, "permissions", None), "logs") else None
         by_id = {r["id"]: r for r in rows}
         resume = []
         for item in keep_going:
@@ -54,7 +55,7 @@ def register(app):
         status_options = [(code, defs[code]["label"]) for code in STATUS_ORDER if code in defs]
         ratings_seen = sorted({r["certification"] for r in rows if r["certification"]}, key=lambda c: (ratings.rank(c) is None, ratings.rank(c) or 0, c))
         return render_template("index.html", rows=rows, stats=catalog.dashboard_stats(rows), all_users=users, status_options=status_options,
-                               resume=resume, can_filter_watch=bool(user), certifications=ratings_seen, health=health)
+                               resume=resume, can_filter_watch=bool(user), certifications=ratings_seen, health=health, reconcile=reconcile)
 
     @app.route("/discover")
     def discover_page():
