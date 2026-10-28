@@ -18,7 +18,8 @@ def sync(conn, client, scope="all", now=None, progress=None):
     now = now or db.now()
     progress = progress or (lambda message, force=False: None)
     jf_types = SCOPES[scope]
-    items = [i for i in client.iter_items(jf_types) if i.get("Type") in TYPE_MAP]   # fetch fully before touching the database
+    # fetch fully before touching the database; a "Virtual" item is a placeholder Jellyfin makes for an episode it has no file for
+    items = [i for i in client.iter_items(jf_types) if i.get("Type") in TYPE_MAP and i.get("LocationType") != "Virtual"]
     progress(f"Read {len(items)} item(s) from Jellyfin; saving them...", force=True)
 
     season_series = {i["Id"]: (i.get("SeriesId") or i.get("ParentId")) for i in items if i.get("Type") == "Season"}

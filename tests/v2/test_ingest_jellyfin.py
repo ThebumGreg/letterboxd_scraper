@@ -126,3 +126,18 @@ def test_resync_is_idempotent(conn):
     before = rows(conn)
     jf.sync(conn, FakeJellyfin(items), "tv", now="2026-01-01 00:00:00")
     assert rows(conn) == before
+
+
+def test_placeholder_episodes_without_a_file_are_not_in_the_library(conn):
+    """Jellyfin lists an episode it has no file for as a Virtual item; counting it made missing episodes look present."""
+    real = episode("ep1", "ser1", "sea1", 1, 1)
+    placeholder = episode("ep2", "ser1", "sea1", 1, 2, LocationType="Virtual")
+    jf.sync(conn, FakeJellyfin([series("ser1", "Show", tmdb="1"), season("sea1", "ser1", 1), real, placeholder]), "tv", now="2026-01-01 00:00:00")
+    conn.commit()
+    assert set(rows(conn)) == {"ser1", "sea1", "ep1"}
+    # an episode that was counted before the placeholder rule is dropped by the next sync
+    conn.execute("INSERT INTO src_jellyfin_item (item_id, type, series_id, first_seen, last_seen) VALUES ('ep2', 'episode', 'ser1', '2025-01-01 00:00:00', '2025-01-01 00:00:00')")
+    conn.commit()
+    result = jf.sync(conn, FakeJellyfin([series("ser1", "Show", tmdb="1"), season("sea1", "ser1", 1), real, placeholder]), "tv", now="2026-01-02 00:00:00")
+    conn.commit()
+    assert result["removed"] == 1 and rows(conn)["ep2"]["removed_at"] == "2026-01-02 00:00:00"
