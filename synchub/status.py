@@ -89,11 +89,19 @@ def _disk_items():
              "detail": f"{free_gb:.0f} GB free of {usage.total / 1e9:.0f} GB (where the database lives)", "href": None}]
 
 
+def _dvr_items(conn):
+    if settings.get("dvr_enabled", conn=conn) != "1":
+        return []
+    from synchub import dvr
+    s = dvr.stats(conn)
+    return [{"label": "Jellyfin DVR", "state": WARN if s["failed"] else OK, "detail": dvr.summary(s), "href": "/tools"}]
+
+
 def snapshot(conn, now=None):
     """{'items': [{'label', 'state', 'detail', 'href'}], 'state': worst state, 'attention': how many items need a look, 'summary': one sentence}."""
     now = now or datetime.now(timezone.utc)
     items = [_connection(conn, n, k, t, now) for n, k, t in CONNECTIONS]
-    items += _worker_items(conn) + _queue_items(conn) + _disk_items()
+    items += _dvr_items(conn) + _worker_items(conn) + _queue_items(conn) + _disk_items()
     worst = max((i["state"] for i in items), key=lambda s: SEVERITY[s], default=OK)
     attention = sum(1 for i in items if SEVERITY[i["state"]] > 0)
     summary = "All systems OK" if not attention else f"{attention} thing{'' if attention == 1 else 's'} need attention"

@@ -419,6 +419,12 @@ def register(app):
         out = rt().device(dev_id).launch(str(body.get("app", "")), body.get("params"))
         return reply(True, out or "launched")
 
+    @app.post("/api/tv/devices/<dev_id>/jellyfin")
+    def api_tv_device_open_jellyfin(dev_id):
+        """Open the TV's Jellyfin app (the Jellyfin channel on a Roku, org.jellyfin.androidtv on a Google TV, or what the TV's jellyfin.app says)."""
+        d = rt().device(dev_id)
+        return reply(True, d.launch(d.jellyfin_app()) or "launched")
+
     # ------------------------------------------------------------------ playing a title on a TV
     def play_by_url(d, body, prior_steps=()):
         """Hand the device a stream URL (no Jellyfin app or session involved)."""

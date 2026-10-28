@@ -1,5 +1,5 @@
 """Jellyfin -> src_jellyfin_item. Episodes keep the ID of the series they belong to, so they never depend on provider IDs."""
-from synchub import db
+from synchub import db, dvr
 from synchub.ingest.common import mark_unseen, touch
 from synchub.text import clean_id
 
@@ -24,6 +24,7 @@ def sync(conn, client, scope="all", now=None, progress=None):
     season_series = {i["Id"]: (i.get("SeriesId") or i.get("ParentId")) for i in items if i.get("Type") == "Season"}
     series_ids = {i["Id"] for i in items if i.get("Type") == "Series"}
 
+    folders = dvr.prefixes(conn)
     seen = []
     for item in items:
         kind = TYPE_MAP[item["Type"]]
@@ -44,6 +45,7 @@ def sync(conn, client, scope="all", now=None, progress=None):
             "premiere_date": (item.get("PremiereDate") or "")[:10] or None,
             "tmdb_id": _provider(item, "tmdb"), "tvdb_id": _provider(item, "tvdb"), "imdb_id": _provider(item, "imdb"),
             "date_created": (item.get("DateCreated") or "")[:19].replace("T", " ") or None,
+            "path": item.get("Path"), "is_dvr": 1 if dvr.is_dvr_path(item.get("Path"), folders) else 0,
         }, now, keep=("date_created",))                # a sync that does not give the date never erases one we have
         seen.append(item["Id"])
 

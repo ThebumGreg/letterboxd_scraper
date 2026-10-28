@@ -44,10 +44,21 @@
     {{ task_card('id_resolver', 'Letterboxd ID resolver', 'Finds the TMDB ID of Letterboxd films from their film pages.', task_statuses.get('id_resolver'), url_for('trigger', name='id_resolver'), 'Resolve IDs now') }}
     {{ task_card('reconcile', 'Match & update', 'Links everything to its movie or show, fetches TMDB details and episode lists, and recalculates every status.'|safe, task_statuses.get('reconcile'), url_for('trigger', name='reconcile'), 'Match now') }}
     {{ task_card('backup', 'Database backup', 'Saves a consistent copy of the database (safe while SyncHub runs) in the backups folder next to it. This also runs every night at 03:30 and keeps the newest few (Settings, Database backups).', task_statuses.get('backup'), url_for('trigger', name='backup'), 'Back up now') }}
+    {{ task_card('dvr', 'Jellyfin DVR', 'Reads what Jellyfin has scheduled to record (timers and series rules). It only reads. It runs on its own every few minutes when the DVR is switched on in Settings.', task_statuses.get('dvr'), url_for('trigger', name='dvr'), 'Read the schedule now') }}
     {{ task_card('posters', 'Posters', 'Tries every poster again: forgets earlier failures, asks TMDB for the poster of titles that have none, and saves every poster that is not cached yet.', task_statuses.get('posters'), url_for('trigger', name='posters'), 'Refresh posters now') }}
 </div>
 
 <div class="row g-4 mb-4">
+    <div class="col-md-6">
+        <div class="panel p-3 p-md-4 h-100 d-flex flex-column gap-3" id="libraryPaths">
+            <div>
+                <h5 class="m-0 text-success">Jellyfin library folders</h5>
+                <p class="text-body-secondary m-0 mt-1">Looks for libraries that share a folder, sit inside another library's folder or differ only in letter case. It only reads from Jellyfin.</p>
+            </div>
+            <div><button type="button" class="btn btn-secondary btn-sm" id="checkLibraryPaths">Check library folders</button></div>
+            <div id="libraryPathsResult" class="small"></div>
+        </div>
+    </div>
     <div class="col-md-6">
         <div class="panel p-3 p-md-4 h-100 d-flex flex-column justify-content-between gap-3">
             <div>
@@ -63,6 +74,22 @@
 {% block scripts %}
 <script>
 document.addEventListener("DOMContentLoaded", function() {
+    const checkBtn = document.getElementById('checkLibraryPaths'), out = document.getElementById('libraryPathsResult');
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+    if (checkBtn) checkBtn.addEventListener('click', async () => {
+        checkBtn.disabled = true; out.textContent = 'Asking Jellyfin...';
+        try {
+            const res = await fetch('/api/tools/library-paths', {headers: {Accept: 'application/json'}});
+            const body = await res.json();
+            if (!body.ok) { out.innerHTML = `<span class="text-danger">${esc(body.message)}</span>`; return; }
+            const libs = body.libraries.map(l => `<li><strong>${esc(l.name)}</strong> <span class="text-body-secondary">${esc(l.type || 'mixed')}</span>: ${l.paths.map(esc).join(', ')}</li>`).join('');
+            const bad = body.overlaps.length
+                ? `<ul class="mb-2">${body.overlaps.map(o => `<li class="text-warning">${esc(o.message)}</li>`).join('')}</ul>`
+                : '<p class="text-success mb-2">No overlapping folders found.</p>';
+            out.innerHTML = bad + `<details><summary>${body.libraries.length} libraries</summary><ul>${libs}</ul></details>`;
+        } catch (e) { out.innerHTML = `<span class="text-danger">${esc(e.message)}</span>`; }
+        finally { checkBtn.disabled = false; }
+    });
     document.querySelectorAll('[data-task-last]').forEach(el => {
         const val = el.textContent.trim();
         if (val && val !== 'Never') {

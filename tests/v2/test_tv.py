@@ -484,3 +484,27 @@ def test_forgetting_the_pairing_deletes_the_identity_and_asks_to_pair_again(tmp_
         open(f, "w").write("x")
     d.forget_pairing()
     assert not Path(d.certfile).exists() and not Path(d.keyfile).exists() and d.needs_pairing
+
+
+# ---------------------------------------------------------------- open the Jellyfin app
+def test_the_open_jellyfin_button_launches_the_tvs_jellyfin_app(client, tv, den, monkeypatch):
+    launched = []
+    monkeypatch.setattr(RokuDriver, "jellyfin_app", lambda self: "2285")
+    monkeypatch.setattr(RokuDriver, "launch", lambda self, app_id, params=None: launched.append(app_id) or "launched")
+    body = post(client, f"/api/tv/devices/{den}/jellyfin").get_json()
+    assert body["ok"] and launched == ["2285"]
+
+
+def test_the_open_jellyfin_button_says_why_when_the_app_is_missing(client, tv, den, monkeypatch):
+    def missing(self):
+        raise tv_errors("No installed Roku app matching \"Jellyfin\".")
+    from synchub.tv.devices import DeviceError as tv_errors
+    monkeypatch.setattr(RokuDriver, "jellyfin_app", missing)
+    body = post(client, f"/api/tv/devices/{den}/jellyfin").get_json()
+    assert body["ok"] is False
+
+
+def test_the_remote_page_script_has_the_button_and_the_address_exists(app):
+    from config import BASE_DIR
+    assert "data-act=\"openjf\"" in (BASE_DIR / "static" / "tv" / "remote.js").read_text()
+    assert "openjf:" in (BASE_DIR / "static" / "tv" / "common.js").read_text()

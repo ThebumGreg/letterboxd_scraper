@@ -124,6 +124,7 @@
 .tvr .remote-page .rgrid button{padding:12px 4px;font-size:15px}
 .tvr .remote-page .dpad{grid-template-columns:repeat(3,76px);grid-template-rows:repeat(3,64px)}
 .tvr .watchbtn{width:100%;margin-top:12px;padding:13px;border-radius:14px;font-size:15px}
+.tvr .jfopen{width:100%;margin-top:8px;padding:11px;border-radius:14px;font-size:14px}
 /* now playing, built into the remote */
 .tvr .np{background:#12171c;border:1px solid var(--line);border-radius:16px;padding:10px;margin:10px 0}
 .tvr .np .ico{width:36px;height:36px;font-size:13px;border-radius:9px}

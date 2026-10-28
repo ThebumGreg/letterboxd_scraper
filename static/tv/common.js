@@ -383,6 +383,7 @@ const ACTIONS = {
   selectdev: b => selectDevice(b.dataset.id),
   key: b => sendKey(b, b.dataset.key),
   power: async b => { await run(b, api('POST', devPath('/power'), {state: b.dataset.state})); pollStatus(dev()); },
+  openjf: async b => { await run(b, api('POST', devPath('/jellyfin'))); setTimeout(() => pollStatus(dev()), 1500); },
   launch: async b => { await run(b, api('POST', devPath('/launch'), {app: b.dataset.app})); setTimeout(() => pollStatus(dev()), 1500); },
   playstate: b => {
     const key = activeClockKey(), cmd = b.dataset.cmd;   // pause and resume show at once; the server confirms a moment later

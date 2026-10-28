@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Jellyfin as the DVR: groundwork (migration 022).** SyncHub now keeps each Jellyfin item's path and marks the ones inside the recording folders (*Settings > Jellyfin DVR*, default `/DVR`, as Jellyfin spells the path) as recordings; nothing changes how they are treated yet, and the flag fills in at the next Jellyfin sync. Switch on *Read the recording schedule from Jellyfin* to have SyncHub read Jellyfin's timers and series rules every few minutes (it only reads; it never schedules or cancels). The System status page then shows a *Jellyfin DVR* line: recording now, scheduled, series rules, failed or in conflict, the next recording, and how many recordings are in the library. *Tools > Jellyfin library folders* lists libraries that share a folder, sit inside another library's folder or differ only in letter case.
+- **Open Jellyfin from the remote.** An *Open Jellyfin* button on the TV remote starts the Jellyfin app on a Google TV or Roku (the app name can be changed with the TV's `jellyfin.app` setting).
 - **Dashboard counts reconcile with Jellyfin.** The *In Library* card now says how many of its titles are movies and how many are shows, and admins see a line showing Jellyfin's movie items, the titles they make up here (extra versions of one film count once) and how many are not matched yet.
 
 ## 1.4.0
