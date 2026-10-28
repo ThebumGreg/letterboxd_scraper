@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Dashboard counts reconcile with Jellyfin.** The *In Library* card now says how many of its titles are movies and how many are shows, and admins see a line showing Jellyfin's movie items, the titles they make up here (extra versions of one film count once) and how many are not matched yet.
+
 ## 1.4.0
 
 One new migration (021, the watchlist table and a per-person setting). Workers need no change apart from the version number.

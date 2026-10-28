@@ -67,7 +67,7 @@ def test_list_catalog_movies_and_shows(conn):
     d = rows["Delta"]
     assert (d["kind"], d["state"], d["state_label"], d["episodes"], d["aired"], d["in_library"], d["percent"], d["url"]) == ("show", "partial", "Partial", 3, 2, 1, 50, f"/show/{show}")
     stats = catalog.dashboard_stats(list(rows.values()))
-    assert stats == {"total": 4, "movies": 3, "shows": 1, "in_library": 1, "in_flight": 1, "queued": 0, "missing": 1, "partial": 1, "users": 1}
+    assert stats == {"total": 4, "movies": 3, "shows": 1, "in_library": 1, "movies_in_library": 1, "shows_in_library": 0, "in_flight": 1, "queued": 0, "missing": 1, "partial": 1, "users": 1}
 
 
 def test_removed_jellyfin_item_is_not_a_library_link(conn):
@@ -75,6 +75,15 @@ def test_removed_jellyfin_item_is_not_a_library_link(conn):
     conn.execute("INSERT INTO src_jellyfin_item (item_id, type, first_seen, last_seen, removed_at) VALUES ('jf1', 'movie', ?, ?, ?)", (NOW, NOW, NOW)); link(conn, "jellyfin", "jf1", m)
     row = catalog.list_catalog(conn, TODAY)[0]
     assert row["in_jellyfin"] is False and row["jellyfin_link"] is None
+
+
+def test_jellyfin_movie_reconcile(conn):
+    a = media(conn, "movie", "1", "Twice")
+    for jf in ("jf1", "jf2", "jf3", "jf4"):
+        conn.execute("INSERT INTO src_jellyfin_item (item_id, type, first_seen, last_seen) VALUES (?, 'movie', ?, ?)", (jf, NOW, NOW))
+    conn.execute("INSERT INTO src_jellyfin_item (item_id, type, first_seen, last_seen, removed_at) VALUES ('jf5', 'movie', ?, ?, ?)", (NOW, NOW, NOW))
+    link(conn, "jellyfin", "jf1", a); link(conn, "jellyfin", "jf2", a)      # two editions of one film; jf3/jf4 unmatched
+    assert catalog.jellyfin_movie_reconcile(conn) == {"jellyfin_items": 4, "titles": 1, "duplicates": 1, "unmatched": 2}
 
 
 def test_media_detail(conn):

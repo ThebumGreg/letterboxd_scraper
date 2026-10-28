@@ -12,12 +12,15 @@
 </a>
 {% endif %}
 <div class="row g-3 mb-4" aria-label="Library at a glance">
-    {{ stat_card('In Library', stats.in_library, 'success', '', 'in_library') }}
+    {{ stat_card('In Library', stats.in_library, 'success', '', 'in_library', sub=stats.movies_in_library ~ ' movies · ' ~ stats.shows_in_library ~ ' shows') }}
     {{ stat_card('In Progress', stats.in_flight, 'primary', '', 'in_flight') }}
     {{ stat_card('Queued', stats.queued, 'info', '', 'queued') }}
     {{ stat_card('Missing', stats.missing, 'danger', '', 'missing') }}
     {% if stats.partial %}{{ stat_card('Partial', stats.partial, 'warning', '', 'partial') }}{% endif %}
 </div>
+{% if reconcile and reconcile.jellyfin_items %}
+<p class="small text-body-secondary mb-4">Jellyfin movies: {{ reconcile.jellyfin_items }} item{{ '' if reconcile.jellyfin_items == 1 else 's' }} = {{ reconcile.titles }} title{{ '' if reconcile.titles == 1 else 's' }} here{% if reconcile.duplicates %} ({{ reconcile.duplicates }} extra version{{ '' if reconcile.duplicates == 1 else 's' }} of a film already counted){% endif %}{% if reconcile.unmatched %}, {{ reconcile.unmatched }} not matched yet (see Match review){% endif %}.</p>
+{% endif %}
 
 {% if resume %}
 <section class="mb-4" aria-labelledby="h-continue" id="continueWatching">
