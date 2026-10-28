@@ -70,7 +70,7 @@ RULES = (
     ("workers_*", "workers"), ("api_worker*", "workers"), ("api_job*", "workers"), ("api_test_copy", "workers"),
     ("storage_page", "storage"), ("api_storage*", "storage"),
     ("tv_setup*", "tv_setup"), ("api_tv_setup*", "tv_setup"), ("tv_*", "tv"), ("api_tv_*", "tv"),
-    ("tools", "tools"), ("trigger", "tools"), ("export_csv", "tools"),
+    ("tools", "tools"), ("trigger", "tools"), ("export_csv", "tools"), ("api_tools_*", "tools"),
     ("activity_page", "logs"), ("diagnostics_page", "logs"), ("api_activity", "logs"),
     ("logs_page", "logs"), ("api_logs", "logs"), ("jellyfin_event*", "logs"),
     ("payloads_page", "payloads"), ("api_payload_logs", "payloads"), ("api_clear_payload_logs", "payloads"),

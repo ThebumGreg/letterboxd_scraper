@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 
-from synchub import automation, db, episodes, matching, metadata, posters, ratings, settings, states, watchlist
+from synchub import automation, db, dvr, episodes, matching, metadata, posters, ratings, settings, states, watchlist
 from synchub.clients import ConfigError
 from synchub.clients.arr import RadarrClient, SonarrClient
 from synchub.clients.jellyfin import JellyfinClient
@@ -115,6 +115,20 @@ def _jellyfin(scope, label, report):
     with db.connection() as conn:
         result = jf_ingest.sync(conn, client, scope, progress=report)
     return f"{label}: {result['seen']} item(s) synced, {result['removed']} no longer reported."
+
+
+def sync_dvr():
+    """Reads Jellyfin's scheduled recordings (timers and series rules). Only reads: nothing is scheduled, changed or cancelled."""
+    def work(report):
+        if settings.get("disable_jellyfin_connection") == "1":
+            return "Jellyfin integration is disabled in Settings."
+        client = JellyfinClient()
+        report("Reading Jellyfin's recording schedule...", force=True)
+        timers, rules = client.timers(), client.series_timers()
+        with db.connection() as conn:
+            result = dvr.sync_timers(conn, timers, rules)
+        return f"Jellyfin DVR: {result['timers']} timer(s), {result['series']} series rule(s)."
+    return run("dvr", "Reading Jellyfin's recording schedule", work)
 
 
 def backup_database():
@@ -516,7 +530,7 @@ def run_all():
 
 
 # ---------------------------------------------------------------- helpers for the web layer
-TASK_NAMES = ("jellyfin_movies", "jellyfin_tv", "watch_state", "radarr", "sonarr", "scraper_letterboxd", "scraper_serializd", "id_resolver", "reconcile", "posters", "all")
+TASK_NAMES = ("jellyfin_movies", "jellyfin_tv", "watch_state", "radarr", "sonarr", "scraper_letterboxd", "scraper_serializd", "id_resolver", "reconcile", "posters", "dvr", "all")
 
 
 def all_statuses():

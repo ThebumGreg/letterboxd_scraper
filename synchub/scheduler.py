@@ -30,6 +30,12 @@ REAPER_SECONDS = 30
 NOTIFY_SECONDS = 30       # how often the outbox is looked at (it sends nothing while the administrator's switch is off)
 
 
+def dvr_poll_seconds():
+    """How often Jellyfin's recording schedule is read (0 = never; 1 to 59 is raised to 60)."""
+    seconds = interval_hours("dvr_poll_seconds", 300)
+    return 0 if seconds == 0 else max(60, seconds)
+
+
 def _reap_jobs():
     """Takes back jobs whose worker has gone silent."""
     from synchub import db, jobs
@@ -94,6 +100,9 @@ def configure():
     from synchub import backup
     if backup.keep_count():
         scheduler.add_job(tasks.backup_database, "cron", hour=3, minute=30, id="job_backup", max_instances=1, coalesce=True, misfire_grace_time=3600)
+    dvr_seconds = dvr_poll_seconds()
+    if dvr_seconds > 0 and settings.get("dvr_enabled") == "1":
+        scheduler.add_job(tasks.sync_dvr, "interval", seconds=dvr_seconds, id="job_dvr", max_instances=1, coalesce=True)
     seconds = queue_poll_seconds()
     if seconds > 0:
         scheduler.add_job(tasks.poll_queues, "interval", seconds=seconds, id="job_queue_poll", max_instances=1, coalesce=True)

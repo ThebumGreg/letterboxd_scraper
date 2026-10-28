@@ -15,6 +15,7 @@ DEFAULTS = {
     "radarr_min_user_count": "1", "radarr_quality_profile_id": "1", "radarr_root_folder": "/movies",
     "sonarr_enable_queue_addition": "0", "sonarr_dry_run": "0",
     "sonarr_min_user_count": "1", "sonarr_quality_profile_id": "1", "sonarr_root_folder": "/tv",
+    "dvr_enabled": "0", "dvr_poll_seconds": "300", "dvr_path_prefixes": "/DVR",
     "enable_notifications": "0", "notify_admin_profiles": "", "notify_history_keep_days": "90", "payload_logging_enabled": "0", "payload_retention_limit": "500",
     "log_service_jellyfin": "0", "log_service_radarr": "0", "log_service_sonarr": "0", "log_service_tmdb": "0", "log_service_dynu": "0",
     # the Library: the one share everything is brought into, how it is laid out, and how scans look at files
