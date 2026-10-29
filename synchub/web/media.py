@@ -9,6 +9,7 @@ from synchub import access, db, storage
 # (key, label, endpoint that opens it, what it holds)
 TABS = (
     ("library", "Library", "library_page", "Every video file on your shares and what to do with it"),
+    ("versions", "Versions", "library_versions_page", "Smaller extra copies of big films and Dolby Vision 7 conversions, for you to approve"),
     ("workers", "Workers", "workers_page", "The PCs that do the heavy work, and their jobs"),
     ("originals", "Originals", "workers_originals_page", "Original files kept after a file was replaced: restore, keep longer or delete"),
     ("storage", "Storage", "storage_page", "The shares the workers mount"),
@@ -19,6 +20,9 @@ def _data(key, conn):
     if key == "library":
         from synchub.web import library
         return library.overview(conn)
+    if key == "versions":
+        from synchub.web import versions
+        return versions.overview(conn)
     if key == "workers":
         from synchub.web import fleet
         return fleet.snapshot(conn)

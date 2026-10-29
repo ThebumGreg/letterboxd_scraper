@@ -47,7 +47,7 @@ __version__ = "1.4.0"      # kept equal to SyncHub's version (synchub/__init__.p
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
 OPS = ["copy", "rename", "delete_source", "originals"]     # the operations (plan.op) every agent can do; scan, hash and convert are added when the analysis module and ffmpeg are there
-FEATURES = ["profiles"]            # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run)
+FEATURES = ["profiles", "scale"]   # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run). "dovi" is added when dovi_tool and mkvmerge work
 MANIFEST_VERSION = 1
 HASH_BUFFER = 8 * 1024 * 1024
 SPACE_MARGIN = 1024 ** 3           # room left over on a disk after a copy
@@ -178,6 +178,8 @@ class Config:
         self.hostname = pick("worker", "hostname", "SYNCHUB_HOSTNAME") or socket.gethostname()
         self.ffmpeg = pick("worker", "ffmpeg", "SYNCHUB_FFMPEG", "ffmpeg")
         self.ffprobe = pick("worker", "ffprobe", "SYNCHUB_FFPROBE", "ffprobe")
+        self.dovi_tool = pick("worker", "dovi_tool", "SYNCHUB_DOVI_TOOL", "dovi_tool")
+        self.mkvmerge = pick("worker", "mkvmerge", "SYNCHUB_MKVMERGE", "mkvmerge")
         self.log_level = (pick("worker", "log_level", "SYNCHUB_LOG_LEVEL", "INFO") or "INFO").upper()
         self.verify = (pick("worker", "verify", "SYNCHUB_VERIFY", "hash") or "hash").lower()
         self.video_encoder = (pick("worker", "video_encoder", "SYNCHUB_VIDEO_ENCODER", "auto") or "auto").lower()      # which GPU encoder to use when a plan allows GPU encoding
@@ -656,6 +658,9 @@ def clean_size_cap(profile):
         out["max_bytes"] = int(profile["max_bytes"])
     if profile.get("deinterlace"):
         out["deinterlace"] = True
+    height = _positive_int(profile.get("max_height"), 4320)
+    if height and height >= 240:
+        out["max_height"] = height                       # the picture is scaled down to at most this height (never up)
     hdr = profile.get("hdr")
     if isinstance(hdr, dict) and hdr.get("kind") in ("hdr10", "hlg"):
         clean = {"kind": hdr["kind"]}
@@ -683,13 +688,20 @@ def hevc_extra_args(profile):
     return ":".join(params), extra
 
 
+def scale_filter(profile):
+    """The ffmpeg filter that scales the picture down to the profile's `max_height` (never up, width follows the aspect ratio), or None."""
+    height = (profile or {}).get("max_height")
+    return f"scale=-2:'min({int(height)},ih)':flags=lanczos" if height else None
+
+
 def video_arguments(video, profile):
     """The ffmpeg arguments for a video the plan says to re-encode. The profile chooses codec and quality; without one it is H.264 at CRF 20, as before."""
     codec = (profile or {}).get("video_codec") if (profile or {}).get("video_codec") not in (None, "keep") else (video.get("codec") or "h264")
     if codec == "hevc":
         pix = "yuv420p10le" if (profile or {}).get("ten_bit") or (profile or {}).get("hdr") else "yuv420p"
         params, extra = hevc_extra_args(profile or {})
-        yadif = ["-vf", "yadif"] if (profile or {}).get("deinterlace") else []
+        filters = (["yadif"] if (profile or {}).get("deinterlace") else []) + ([scale_filter(profile)] if scale_filter(profile) else [])
+        yadif = ["-vf", ",".join(filters)] if filters else []
         return yadif + ["-c:v", "libx265", "-crf", str((profile or {}).get("crf") or 23), "-preset", (profile or {}).get("preset") or "medium", "-pix_fmt", pix, "-tag:v", "hvc1", "-x265-params", params] + extra
     return ["-c:v", "libx264", "-crf", str((profile or {}).get("crf") or 20), "-preset", (profile or {}).get("preset") or "medium", "-pix_fmt", "yuv420p"]
 
@@ -717,7 +729,7 @@ def gpu_video_arguments(kind, profile, device):
     crf, ten = int(profile.get("crf") or 23), bool(profile.get("ten_bit"))
     preset, maxrate = profile.get("preset") or "medium", profile.get("maxrate_kbps")
     bufsize = profile.get("bufsize_kbps") or (maxrate or 0) * 2
-    deinterlace = ["yadif"] if profile.get("deinterlace") else []
+    deinterlace = (["yadif"] if profile.get("deinterlace") else []) + ([scale_filter(profile)] if scale_filter(profile) else [])      # run on the CPU, before the picture goes to the card
     target = int(maxrate / MAXRATE_HEADROOM) if maxrate else None
     if kind == "nvenc":
         args = ["-c:v", "hevc_nvenc", "-preset", NVENC_PRESETS[preset], "-tune", "hq", "-rc", "vbr", "-cq", str(crf), "-b:v", f"{target}k" if target else "0"]
@@ -752,6 +764,9 @@ def _track_arguments(change, profile, n):
     for position, index in enumerate(keep_audio if isinstance(keep_audio, list) else []):
         if str(index) in converting:
             codecs += [f"-c:a:{position}", converting[str(index)].get("codec") or "aac", f"-b:a:{position}", f"{bitrate}k"]
+            channels = _positive_int(converting[str(index)].get("channels"), 8)
+            if channels:
+                codecs += [f"-ac:a:{position}", str(channels)]
     default = change.get("default_audio")
     if default is not None and isinstance(keep_audio, list) and default in keep_audio:
         codecs += ["-disposition:a", "0", f"-disposition:a:{keep_audio.index(default)}", "default"]
@@ -785,6 +800,21 @@ def build_chunk_command(ffmpeg, src, out, change, profile, encoder, device, star
     pre, video_args = video_plan(change.get("video") or {}, profile, encoder, device)
     window = ["-ss", f"{start:.3f}"] + (["-t", f"{length:.3f}"] if length else [])
     return [ffmpeg, "-nostdin", "-hide_banner", "-y", "-v", "error", "-progress", "pipe:1", "-nostats"] + pre + window + ["-i", src, "-map", "0:V?", "-an", "-sn", "-dn"] + video_args + ["-f", "matroska", out]
+
+
+def dovi_extract_command(ffmpeg, src):
+    """ffmpeg writing the first video stream of `src` as a raw HEVC stream on stdout, the form dovi_tool reads."""
+    return [ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-i", src, "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb", "-f", "hevc", "pipe:1"]
+
+
+def dovi_convert_command(dovi_tool, out):
+    """dovi_tool reading that stream on stdin, converting the Dolby Vision data to profile 8.1 (mode 2) and dropping the enhancement layer."""
+    return [dovi_tool, "-m", "2", "convert", "--discard", "-i", "-", "-o", out]
+
+
+def mkvmerge_command(mkvmerge, video, fps, src, out):
+    """mkvmerge joining the converted picture with everything else in `src` (audio, subtitles, chapters, attachments, tags), none of which is touched."""
+    return [mkvmerge, "-o", out, "--default-duration", f"0:{fps}p", video, "--no-video", src]
 
 
 MAXRATE_HEADROOM = 1.05              # the same cap as synchub.library.size_policy: maxrate is 5 % over the target video bitrate
@@ -924,6 +954,11 @@ def detect_capabilities(cfg):
         if media_analysis and caps["ffmpeg"]:
             caps["ops"].extend(["scan", "convert", "preview"])          # a scan needs ffprobe to read files and ffmpeg to check them; a conversion also runs ffmpeg, then checks the result
             caps["features"].append("preview")
+    if caps["ffmpeg"] and caps["ffprobe"] and media_analysis:
+        dovi_code, _ = run_quiet([cfg.dovi_tool, "--version"])
+        mkv_code, _ = run_quiet([cfg.mkvmerge, "--version"])
+        if dovi_code == 0 and mkv_code == 0:
+            caps["features"].append("dovi")                              # Dolby Vision profile 7 to 8.1 (see remux_dolby_vision)
     return caps
 
 
@@ -1790,7 +1825,10 @@ class JobRunner(threading.Thread):
         done = self.stage_info("encode")
         if not (done.get("done") and os.path.isfile(converted) and os.path.getsize(converted) == done.get("bytes")):
             done.clear()
-            done.update(self.encode(local, converted, change, self.job["plan"].get("duration"), plan.get("profile")))
+            if (change.get("video") or {}).get("dv") == "p8_1":
+                done.update(self.remux_dolby_vision(local, converted, plan.get("duration")))
+            else:
+                done.update(self.encode(local, converted, change, self.job["plan"].get("duration"), plan.get("profile")))
             self.save()
         quality = self.quality_check(local, converted, change, plan.get("profile"))
         out_size = os.path.getsize(converted)
@@ -2196,6 +2234,10 @@ class JobRunner(threading.Thread):
             got_codec = next((str(st.get("codec_name")) for st in streams if st.get("codec_type") == "video"), None)
             if got_codec and got_codec not in ({"hevc"} if wanted == "hevc" else {"h264"}):
                 problems.append(f"the video is {got_codec} but the profile asks for {wanted}")
+        limit = (profile or {}).get("max_height")
+        got_height = next((int(st.get("height") or 0) for st in streams if st.get("codec_type") == "video"), 0)
+        if limit and got_height > limit:
+            problems.append(f"the picture is {got_height} pixels high but the plan asked for at most {limit}")
         for kind, key in (("audio", "keep_audio"), ("subtitle", "keep_subtitle")):
             if isinstance(change.get(key), list) and counts[kind] != len(change[key]):
                 problems.append(f"it has {counts[kind]} {kind} track(s) but {len(change[key])} were planned")
@@ -2209,6 +2251,110 @@ class JobRunner(threading.Thread):
         if problems:
             raise JobFailure("verification_failed", "The converted file failed its checks: " + "; ".join(problems))
         return {"duration": got, **counts}
+
+    def remux_dolby_vision(self, local, converted, expected_duration):
+        """Dolby Vision profile 7 to 8.1 without re-encoding the picture: the video is streamed through dovi_tool (which drops the enhancement layer and rewrites the Dolby
+        data) into a raw stream, then mkvmerge joins it with the source's other tracks. The result must read back as profile 8 with the same tracks and length."""
+        settings = self.media_settings({})
+        data = media_analysis.run_ffprobe(settings, local)
+        video = next((st for st in data.get("streams") or [] if isinstance(st, dict) and st.get("codec_type") == "video"), None)
+        facts = media_analysis.video_facts(video, data.get("format"))
+        self.require_profile_7(facts)
+        fps = str((video or {}).get("r_frame_rate") or "")
+        if not re.match(r"^\d{1,6}(/\d{1,6})?$", fps) or fps in ("0/0", "0"):
+            raise JobFailure("encode_failed", "The frame rate of the video is not known, so it cannot be joined back together.", retryable=False)
+        size = os.path.getsize(local)
+        free = shutil.disk_usage(self.folder).free
+        if free < size * 2 + SPACE_MARGIN:
+            raise JobFailure("transient", f"Not enough free space on the work disk: about {human_bytes(size * 2)} is needed for the converted video and the joined file, and {human_bytes(free)} is free.")
+        folder = os.path.join(self.folder, "dv")
+        shutil.rmtree(folder, ignore_errors=True)
+        os.makedirs(folder, exist_ok=True)
+        stream, partial, errors = os.path.join(folder, "video.hevc"), converted + ".partial", os.path.join(folder, "tools.err")
+        os.makedirs(os.path.dirname(converted), exist_ok=True)
+        for leftover in (partial, converted):
+            self._remove(leftover)
+        started = time.monotonic()
+        extract, convert = dovi_extract_command(self.cfg.ffmpeg, local), dovi_convert_command(self.cfg.dovi_tool, stream)
+        self.log.info("Converting Dolby Vision profile 7 to 8.1", command=shlex.join(extract) + " | " + shlex.join(convert))
+        self.report_progress("encode", 0.25, "Converting the Dolby Vision data", force=True)
+        with open(errors, "w", encoding="utf-8", errors="replace") as err:
+            reader = subprocess.Popen(extract, stdout=subprocess.PIPE, stderr=err, start_new_session=True)
+            try:
+                writer = subprocess.Popen(convert, stdin=reader.stdout, stdout=err, stderr=err, start_new_session=True)
+            except OSError as exc:
+                self._stop_ffmpeg(reader)
+                raise JobFailure("encode_failed", f"dovi_tool could not be started: {exc}", retryable=False)
+            reader.stdout.close()
+            try:
+                while writer.poll() is None:
+                    self.reporter.check()
+                    written = os.path.getsize(stream) if os.path.exists(stream) else 0
+                    self.report_progress("encode", 0.25 + 0.50 * min(0.99, written / max(1, size * 0.95)), f"Converting the Dolby Vision data: {human_bytes(written)}")
+                    time.sleep(1.0)
+                reader.wait()
+            except BaseException:
+                self._stop_ffmpeg(writer)
+                self._stop_ffmpeg(reader)
+                shutil.rmtree(folder, ignore_errors=True)
+                raise
+        if reader.returncode != 0 or writer.returncode != 0:
+            tail = read_file(errors).strip()[-800:]
+            shutil.rmtree(folder, ignore_errors=True)
+            raise JobFailure("encode_failed", f"The Dolby Vision conversion stopped (ffmpeg exit {reader.returncode}, dovi_tool exit {writer.returncode}): {tail or 'no message'}", retryable=False)
+        self.report_progress("encode", 0.78, "Joining the video with the audio and subtitles", force=True)
+        join = mkvmerge_command(self.cfg.mkvmerge, stream, fps, local, partial)
+        self.log.info("Joining with mkvmerge", command=shlex.join(join))
+        with open(errors, "w", encoding="utf-8", errors="replace") as err:
+            try:
+                done = subprocess.run(join, stdout=err, stderr=subprocess.STDOUT, timeout=6 * 3600)
+            except (OSError, subprocess.SubprocessError) as exc:
+                shutil.rmtree(folder, ignore_errors=True)
+                raise JobFailure("encode_failed", f"mkvmerge could not run: {exc}", retryable=False)
+        shutil.rmtree(folder, ignore_errors=True) if done.returncode in (0, 1) else None     # mkvmerge exits 1 for warnings only
+        if done.returncode not in (0, 1):
+            self._remove(partial)
+            raise JobFailure("encode_failed", f"mkvmerge stopped with exit code {done.returncode}.", retryable=False)
+        try:
+            probe = self.check_dv_remux(settings, partial, data, expected_duration)
+        except JobFailure:
+            self._remove(partial)
+            raise
+        os.replace(partial, converted)
+        return {"done": True, "bytes": os.path.getsize(converted), "seconds": round(time.monotonic() - started, 1), "command": " | ".join((shlex.join(extract), shlex.join(convert))) + " ; " + shlex.join(join),
+                "probe": probe, "finished": iso(), "encoder": "dovi_tool", "fallback": None, "chunked": False}
+
+    @staticmethod
+    def require_profile_7(facts):
+        if facts["hdr"] != "dv" or str(facts.get("dv_profile")) != "7":
+            raise JobFailure("encode_failed", f"This file is not Dolby Vision profile 7 (it is {facts['hdr']}{' profile ' + str(facts.get('dv_profile')) if facts['hdr'] == 'dv' else ''}), so there is nothing to convert.", retryable=False)
+
+    def check_dv_remux(self, settings, path, source, expected_duration):
+        """The joined file must read back as Dolby Vision profile 8 (compatibility id 1, a plain HDR10 base layer), have the source's audio and subtitle tracks and its length, and decode cleanly."""
+        data = media_analysis.run_ffprobe(settings, path)
+        streams = [s for s in data.get("streams") or [] if isinstance(s, dict)]
+        wanted = [s for s in source.get("streams") or [] if isinstance(s, dict)]
+        counts = lambda items, kind: sum(1 for s in items if s.get("codec_type") == kind)          # noqa: E731
+        video = next((s for s in streams if s.get("codec_type") == "video"), None)
+        facts = media_analysis.video_facts(video, data.get("format")) if video else {"hdr": None}
+        problems = []
+        if facts.get("hdr") != "dv" or str(facts.get("dv_profile")) != "8":
+            problems.append(f"the video does not read back as Dolby Vision profile 8 (it reads as {facts.get('hdr')}{' profile ' + str(facts.get('dv_profile')) if facts.get('hdr') == 'dv' else ''})")
+        elif str(facts.get("dv_compat")) not in ("1", "None"):
+            problems.append(f"the Dolby Vision data is not compatible with HDR10 (compatibility id {facts.get('dv_compat')})")
+        for kind in ("audio", "subtitle"):
+            if counts(streams, kind) != counts(wanted, kind):
+                problems.append(f"it has {counts(streams, kind)} {kind} track(s) but the source has {counts(wanted, kind)}")
+        got = media_duration(data)
+        if expected_duration and got is not None and abs(got - expected_duration) > max(1.0, expected_duration * 0.005):
+            problems.append(f"it is {got:.0f} s long but the source is {expected_duration:.0f} s")
+        if not problems:
+            status, detail = media_analysis.decode_check(settings, path)
+            if status == media_analysis.INT_DECODE_ERROR:
+                problems.append(f"it does not decode cleanly: {detail[:300]}")
+        if problems:
+            raise JobFailure("verification_failed", "The converted file failed its checks: " + "; ".join(problems))
+        return {"duration": got, "dv_profile": facts.get("dv_profile"), "dv_compat": facts.get("dv_compat"), "audio": counts(streams, "audio"), "subtitle": counts(streams, "subtitle")}
 
     # progress: copy in 0 - 45 %, copy out 45 - 90 %, reading the copy back to verify it 90 - 100 %
     BANDS = {"copy_in": (0.0, 0.45), "copy_out": (0.45, 0.90), "verify": (0.90, 1.0)}

@@ -124,6 +124,18 @@ sudo ./agent/update-worker.sh --dir /opt/synchub-worker --no-pull
 git checkout main                                   # when you want to follow main again
 ```
 
+### Dolby Vision conversion (new worker image)
+
+After this update the worker image also contains `mkvmerge` and `dovi_tool` (a prebuilt release, checked against a fixed checksum while the image is built). If `dovi_tool` cannot be downloaded the image is still built, but that worker does not offer the Dolby Vision job. Check after `docker compose up -d --build`:
+
+```
+cd /opt/synchub-worker
+sudo docker compose run --rm --entrypoint dovi_tool worker --version
+sudo docker compose run --rm --entrypoint mkvmerge worker --version
+```
+
+Both should print a version. The conversion needs about three times the film's size free in the work folder (the copy, the converted stream and the joined file). Start with one film from *Media > Versions* and play it on the Google TV or Roku before approving more.
+
 ### Turning on GPU encoding on a worker (Intel UHD 630 on worker-1)
 
 The 1.3.0 image already contains ffmpeg with libvmaf and the Intel media driver; the container only needs the GPU passed in. On worker-1:

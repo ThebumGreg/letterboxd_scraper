@@ -24,6 +24,9 @@ DEFAULTS = {
     # downloads Radarr/Sonarr import: off, review (a person approves each one), auto (high-confidence plans run on their own); the original is kept on the worker this long
     "size_policy": "0", "movie_max_gb": "30", "movie_target_gb": "25", "tv_size_policy": "0", "tv_max_gb_per_hour": "4", "tv_target_gb_per_hour": "2.5", "gpu_encoding": "0", "vmaf_mode": "warn", "size_crf": "22", "size_preset": "medium",
     "dolby_vision_profile_5": "review", "dolby_vision_profile_7_8": "hdr10",
+    # extra versions of a film (a smaller copy beside the original, shown by Jellyfin as another version) and Dolby Vision profile 7 to 8.1 (docs/DESIGN_ENCODING.md 13)
+    "versions_on": "1", "variant_min_gb": "30", "variant_height": "1080", "variant_label": "1080p", "variant_crf": "23", "variant_maxrate_kbps": "8000", "variant_audio_kbps": "192",
+    "variant_stereo": "1", "dv7_remux": "1",
     "review_first": "always", "trust_after": "3", "preview_seconds": "45", "preview_keep_days": "7", "preview_auto": "1",
     "download_pipeline": "off", "originals_retention_days": "30",
     # conversion profile used when none is chosen for a file; the source file is deleted this many days after a verified migration (0 = never);

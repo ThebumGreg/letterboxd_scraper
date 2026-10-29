@@ -1,0 +1,47 @@
+<script>
+(() => {
+    const pane = document.getElementById('media-pane-versions');
+    if (!pane) return;
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const box = document.getElementById('versionsMessage');
+    const say = (ok, text) => { box.className = 'alert alert-' + (ok ? 'success' : 'danger'); box.textContent = text; box.scrollIntoView({ block: 'nearest' }); };
+    const post = async (url, body) => {
+        try {
+            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf }, body: JSON.stringify(body || {}) });
+            return await res.json();
+        } catch (e) { return { ok: false, message: 'Could not reach the server.' }; }
+    };
+    const done = (data, reload = true) => { say(data.ok, data.message); if (data.ok && reload) setTimeout(() => location.reload(), 1200); };
+
+    pane.querySelectorAll('section[data-kind]').forEach((section) => {
+        const kind = section.dataset.kind;
+        const rows = () => [...section.querySelectorAll('tbody tr')];
+        section.querySelector('[data-select-all]')?.addEventListener('change', (ev) => rows().forEach((r) => { const c = r.querySelector('[data-pick]'); if (c && !c.disabled) c.checked = ev.target.checked; }));
+        section.querySelector('[data-approve="selected"]')?.addEventListener('click', async () => {
+            const items = rows().filter((r) => r.querySelector('[data-pick]')?.checked).map((r) => ({ id: Number(r.dataset.id), height: r.querySelector('[data-height]') ? Number(r.querySelector('[data-height]').value) : undefined }));
+            if (!items.length) { say(false, 'Tick at least one film.'); return; }
+            if (!confirm('Queue ' + items.length + ' film' + (items.length === 1 ? '' : 's') + ' for a worker?')) return;
+            done(await post('/api/library/versions/approve', { kind, items }));
+        });
+        section.querySelector('[data-approve="all"]')?.addEventListener('click', async () => {
+            if (!confirm('Queue every recommended film in this list, with the default settings?')) return;
+            done(await post('/api/library/versions/approve', { kind, all: true }));
+        });
+        section.querySelectorAll('[data-skip]').forEach((b) => b.addEventListener('click', async () => {
+            done(await post('/api/library/versions/skip', { kind, id: Number(b.closest('tr').dataset.id) }));
+        }));
+    });
+    pane.querySelectorAll('[data-restore]').forEach((b) => b.addEventListener('click', async () => done(await post('/api/library/versions/restore', { kind: b.dataset.restore, id: Number(b.dataset.id) }))));
+    pane.querySelectorAll('[data-cancel]').forEach((b) => b.addEventListener('click', async () => {
+        if (confirm('Cancel this job? A running one stops at its next report.')) done(await post('/api/library/versions/cancel/' + b.dataset.cancel));
+    }));
+    document.getElementById('versionsSettings')?.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const $ = (id) => document.getElementById(id);
+        done(await post('/api/library/versions/settings', {
+            versions_on: $('vOn').checked ? '1' : '0', variant_min_gb: $('vMinGb').value, variant_height: $('vHeight').value, variant_label: $('vLabel').value, variant_crf: $('vCrf').value,
+            variant_maxrate_kbps: $('vRate').value, variant_audio_kbps: $('vAudio').value, variant_stereo: $('vStereo').checked ? '1' : '0', dv7_remux: $('vDv7').checked ? '1' : '0',
+        }));
+    });
+})();
+</script>
