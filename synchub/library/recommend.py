@@ -173,6 +173,10 @@ def recommend(rec, cfg=None) -> Recommendation:
         return Recommendation(G_DONE, "done", "none", "Approved for migration", steps, [], HIGH, False, **base)
     if rec["approval_status"] == db.APPROVAL_REJECTED:
         return Recommendation(G_DONE, "done", "none", "Rejected: will not be migrated", [], [], HIGH, False, **base)
+    from synchub import versions                       # imported here: versions uses the Library, not the other way round
+    if rec["root_name"] == cfg.destination_root and versions.is_version_file(rec["file_name"]):
+        return Recommendation(G_DONE, "version", "none", "Another version of a film: left as it is",
+                              ["A file named like “Film (Year) - 1080p” is shown by Jellyfin as another version of the film next to it, so it must keep its name and place."], [], HIGH, False, **base)
 
     # ---- cannot be approved ------------------------------------------------------------------------
     if rec.get("unreadable_reason"):

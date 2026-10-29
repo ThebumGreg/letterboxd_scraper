@@ -425,7 +425,7 @@ def test_an_outage_is_survived_and_reporting_resumes(monkeypatch):
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg is not installed")
 def test_capabilities_list_only_encoders_that_really_work(tmp_path):
     caps = agent.detect_capabilities(config(tmp_path))
-    assert caps["ops"] == ["copy", "rename", "delete_source", "originals", "hash", "scan", "convert", "preview"] and caps["features"] == ["profiles", "preview"] and caps["ffmpeg"].startswith("ffmpeg version") and caps["ffprobe"].startswith("ffprobe version") and caps["cores"] >= 1
+    assert caps["ops"] == ["copy", "rename", "delete_source", "originals", "hash", "scan", "convert", "preview"] and caps["features"][:3] == ["profiles", "scale", "preview"] and set(caps["features"]) <= {"profiles", "scale", "preview", "dovi"} and caps["ffmpeg"].startswith("ffmpeg version") and caps["ffprobe"].startswith("ffprobe version") and caps["cores"] >= 1
     assert set(caps["encoders"]) <= set(agent.TESTED_ENCODERS)
     assert "libx264" in caps["encoders"] or "libx265" in caps["encoders"]
     assert not any(e.endswith(("_nvenc", "_qsv", "_vaapi")) for e in caps["encoders"])           # no GPU here: those encoders exist in ffmpeg but do not work, and are not offered
