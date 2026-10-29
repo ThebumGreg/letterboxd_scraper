@@ -8,7 +8,7 @@ Radarr/Sonarr queue entries are turned into processing events, the same mechanis
 import logging
 from datetime import date
 
-from synchub import db
+from synchub import db, settings
 
 # Radarr/Sonarr trackedDownloadState (or status) -> state_def code. Unknown values count as downloading.
 QUEUE_STATE_MAP = {
@@ -114,30 +114,35 @@ def compute(conn, now=None, only=None, changed=None):
     ranks = {r["code"]: r["rank"] for r in conn.execute("SELECT code, rank FROM state_def")}
     events, job_events = _best_events(conn, ranks)
     results = []
+    dvr_lib = 1 if settings.get("dvr_counts_as_library", conn=conn) == "1" else 0         # off: a recording is 'recorded', not 'in_library'
     movie_filter, movie_params = _only_clause(only, "movie", "m.id")
     episode_filter, episode_params = _only_clause(only, "episode", "e.id")
 
     movies = conn.execute(f"""
         SELECT m.id,
           EXISTS (SELECT 1 FROM link l JOIN src_jellyfin_item j ON j.item_id = l.source_key
-                  WHERE l.source = 'jellyfin' AND l.entity_type = 'media' AND l.entity_id = m.id AND j.type = 'movie' AND j.removed_at IS NULL) AS in_library,
+                  WHERE l.source = 'jellyfin' AND l.entity_type = 'media' AND l.entity_id = m.id AND j.type = 'movie' AND j.removed_at IS NULL AND (j.is_dvr = 0 OR ?)) AS in_library,
+          EXISTS (SELECT 1 FROM link l JOIN src_jellyfin_item j ON j.item_id = l.source_key
+                  WHERE l.source = 'jellyfin' AND l.entity_type = 'media' AND l.entity_id = m.id AND j.type = 'movie' AND j.removed_at IS NULL AND j.is_dvr = 1) AS recorded,
           (SELECT MAX(r.has_file) FROM link l JOIN src_radarr_movie r ON r.radarr_id = l.source_key
                   WHERE l.source = 'radarr' AND l.entity_type = 'media' AND l.entity_id = m.id AND r.removed_at IS NULL) AS has_file,
           (SELECT MAX(r.monitored) FROM link l JOIN src_radarr_movie r ON r.radarr_id = l.source_key
                   WHERE l.source = 'radarr' AND l.entity_type = 'media' AND l.entity_id = m.id AND r.removed_at IS NULL) AS monitored
-        FROM media m WHERE m.kind = 'movie' {movie_filter}""", movie_params).fetchall()
+        FROM media m WHERE m.kind = 'movie' {movie_filter}""", [dvr_lib] + movie_params).fetchall()
     for r in movies:
         results.append(("movie", r["id"], _decide(r, events.get(("movie", r["id"])), ranks, ("movie", r["id"]) in job_events)))
 
     episodes = conn.execute(f"""
         SELECT e.id,
           EXISTS (SELECT 1 FROM link l JOIN src_jellyfin_item j ON j.item_id = l.source_key
-                  WHERE l.source = 'jellyfin_episode' AND l.entity_type = 'episode' AND l.entity_id = e.id AND j.removed_at IS NULL) AS in_library,
+                  WHERE l.source = 'jellyfin_episode' AND l.entity_type = 'episode' AND l.entity_id = e.id AND j.removed_at IS NULL AND (j.is_dvr = 0 OR ?)) AS in_library,
+          EXISTS (SELECT 1 FROM link l JOIN src_jellyfin_item j ON j.item_id = l.source_key
+                  WHERE l.source = 'jellyfin_episode' AND l.entity_type = 'episode' AND l.entity_id = e.id AND j.removed_at IS NULL AND j.is_dvr = 1) AS recorded,
           (SELECT MAX(s.has_file) FROM link l JOIN src_sonarr_episode s ON s.sonarr_episode_id = l.source_key
                   WHERE l.source = 'sonarr_episode' AND l.entity_type = 'episode' AND l.entity_id = e.id AND s.removed_at IS NULL) AS has_file,
           (SELECT MAX(s.monitored) FROM link l JOIN src_sonarr_episode s ON s.sonarr_episode_id = l.source_key
                   WHERE l.source = 'sonarr_episode' AND l.entity_type = 'episode' AND l.entity_id = e.id AND s.removed_at IS NULL) AS monitored
-        FROM episode e WHERE 1 = 1 {episode_filter}""", episode_params).fetchall()
+        FROM episode e WHERE 1 = 1 {episode_filter}""", [dvr_lib] + episode_params).fetchall()
     for r in episodes:
         results.append(("episode", r["id"], _decide(r, events.get(("episode", r["id"])), ranks, ("episode", r["id"]) in job_events)))
 
@@ -174,6 +179,8 @@ def _decide(row, event, ranks, job_event=False):
     candidates = []
     if row["in_library"]:
         candidates.append(("in_library", None))
+    if row["recorded"]:
+        candidates.append(("recorded", None))
     if event:
         candidates.append(event)
     if row["has_file"]:

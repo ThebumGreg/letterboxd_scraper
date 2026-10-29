@@ -218,7 +218,9 @@
                 ? `<div class="small mt-1" data-watch-state="watched"><span class="badge bg-success">Watched</span>${w.last_played_label ? ` <span class="text-muted">${esc(w.last_played_label)}</span>` : ''}</div>`
                 : `<div class="small mt-1" data-watch-state="in_progress"><span class="badge bg-info text-dark">${esc(w.state_label)}</span> <span class="text-muted">${esc(w.position_label)}${w.runtime_label ? ' of ' + esc(w.runtime_label) : ''}${w.percent ? ' (' + esc(w.percent) + '%)' : ''}</span></div>`;
             const resume = w && w.state === 'in_progress' && w.resume_label ? ` data-resume="at ${esc(w.resume_label)}"` : '';
-            return `<tr class="${rowClass}">
+            const src = (ep.sources || []);
+            const srcRow = src.length ? `<tr class="sd-ep-src d-none"><td></td><td colspan="3" class="small text-muted pt-0 pb-2">${src.map(esc).join('<br>')}</td></tr>` : '';
+            return `<tr class="${rowClass}${src.length ? ' sd-ep-clickable' : ''}"${src.length ? ' style="cursor: pointer;" title="Click to see where this episode came from"' : ''}>
                 <td class="text-center fw-bold text-muted">${esc(ep.episode_number)}</td>
                 <td class="sd-ep-title-cell">
                     <div class="fw-semibold text-truncate" title="${esc(ep.title)}">${esc(ep.title || 'Episode ' + ep.episode_number)}</div>
@@ -227,11 +229,15 @@
                 </td>
                 <td>${badge}</td>
                 <td class="text-end text-nowrap">${ep.can_request ? `<button class="btn btn-sm btn-outline-primary py-0 px-3" data-request-episode="${esc(ep.id)}" {% if not show.tvdb_id %}disabled{% endif %}>Request</button>` : ''}${ep.jellyfin_link ? `<span data-watch-now data-link="${esc(ep.jellyfin_link)}" data-item="${esc(ep.jellyfin_item_id)}" data-title="${esc(ep.title || 'episode ' + ep.episode_number)}" data-size="ep"${resume}><a class="btn btn-sm btn-success py-0 px-3" href="${esc(ep.jellyfin_link)}" data-jellyfin-item="${esc(ep.jellyfin_item_id)}" target="_blank" rel="noopener noreferrer">Watch now</a></span>` : ''}</td>
-            </tr>`;
+            </tr>${srcRow}`;
         }).join('');
         container.innerHTML = `<div class="table-responsive"><table class="table table-hover mb-0 align-middle sd-table">
             <thead><tr><th style="width: 64px;" class="text-center">Ep</th><th>Title</th><th style="width: 160px;">Status</th><th style="width: 130px;" class="text-end">Action</th></tr></thead>
             <tbody>${rows}</tbody></table></div>`;
+        container.querySelectorAll('tr.sd-ep-clickable').forEach((row) => row.addEventListener('click', (ev) => {
+            if (ev.target.closest('a, button')) return;
+            row.nextElementSibling.classList.toggle('d-none');
+        }));
         container.querySelectorAll('[data-request-episode]').forEach((b) => b.addEventListener('click', () =>
             post(`/api/request/show/${mediaId}/episodes`, { episode_ids: [parseInt(b.dataset.requestEpisode, 10)] }, b, true)));
     }

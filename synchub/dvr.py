@@ -78,3 +78,41 @@ def summary(s):
     if s["next"] and s["next"]["start_at"]:
         text += f". Next: {s['next']['name'] or 'a recording'} at {s['next']['start_at']} UTC"
     return text
+
+
+# ---------------------------------------------------------------- full or short
+SHORT_BELOW = 0.9           # a recording under this share of its scheduled length is called short
+START_EARLY = 600           # a recording file starts a little before the program (padding); seconds allowed
+_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def _seconds(value):
+    from datetime import datetime
+    return datetime.strptime(value, _FORMAT)
+
+
+def completeness(conn, row):
+    """('full' | 'short' | 'unknown', percent or None) for one recording (a src_jellyfin_item row).
+
+    The recording is matched to the timer Jellyfin had for it: same show (or film) name, and a timer window that contains the moment the file was
+    created. Jellyfin drops a timer shortly after it finishes, but SyncHub keeps its copy. The recorded length is compared with the timer's length.
+    Whenever the length or the timer is missing, or two different timers fit, the answer is unknown rather than a guess."""
+    runtime, created = row["runtime_seconds"], row["date_created"]
+    if not runtime or not created:
+        return "unknown", None
+    names = {n.strip().lower() for n in (row["series_name"], row["name"]) if n and n.strip()}
+    try:
+        made = _seconds(created[:19])
+    except ValueError:
+        return "unknown", None
+    fits = []
+    for t in conn.execute("SELECT name, start_at, end_at FROM dvr_timer WHERE kind = 'timer' AND start_at IS NOT NULL AND end_at IS NOT NULL"):
+        if (t["name"] or "").strip().lower() not in names:
+            continue
+        start, end = _seconds(t["start_at"]), _seconds(t["end_at"])
+        if (start - made).total_seconds() <= START_EARLY and made <= end:
+            fits.append((end - start).total_seconds())
+    if len(set(fits)) != 1 or fits[0] <= 0:
+        return "unknown", None
+    percent = round(100 * runtime / fits[0])
+    return ("short" if runtime < SHORT_BELOW * fits[0] else "full"), percent

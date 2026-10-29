@@ -46,8 +46,8 @@ def sync(conn, client, scope="all", now=None, progress=None):
             "premiere_date": (item.get("PremiereDate") or "")[:10] or None,
             "tmdb_id": _provider(item, "tmdb"), "tvdb_id": _provider(item, "tvdb"), "imdb_id": _provider(item, "imdb"),
             "date_created": (item.get("DateCreated") or "")[:19].replace("T", " ") or None,
-            "path": item.get("Path"), "is_dvr": 1 if dvr.is_dvr_path(item.get("Path"), folders) else 0,
-        }, now, keep=("date_created",))                # a sync that does not give the date never erases one we have
+            "path": item.get("Path"), "runtime_seconds": round(item["RunTimeTicks"] / 10_000_000) if item.get("RunTimeTicks") else None, "is_dvr": 1 if dvr.is_dvr_path(item.get("Path"), folders) else 0,
+        }, now, keep=("date_created", "runtime_seconds"))                # a sync that does not give the date never erases one we have
         seen.append(item["Id"])
 
     types = ", ".join(f"'{TYPE_MAP[t]}'" for t in jf_types)
