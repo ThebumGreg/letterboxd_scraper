@@ -204,6 +204,8 @@
                     <input type="number" class="form-control" id="dvr_poll_seconds" name="dvr_poll_seconds" value="{{ settings.get('dvr_poll_seconds') or 300 }}" min="0" step="1" required>
                     <div class="form-text">0 turns it off; anything from 1 to 59 is treated as 60.</div>
                 </div>
+                {{ switch('dvr_counts_as_library', 'A recording counts as In Library', settings.dvr_counts_as_library) }}
+                <div class="form-text mb-3">Turn this off to show recordings as <em>Recorded (DVR)</em> instead. A show or film that only exists as a recording can then still be requested and added to Radarr or Sonarr automatically.</div>
                 <div class="mb-3">
                     <label for="dvr_path_prefixes" class="form-label">Recording folders, as Jellyfin sees them</label>
                     <input type="text" class="form-control" id="dvr_path_prefixes" name="dvr_path_prefixes" value="{{ settings.get('dvr_path_prefixes') or '/DVR' }}">

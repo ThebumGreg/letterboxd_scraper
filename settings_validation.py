@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 _SWITCH_KEYS = {
     "disable_jellyfin_connection", "radarr_enable_library_sync", "radarr_enable_queue_addition", "radarr_dry_run",
     "sonarr_enable_library_sync", "sonarr_enable_queue_addition", "sonarr_dry_run", "enable_notifications",
-    "payload_logging_enabled", "dvr_enabled", "versions_on", "variant_stereo", "dv7_remux", "size_policy", "tv_size_policy", "gpu_encoding", "preview_auto", "log_service_jellyfin", "log_service_radarr", "log_service_sonarr",
+    "payload_logging_enabled", "dvr_enabled", "dvr_counts_as_library", "versions_on", "variant_stereo", "dv7_remux", "size_policy", "tv_size_policy", "gpu_encoding", "preview_auto", "log_service_jellyfin", "log_service_radarr", "log_service_sonarr",
     "log_service_tmdb", "log_service_dynu",
 }
 _INT_RANGES = {

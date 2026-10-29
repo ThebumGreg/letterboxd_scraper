@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Recordings: full or short, and where an episode came from (migration 024).** Click an episode on a show page to open a plain-text line saying where it came from: a DVR recording in Jellyfin, a file Sonarr downloaded, Sonarr downloading or monitoring it, or *In the Jellyfin library (source unknown)*. For a recording it says *full recording*, *short recording, about N% of the scheduled length* (under 90%) or *length unknown*; SyncHub compares the length Jellyfin reports with the length of the matching timer it saw, and says unknown when either is missing or the match is not clear. A new setting under *Jellyfin DVR*, *A recording counts as In Library* (on by default, so nothing changes), when turned off shows recordings as *Recorded (DVR)*, lets a title that only exists as a recording be requested (the episode list shows Request) and lets Radarr/Sonarr auto-add pick it up. The Jellyfin sync now also saves each item's length. Movie pages do not have the source line yet.
 Rebuild every worker image (`docs/UPGRADE.md`): it now contains `dovi_tool` and `mkvmerge`. One new migration (023, a table for the actions below).
 
 - **Versions tab (Media page): smaller extra copies and Dolby Vision 7 to 8.1.** A new tab lists what could be done to films that are already in the library, from the Library scan, and nothing happens until you approve it (all recommended, the ticked rows, or one film; "Not this one" hides a film until you bring it back).
