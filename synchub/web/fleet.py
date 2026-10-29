@@ -1,7 +1,7 @@
 """Pages for the worker fleet: the Workers page, its live fragment and the actions behind its buttons."""
 from flask import jsonify, render_template, request
 
-from synchub import db, jobs, storage, webhooks, workers
+from synchub import db, jobs, storage, versions, webhooks, workers
 from synchub.library import cleanup, migrate
 
 # What each worker button does: setting, new value.
@@ -326,6 +326,7 @@ def register(app):
                 if action == "cancel":
                     result = jobs.cancel(conn, job_id, by)
                     migrate.sync(conn, job_id)
+                    versions.sync(conn, job_id)
                     cleanup.sync(conn, job_id)
                     return jsonify(ok=True, message="Cancelling: the worker stops at its next report." if result == "cancelling" else "Cancelled.")
                 if action == "log":
@@ -339,11 +340,13 @@ def register(app):
                     else:
                         jobs.retry(conn, job_id, by)
                     migrate.sync(conn, job_id)
+                    versions.sync(conn, job_id)
                     cleanup.sync(conn, job_id)
                     return jsonify(ok=True, message="Queued again.")
                 if action in ("approve", "skip", "reject"):
                     jobs.decide(conn, job_id, action, by, data.get("note"))
                     migrate.sync(conn, job_id)
+                    versions.sync(conn, job_id)
                     cleanup.sync(conn, job_id)
                     return jsonify(ok=True, message={"approve": "Approved: it carries on.", "skip": "Skipped: the file is left as it is.", "reject": "Rejected."}[action])
         except jobs.JobError as exc:

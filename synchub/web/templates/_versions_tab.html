@@ -1,0 +1,98 @@
+<!-- synchub/web/templates/_versions_tab.html: the Versions tab of the Media page -->
+<div class="mb-3">
+    <h3 class="h4 mb-2">Versions</h3>
+    <p class="text-body-secondary mb-0">Two things for films that are already in the library. A <strong>smaller extra copy</strong> (for phones and remote viewing) is saved next to the film, and Jellyfin shows it as another version of the same film; the original is never touched. A <strong>Dolby Vision 7 to 8.1</strong> conversion fixes big 4K files that almost nothing can play directly, without re-encoding the picture. Nothing happens until you approve it. The list comes from the Library scan, so scan the share first.</p>
+</div>
+<div id="versionsMessage" class="alert d-none" role="status"></div>
+
+<details class="mb-4">
+    <summary class="fw-semibold">Settings</summary>
+    <form id="versionsSettings" class="row g-3 mt-1">
+        <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="vOn" {% if config.on %}checked{% endif %}><label class="form-check-label" for="vOn">Recommend extra versions</label></div></div>
+        <div class="col-6 col-md-3"><label class="form-label" for="vMinGb">For films over (GB)</label><input class="form-control" id="vMinGb" type="number" min="0" step="1" value="{{ '%g'|format(config.min_gb) }}"></div>
+        <div class="col-6 col-md-3"><label class="form-label" for="vHeight">Copy height</label>
+            <select class="form-select" id="vHeight">{% for h in heights %}<option value="{{ h }}" {% if h == config.height %}selected{% endif %}>{{ h }}p</option>{% endfor %}</select></div>
+        <div class="col-6 col-md-3"><label class="form-label" for="vLabel">Name added to the file</label><input class="form-control" id="vLabel" maxlength="20" value="{{ config.label }}"></div>
+        <div class="col-6 col-md-3"><label class="form-label" for="vCrf">Quality (lower is better)</label><input class="form-control" id="vCrf" type="number" min="14" max="35" value="{{ config.crf }}"></div>
+        <div class="col-6 col-md-3"><label class="form-label" for="vRate">Highest video bitrate (kbps)</label><input class="form-control" id="vRate" type="number" min="500" step="100" value="{{ config.maxrate_kbps }}"></div>
+        <div class="col-6 col-md-3"><label class="form-label" for="vAudio">Audio bitrate (kbps)</label><input class="form-control" id="vAudio" type="number" min="64" max="640" value="{{ config.audio_kbps }}"></div>
+        <div class="col-12 col-md-6 d-flex align-items-end"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="vStereo" {% if config.stereo %}checked{% endif %}><label class="form-check-label" for="vStereo">Stereo audio in the copy (best for phones)</label></div></div>
+        <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="vDv7" {% if config.dv7 %}checked{% endif %}><label class="form-check-label" for="vDv7">Recommend converting Dolby Vision profile 7 to 8.1</label></div></div>
+        <div class="col-12"><button type="submit" class="btn btn-primary btn-sm">Save settings</button> <span class="small text-body-secondary">The copy keeps HDR10 when the film is HDR, and never goes bigger than the original.</span></div>
+    </form>
+</details>
+
+{% macro rec_list(kind, title, hint, entries, withHeight) %}
+<section class="mb-4" data-kind="{{ kind }}">
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <h4 class="h5 mb-0">{{ title }} <span class="badge bg-secondary">{{ entries|length }}</span></h4>
+        {% if entries %}
+        <span class="ms-auto d-flex gap-2">
+            <button type="button" class="btn btn-sm btn-primary" data-approve="selected">Approve selected</button>
+            <button type="button" class="btn btn-sm btn-outline-primary" data-approve="all">Approve all recommended</button>
+        </span>
+        {% endif %}
+    </div>
+    <p class="small text-body-secondary mb-2">{{ hint }}</p>
+    {% if not entries %}
+        <p class="text-body-secondary">Nothing to recommend right now.</p>
+    {% else %}
+    <div class="table-responsive">
+        <table class="table table-sm align-middle">
+            <thead><tr><th style="width:2rem"><input type="checkbox" class="form-check-input" data-select-all aria-label="Select all"></th><th>Film</th><th class="text-end">Size</th><th>Picture</th>{% if withHeight %}<th>Height</th>{% endif %}<th></th></tr></thead>
+            <tbody>
+            {% for e in entries %}
+                <tr data-id="{{ e.id }}">
+                    <td><input type="checkbox" class="form-check-input" data-pick {% if not e.can_approve %}disabled{% else %}checked{% endif %} aria-label="Select {{ e.title }}"></td>
+                    <td>
+                        <div class="fw-semibold text-break">{{ e.title }}</div>
+                        <div class="small text-body-secondary text-break">{{ e.path }}{% if e.duration_minutes %} &middot; {{ e.duration_minutes }} min{% endif %}</div>
+                        {% if e.retry %}<div class="small text-danger">Failed before: {{ e.retry }}</div>{% endif %}
+                        {% if not e.can_approve %}<div class="small text-warning-emphasis">{{ e.why_not }}</div>{% else %}<div class="small text-body-secondary">{{ e.notes|join(' ') }}</div>{% endif %}
+                    </td>
+                    <td class="text-end text-nowrap">{{ e.size_gb }} GB</td>
+                    <td class="text-nowrap">{{ e.picture }}{% if e.resolution %}<div class="small text-body-secondary">{{ e.resolution }}</div>{% endif %}</td>
+                    {% if withHeight %}<td><select class="form-select form-select-sm" data-height style="width:6rem" {% if not e.can_approve %}disabled{% endif %}>{% for h in heights %}<option value="{{ h }}" {% if h == e.height %}selected{% endif %}>{{ h }}p</option>{% endfor %}</select></td>{% endif %}
+                    <td class="text-end text-nowrap"><button type="button" class="btn btn-sm btn-outline-secondary" data-skip>Not this one</button></td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</section>
+{% endmacro %}
+
+{{ rec_list('dv_remux', 'Dolby Vision 7 to 8.1', 'Almost no phone, Roku or Google TV plays profile 7 directly, so your server would have to convert it live. This changes the file in place, fast, without re-encoding; the original is kept on the worker for the retention period (Originals tab).', recommended.dv_remux, false) }}
+{{ rec_list('variant', 'Smaller extra copy', 'Saved next to the film as “Film (Year) - ' ~ config.label ~ '.mkv”. Change the height for a film in its row, or untick it to leave it out. It is made on a worker, on the CPU for HDR films, so a long film takes hours.', recommended.variant, true) }}
+
+<section class="mb-4">
+    <h4 class="h5">In progress and finished <span class="badge bg-secondary">{{ counts.open }} open</span></h4>
+    {% if not actions %}<p class="text-body-secondary">Nothing has been started yet.</p>{% else %}
+    <div class="table-responsive">
+        <table class="table table-sm align-middle">
+            <thead><tr><th>File</th><th>What</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+            {% for a in actions %}
+                <tr>
+                    <td class="text-break"><div class="fw-semibold">{{ a.name }}</div><div class="small text-body-secondary">{{ a.root_name }}:{{ a.relative_path }}</div></td>
+                    <td>{{ a.kind_label }}{% if a.options.height %} ({{ a.options.height }}p){% endif %}</td>
+                    <td><span class="badge bg-{{ {'queued': 'secondary', 'converting': 'info', 'done': 'success', 'failed': 'danger', 'blocked': 'warning'}.get(a.status, 'secondary') }}">{{ a.status_label }}</span>{% if a.message %}<div class="small text-body-secondary">{{ a.message }}</div>{% endif %}</td>
+                    <td class="text-end">{% if a.active %}<button type="button" class="btn btn-sm btn-outline-danger" data-cancel="{{ a.id }}">Cancel</button>{% endif %}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</section>
+
+{% if declined %}
+<details class="mb-4">
+    <summary class="fw-semibold">Declined ({{ declined|length }})</summary>
+    <ul class="list-unstyled mt-2">
+        {% for e in declined %}<li class="d-flex align-items-center gap-2 py-1"><span class="text-break">{{ e.title }} <span class="small text-body-secondary">{{ 'Dolby Vision 7 to 8.1' if e.kind == 'dv_remux' else 'extra copy' }}</span></span>
+            <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" data-restore="{{ e.kind }}" data-id="{{ e.id }}">Bring back</button></li>{% endfor %}
+    </ul>
+</details>
+{% endif %}

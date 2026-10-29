@@ -10,6 +10,26 @@ RUN apt-get update \
     && ffmpeg -hide_banner -filters | grep -q libvmaf \
     && rm -rf /var/lib/apt/lists/*
 
+# mkvtoolnix (mkvmerge) and dovi_tool convert Dolby Vision profile 7 to 8.1 without re-encoding the picture (the "dovi" feature). dovi_tool is a prebuilt release
+# checked against a fixed checksum. If it cannot be downloaded the image is still built, the worker just does not offer that job (see --check).
+ARG DOVI_TOOL_VERSION=2.3.0
+ARG TARGETARCH
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends mkvtoolnix curl ca-certificates \
+    && ( case "${TARGETARCH:-amd64}" in \
+           amd64) arch=x86_64; sum=6aa166dbdcedb5c09bac99b832aa0013f6bc95aeb6db44d62d79b41c8abf0d98 ;; \
+           arm64) arch=aarch64; sum=fc8523b84e61153c4c434cfabf23c3490056d54d0789d029173b36368b662eb2 ;; \
+           *) echo "dovi_tool: no build for ${TARGETARCH}"; exit 1 ;; \
+         esac \
+         && curl -fsSL -o /tmp/dovi_tool.tgz "https://github.com/quietvoid/dovi_tool/releases/download/${DOVI_TOOL_VERSION}/dovi_tool-${DOVI_TOOL_VERSION}-${arch}-unknown-linux-musl.tar.gz" \
+         && echo "${sum}  /tmp/dovi_tool.tgz" | sha256sum -c - \
+         && tar -xzf /tmp/dovi_tool.tgz -C /usr/local/bin ./dovi_tool \
+         && dovi_tool --version \
+       || echo "WARNING: dovi_tool was not installed; Dolby Vision conversion will not be offered by this worker" ) \
+    && rm -f /tmp/dovi_tool.tgz \
+    && apt-get purge -y curl && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY synchub_agent.py media_analysis.py /app/
 
