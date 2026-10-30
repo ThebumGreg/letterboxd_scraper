@@ -34,6 +34,11 @@ class JellyfinClient:
         res = http.request("jellyfin", "RefreshLibrary", "POST", f"{self.url}/Library/Refresh", headers=self.headers, timeout=15)
         check(res, "Jellyfin", "library refresh")
 
+    def media_updated(self, updates):
+        """Tells Jellyfin that specific files appeared, changed or went away, so it looks at just those paths. `updates` is [{"Path": path as Jellyfin sees it, "UpdateType": "Created" | "Modified" | "Deleted"}]."""
+        res = http.request("jellyfin", "MediaUpdated", "POST", f"{self.url}/Library/Media/Updated", headers=self.headers, json={"Updates": updates}, timeout=15)
+        check(res, "Jellyfin", "media update")
+
     def virtual_folders(self):
         """Jellyfin's libraries: [{Name, CollectionType, Locations, ItemId, ...}]."""
         res = http.request("jellyfin", "GetLibraries", "GET", f"{self.url}/Library/VirtualFolders", headers=self.headers)

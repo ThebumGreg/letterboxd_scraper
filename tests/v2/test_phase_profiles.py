@@ -181,3 +181,45 @@ def test_the_extra_copy_follows_the_profile_of_the_film(conn):
     off = profiles.save(conn, {"name": "No copy", "video_codec": "keep", "rules": {"extra_copy": False}}, by="t")
     assert versions.load(conn, profiles.get(conn, off)).on is False
     assert versions.load_for(conn, {"scan_profile_id": pid}).label == "720p"
+
+
+# ---------------------------------------------------------------- the Library queue shows what the rules will do
+def test_a_big_4k_film_with_lossless_audio_sits_in_format_conversion_with_the_rule_steps(conn):
+    from .library_helpers import add
+    from synchub.library import recommend as rc, scan
+    settings.set_value("size_mode", "bitrate", conn=conn)
+    settings.set_value("size_policy", "1", conn=conn)
+    settings.set_value("audio_mode", "add_compatible", conn=conn)
+    conn.commit()
+    rec_id = add(conn, rel="Heat (1995)/Heat (1995).mkv", name="Heat (1995).mkv", size=int(60 * GIB), media_type="Movie/Unknown")
+    info = {"hdr": "sdr", "bit_depth": 10, "width": 3840, "height": 2160, "video_kbps": 60000}
+    conn.execute("UPDATE library_file SET duration_seconds = 7200, video_codec = 'hevc', resolution = '3840x2160', video_info_json = ?, streams_json = ? WHERE id = ?",
+                 (json.dumps(info), json.dumps([TRUEHD]), rec_id))
+    conn.commit()
+    rows = {rec["id"]: r for rec, r in rc.classify(conn, scan.config(conn))}
+    r = rows[rec_id]
+    assert r.group == rc.G_CONVERT and r.kind in ("rules", "convert")
+    text = " ".join(r.steps)
+    assert "Compress" in text and "compatible" in text
+    conn.execute("UPDATE library_file SET scan_profile_id = 3 WHERE id = ?", (rec_id,))          # Move only: the rules do not apply
+    conn.commit()
+    assert {rec["id"]: r for rec, r in rc.classify(conn, scan.config(conn))}[rec_id].group != rc.G_CONVERT
+
+
+# ---------------------------------------------------------------- port 80 next to 5001
+def test_the_entrypoint_adds_the_extra_port_to_gunicorn(tmp_path):
+    import os
+    import pathlib
+    import subprocess
+    stub = tmp_path / "bin" / "gunicorn"
+    stub.parent.mkdir()
+    stub.write_text("#!/bin/sh\necho \"$@\"\n")
+    stub.chmod(0o755)
+    data = tmp_path / "data"
+    data.mkdir()
+    script = pathlib.Path(__file__).resolve().parents[2] / "docker" / "entrypoint.sh"
+    env = {**os.environ, "PATH": f"{stub.parent}:{os.environ['PATH']}", "SYNCHUB_DATA_DIR": str(data), "SYNCHUB_EXTRA_PORT": "80", "PUID": str(os.getuid()), "PGID": str(os.getgid())}
+    out = subprocess.run(["sh", str(script), "gunicorn", "--bind", "0.0.0.0:5001", "app"], env=env, capture_output=True, text=True, check=True).stdout.strip()
+    assert out == "--bind 0.0.0.0:80 --bind 0.0.0.0:5001 app"
+    env.pop("SYNCHUB_EXTRA_PORT")
+    assert subprocess.run(["sh", str(script), "gunicorn", "--bind", "0.0.0.0:5001", "app"], env=env, capture_output=True, text=True, check=True).stdout.strip() == "--bind 0.0.0.0:5001 app"

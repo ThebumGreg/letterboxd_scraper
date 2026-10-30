@@ -24,7 +24,7 @@ import json
 import os
 from typing import List, Optional
 
-from synchub.library import findings, layout as media_layout, migrate, store
+from synchub.library import findings, layout as media_layout, migrate, rule_steps, store
 from synchub.library import vocab as db
 from synchub.library.vocab import LibraryConfig
 
@@ -155,8 +155,8 @@ def estimate_text(rec, mode):
     return f"Rough time: reads the whole file once ({size:.1f} GB), a few minutes on a fast connection."
 
 
-def recommend(rec, cfg=None) -> Recommendation:
-    """The suggestion for one record (a dict from the library_file table)."""
+def recommend(rec, cfg=None, rule_steps=None) -> Recommendation:
+    """The suggestion for one record (a dict from the library_file table). `rule_steps` is a function giving what the profile's rules add (see rule_steps.py); it is only called when the plan is built."""
     cfg = cfg or LibraryConfig()
     cats = categories(rec)
     path, path_error = _relative_path(rec, cfg)
@@ -282,18 +282,24 @@ def recommend(rec, cfg=None) -> Recommendation:
         kind = "keep_duplicate" if kind in ("plain", "check", "naming") else kind
         steps.append("Keep this copy and skip the other identical copies")
         levels.append(MEDIUM)
+    extra = rule_steps(plans) if rule_steps else None
+    if extra:
+        steps += extra.steps
+        notes += extra.notes
+        levels.append(MEDIUM)
+        kind = "rules" if kind in ("plain", "tracks", "naming", "check", "keep_duplicate") else kind
     if not steps:
         steps = ["Copy as is"]
 
     group = (G_READY if kind == "plain" else G_CHECK if kind == "check" else
-             G_CONVERT if kind == "convert" else G_SUGGESTED)
+             G_CONVERT if kind in ("convert", "rules") else G_SUGGESTED)
     convert_plan = next((p for p in plans if p["op"] == "convert"), None)
     convert_headline = ("Re-encode to H.264 in MKV" if convert_plan and convert_plan["video"]["action"] == "transcode"
                         else "Convert audio to AAC" if convert_plan and convert_plan["audio_convert"]
                         else "Remux to MKV (lossless)")
     headline = {"plain": "Looks good: ready to copy", "convert": convert_headline, "tracks": "Keep English tracks only",
                 "naming": f"Rename to “{media_layout.file_name(rec, cfg)}”", "check": "Copy unchanged (worth a look)",
-                "keep_duplicate": "Keep this copy"}[kind]
+                "keep_duplicate": "Keep this copy", "rules": extra.headline if extra else ""}[kind]
     if needs_name:
         notes.insert(0, f"No valid destination yet: {path_error}. Enter a valid name to continue.")
     confidence = _lowest(HIGH, *levels) if levels else HIGH
@@ -332,13 +338,13 @@ def cfg_for(conn, rec, cfg, cache):
 def classify(conn, cfg=None, match=None, root=None):
     """[(record, Recommendation)] for every record (optionally filtered), in display order."""
     cfg = cfg or LibraryConfig()
-    rows, cache = [], {}
+    rows, cache, rules_cache = [], {}, {}
     for rec in sorted(all_records(conn), key=_sort_key):
         if match and match.lower() not in (rec["source_path"] + " " + rec["file_name"]).lower():
             continue
         if root and rec.get("root_name") != root:
             continue
-        rows.append((rec, recommend(rec, cfg_for(conn, rec, cfg, cache))))
+        rows.append((rec, recommend(rec, cfg_for(conn, rec, cfg, cache), lambda plans, rec=rec: rule_steps.for_record(conn, rec, plans, rules_cache))))
     return rows
 
 

@@ -305,14 +305,54 @@ def attention(conn, limit=20):
         "AND missing_since IS NULL AND ((migration_status = 'pending' AND migration_cancelled_at IS NOT NULL) OR migration_status = 'failed') ORDER BY id LIMIT ?", (limit,))]
 
 
-def tell_jellyfin(count=1):
-    """Asks Jellyfin to look for the files that just arrived in the destination share. Best effort: the files are in place either way, and
-    Jellyfin finds them on its own scheduled scan. Never raises. Call it with no database transaction open."""
+def _op(plan):
+    try:
+        return (json.loads(plan) if isinstance(plan, str) else plan or {}).get("op")
+    except ValueError:
+        return None
+
+
+def jellyfin_updates(conn, job_id):
+    """[{"Path", "UpdateType"}] for the files a finished job created or moved, as Jellyfin sees the paths; None when a share has no Jellyfin path set (the caller then asks for a whole refresh)."""
+    r = conn.execute("SELECT kind, source_root, source_rel, dest_root, dest_rel, plan FROM job WHERE id = ?", (job_id,)).fetchone()
+    if r is None or not r["dest_root"] or not r["dest_rel"]:
+        return None
+
+    from synchub import storage
+
+    def seen(root_name, rel):
+        root = storage.by_name(conn, root_name)
+        base = (root or {}).get("jellyfin_path")
+        return f"{base.rstrip('/')}/{rel}" if base and rel else None
+
+    created = seen(r["dest_root"], r["dest_rel"])
+    if created is None:
+        return None
+    updates = [{"Path": created, "UpdateType": "Created"}]
+    if r["source_root"] == r["dest_root"] and r["source_rel"] and r["source_rel"] != r["dest_rel"] and _op(r["plan"]) == "rename":
+        gone = seen(r["source_root"], r["source_rel"])
+        if gone:
+            updates.append({"Path": gone, "UpdateType": "Deleted"})
+    return updates
+
+
+def tell_jellyfin(count=1, updates=None):
+    """Asks Jellyfin to look at the files that just arrived in the destination share: just those paths when `updates` is given (see jellyfin_updates), else
+    (or if that fails) a scan of the whole library. Best effort: the files are in place either way, and Jellyfin finds them on its own scheduled scan.
+    Never raises. Call it with no database transaction open."""
     if settings.get("disable_jellyfin_connection") == "1":
         return False
     try:
         from synchub.clients.jellyfin import JellyfinClient
-        JellyfinClient().refresh_library()
+        client = JellyfinClient()
+        if updates:
+            try:
+                client.media_updated(updates)
+                logger.info(f"[library] told Jellyfin about {len(updates)} changed path(s)")
+                return True
+            except Exception as exc:
+                logger.warning(f"[library] Jellyfin would not take the path update ({exc}); asking for a library scan instead")
+        client.refresh_library()
     except Exception as exc:
         logger.warning(f"[library] could not ask Jellyfin to scan the {count} new file(s): {exc}")
         return False

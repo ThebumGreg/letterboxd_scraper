@@ -640,7 +640,7 @@ def test_approving_a_file_gets_it_converted_by_the_worker_and_the_library_record
     from .library_helpers import CFG, add, plan
     from .test_library_findings import rec_of
     told = []
-    monkeypatch.setattr(migrate, "tell_jellyfin", lambda count=1: told.append(count) or True)
+    monkeypatch.setattr(migrate, "tell_jellyfin", lambda count=1, updates=None: told.append(count) or True)
     make_avi(rig.roots["tfiles"] / "Old/Heat.avi", audio_tracks=1)
     record_id = add(conn, rel="Old/Heat.avi", name="Heat (1995).mkv", container="avi", video="mpeg4", action="remux_copy", size=(rig.roots["tfiles"] / "Old/Heat.avi").stat().st_size,
                     proposals=[plan(convert={"remux": True}, keep_audio=(1,))])
@@ -742,7 +742,7 @@ def test_a_radarr_import_is_scanned_converted_in_place_and_radarr_is_asked_to_re
     from synchub.library import migrate
     import synchub.clients.arr as arr
     rescans, told = [], []
-    monkeypatch.setattr(migrate, "tell_jellyfin", lambda count=1: told.append(count) or True)
+    monkeypatch.setattr(migrate, "tell_jellyfin", lambda count=1, updates=None: told.append(count) or True)
     monkeypatch.setattr(arr, "RadarrClient", type("R", (), {"rescan_movie": lambda self, movie_id: rescans.append(movie_id)}))
     conn.execute("UPDATE storage_root SET radarr_path = '/movies' WHERE name = 'media'")
     settings.set_value("download_pipeline", "review", conn=conn)

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from flask import Response, jsonify, redirect, render_template, request, send_file, url_for
 
 from synchub import db, downloads, jobs, previews, settings, storage, versions
-from synchub.library import cleanup, findings, migrate, profiles, recommend as rc, report, scan, size_policy, store
+from synchub.library import cleanup, findings, migrate, profiles, recommend as rc, report, rule_steps, scan, size_policy, store
 from synchub.library import vocab as v
 from settings_validation import validate_setting
 
@@ -183,7 +183,7 @@ def register(app):
             if rec is None:
                 return redirect(url_for("library_page"))
             cfg = rc.cfg_for(conn, rec, cfg, {})
-            rcm = rc.recommend(rec, cfg)
+            rcm = rc.recommend(rec, cfg, lambda plans: rule_steps.for_record(conn, rec, plans))
             events = store.events_for(conn, record_id)
             siblings = []
             if rec.get("duplicate_group"):

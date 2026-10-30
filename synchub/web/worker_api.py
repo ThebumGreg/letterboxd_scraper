@@ -152,12 +152,13 @@ def register(app):
             arrived = migrate.sync(conn, job_id) or downloads.sync(conn, job_id) or versions.sync(conn, job_id)
             previews.sync(conn, job_id)
             cleanup.sync(conn, job_id)
+            updates = migrate.jellyfin_updates(conn, job_id) if arrived else None
         logger.info(f"[jobs] job {job_id} completed by {g.worker['name']}")
         _dashboard([job_id])
         downloads.rescan_due()
         cleanup.arr_due()
         if arrived:
-            migrate.tell_jellyfin()
+            migrate.tell_jellyfin(updates=updates)
         return jsonify(ok=True)
 
     @route("/jobs/<int:job_id>/fail", "fail")

@@ -3,6 +3,11 @@
 # so when started as root this makes /data belong to PUID:PGID and then drops to that user. Started as any other user (docker run --user, or
 # "user:" in compose), it just runs the command and /data must already be writable by that user.
 set -e
+# SYNCHUB_EXTRA_PORT (for example 80) makes the web server listen on that port as well as 5001, so the same site answers on both (see docker-compose.port80.yml).
+if [ -n "$SYNCHUB_EXTRA_PORT" ] && [ "$1" = "gunicorn" ]; then
+    shift
+    set -- gunicorn --bind "0.0.0.0:$SYNCHUB_EXTRA_PORT" "$@"
+fi
 DATA="${SYNCHUB_DATA_DIR:-/data}"
 if [ "$(id -u)" = "0" ]; then
     PUID="${PUID:-99}"

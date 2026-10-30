@@ -10,6 +10,7 @@ def v2(tmp_path, monkeypatch):
     db.migrate()
     from synchub import settings
     settings.set_value("naming_style", "current")      # TV files named `Show - S01E01` as before; tests of Jellyfin's style switch it
+    settings.set_value("audio_mode", "keep")             # the compatible-track rule is tested on its own; older tests keep the audio as it is
     settings.set_value("size_mode", "size")            # the older GB limits: the tests written for them keep their meaning; tests of the bitrate rule switch it back
     return db
 
