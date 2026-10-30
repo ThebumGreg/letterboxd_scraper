@@ -5,22 +5,10 @@
 </div>
 <div id="versionsMessage" class="alert d-none" role="status"></div>
 
-<details class="mb-4">
-    <summary class="fw-semibold">Settings</summary>
-    <form id="versionsSettings" class="row g-3 mt-1">
-        <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="vOn" {% if config.on %}checked{% endif %}><label class="form-check-label" for="vOn">Recommend extra versions</label></div></div>
-        <div class="col-6 col-md-3"><label class="form-label" for="vMinGb">For films over (GB)</label><input class="form-control" id="vMinGb" type="number" min="0" step="1" value="{{ '%g'|format(config.min_gb) }}"></div>
-        <div class="col-6 col-md-3"><label class="form-label" for="vHeight">Copy height</label>
-            <select class="form-select" id="vHeight">{% for h in heights %}<option value="{{ h }}" {% if h == config.height %}selected{% endif %}>{{ h }}p</option>{% endfor %}</select></div>
-        <div class="col-6 col-md-3"><label class="form-label" for="vLabel">Name added to the file</label><input class="form-control" id="vLabel" maxlength="20" value="{{ config.label }}"></div>
-        <div class="col-6 col-md-3"><label class="form-label" for="vCrf">Quality (lower is better)</label><input class="form-control" id="vCrf" type="number" min="14" max="35" value="{{ config.crf }}"></div>
-        <div class="col-6 col-md-3"><label class="form-label" for="vRate">Highest video bitrate (kbps)</label><input class="form-control" id="vRate" type="number" min="500" step="100" value="{{ config.maxrate_kbps }}"></div>
-        <div class="col-6 col-md-3"><label class="form-label" for="vAudio">Audio bitrate (kbps)</label><input class="form-control" id="vAudio" type="number" min="64" max="640" value="{{ config.audio_kbps }}"></div>
-        <div class="col-12 col-md-6 d-flex align-items-end"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="vStereo" {% if config.stereo %}checked{% endif %}><label class="form-check-label" for="vStereo">Stereo audio in the copy (best for phones)</label></div></div>
-        <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="vDv7" {% if config.dv7 %}checked{% endif %}><label class="form-check-label" for="vDv7">Recommend converting Dolby Vision profile 7 to 8.1</label></div></div>
-        <div class="col-12"><button type="submit" class="btn btn-primary btn-sm">Save settings</button> <span class="small text-body-secondary">The copy keeps HDR10 when the film is HDR, and never goes bigger than the original.</span></div>
-    </form>
-</details>
+<p class="small text-body-secondary mb-4">
+    Extra copies are {{ 'recommended' if config.on else 'off' }}{% if config.on %} for films over {{ '%g'|format(config.min_gb) }} GB, as {{ config.height }}p &ldquo;{{ config.label }}&rdquo; copies{% endif %}; Dolby Vision 7 conversion is {{ 'recommended' if config.dv7 else 'off' }}.
+    Change these in <a href="{{ url_for('library_options_page') }}">Options</a>, or per conversion profile.
+</p>
 
 {% macro rec_list(kind, title, hint, entries, withHeight) %}
 <section class="mb-4" data-kind="{{ kind }}">

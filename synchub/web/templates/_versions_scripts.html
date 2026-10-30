@@ -35,13 +35,5 @@
     pane.querySelectorAll('[data-cancel]').forEach((b) => b.addEventListener('click', async () => {
         if (confirm('Cancel this job? A running one stops at its next report.')) done(await post('/api/library/versions/cancel/' + b.dataset.cancel));
     }));
-    document.getElementById('versionsSettings')?.addEventListener('submit', async (ev) => {
-        ev.preventDefault();
-        const $ = (id) => document.getElementById(id);
-        done(await post('/api/library/versions/settings', {
-            versions_on: $('vOn').checked ? '1' : '0', variant_min_gb: $('vMinGb').value, variant_height: $('vHeight').value, variant_label: $('vLabel').value, variant_crf: $('vCrf').value,
-            variant_maxrate_kbps: $('vRate').value, variant_audio_kbps: $('vAudio').value, variant_stereo: $('vStereo').checked ? '1' : '0', dv7_remux: $('vDv7').checked ? '1' : '0',
-        }));
-    });
 })();
 </script>

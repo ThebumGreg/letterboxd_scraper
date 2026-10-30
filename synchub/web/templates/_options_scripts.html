@@ -19,6 +19,8 @@
             library_integrity_mode: $('setIntegrity').value, library_tail_seconds: $('setTail').value, library_exclude_folders: $('setExclude').value,
             download_pipeline: $('setDownloads').value, originals_retention_days: $('setOriginals').value,
             ...sizeValues(), size_mode: 'bitrate', size_policy: $('setSizePolicy').checked ? '1' : '0', size_crf: $('setSizeCrf').value,
+            versions_on: $('vOn').checked ? '1' : '0', variant_min_gb: $('vMinGb').value, variant_height: $('vHeight').value, variant_label: $('vLabel').value, variant_crf: $('vCrf').value,
+            variant_maxrate_kbps: $('vRate').value, variant_audio_kbps: $('vAudio').value, variant_stereo: $('vStereo').checked ? '1' : '0', dv7_remux: $('vDv7').checked ? '1' : '0',
             naming_style: $('setNaming').value, audio_mode: $('setAudio').value, clean_names: $('setCleanNames').checked ? '1' : '0', gpu_encoding: $('setGpu').value, vmaf_mode: $('setVmaf').value,
             dolby_vision_profile_5: $('setDv5').value, dolby_vision_profile_7_8: $('setDv78').value,
             review_first: $('setReviewFirst').value, trust_after: $('setTrustAfter').value, preview_seconds: $('setPreviewSeconds').value, preview_auto: $('setPreviewAuto').checked ? '1' : '0',
@@ -30,12 +32,15 @@
     function fillProfile(p, copy) {
         pf('pfId').value = copy ? '' : p.id; pf('pfName').value = copy ? p.name + ' copy' : p.name; pf('pfCodec').value = p.video_codec; pf('pfSubs').value = p.subtitles;
         pf('pfCrf').value = p.crf || ''; pf('pfPreset').value = p.preset || 'medium'; pf('pfAudio').value = p.audio_kbps; pf('pfTenBit').checked = !!p.ten_bit; pf('pfMoveOnly').checked = !!p.move_only; pf('pfDesc').value = p.description || '';
+        document.querySelectorAll('[data-rule]').forEach((el) => { const v = (p.rules || {})[el.dataset.rule]; el.value = v === undefined ? '' : (v === true ? '1' : v === false ? '0' : String(v)); });
         pf('pfName').focus();
     }
     $('profileForm').addEventListener('submit', async (e) => {
         e.preventDefault();
+        const rules = {};
+        document.querySelectorAll('[data-rule]').forEach((el) => { if (el.value !== '') rules[el.dataset.rule] = el.value; });
         const data = await libraryPost('/api/library/profiles', { id: pf('pfId').value, name: pf('pfName').value, video_codec: pf('pfCodec').value, subtitles: pf('pfSubs').value, crf: pf('pfCrf').value,
-            preset: pf('pfPreset').value, audio_kbps: pf('pfAudio').value, ten_bit: pf('pfTenBit').checked, move_only: pf('pfMoveOnly').checked, description: pf('pfDesc').value });
+            preset: pf('pfPreset').value, audio_kbps: pf('pfAudio').value, ten_bit: pf('pfTenBit').checked, move_only: pf('pfMoveOnly').checked, description: pf('pfDesc').value, rules });
         say(data.message || (data.ok ? 'Saved.' : 'Failed.'), data.ok);
         if (data.ok) setTimeout(() => location.reload(), 600);
     });
