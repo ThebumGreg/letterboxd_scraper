@@ -27,6 +27,10 @@ DEFAULTS = {
     # extra versions of a film (a smaller copy beside the original, shown by Jellyfin as another version) and Dolby Vision profile 7 to 8.1 (docs/DESIGN_ENCODING.md 13)
     "versions_on": "1", "variant_min_gb": "30", "variant_height": "1080", "variant_label": "1080p", "variant_crf": "23", "variant_maxrate_kbps": "8000", "variant_audio_kbps": "192",
     "variant_stereo": "1", "dv7_remux": "1",
+    # compression by video bitrate (Mbps) per picture height, how far over the ceiling a file must be before it is touched, a size that is compressed whatever the bitrate,
+    # whether names are cleaned while files are brought in, and what happens to audio (keep, add_compatible, compatible_only); a conversion profile can override all of them
+    "size_mode": "bitrate", "cap_mbps_2160": "18", "cap_mbps_1080": "8", "cap_mbps_720": "4", "cap_mbps_sd": "2", "tv_cap_share": "0.5", "size_trigger_factor": "1.5", "safety_gb_2160": "45", "safety_gb_1080": "15",
+    "clean_names": "1", "audio_mode": "add_compatible", "naming_style": "jellyfin", "naming_tmdb_ids": "0",
     "review_first": "always", "trust_after": "3", "preview_seconds": "45", "preview_keep_days": "7", "preview_auto": "1",
     "download_pipeline": "off", "originals_retention_days": "30",
     # conversion profile used when none is chosen for a file; the source file is deleted this many days after a verified migration (0 = never);

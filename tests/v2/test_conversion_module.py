@@ -24,7 +24,7 @@ def seeded(conn, **kw):
 # ---------------------------------------------------------------- profiles
 def test_the_built_in_profiles_exist_and_cannot_be_changed(conn):
     names = [p["name"] for p in profiles.all_profiles(conn)]
-    assert names == ["Standard", "Keep all subtitles", "Move only", "HEVC smaller", "HEVC balanced", "HEVC high quality"]
+    assert names == ["Standard", "Keep all subtitles", "Move only", "HEVC smaller", "HEVC balanced", "HEVC high quality", "Direct play", "Space saver", "Archive"]
     assert profiles.default(conn)["name"] == "Standard"
     with pytest.raises(profiles.ProfileError, match="cannot be changed"):
         profiles.save(conn, {"name": "Standard x"}, "Greg", 1)
@@ -600,16 +600,16 @@ def test_profiles_are_made_and_deleted_through_the_page_and_the_settings_check_t
     from .test_library_web import post
     web_shares(conn)
     r = post(client, "/api/library/profiles", {"name": "Phone", "video_codec": "hevc", "crf": "28", "preset": "fast", "ten_bit": True, "audio_kbps": "128", "subtitles": "keep_all"})
-    assert r.get_json()["ok"] and profiles.get(conn, 7)["name"] == "Phone"
+    assert r.get_json()["ok"] and profiles.get(conn, 10)["name"] == "Phone"
     assert not post(client, "/api/library/profiles", {"name": "Bad", "video_codec": "hevc", "crf": "99"}).get_json()["ok"]
     assert not post(client, "/api/library/profiles", {"id": 1, "name": "Standard 2"}).get_json()["ok"]
-    assert post(client, "/api/library/settings", {"library_default_profile": "7", "source_delete_after_days": "14", "arr_after_migration": "unmonitor", "arr_apply_when": "with_source_delete"}).get_json()["ok"]
-    assert (settings.get("library_default_profile"), settings.get("source_delete_after_days"), settings.get("arr_after_migration"), settings.get("arr_apply_when")) == ("7", "14", "unmonitor", "with_source_delete")
+    assert post(client, "/api/library/settings", {"library_default_profile": "10", "source_delete_after_days": "14", "arr_after_migration": "unmonitor", "arr_apply_when": "with_source_delete"}).get_json()["ok"]
+    assert (settings.get("library_default_profile"), settings.get("source_delete_after_days"), settings.get("arr_after_migration"), settings.get("arr_apply_when")) == ("10", "14", "unmonitor", "with_source_delete")
     for bad in ({"library_default_profile": "99"}, {"source_delete_after_days": "5"}, {"arr_after_migration": "delete"}, {"arr_apply_when": "now"}):
         assert not post(client, "/api/library/settings", bad).get_json()["ok"]
-    assert not post(client, "/api/library/profiles/7/delete").get_json()["ok"]                       # it is the default
+    assert not post(client, "/api/library/profiles/10/delete").get_json()["ok"]                       # it is the default
     assert post(client, "/api/library/settings", {"library_default_profile": "1"}).get_json()["ok"]
-    assert post(client, "/api/library/profiles/7/delete").get_json()["ok"] and profiles.get(conn, 7) is None
+    assert post(client, "/api/library/profiles/10/delete").get_json()["ok"] and profiles.get(conn, 10) is None
 
 
 def test_the_library_page_lists_profiles_settings_and_files_that_stopped(client, conn):

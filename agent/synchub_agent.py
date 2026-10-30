@@ -47,7 +47,7 @@ __version__ = "1.4.0"      # kept equal to SyncHub's version (synchub/__init__.p
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
 OPS = ["copy", "rename", "delete_source", "originals"]     # the operations (plan.op) every agent can do; scan, hash and convert are added when the analysis module and ffmpeg are there
-FEATURES = ["profiles", "scale"]   # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run). "dovi" is added when dovi_tool and mkvmerge work
+FEATURES = ["profiles", "scale", "audio_add"]   # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run). "dovi" is added when dovi_tool and mkvmerge work
 MANIFEST_VERSION = 1
 HASH_BUFFER = 8 * 1024 * 1024
 SPACE_MARGIN = 1024 ** 3           # room left over on a disk after a copy
@@ -752,23 +752,54 @@ def video_plan(video, profile, encoder="cpu", device="/dev/dri/renderD128"):
     return [], video_arguments(video, profile)
 
 
+AUDIO_ADD_CODECS = {"eac3": (64, 768), "ac3": (64, 640), "aac": (64, 640)}       # what an added compatible track may be, with its bitrate range in kbps
+
+
+def clean_audio_add(change):
+    """The compatible audio track a plan wants added (see synchub.library.audio): the source track to base it on, its codec, channels and bitrate. None when the plan has none.
+    Checked here because it ends up in the ffmpeg command."""
+    add = change.get("audio_add")
+    if add is None:
+        return None
+    if not isinstance(add, dict) or add.get("codec") not in AUDIO_ADD_CODECS:
+        raise JobFailure("bad_job", "The plan asks for a compatible audio track this agent does not know.", retryable=False)
+    try:
+        source, channels, kbps = int(add["from"]), int(add.get("channels") or 2), int(add.get("kbps") or 192)
+    except (KeyError, TypeError, ValueError):
+        raise JobFailure("bad_job", "The compatible audio track in this job has numbers that are not readable.", retryable=False)
+    low, high = AUDIO_ADD_CODECS[add["codec"]]
+    if source < 0 or not 1 <= channels <= 8 or not low <= kbps <= high:
+        raise JobFailure("bad_job", "The compatible audio track in this job is outside what this agent accepts.", retryable=False)
+    title = re.sub(r"[^A-Za-z0-9 .()+-]", "", str(add.get("title") or ""))[:60]
+    return {"from": source, "codec": add["codec"], "channels": channels, "kbps": kbps, "title": title}
+
+
 def _track_arguments(change, profile, n):
-    """The -map options for the audio and subtitle tracks the plan keeps and the codec options for them, with the source as ffmpeg input number `n`."""
+    """The -map options for the audio and subtitle tracks the plan keeps and the codec options for them, with the source as ffmpeg input number `n`.
+    A plan with `audio_add` gets one more audio track, first and the default, made from one of the source's tracks."""
     keep_audio, keep_subtitle = change.get("keep_audio"), change.get("keep_subtitle")
-    maps = []
+    add = clean_audio_add(change) if isinstance(keep_audio, list) else None
+    maps = ["-map", f"{n}:{add['from']}"] if add else []
     for indexes, everything in ((keep_audio, f"{n}:a?"), (keep_subtitle, f"{n}:s?")):
         maps += [part for i in indexes for part in ("-map", f"{n}:{int(i)}")] if isinstance(indexes, list) else ["-map", everything]
     codecs = ["-c:a", "copy", "-c:s", "copy"]
+    shift = 1 if add else 0
+    if add:
+        codecs += ["-c:a:0", add["codec"], "-b:a:0", f"{add['kbps']}k", "-ac:a:0", str(add["channels"])] + (["-metadata:s:a:0", f"title={add['title']}"] if add["title"] else [])
     converting = change.get("audio_convert") or {}
     bitrate = (profile or {}).get("audio_kbps") or 192
     for position, index in enumerate(keep_audio if isinstance(keep_audio, list) else []):
         if str(index) in converting:
-            codecs += [f"-c:a:{position}", converting[str(index)].get("codec") or "aac", f"-b:a:{position}", f"{bitrate}k"]
-            channels = _positive_int(converting[str(index)].get("channels"), 8)
+            entry = converting[str(index)]
+            kbps = _positive_int(entry.get("kbps"), 768) or bitrate
+            codecs += [f"-c:a:{position + shift}", entry.get("codec") or "aac", f"-b:a:{position + shift}", f"{kbps}k"]
+            channels = _positive_int(entry.get("channels"), 8)
             if channels:
-                codecs += [f"-ac:a:{position}", str(channels)]
+                codecs += [f"-ac:a:{position + shift}", str(channels)]
     default = change.get("default_audio")
-    if default is not None and isinstance(keep_audio, list) and default in keep_audio:
+    if add:
+        codecs += ["-disposition:a", "0", "-disposition:a:0", "default"]
+    elif default is not None and isinstance(keep_audio, list) and default in keep_audio:
         codecs += ["-disposition:a", "0", f"-disposition:a:{keep_audio.index(default)}", "default"]
     return maps, codecs
 
@@ -2239,8 +2270,9 @@ class JobRunner(threading.Thread):
         if limit and got_height > limit:
             problems.append(f"the picture is {got_height} pixels high but the plan asked for at most {limit}")
         for kind, key in (("audio", "keep_audio"), ("subtitle", "keep_subtitle")):
-            if isinstance(change.get(key), list) and counts[kind] != len(change[key]):
-                problems.append(f"it has {counts[kind]} {kind} track(s) but {len(change[key])} were planned")
+            planned = len(change[key]) + (1 if kind == "audio" and change.get("audio_add") else 0) if isinstance(change.get(key), list) else None
+            if planned is not None and counts[kind] != planned:
+                problems.append(f"it has {counts[kind]} {kind} track(s) but {planned} were planned")
         got = media_duration(data)
         if expected_duration and got is not None and abs(got - expected_duration) > max(1.0, expected_duration * 0.005):
             problems.append(f"it is {got:.0f} s long but the source is {expected_duration:.0f} s")

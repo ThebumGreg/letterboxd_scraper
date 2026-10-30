@@ -10,7 +10,7 @@ import logging
 import os
 
 from synchub import db, jobs, settings
-from synchub.library import layout, profiles, size_policy, store
+from synchub.library import audio, layout, profiles, size_policy, store
 from synchub.library import vocab as v
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,8 @@ def approved_removals(rec, profile=None):
 
 
 def _changes_nothing(change):
-    return change.get("op") != "convert" and not change.get("remove_audio") and not change.get("remove_subtitle") and change.get("default_audio") is None
+    return (change.get("op") != "convert" and not change.get("remove_audio") and not change.get("remove_subtitle") and change.get("default_audio") is None
+            and not change.get("audio_add") and not change.get("audio_convert"))
 
 
 def _is_video(codec, wanted):
@@ -63,7 +64,7 @@ def _is_video(codec, wanted):
     return codec.startswith("hevc") or codec.startswith("h265") if wanted == "hevc" else codec.startswith("h264") or codec.startswith("avc")
 
 
-def plan_for(rec, cfg, profile=None, mode=None, size=None):
+def plan_for(rec, cfg, profile=None, mode=None, size=None, rules=None):
     """(destination root, destination relative path, plan) for an approved record. Raises layout.LayoutError.
 
     `mode` 'rename_only' renames the file inside its own share and touches nothing else. Otherwise the profile decides: a move-only profile copies
@@ -88,6 +89,9 @@ def plan_for(rec, cfg, profile=None, mode=None, size=None):
         change.setdefault("audio_convert", {})
         if not dest_rel.lower().endswith(".mkv"):
             change["target_extension"] = ".mkv"
+    audio_note = None
+    if rules:                                                         # the profile's audio rule (add a compatible track, or convert the main one)
+        change, audio_note = audio.apply(rec, change, rules.get("audio_mode"))
     if change is not None and _changes_nothing(change):
         change = None
     decision = size_policy.decide(rec, [change] if change else [], size) if size is not None else None
@@ -104,6 +108,10 @@ def plan_for(rec, cfg, profile=None, mode=None, size=None):
         dest_rel = os.path.splitext(dest_rel)[0] + extension
     if profile and (profile["video_codec"] != "keep" or profile["audio_kbps"] != 192):
         plan.update(profile=profiles.for_plan(profile), needs=[profiles.FEATURE])
+    if change.get("audio_add") or any(isinstance(c, dict) and c.get("kbps") for c in (change.get("audio_convert") or {}).values()):
+        plan["needs"] = sorted(set(plan.get("needs") or []) | {"audio_add"})
+    if audio_note:
+        plan["audio_note"] = audio_note
     if compress:
         plan, dest_rel = size_policy.apply(plan, decision, dest_rel)
     return cfg.destination_root, dest_rel, plan
@@ -115,8 +123,8 @@ def active_job(conn, record_id):
 
 
 def profile_for(conn, rec):
-    """The profile an approved record is converted with: the one chosen for the file, else the default."""
-    return (profiles.get(conn, rec["approved_profile_id"]) if rec.get("approved_profile_id") else None) or profiles.default(conn)
+    """The profile an approved record is converted with: the one chosen for the file, else the one chosen at its scan, else the default."""
+    return profiles.effective(conn, rec)
 
 
 TITLES = {"copy": "Copy", "convert": "Convert", "rename": "Rename"}
@@ -138,7 +146,8 @@ def queue(conn, record_id, cfg, by="someone", force=False):
     if downloads.busy(conn, rec):                                # the download pipeline is replacing this very file in place
         return None
     try:
-        dest_root, dest_rel, plan = plan_for(rec, cfg, profile_for(conn, rec), size=size_policy.load(conn))
+        profile = profile_for(conn, rec)
+        dest_root, dest_rel, plan = plan_for(rec, cfg, profile, size=size_policy.load(conn, profile), rules=profiles.rules(conn, profile))
     except layout.LayoutError as exc:
         raise ValueError(f"cannot plan the destination: {exc}")
     need = 0 if plan["op"] == "rename" else (rec["size_bytes"] or 0) * (2 if plan["op"] == "convert" else 1) + WORK_MARGIN_BYTES

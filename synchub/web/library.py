@@ -191,7 +191,7 @@ def register(app):
         group = request.args.get("group") or rcm.group
         data = describe_record(rec, rcm, cfg, chosen)
         with db.connection() as conn:
-            size = size_policy.decide(rec, previews.plans_of(rec, approved=rec["approval_status"] == v.APPROVAL_APPROVED), size_policy.load(conn))
+            size = size_policy.decide(rec, previews.plans_of(rec, approved=rec["approval_status"] == v.APPROVAL_APPROVED), size_policy.load(conn, chosen))
             latest = previews.latest_for(conn, "library_file", record_id)
         preview_info = {"summary": size.summary or "The size rules would compress this file; watch a short window first.", "latest": previews.describe(latest) if latest else None} if size.profile is not None else None
         data.update(preview_info=preview_info, cfg=cfg, profiles=all_profiles, chosen_profile=chosen, rename_to=rc.rename_path(rec, cfg), source_cleanup=cleanup.source_days())
