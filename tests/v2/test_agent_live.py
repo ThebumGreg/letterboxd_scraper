@@ -650,6 +650,7 @@ def test_approving_a_file_gets_it_converted_by_the_worker_and_the_library_record
     assert rec_of(conn, record_id)["migration_status"] == "pending" and migrate.queue_summary(conn)["queued"] == 1
     rig.start()
     wait(lambda: (conn.commit() or True) and rec_of(conn, record_id)["migration_status"] == "completed", timeout=60, what="the record to complete")
+    wait(lambda: told, timeout=10, what="Jellyfin to be told (it happens just after the record is saved)")
     rec = rec_of(conn, record_id)
     dest = rig.roots["media"] / "Movies/Heat (1995)/Heat (1995).mkv"
     assert dest.exists() and rec["migration_destination_path"] == "media:Movies/Heat (1995)/Heat (1995).mkv" and rec["migration_verification_status"] == "verified"

@@ -123,7 +123,8 @@ def test_a_long_video_is_encoded_in_chunks_and_an_interruption_loses_at_most_one
     assert job["status"] == "done", job["error"]
     messages = [line["msg"] for line in rig.joblog(job_id)]
     assert sum(m == "Encoding chunk 1 of 3" for m in messages) == 1 and sum(m == "Encoding chunk 2 of 3" for m in messages) == 1      # finished chunks were not encoded again
-    assert sum(m == "Encoding chunk 3 of 3" for m in messages) == 2 and "Joining the encoded parts" in " ".join(messages)
+    # the interrupted chunk is redone (the stopping worker may log it once more before it exits, so "at least twice")
+    assert sum(m == "Encoding chunk 3 of 3" for m in messages) >= 2 and "Joining the encoded parts" in " ".join(messages)
     data = probe(rig.roots["media"] / "Movies/Heat (1995)/Heat (1995).mkv")
     kinds = [s["codec_type"] for s in data["streams"]]
     assert kinds.count("video") == 1 and kinds.count("audio") == 2 and abs(float(data["format"]["duration"]) - 130) < 1.5
