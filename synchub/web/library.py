@@ -95,7 +95,7 @@ def overview(conn):
 def scan_options_for_page(conn):
     options, cfg = scan.scan_options(conn), scan.config(conn)
     return {**options, "exclude_text": "\n".join(options["exclude"]), "destination": cfg.destination_root, "tv_folder": cfg.tv_folder, "movie_folder": cfg.movie_folder,
-            "naming_style": cfg.naming_style, "audio_mode": settings.get("audio_mode", conn=conn), "clean_names": cfg.clean_names}
+            "naming_style": cfg.naming_style, "audio_mode": settings.get("audio_mode", conn=conn), "clean_names": cfg.clean_names, "tmdb_ids": settings.get("naming_tmdb_ids", conn=conn) == "1"}
 
 
 def describe_record(rec, rcm, cfg, profile=None, quality=None):
@@ -358,7 +358,7 @@ def register(app):
         data = request.get_json(silent=True) or {}
         keys = ("library_destination_root", "library_tv_folder", "library_movie_folder", "library_integrity_mode", "library_tail_seconds", "library_exclude_folders", "download_pipeline", "originals_retention_days",
                 "size_policy", "size_mode", "cap_mbps_2160", "cap_mbps_1080", "cap_mbps_720", "cap_mbps_sd", "size_trigger_factor", "safety_gb_2160", "safety_gb_1080", "tv_cap_share",
-                "naming_style", "audio_mode", "clean_names", "versions_on", "variant_min_gb", "variant_height", "variant_label", "variant_crf", "variant_maxrate_kbps", "variant_audio_kbps", "variant_stereo", "dv7_remux", "size_crf", "tv_size_policy", "gpu_encoding", "vmaf_mode", "dolby_vision_profile_5", "dolby_vision_profile_7_8",
+                "naming_style", "audio_mode", "clean_names", "naming_tmdb_ids", "versions_on", "variant_min_gb", "variant_height", "variant_label", "variant_crf", "variant_maxrate_kbps", "variant_audio_kbps", "variant_stereo", "dv7_remux", "size_crf", "tv_size_policy", "gpu_encoding", "vmaf_mode", "dolby_vision_profile_5", "dolby_vision_profile_7_8",
                 "review_first", "trust_after", "preview_seconds", "preview_keep_days", "preview_auto",
                 "library_default_profile", "source_delete_after_days", "arr_after_migration", "arr_apply_when")
         cleaned, errors = {}, []

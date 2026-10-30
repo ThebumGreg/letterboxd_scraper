@@ -340,3 +340,25 @@ def test_the_bulk_page_says_what_will_happen_and_can_set_the_profile_for_all(cli
     done = client.post("/api/library/bulk/convert", json={"profile_id": 8, "conf": "medium"}).get_json()
     assert done["ok"] and done["done"] == 2
     assert {conn.execute("SELECT approved_profile_id FROM library_file WHERE id = ?", (i,)).fetchone()[0] for i in ids} == {8}
+
+
+# ---------------------------------------------------------------- show folders with the year
+def test_a_new_episode_gets_the_show_year_and_tag_but_a_library_folder_is_left_alone(conn):
+    from synchub.library import recommend as rc
+    from synchub.library import vocab as v
+    conn.execute("INSERT INTO media (kind, title, year, tmdb_id) VALUES ('show', 'Cold Case', 2003, '4601')")
+    settings.set_value("naming_style", "jellyfin", conn=conn)
+    conn.commit()
+    cfg = v.LibraryConfig(naming_style="jellyfin", destination_root="media")
+    new = tv_record(root_name="tfiles")
+    assert rc.cfg_for(conn, new, cfg, {}).show_folders == (("Cold Case", "Cold Case (2003)"),)
+    from synchub.library import layout
+    assert layout.relative_display(new, rc.cfg_for(conn, new, cfg, {})).startswith("TV Shows/Cold Case (2003)/Season 02/")
+    settings.set_value("naming_tmdb_ids", "1", conn=conn)
+    conn.commit()
+    assert layout.relative_display(new, rc.cfg_for(conn, new, cfg, {})).startswith("TV Shows/Cold Case (2003) [tmdbid-4601]/")
+    placed = tv_record(root_name="media")
+    assert layout.relative_display(placed, rc.cfg_for(conn, placed, cfg, {})).startswith("TV Shows/Cold Case/Season 02/")
+    settings.set_value("naming_style", "current", conn=conn)
+    conn.commit()
+    assert rc.cfg_for(conn, new, cfg, {}).show_folders == ()

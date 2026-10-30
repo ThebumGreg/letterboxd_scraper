@@ -51,6 +51,7 @@ def relative_parts(record, cfg=None):
         show, season = record["show_title"], record["season_number"]
         if not show or season is None:
             raise LayoutError("TV episode without show title / season")
+        show = dict(cfg.show_folders).get(show, show)
         problems += _problems("show folder", show)
         parts = [cfg.tv_folder, show, f"Season {int(season):02d}", name]
     else:

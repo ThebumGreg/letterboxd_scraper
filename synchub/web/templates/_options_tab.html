@@ -69,7 +69,9 @@
                         <div class="col-6"><label for="setAudio" class="form-label small mb-1">Audio that many players cannot decode</label>
                             <select class="form-select form-select-sm" id="setAudio">{% for m, label in [('add_compatible', 'Add a compatible track, keep the original'), ('compatible_only', 'Replace it with a compatible track'), ('keep', 'Leave the audio alone')] %}<option value="{{ m }}"{% if m == options.audio_mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
                     </div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="setTmdbIds"{% if options.tmdb_ids %} checked{% endif %}><label class="form-check-label small" for="setTmdbIds">Add the TMDB id to new show folders, like <code>Show (2018) [tmdbid-1234]</code> (helps Jellyfin match them)</label></div>
                     <div class="form-check"><input class="form-check-input" type="checkbox" id="setCleanNames"{% if options.clean_names %} checked{% endif %}><label class="form-check-label small" for="setCleanNames">Clean file names (remove release tags, dots and junk) when files are brought in</label></div>
+                    <div class="form-text">Show folders for files brought in get the year SyncHub knows for the show (<code>Show (2018)</code>) in the Jellyfin style. Folders already in the library are never renamed for this.</div>
                     <div class="form-text">A compatible track is E-AC-3 5.1 (AAC stereo for stereo sources), placed first and set as the default, so players that cannot decode TrueHD or DTS-HD pick it. Jellyfin does not choose a track by codec. A conversion profile can change any of these.</div>
                 </div>
                 <div class="border rounded p-2 mb-2">

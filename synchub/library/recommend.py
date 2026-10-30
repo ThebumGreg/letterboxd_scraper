@@ -24,6 +24,7 @@ import json
 import os
 from typing import List, Optional
 
+from synchub import settings
 from synchub.library import findings, layout as media_layout, migrate, rule_steps, store
 from synchub.library import vocab as db
 from synchub.library.vocab import LibraryConfig
@@ -328,13 +329,31 @@ def all_records(conn):
     return [dict(r) for r in conn.execute("SELECT * FROM library_file")]
 
 
+def show_folders(conn):
+    """((title, folder name), ...) for the shows SyncHub knows by one unambiguous title: `Show (Year)`, plus ` [tmdbid-N]` when that setting is on. Empty with the Jellyfin style off."""
+    if settings.get("naming_style", conn=conn) == "current":
+        return ()
+    tags = settings.get("naming_tmdb_ids", conn=conn) == "1"
+    seen, out = {}, {}
+    for r in conn.execute("SELECT title, year, tmdb_id FROM media WHERE kind = 'show' AND year IS NOT NULL"):
+        seen[r["title"]] = seen.get(r["title"], 0) + 1
+        out[r["title"]] = f"{r['title']} ({r['year']})" + (f" [tmdbid-{r['tmdb_id']}]" if tags and r["tmdb_id"] else "")
+    return tuple((t, f) for t, f in out.items() if seen[t] == 1 and t != f)
+
+
 def cfg_for(conn, rec, cfg, cache):
-    """The library config with the naming rule of the profile that applies to `rec`. `cache` ({profile id: config}) spares a lookup per file."""
+    """The library config with the naming rule of the profile that applies to `rec`, and the show folder names for a file that is not in the library yet (a folder
+    already in the library is never renamed because a year became known). `cache` ({profile id: config}) spares a lookup per file."""
     from synchub.library import profiles
     profile = profiles.effective(conn, rec)
     if profile["id"] not in cache:
         cache[profile["id"]] = dataclasses.replace(cfg, clean_names=bool(profiles.rules(conn, profile)["clean_names"]))
-    return cache[profile["id"]]
+    found = cache[profile["id"]]
+    if rec.get("root_name") == cfg.destination_root or rec.get("media_type") != "TV Episode":
+        return found
+    if "_shows" not in cache:
+        cache["_shows"] = show_folders(conn)
+    return dataclasses.replace(found, show_folders=cache["_shows"]) if cache["_shows"] else found
 
 
 def classify(conn, cfg=None, match=None, root=None):
