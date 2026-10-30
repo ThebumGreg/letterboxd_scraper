@@ -53,12 +53,12 @@ One new migration (021, the watchlist table and a per-person setting). Workers n
 
 ## 1.3.0
 
-Update every worker (`docs/UPGRADE.md`) and rebuild its image: the worker image moves to Debian 13 so its ffmpeg has libvmaf. One new migration (020, a column for the originals a worker holds).
+Update every worker (`docs/UPGRADE.md`) and rebuild its image: the worker image moves to Debian 13 (with the Intel GPU driver when it can be installed). One new migration (020, a column for the originals a worker holds).
 
 **Conversion batch: GPU encoding, resumable encodes, quality scores, an Originals tab and TV size limits.**
 - **GPU encoding.** *Library settings > GPU encoding* lets a plan use a worker's `hevc_nvenc`, `hevc_qsv` or `hevc_vaapi` (new agent setting `video_encoder`, default `auto`; add `agent/examples/docker-compose.gpu.yml` for an Intel GPU). It is off by default, never used for HDR, and falls back to the CPU encoder once if the GPU encode fails or is too big. The size policy uses an average-bitrate encode on a GPU.
 - **Chunked, resumable encodes.** Videos over twice `chunk_minutes` (default 10) are encoded in pieces and joined without re-encoding, so a reboot loses at most one piece (`chunk_minutes = 0` turns it off).
-- **VMAF quality score.** *Library settings > Quality score*: off, record the score, or hold a job whose mean score is under 93 (95 for 2160p) for review before the original is replaced. The worker image now has libvmaf; the build fails if it does not.
+- **VMAF quality score.** *Library settings > Quality score*: off, record the score, or hold a job whose mean score is under 93 (95 for 2160p) for review before the original is replaced. The distribution's ffmpeg has no libvmaf, so scores are skipped unless the image is built with `FFMPEG_URL` (a static ffmpeg build with libvmaf; `agent/Dockerfile`).
 - **Originals tab** on the Media page: every original the workers keep, with Restore (the converted file is set aside for 7 days, not deleted), Keep longer and Delete now, each queued as a job on the worker that holds the file.
 - **TV size policy** has its own switch and is per hour of runtime (`tv_max_gb_per_hour` 4, `tv_target_gb_per_hour` 2.5 by default; replaces `tv_episode_max_gb` and `tv_episode_target_gb`, which were never shown anywhere). A *How many files would this compress?* button counts what the current numbers would do without queuing anything.
 - Release notes from the mount-watchdog batch below are part of this release too.
