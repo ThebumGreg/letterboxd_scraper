@@ -27,7 +27,7 @@
     {% else %}
     <div class="table-responsive">
         <table class="table table-sm align-middle">
-            <thead><tr><th style="width:2rem"><input type="checkbox" class="form-check-input" data-select-all aria-label="Select all"></th><th>Film</th><th class="text-end">Size</th><th>Picture</th>{% if withHeight %}<th>Height</th>{% endif %}<th></th></tr></thead>
+            <thead><tr><th style="width:2rem"><input type="checkbox" class="form-check-input" data-select-all aria-label="Select all"></th><th>Film</th><th class="text-end">Size</th><th>Picture</th>{% if withHeight %}<th>Height</th>{% endif %}{% if kind == 'dv_remux' %}<th>Also make the copy</th>{% endif %}<th></th></tr></thead>
             <tbody>
             {% for e in entries %}
                 <tr data-id="{{ e.id }}">
@@ -41,6 +41,7 @@
                     <td class="text-end text-nowrap">{{ e.size_gb }} GB</td>
                     <td class="text-nowrap">{{ e.picture }}{% if e.resolution %}<div class="small text-body-secondary">{{ e.resolution }}</div>{% endif %}</td>
                     {% if withHeight %}<td><select class="form-select form-select-sm" data-height style="width:6rem" {% if not e.can_approve %}disabled{% endif %}>{% for h in heights %}<option value="{{ h }}" {% if h == e.height %}selected{% endif %}>{{ h }}p</option>{% endfor %}</select></td>{% endif %}
+                    {% if kind == 'dv_remux' %}<td>{% if e.also_copy %}<div class="form-check"><input type="checkbox" class="form-check-input" data-with-copy checked aria-label="Also make the {{ e.height }}p copy of {{ e.title }}"><label class="form-check-label small">{{ e.height }}p</label></div>{% else %}<span class="small text-body-secondary">-</span>{% endif %}</td>{% endif %}
                     <td class="text-end text-nowrap"><button type="button" class="btn btn-sm btn-outline-secondary" data-skip>Not this one</button></td>
                 </tr>
             {% endfor %}

@@ -18,7 +18,8 @@
         const rows = () => [...section.querySelectorAll('tbody tr')];
         section.querySelector('[data-select-all]')?.addEventListener('change', (ev) => rows().forEach((r) => { const c = r.querySelector('[data-pick]'); if (c && !c.disabled) c.checked = ev.target.checked; }));
         section.querySelector('[data-approve="selected"]')?.addEventListener('click', async () => {
-            const items = rows().filter((r) => r.querySelector('[data-pick]')?.checked).map((r) => ({ id: Number(r.dataset.id), height: r.querySelector('[data-height]') ? Number(r.querySelector('[data-height]').value) : undefined }));
+            const items = rows().filter((r) => r.querySelector('[data-pick]')?.checked).map((r) => ({ id: Number(r.dataset.id), height: r.querySelector('[data-height]') ? Number(r.querySelector('[data-height]').value) : undefined,
+                with_copy: r.querySelector('[data-with-copy]') ? r.querySelector('[data-with-copy]').checked : undefined }));
             if (!items.length) { say(false, 'Tick at least one film.'); return; }
             if (!confirm('Queue ' + items.length + ' film' + (items.length === 1 ? '' : 's') + ' for a worker?')) return;
             done(await post('/api/library/versions/approve', { kind, items }));

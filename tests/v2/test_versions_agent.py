@@ -166,3 +166,41 @@ def test_ffmpeg_makes_the_compatible_track_first_and_keeps_the_original(tmp_path
     audio = [s for s in probe(out)["streams"] if s["codec_type"] == "audio"]
     assert [a["codec_name"] for a in audio] == ["eac3", "flac"] and audio[0]["disposition"]["default"] == 1 and audio[1]["disposition"]["default"] == 0
     assert audio[0]["channels"] == 6 and audio[0]["tags"].get("title") == "Compatible (E-AC-3 5.1)"
+
+
+# ---------------------------------------------------------------- a real worker makes two outputs from one copy-in
+@needs_ffmpeg
+def test_one_job_replaces_the_film_and_makes_the_smaller_copy_from_the_same_copy_in(rig, conn, monkeypatch):      # noqa: F811
+    """The Dolby Vision step itself needs dovi_tool; here it is replaced by a plain remux so the two-output machinery (one copy-in, the copy made before the swap,
+    both verified, the original kept, both reported) runs on real ffmpeg."""
+    def plain_remux(self, local, converted, expected_duration):
+        os.makedirs(os.path.dirname(converted), exist_ok=True)
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", local, "-map", "0", "-c", "copy", converted], check=True)
+        return {"done": True, "bytes": os.path.getsize(converted), "seconds": 0.1, "command": "stub", "probe": {}, "finished": "now", "encoder": "copy"}
+    monkeypatch.setattr(agent.JobRunner, "remux_dolby_vision", plain_remux)
+    real = agent.detect_capabilities
+    monkeypatch.setattr(agent, "detect_capabilities", lambda cfg: (lambda caps: (caps["features"].append("dovi"), caps)[1])(real(cfg)))
+    source = rig.roots["media"] / "Movies/Heat (1995)/Heat (1995) Bluray-2160p.mkv"
+    real_film(source, width=640, height=360, seconds=3)
+    settings.set_value("variant_min_gb", "0", conn=conn)
+    settings.set_value("variant_height", "240", conn=conn)
+    record_id = film(conn, info=DV7, size_gb=0.001, audio=[agent_track(1, "ac3", 6)])
+    conn.execute("UPDATE library_file SET size_bytes = ?, mtime = ?, duration_seconds = 3.0, resolution = '640x360' WHERE id = ?", (source.stat().st_size, source.stat().st_mtime, record_id))
+    conn.commit()
+    before = source.read_bytes()
+    versions.approve(conn, "dv_remux", record_id, "Greg")
+    conn.commit()
+    rig.start()
+    try:
+        wait(lambda: (conn.commit() or True) and all(r["status"] in ("done", "failed", "blocked") for r in conn.execute("SELECT status FROM library_action")), timeout=40, what="both outputs")
+    except AssertionError:
+        print("DEBUG", [dict(r) for r in conn.execute("SELECT id, status, error, message, stage FROM job")], [dict(r) for r in conn.execute("SELECT kind, status, message FROM library_action")])
+        raise
+    rows = {r["kind"]: dict(r) for r in conn.execute("SELECT * FROM library_action")}
+    assert rows["dv_remux"]["status"] == "done", rows["dv_remux"]["message"]
+    assert rows["variant"]["status"] == "done", rows["variant"]["message"]
+    extra = rig.roots["media"] / "Movies/Heat (1995)/Heat (1995) - 1080p.mkv"
+    video = next(s for s in probe(extra)["streams"] if s["codec_type"] == "video")
+    assert video["codec_name"] == "hevc" and int(video["height"]) == 240
+    assert source.is_file() and source.read_bytes() != b"" and len(list((rig.work / "originals").glob("*/meta.json"))) == 1          # the film was replaced and its original kept
+    assert before != b"" and not list(extra.parent.glob("*.synchub-partial"))

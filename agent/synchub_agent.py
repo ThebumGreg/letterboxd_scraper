@@ -47,7 +47,7 @@ __version__ = "1.4.0"      # kept equal to SyncHub's version (synchub/__init__.p
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
 OPS = ["copy", "rename", "delete_source", "originals"]     # the operations (plan.op) every agent can do; scan, hash and convert are added when the analysis module and ffmpeg are there
-FEATURES = ["profiles", "scale", "audio_add", "benchmark"]   # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run). "dovi" is added when dovi_tool and mkvmerge work
+FEATURES = ["profiles", "scale", "audio_add", "benchmark", "two_outputs"]   # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run). "dovi" is added when dovi_tool and mkvmerge work
 MANIFEST_VERSION = 1
 HASH_BUFFER = 8 * 1024 * 1024
 SPACE_MARGIN = 1024 ** 3           # room left over on a disk after a copy
@@ -1862,16 +1862,20 @@ class JobRunner(threading.Thread):
                 done.update(self.encode(local, converted, change, self.job["plan"].get("duration"), plan.get("profile")))
             self.save()
         quality = self.quality_check(local, converted, change, plan.get("profile"))
+        extra = self.make_extra(local, plan)                           # a second output of the same job: made before the main file is swapped in, so a failure here costs nothing
         out_size = os.path.getsize(converted)
         if not done.get("sha256"):
             done["sha256"] = hash_file(converted, check=self.guard)
             self.save()
         keep = (lambda: self.keep_original(src, local, size, mtime, plan)) if replace else None
         out_seconds = self.copy_out(converted, dst, out_size, done["sha256"], stat.st_mtime_ns, overwrite=src if replace else None, before_swap=keep)
+        extra_result = self.deliver_extra(plan, extra, stat.st_mtime_ns) if extra is not None else None
         elapsed = time.monotonic() - t0
         result = {"op": "convert", "bytes": out_size, "source_bytes": size, "sha256": done["sha256"], "verified": "sha256" if self.cfg.verify == "hash" else "size",
                   "seconds": round(elapsed, 1), "encode_seconds": done.get("seconds"), "command": done.get("command"), "output": done.get("probe"),
                   "encoder": done.get("encoder"), "gpu_fallback": done.get("fallback"), "chunked": done.get("chunked"), "vmaf": quality}
+        if extra_result is not None:
+            result["extra"] = extra_result
         if replace:
             original = self.m.get("original") or {}
             result.update(replaced=True, kept_original=bool(original.get("path")), original_expires=original.get("expires_at"), path_changed=dst != src)
@@ -1882,6 +1886,79 @@ class JobRunner(threading.Thread):
             return result
         self.log.info(f"Converted {name} ({human_bytes(size)} to {human_bytes(out_size)}) and brought it into the destination in {human_duration(elapsed)}")
         return result
+
+    # ---- the second output of a job (a smaller copy made in the same job as a Dolby Vision conversion)
+    def make_extra(self, local, plan):
+        """Encodes the plan's `extra` output from the local copy of the source (its track numbers are the ones the plan was made with). Returns None when the plan has
+        none, else {'path', 'sha256', ...} or {'error': why}. A failure here is not the job's failure: the main file is still converted and the report says the copy was not made."""
+        extra = plan.get("extra")
+        if not isinstance(extra, dict):
+            return None
+        rel = str(extra.get("rel") or "")
+        if not rel or rel.startswith("/") or ".." in rel.split("/") or not rel.lower().endswith(".mkv"):
+            return {"error": "the plan names a destination for the smaller copy that cannot be used"}
+        if self.m.get("extra_error"):
+            return {"error": self.m["extra_error"]}
+        path = os.path.join(self.folder, "extra", os.path.basename(rel))
+        done = self.stage_info("extra_encode")
+        if not (done.get("done") and os.path.isfile(path) and os.path.getsize(path) == done.get("bytes")):
+            done.clear()
+            self.log.info(f"Making the {extra.get('label') or 'smaller'} copy from the same local copy of the film")
+            try:
+                done.update(self.encode(local, path, extra.get("change") or {}, plan.get("duration"), extra.get("profile")))
+            except JobFailure as exc:
+                self.m["extra_error"] = exc.message[:300]
+                self.save()
+                self.log.warning(f"The smaller copy could not be made ({exc.message[:300]}); the main file carries on")
+                return {"error": self.m["extra_error"]}
+            self.save()
+        if not done.get("sha256"):
+            done["sha256"] = hash_file(path, check=self.guard)
+            self.save()
+        return {"path": path, "sha256": done["sha256"], "bytes": done["bytes"], "encode_seconds": done.get("seconds"), "encoder": done.get("encoder")}
+
+    def deliver_extra(self, plan, made, source_mtime_ns):
+        """Copies the smaller copy next to the main file (never over a different file) and verifies it. Returns what the report says about it."""
+        if made.get("error"):
+            return {"error": made["error"]}
+        rel = plan["extra"]["rel"]
+        try:
+            dst = safe_path(self.agent.roots.path(self.job["dest"]["root"]), rel)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        info = self.stage_info("extra_copy_out")
+        size, digest = made["bytes"], made["sha256"]
+        if os.path.lexists(dst):
+            if info.get("done") or (os.path.isfile(dst) and os.path.getsize(dst) == size and (self.cfg.verify == "size" or hash_file(dst, check=self.guard) == digest)):
+                return {"bytes": size, "sha256": digest, "rel": rel, "encode_seconds": made.get("encode_seconds"), "encoder": made.get("encoder")}
+            return {"error": f"{rel} already exists and is different. SyncHub never overwrites a file."}
+        partial = dst + ".synchub-partial"
+        try:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            self.report_progress("copy_out", 0.95, "Copying out the smaller copy", force=True)
+            with open(made["path"], "rb") as fin, open(partial, "wb") as fout:
+                while True:
+                    block = fin.read(self.cfg.copy_chunk_mb * 1048576)
+                    if not block:
+                        break
+                    fout.write(block)
+                    self.reporter.check()
+                fout.flush()
+                os.fsync(fout.fileno())
+            if os.path.getsize(partial) != size or (self.cfg.verify == "hash" and hash_file(partial, check=self.guard) != digest):
+                raise JobFailure("verification_failed", "The copy on the share does not match what was made.")
+            os.replace(partial, dst)
+            try:
+                os.utime(dst, ns=(time.time_ns(), source_mtime_ns))
+            except OSError:
+                pass
+        except (OSError, JobFailure) as exc:
+            self._remove(partial)
+            return {"error": f"could not copy it to the share: {getattr(exc, 'message', None) or exc}"[:300]}
+        info.update(done=True, bytes=size, finished=iso())
+        self.save()
+        self.log.info(f"Copied out the smaller copy to {rel}")
+        return {"bytes": size, "sha256": digest, "rel": rel, "encode_seconds": made.get("encode_seconds"), "encoder": made.get("encoder")}
 
     def do_preview(self):
         """Makes the two clips of a preview (docs/DESIGN_ENCODING.md section 12) and uploads them: a window of the film encoded with the planned settings, and the same
