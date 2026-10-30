@@ -7,6 +7,9 @@
 # For an NVIDIA GPU use `gpus: all` here instead of `devices`, with the NVIDIA Container Toolkit installed on the PC.
 services:
   worker:
+    build:
+      args:
+        FFMPEG_URL: ${FFMPEG_URL:-}      # optional: a static ffmpeg build with libvmaf for VMAF scores, see agent/Dockerfile (put FFMPEG_URL=... in .env)
     devices:
       - /dev/dri:/dev/dri
     environment:

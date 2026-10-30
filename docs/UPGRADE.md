@@ -138,15 +138,17 @@ Both should print a version. The conversion needs about three times the film's s
 
 ### Turning on GPU encoding on a worker (Intel UHD 630 on worker-1)
 
-The 1.3.0 image already contains ffmpeg with libvmaf and the Intel media driver; the container only needs the GPU passed in. On worker-1:
+The 1.3.0 image contains ffmpeg and, when its base can install it, the Intel media driver; the container only needs the GPU passed in. VMAF scores need an ffmpeg with libvmaf, which the distribution's does not have: set `FFMPEG_URL` in `.env` (below) and rebuild, or leave it out and scores are skipped. On worker-1:
 
 ```
 ls /dev/dri                                    # should list card0 and renderD128; if not, the PC has no usable GPU device
 cp ~/letterboxd_scraper/agent/examples/docker-compose.gpu.yml /opt/synchub-worker/
 cd /opt/synchub-worker
 echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml' | sudo tee -a .env     # every docker compose command here, and update-worker.sh, now includes the GPU file
+# optional, for VMAF scores (a static ffmpeg build with libvmaf, VAAPI, QSV and NVENC):
+echo 'FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz' | sudo tee -a .env
 sudo docker compose up -d --build
-sudo docker compose run --rm worker --check    # "encoders that work" should now list hevc_vaapi (and maybe hevc_qsv); "VMAF: yes"
+sudo docker compose run --rm worker --check    # "encoders that work" should now list hevc_vaapi (and maybe hevc_qsv); "VMAF: yes" (only with FFMPEG_URL)
 sudo docker compose run --rm --entrypoint vainfo worker     # lists the profiles the GPU can encode (look for HEVC Main and Main10 with EncSlice)
 ```
 
