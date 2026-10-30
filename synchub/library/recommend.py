@@ -10,7 +10,8 @@ Groups (the queues in the UI):
   suggested   we have a plan (rename, remove foreign tracks, skip a duplicate): approve it
   check       a flag worth a look (e.g. no English audio): suggestion is "copy unchanged"
   convert     older formats: a lossless remux into MKV, or a re-encode (slower, lossy)
-  needs_you   cannot be approved yet (unreadable, incomplete analysis, integrity problem...)
+  needs_you   cannot be approved yet (unreadable, incomplete analysis, integrity problem...), or an approved job that failed or stopped
+  queued      approved and waiting for, or being worked on by, a worker
   done        already approved / rejected / migrated
 
 This module only DECIDES and APPLIES decisions through store.set_approval(); it never
@@ -32,21 +33,23 @@ _RANK = {HIGH: 3, MEDIUM: 2, LOW: 1}
 
 G_READY, G_SUGGESTED, G_CHECK = "ready", "suggested", "check"
 G_CONVERT, G_NEEDS, G_DONE = "convert", "needs_you", "done"
-GROUP_ORDER = (G_READY, G_SUGGESTED, G_CHECK, G_CONVERT, G_NEEDS, G_DONE)
+G_QUEUED = "queued"                    # approved and waiting for, or being worked on by, a worker: not done until the job finishes
+GROUP_ORDER = (G_READY, G_SUGGESTED, G_CHECK, G_CONVERT, G_NEEDS, G_QUEUED, G_DONE)
 
 # Rough speed of a re-encode relative to the video's length (1.5 = 1.5x faster than real time); only used for estimates shown to people.
 TRANSCODE_SPEED = 1.5
 GROUP_TITLES = {
     G_READY: "Ready to approve", G_SUGGESTED: "Suggested changes", G_CHECK: "Worth a look",
-    G_CONVERT: "Format conversion", G_NEEDS: "Needs you", G_DONE: "Done",
+    G_CONVERT: "Format conversion", G_NEEDS: "Needs you", G_QUEUED: "Approved and queued", G_DONE: "Done",
 }
 GROUP_HINTS = {
     G_READY: "Nothing unusual found. Approve and they are copied as they are.",
     G_SUGGESTED: "We have a plan for each file (a name, tracks to remove, a duplicate to skip). Check and approve.",
     G_CHECK: "A flag, such as no English audio. We suggest copying unchanged; look and approve.",
     G_CONVERT: "Older formats Jellyfin may have to transcode. We convert the copy to MKV/H.264: a lossless remux where possible, a re-encode (slower) where needed.",
-    G_NEEDS: "These cannot be approved yet: unreadable files, incomplete scans, integrity problems.",
-    G_DONE: "Approved, rejected or already migrated.",
+    G_NEEDS: "These cannot be approved yet (unreadable files, incomplete scans, integrity problems), or an approved job failed or stopped and needs a person.",
+    G_QUEUED: "Approved. A worker is, or soon will be, doing the move or conversion.",
+    G_DONE: "Finished: migrated, already in place, another version of a film, or rejected.",
 }
 
 LANGUAGES = {
@@ -166,11 +169,12 @@ def recommend(rec, cfg=None) -> Recommendation:
         label = {"completed": "Migrated", "in_progress": "Being migrated now", "failed": "Migration failed",
                  "manual_review": "Migration needs a person"}[rec["migration_status"]]
         notes = [rec["migration_last_error"]] if rec.get("migration_last_error") else []
-        return Recommendation(G_DONE, "done", "none", label, [], notes, HIGH, False, **base)
+        group = {"completed": G_DONE, "in_progress": G_QUEUED}.get(rec["migration_status"], G_NEEDS)       # a failed or stopped job needs a person, it is not done
+        return Recommendation(group, "done", "none", label, [], notes, HIGH, False, **base)
     if rec["approval_status"] == db.APPROVAL_APPROVED:
         steps = (["Will be renamed inside its share. Nothing is copied and nothing in the file changes."] if rec.get("approved_mode") == "rename_only"
                  else ["Will be copied" + (" with the approved track changes" if rec.get("approved_track_changes_json") else " unchanged") + ", using the conversion profile"])
-        return Recommendation(G_DONE, "done", "none", "Approved for migration", steps, [], HIGH, False, **base)
+        return Recommendation(G_QUEUED, "done", "none", "Approved for migration", steps, [], HIGH, False, **base)
     if rec["approval_status"] == db.APPROVAL_REJECTED:
         return Recommendation(G_DONE, "done", "none", "Rejected: will not be migrated", [], [], HIGH, False, **base)
     from synchub import versions                       # imported here: versions uses the Library, not the other way round

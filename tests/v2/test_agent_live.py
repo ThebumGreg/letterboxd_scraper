@@ -558,7 +558,7 @@ def test_the_hardware_and_live_figures_reach_synchub_and_the_status_tab(rig, cli
     assert host["cpu"]["threads"] >= 1 and host["arch"] and "gpus" in host
     assert isinstance(worker["status"]["host"], dict)                       # the live figures (load, memory...) ride along with every poll
     page = client.get("/workers/fragment").get_data(as_text=True)
-    assert 'data-fleet-pane="status"' in page and f'data-status-worker="{rig.worker_id}"' in page and "Processor" in page and "Encoding" in page
+    assert f'data-status-worker="{rig.worker_id}"' in page and "Processor" in page and "Encoding" in page
 
 
 def _status_has_host(rig):

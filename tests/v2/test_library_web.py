@@ -153,7 +153,7 @@ def test_decided_files_offer_undo_and_blocked_ones_only_open(client, conn):
     store.set_approval(conn, done, v.APPROVAL_APPROVED, "ann")
     conn.commit()
     blocked = add(conn, rel="b.mkv", name="B.mkv", size=0, mtime=0.0, status=v.ANALYSIS_FAILED, unreadable="stat failed", action="manual_review")
-    page = client.get("/library/queue/done").get_data(as_text=True)
+    page = client.get("/library/queue/queued").get_data(as_text=True)         # approved, not finished: Approved and queued, not Done
     assert 'data-decide="undo"' in row_for(page, done)
     placed = add(conn, root="media", rel="Movies/Heat (1995)/Heat (1995).mkv", name="Heat (1995).mkv")
     assert "data-decide" not in row_for(client.get("/library/queue/done").get_data(as_text=True), placed)             # nobody decided it, so there is nothing to undo

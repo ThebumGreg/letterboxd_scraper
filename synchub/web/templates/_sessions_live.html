@@ -1,0 +1,60 @@
+<!-- The live part of the Sessions page: swapped in every few seconds -->
+{% set watching = rows|selectattr('playing')|list %}
+<h4 class="mb-3">Watching now <small class="text-muted">({{ watching|length }})</small></h4>
+{% if error %}
+<div class="alert alert-warning" role="alert">Could not read Jellyfin's sessions: {{ error }}. Check the Jellyfin address and key under Settings.</div>
+{% endif %}
+<div class="panel p-0 overflow-hidden mb-4">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0" id="sessionTable">
+            <thead class="table-light"><tr><th class="ps-4">Who</th><th>Device</th><th>Watching</th><th style="min-width: 160px;">Progress</th><th class="pe-4">How</th></tr></thead>
+            <tbody>
+                {% for r in watching %}
+                <tr>
+                    <td class="ps-4 fw-bold">{{ r.user }}</td>
+                    <td class="small">{{ r.device }}{% if r.client %}<div class="text-body-secondary">{{ r.client }}</div>{% endif %}</td>
+                    <td>{{ r.title }}</td>
+                    <td class="small">
+                        <span class="badge bg-{{ 'secondary' if r.state == 'Paused' else 'success' }}">{{ r.state }}</span>
+                        {{ r.position }}{% if r.length %} / {{ r.length }}{% endif %}
+                        {% if r.progress is not none %}<div class="progress mt-1" style="height: 5px;" role="progressbar" aria-valuenow="{{ r.progress }}" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width: {{ r.progress }}%"></div></div>{% endif %}
+                    </td>
+                    <td class="pe-4 small">{% if r.method %}<span class="badge bg-{{ r.method_color }}{% if r.method_color == 'warning' %} text-dark{% endif %}">{{ r.method }}</span>{% endif %}{% if r.why %}<div class="text-body-secondary">{{ r.why }}</div>{% endif %}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="text-center text-muted py-4">{{ 'Nobody is watching right now.' if not error else 'Nothing to show.' }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% set idle = rows|rejectattr('playing')|list %}
+{% if idle %}
+<p class="small text-body-secondary mb-4">Connected but not playing: {% for r in idle %}{{ r.user }} on {{ r.device }}{{ ', ' if not loop.last }}{% endfor %}.</p>
+{% endif %}
+
+<h4 class="mb-3">DVR</h4>
+{% if not dvr_on %}
+<div class="panel text-body-secondary">Jellyfin DVR is switched off. Turn it on under Settings, Automation, Jellyfin DVR to see recordings here.</div>
+{% else %}
+<div class="row g-3">
+    <div class="col-lg-6">
+        <div class="panel h-100">
+            <h5 class="mb-3">Recording now <span class="badge bg-{{ 'danger' if dvr.recording else 'secondary' }}">{{ dvr.recording|length }}</span></h5>
+            {% for t in dvr.recording %}
+            <div class="mb-2"><i class="bi bi-record-circle text-danger" aria-hidden="true"></i> <span class="fw-bold">{{ t.name or 'A recording' }}</span>
+                <div class="small text-body-secondary">{% if t.channel_name %}{{ t.channel_name }} &middot; {% endif %}until <span data-utc="{{ t.end_at }}">{{ t.end_at }} UTC</span></div></div>
+            {% else %}<div class="text-body-secondary">Nothing is recording.</div>{% endfor %}
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="panel h-100">
+            <h5 class="mb-3">Next {{ dvr.hours }} hours <span class="badge bg-secondary">{{ dvr.coming|length }}</span></h5>
+            {% for t in dvr.coming %}
+            <div class="mb-2"><span class="fw-bold">{{ t.name or 'A recording' }}</span>{% if t.status != 'New' %} <span class="badge bg-warning text-dark" title="Jellyfin reports a clash with another recording">{{ 'clash' }}</span>{% endif %}
+                <div class="small text-body-secondary">{% if t.channel_name %}{{ t.channel_name }} &middot; {% endif %}<span data-utc="{{ t.start_at }}">{{ t.start_at }} UTC</span></div></div>
+            {% else %}<div class="text-body-secondary">Nothing is scheduled in the next {{ dvr.hours }} hours.</div>{% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}

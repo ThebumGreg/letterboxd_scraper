@@ -29,55 +29,7 @@
         librarySay(data.message || (data.ok ? 'Done.' : 'Failed.'), data.ok);
         if (data.ok) refresh();
     });
-    $('sizePreviewBtn').addEventListener('click', async () => {
-        const out = $('sizePreviewOut');
-        out.textContent = 'Counting...';
-        try {
-            const r = await fetch('/api/library/size_preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-                size_policy: '1', tv_size_policy: $('setTvPolicy').checked ? '1' : '0', movie_max_gb: $('setMaxGb').value, movie_target_gb: $('setTargetGb').value,
-                tv_max_gb_per_hour: $('setTvMax').value, tv_target_gb_per_hour: $('setTvTarget').value }) });
-            const d = await r.json();
-            out.textContent = d.message || d.error || 'No answer.';
-        } catch (e) { out.textContent = 'Could not count.'; }
-    });
-    $('librarySettingsForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const data = await libraryPost('/api/library/settings', { library_destination_root: $('setDest').value, library_movie_folder: $('setMovies').value, library_tv_folder: $('setTv').value,
-            library_integrity_mode: $('setIntegrity').value, library_tail_seconds: $('setTail').value, library_exclude_folders: $('setExclude').value,
-            download_pipeline: $('setDownloads').value, originals_retention_days: $('setOriginals').value,
-            size_policy: $('setSizePolicy').checked ? '1' : '0', movie_max_gb: $('setMaxGb').value, movie_target_gb: $('setTargetGb').value, size_crf: $('setSizeCrf').value,
-            tv_size_policy: $('setTvPolicy').checked ? '1' : '0', tv_max_gb_per_hour: $('setTvMax').value, tv_target_gb_per_hour: $('setTvTarget').value, gpu_encoding: $('setGpu').value, vmaf_mode: $('setVmaf').value,
-            dolby_vision_profile_5: $('setDv5').value, dolby_vision_profile_7_8: $('setDv78').value,
-            review_first: $('setReviewFirst').value, trust_after: $('setTrustAfter').value, preview_seconds: $('setPreviewSeconds').value, preview_auto: $('setPreviewAuto').checked ? '1' : '0',
-            library_default_profile: $('setProfile').value, source_delete_after_days: $('setSourceDelete').value, arr_after_migration: $('setArr').value, arr_apply_when: $('setArrWhen').value });
-        librarySay(data.message || (data.ok ? 'Saved.' : 'Failed.'), data.ok);
-        if (data.ok) setTimeout(() => location.reload(), 600);
-    });
-    const pf = (id) => $(id);
-    function fillProfile(p, copy) {
-        pf('pfId').value = copy ? '' : p.id; pf('pfName').value = copy ? p.name + ' copy' : p.name; pf('pfCodec').value = p.video_codec; pf('pfSubs').value = p.subtitles;
-        pf('pfCrf').value = p.crf || ''; pf('pfPreset').value = p.preset || 'medium'; pf('pfAudio').value = p.audio_kbps; pf('pfTenBit').checked = !!p.ten_bit; pf('pfMoveOnly').checked = !!p.move_only; pf('pfDesc').value = p.description || '';
-        pf('pfName').focus();
-    }
-    $('profileForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const data = await libraryPost('/api/library/profiles', { id: pf('pfId').value, name: pf('pfName').value, video_codec: pf('pfCodec').value, subtitles: pf('pfSubs').value, crf: pf('pfCrf').value,
-            preset: pf('pfPreset').value, audio_kbps: pf('pfAudio').value, ten_bit: pf('pfTenBit').checked, move_only: pf('pfMoveOnly').checked, description: pf('pfDesc').value });
-        librarySay(data.message || (data.ok ? 'Saved.' : 'Failed.'), data.ok);
-        if (data.ok) setTimeout(() => location.reload(), 600);
-    });
-    $('pfClear').addEventListener('click', () => { $('profileForm').reset(); pf('pfId').value = ''; });
     document.addEventListener('click', async (e) => {
-        const edit = e.target.closest('[data-profile-edit]');
-        if (edit) { const p = JSON.parse(edit.dataset.profileEdit); fillProfile(p, p.builtin); return; }
-        const del = e.target.closest('[data-profile-delete]');
-        if (del) {
-            if (!confirm('Delete this profile?')) return;
-            const data = await libraryPost(`/api/library/profiles/${del.dataset.profileDelete}/delete`);
-            librarySay(data.message || (data.ok ? 'Deleted.' : 'Failed.'), data.ok);
-            if (data.ok) setTimeout(() => location.reload(), 600);
-            return;
-        }
         const requeue = e.target.closest('[data-requeue]');
         if (requeue) {
             const data = await libraryPost(`/api/library/record/${requeue.dataset.requeue}/requeue`);

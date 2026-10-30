@@ -98,7 +98,7 @@
                 <p class="mb-2"><strong>Played it and it is fine?</strong> Say what you tested and approve it as it is. Otherwise reject it.</p>
                 <div class="row g-2"><div class="col-md-8"><label for="testNote" class="visually-hidden">What you tested</label><input class="form-control" id="testNote" placeholder="Played it start to end on the TV, no problems" maxlength="500"></div>
                     <div class="col-md-4 d-flex gap-2"><button type="button" class="btn btn-success" data-act="tested">I tested it</button><button type="button" class="btn btn-outline-danger" data-act="reject">Reject</button></div></div>
-            {% elif r.group != 'done' %}
+            {% elif r.group not in ('done', 'queued') %}
                 <div class="d-flex gap-2"><button type="button" class="btn btn-outline-danger" data-act="reject">Reject</button><a class="btn btn-outline-secondary" href="{{ url_for('library_review', group=group, after=rec.id) }}">Skip</a></div>
             {% else %}<p class="text-body-secondary mb-0">Nothing to decide here.</p>{% endif %}
         </div>

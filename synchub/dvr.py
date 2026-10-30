@@ -2,6 +2,8 @@
 
 Everything here only reads from Jellyfin. A recording is an item whose path is inside one of the recording folders (setting dvr_path_prefixes,
 spelled as Jellyfin sees the paths). Jellyfin's timer states are New (scheduled), InProgress, Completed, Cancelled, ConflictedOk, ConflictedNotOk and Error."""
+from datetime import datetime, timedelta
+
 from synchub import db, settings
 from synchub.ingest.common import mark_unseen, touch
 
@@ -60,6 +62,17 @@ def stats(conn, now=None):
     out["next"] = conn.execute("SELECT name, start_at FROM dvr_timer WHERE kind = 'timer' AND removed_at IS NULL AND status = 'New' AND start_at >= ? ORDER BY start_at LIMIT 1", (now,)).fetchone()
     out["next"] = dict(out["next"]) if out["next"] else None
     return out
+
+
+def upcoming(conn, hours=24, now=None):
+    """What is recording now and what Jellyfin will start recording within `hours` (times are UTC, 'YYYY-MM-DD HH:MM:SS')."""
+    now = now or db.now()
+    limit = (datetime.strptime(now, "%Y-%m-%d %H:%M:%S") + timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+    cols = "name, channel_name, start_at, end_at, status"
+    recording = conn.execute(f"SELECT {cols} FROM dvr_timer WHERE kind = 'timer' AND removed_at IS NULL AND status = 'InProgress' ORDER BY start_at").fetchall()
+    coming = conn.execute(f"SELECT {cols} FROM dvr_timer WHERE kind = 'timer' AND removed_at IS NULL AND status IN ('New', 'ConflictedOk', 'ConflictedNotOk') "
+                          "AND start_at > ? AND start_at <= ? ORDER BY start_at", (now, limit)).fetchall()
+    return {"recording": [dict(r) for r in recording], "coming": [dict(r) for r in coming], "hours": hours}
 
 
 def summary(s):

@@ -210,6 +210,17 @@ def register(app):
             data = snapshot(conn)
         return render_template("_fleet.html", **data)
 
+    @app.route("/jobs")
+    def jobs_page():
+        from synchub.web import media
+        return media.render_media("jobs")
+
+    @app.route("/jobs/fragment")
+    def jobs_fragment():
+        with db.connection() as conn:
+            data = snapshot(conn)
+        return render_template("_jobs_live.html", **data)
+
     @app.route("/api/workers")
     def api_workers():
         with db.connection() as conn:

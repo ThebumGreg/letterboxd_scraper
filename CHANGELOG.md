@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Tidier Media page, Sessions page, Remote in the menu.** No migration and no worker change.
+  - **Options tab.** The library settings (where files go, size policy, previews, default profile, source delete, Radarr/Sonarr handling) and the conversion profiles moved off the Library tab to a new *Options* tab. The Library tab is now the queue and the scan form.
+  - **Jobs is its own tab,** next to Workers. The *Worker Status* pill is gone: each worker's hardware and encoders now sit under the workers list in a *Machines* section.
+  - **Approved and queued is separate from Done.** *Done* now means finished: migrated, already in place, another version of a film, or rejected. An approved file waiting for or being worked on by a worker is in the new *Approved and queued* queue, and a failed or stopped job moves to *Needs you*.
+  - **Remote sits next to Dashboard,** and on a phone the top bar has a *Remote* button.
+  - **Sessions page** (System, Monitor): who is watching what, on which device, how far along, whether it is direct play or transcoding and why, plus what the DVR is recording now and will record in the next 24 hours. It refreshes every 10 seconds and still shows the DVR if Jellyfin cannot be reached.
 - **Recordings: full or short, and where an episode came from (migration 024).** Click an episode on a show page to open a plain-text line saying where it came from: a DVR recording in Jellyfin, a file Sonarr downloaded, Sonarr downloading or monitoring it, or *In the Jellyfin library (source unknown)*. For a recording it says *full recording*, *short recording, about N% of the scheduled length* (under 90%) or *length unknown*; SyncHub compares the length Jellyfin reports with the length of the matching timer it saw, and says unknown when either is missing or the match is not clear. A new setting under *Jellyfin DVR*, *A recording counts as In Library* (on by default, so nothing changes), when turned off shows recordings as *Recorded (DVR)*, lets a title that only exists as a recording be requested (the episode list shows Request) and lets Radarr/Sonarr auto-add pick it up. The Jellyfin sync now also saves each item's length. Movie pages do not have the source line yet.
 Rebuild every worker image (`docs/UPGRADE.md`): it now contains `dovi_tool` and `mkvmerge`. One new migration (023, a table for the actions below).
 

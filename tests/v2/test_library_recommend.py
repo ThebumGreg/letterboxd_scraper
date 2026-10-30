@@ -98,7 +98,7 @@ def test_decided_files_are_done(conn):
     conn.execute("UPDATE library_file SET migration_status = 'failed', migration_last_error = 'dest exists' WHERE id = ?", (failed,))
     conn.commit()
     assert [(rule(conn, i).group, rule(conn, i).headline) for i in (approved, rejected, migrated, failed)] == [
-        ("done", "Approved for migration"), ("done", "Rejected: will not be migrated"), ("done", "Migrated"), ("done", "Migration failed")]
+        ("queued", "Approved for migration"), ("done", "Rejected: will not be migrated"), ("done", "Migrated"), ("needs_you", "Migration failed")]
     assert rule(conn, failed).notes == ["dest exists"] and not any(rule(conn, i).can_approve for i in (approved, rejected, migrated))
 
 

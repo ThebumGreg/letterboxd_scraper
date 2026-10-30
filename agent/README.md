@@ -7,7 +7,7 @@ What it does today: **verified copies** between your shares (SyncHub's *Test cop
 ## What it tells SyncHub
 
 - **Its own log, on request.** The Workers page's **Logs** button asks the agent for the tail of `worker.jsonl` (and its rotated files, newest last, at most about 1 MB); the agent sends it with its next poll, a few seconds later. The page can filter by level and search it, and the log can be copied or downloaded. Only the latest one is kept.
-- **The machine.** At start the agent reads the CPU (model, cores, threads, the instruction sets that matter for encoding), memory, graphics cards (`nvidia-smi`, `lspci`, `/dev/dri`), whether it runs in a container, what ffmpeg and ffprobe it found, ffmpeg's hardware decoders and which encoders are built in. It then tests each of the main ones (x264, x265, SVT-AV1 and the NVENC, Quick Sync and VAAPI ones) by encoding a test frame, so SyncHub can tell an encoder that **works** from one that is built into ffmpeg but **failed** (usually no GPU, driver or `/dev/dri` in the container). With every poll it sends the figures that change: CPU use, load, free memory, how long the PC has been up. All of it is on the Workers page's **Worker Status** tab. A GPU inside the Docker image needs the device passed in (`devices: ["/dev/dri:/dev/dri"]`) and the matching ffmpeg driver packages; the tab shows what the agent can actually see.
+- **The machine.** At start the agent reads the CPU (model, cores, threads, the instruction sets that matter for encoding), memory, graphics cards (`nvidia-smi`, `lspci`, `/dev/dri`), whether it runs in a container, what ffmpeg and ffprobe it found, ffmpeg's hardware decoders and which encoders are built in. It then tests each of the main ones (x264, x265, SVT-AV1 and the NVENC, Quick Sync and VAAPI ones) by encoding a test frame, so SyncHub can tell an encoder that **works** from one that is built into ffmpeg but **failed** (usually no GPU, driver or `/dev/dri` in the container). With every poll it sends the figures that change: CPU use, load, free memory, how long the PC has been up. All of it is in the **Machines** section of the Workers tab. A GPU inside the Docker image needs the device passed in (`devices: ["/dev/dri:/dev/dri"]`) and the matching ffmpeg driver packages; the tab shows what the agent can actually see.
 
 ## What it promises
 
@@ -113,7 +113,7 @@ Options of `update-worker.sh`: `--dir` (the Docker folder, default `/opt/synchub
 
    The Workers page now shows the worker online with each share "ready". Use **Test copy** to prove the path from end to end with a small file.
 
-Useful afterwards: **SyncHub's Workers page** (the **Logs** button fetches this worker's log from SyncHub, and the **Worker Status** tab shows its CPU, memory, graphics card and which encoders work), `docker compose logs -f` (live), `work/logs/worker.jsonl` (JSON lines, rotated 10 MB x 5), `work/jobs/<id>-xxxxxxxx/job.log` (one job's log), `docker compose restart` (safe at any moment: jobs resume).
+Useful afterwards: **SyncHub's Workers page** (the **Logs** button fetches this worker's log from SyncHub, and the **Machines** section under the workers list shows its CPU, memory, graphics card and which encoders work), `docker compose logs -f` (live), `work/logs/worker.jsonl` (JSON lines, rotated 10 MB x 5), `work/jobs/<id>-xxxxxxxx/job.log` (one job's log), `docker compose restart` (safe at any moment: jobs resume).
 
 ## Install without Docker
 

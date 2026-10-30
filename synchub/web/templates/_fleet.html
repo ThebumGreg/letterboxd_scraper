@@ -1,12 +1,4 @@
-<!-- The workers, jobs and Worker Status tabs: rendered with the page and swapped in every few seconds. Which tab is open is kept by the page's script. -->
-{% set waiting = jobs|selectattr('status', 'equalto', 'needs_review')|list|length %}
-<ul class="nav nav-pills mb-4" id="fleetTabs" role="tablist">
-    <li class="nav-item" role="presentation"><button type="button" class="nav-link active" data-pane="workers" role="tab" aria-selected="true">Workers <span class="badge bg-secondary">{{ workers|length }}</span></button></li>
-    <li class="nav-item" role="presentation"><button type="button" class="nav-link" data-pane="jobs" role="tab" aria-selected="false">Jobs <span class="badge bg-secondary">{{ jobs|length }}</span>{% if waiting %} <span class="badge bg-warning text-dark" title="Jobs waiting for your decision">{{ waiting }} waiting for you</span>{% endif %}</button></li>
-    <li class="nav-item" role="presentation"><button type="button" class="nav-link" data-pane="status" role="tab" aria-selected="false">Worker Status</button></li>
-</ul>
-
-<div data-fleet-pane="workers" role="tabpanel">
+<!-- The workers and what each machine can do: rendered with the page and swapped in every few seconds. Jobs are their own tab. -->
 <h4 class="mb-3">Workers <small class="text-muted">({{ workers|length }})</small></h4>
 <div class="panel p-0 overflow-hidden mb-5">
     <div class="table-responsive">
@@ -67,62 +59,7 @@
     </div>
 </div>
 
-</div>
-
-<div data-fleet-pane="jobs" role="tabpanel" hidden>
-<h4 class="mb-3">Jobs
-    <small class="text-muted">{{ summary }}</small>
-</h4>
-<div class="panel p-0 overflow-hidden mb-5">
-    <div class="table-responsive">
-        <table class="table table-hover align-middle mb-0" id="jobTable">
-            <thead class="table-light">
-                <tr><th class="ps-4">Job</th><th>Status</th><th style="min-width: 180px;">Progress</th><th>Worker</th><th>Tries</th><th>Updated</th><th class="pe-4 text-end">Actions</th></tr>
-            </thead>
-            <tbody>
-                {% for j in jobs %}
-                {% set color = {'queued': 'secondary', 'needs_you': 'warning', 'completed': 'success', 'failed': 'danger', 'cancelled': 'dark'}.get(j.lifecycle.code, 'primary') %}
-                <tr data-job="{{ j.id }}">
-                    <td class="ps-4">
-                        <a href="#" class="fw-bold text-decoration-none" data-job-details="{{ j.id }}">#{{ j.id }} {{ j.title or j.kind }}</a>
-                        <div class="small text-body-secondary">{{ j.kind }}</div>
-                    </td>
-                    <td><span class="badge bg-{{ color }}{% if color == 'warning' %} text-dark{% endif %}">{{ j.lifecycle.label }}</span></td>
-                    <td class="small">
-                        {% if j.status == 'running' %}
-                        <div>{{ (j.stage or 'starting').replace('_', ' ') }}{% if j.percent is not none %} {{ j.percent }}%{% endif %}{% if j.eta %} &middot; {{ j.eta }} left{% endif %}</div>
-                        {% if j.percent is not none %}<div class="progress mt-1" style="height: 5px;" role="progressbar" aria-valuenow="{{ j.percent }}" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width: {{ j.percent }}%"></div></div>{% endif %}
-                        {% endif %}
-                        {% if j.status == 'needs_review' and j.review_reason %}<div class="text-warning">{{ j.review_reason }}</div>
-                        {% elif j.message and j.status != 'running' %}<div class="text-body-secondary">{{ j.message }}</div>{% endif %}
-                        {% if j.waiting_for %}<div class="text-warning">{{ j.waiting_for }}</div>{% endif %}
-                        {% if j.status in ['failed'] and j.error %}<div class="text-danger">{{ j.error_class }}: {{ j.error }}</div>{% endif %}
-                    </td>
-                    <td class="small">{{ j.worker_name or (j.holder_name and 'held by ' ~ j.holder_name) or '-' }}</td>
-                    <td class="small">{{ j.attempts }}/{{ j.max_attempts }}</td>
-                    <td class="small">{{ j.updated }}</td>
-                    <td class="pe-4 text-end text-nowrap">
-                        {% if j.status == 'needs_review' %}
-                        <button type="button" class="btn btn-sm btn-warning" data-review-job="{{ j.id }}" data-reason="{{ j.review_reason or '' }}">Decide</button>
-                        {% endif %}
-                        {% if j.status in ['queued', 'running', 'needs_review'] %}
-                        <button type="button" class="btn btn-sm btn-outline-danger" data-job-action="cancel" data-id="{{ j.id }}" data-confirm="Cancel job #{{ j.id }}?">Cancel</button>
-                        {% elif j.status in ['failed', 'cancelled', 'skipped'] %}
-                        <button type="button" class="btn btn-sm btn-outline-secondary" data-job-action="retry" data-id="{{ j.id }}">Retry</button>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% else %}
-                <tr><td colspan="7" class="text-center text-muted py-4">No jobs yet.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-</div>
-</div>
-
-<div data-fleet-pane="status" role="tabpanel" hidden>
-<h4 class="mb-3">Worker Status <small class="text-muted">the machine behind each worker and what it can encode</small></h4>
+<h4 class="mb-3">Machines <small class="text-muted">the hardware behind each worker and what it can encode</small></h4>
 {% for w in workers %}
 {% set h = w.host %}
 <div class="panel mb-4{% if not w.online %} opacity-75{% endif %}" data-status-worker="{{ w.id }}">
@@ -211,4 +148,3 @@
 {% else %}
 <div class="panel text-center text-muted py-4">No workers yet. Add one to see its hardware here.</div>
 {% endfor %}
-</div>
