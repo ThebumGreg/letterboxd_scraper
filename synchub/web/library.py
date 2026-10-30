@@ -130,6 +130,11 @@ def register(app):
         from synchub.web import media
         return media.render_media("library")
 
+    @app.route("/library/options")
+    def library_options_page():
+        from synchub.web import media
+        return media.render_media("options")
+
     @app.route("/library/fragment")
     def library_fragment():
         with db.connection() as conn:

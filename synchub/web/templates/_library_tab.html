@@ -14,7 +14,7 @@
 <div id="libraryLive">{% include "_library_live.html" %}</div>
 
 <div class="row g-3 mb-5">
-    <div class="col-lg-7">
+    <div class="col-12">
         <div class="panel p-3 p-md-4 h-100">
             <h5>Look at a share</h5>
             <p class="small text-body-secondary">A worker lists the video files, looks at the ones it has not seen (or that changed) and reports what it found. Files already looked at are skipped, so running it again is quick.</p>
@@ -40,111 +40,4 @@
             </form>
         </div>
     </div>
-    <div class="col-lg-5">
-        <div class="panel p-3 p-md-4 h-100">
-            <h5>Settings</h5>
-            <form id="librarySettingsForm">
-                <div class="mb-2"><label for="setDest" class="form-label small mb-1">Bring everything into</label>
-                    <select class="form-select" id="setDest">{% for r in roots %}<option value="{{ r }}"{% if r == options.destination %} selected{% endif %}>{{ r }}</option>{% else %}<option value="{{ options.destination }}">{{ options.destination }}</option>{% endfor %}</select></div>
-                <div class="row g-2 mb-2">
-                    <div class="col-6"><label for="setMovies" class="form-label small mb-1">Movies folder</label><input class="form-control form-control-sm" id="setMovies" value="{{ options.movie_folder }}" maxlength="80"></div>
-                    <div class="col-6"><label for="setTv" class="form-label small mb-1">TV folder</label><input class="form-control form-control-sm" id="setTv" value="{{ options.tv_folder }}" maxlength="80"></div>
-                </div>
-                <div class="row g-2 mb-2">
-                    <div class="col-7"><label for="setIntegrity" class="form-label small mb-1">Usual file check</label>
-                        <select class="form-select form-select-sm" id="setIntegrity">{% for m, label in [('metadata', 'Details only'), ('tail', 'Last seconds'), ('full', 'Whole file')] %}<option value="{{ m }}"{% if m == options.integrity %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-                    <div class="col-5"><label for="setTail" class="form-label small mb-1">Seconds</label><input type="number" min="5" max="600" class="form-control form-control-sm" id="setTail" value="{{ options.tail_seconds }}"></div>
-                </div>
-                <label for="setExclude" class="form-label small mb-1">Folders always left out</label>
-                <textarea class="form-control form-control-sm mb-2" id="setExclude" rows="4">{{ options.exclude_text }}</textarea>
-                <div class="row g-2 mb-2">
-                    <div class="col-7"><label for="setDownloads" class="form-label small mb-1">New Radarr/Sonarr downloads</label>
-                        <select class="form-select form-select-sm" id="setDownloads">{% for m, label in [('off', 'Leave alone'), ('review', 'Ask me first'), ('auto', 'Replace when safe')] %}<option value="{{ m }}"{% if m == download_summary.mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-                    <div class="col-5"><label for="setOriginals" class="form-label small mb-1">Keep originals (days)</label><input type="number" min="0" max="3650" class="form-control form-control-sm" id="setOriginals" value="{{ originals_days }}" title="0 drops the original once the replacement is verified"></div>
-                </div>
-                <div class="border rounded p-2 mb-2">
-                    <div class="form-check"><input class="form-check-input" type="checkbox" id="setSizePolicy"{% if size.on %} checked{% endif %}><label class="form-check-label small fw-bold" for="setSizePolicy">Compress movies that are too big</label></div>
-                    <div class="form-text mb-2">A movie over the limit is re-encoded to HEVC with a bitrate cap so it ends under the target, never padded up to it. Removing unwanted tracks is tried first. HDR10 and HLG are kept. <strong>TV episodes have their own switch below.</strong></div>
-                    <div class="row g-2 mb-2">
-                        <div class="col-4"><label for="setMaxGb" class="form-label small mb-1">Over (GB)</label><input type="number" min="1" step="1" class="form-control form-control-sm" id="setMaxGb" value="{{ '%g' % size.movie_max_gb }}"></div>
-                        <div class="col-4"><label for="setTargetGb" class="form-label small mb-1">Down to (GB)</label><input type="number" min="1" step="1" class="form-control form-control-sm" id="setTargetGb" value="{{ '%g' % size.movie_target_gb }}"></div>
-                        <div class="col-4"><label for="setSizeCrf" class="form-label small mb-1">Quality (CRF)</label><input type="number" min="14" max="35" class="form-control form-control-sm" id="setSizeCrf" value="{{ size.crf }}" title="Lower is better and larger"></div>
-                    </div>
-                    <div class="row g-2">
-                        <div class="col-6"><label for="setDv5" class="form-label small mb-1">Dolby Vision profile 5</label>
-                            <select class="form-select form-select-sm" id="setDv5">{% for m, label in [('review', 'Leave it alone'), ('hdr10', 'Compress as HDR10 (wrong colours)')] %}<option value="{{ m }}"{% if m == size.dv_profile_5 %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-                        <div class="col-6"><label for="setDv78" class="form-label small mb-1">Dolby Vision profile 7 and 8</label>
-                            <select class="form-select form-select-sm" id="setDv78">{% for m, label in [('hdr10', 'Compress as HDR10 (Dolby layer lost)'), ('review', 'Ask me first')] %}<option value="{{ m }}"{% if m == size.dv_profile_7_8 %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-                    </div>
-                    <div class="form-check mt-3"><input class="form-check-input" type="checkbox" id="setTvPolicy"{% if size.tv_on %} checked{% endif %}><label class="form-check-label small fw-bold" for="setTvPolicy">Also compress TV episodes that are too big</label></div>
-                    <div class="form-text mb-2">Limits are per hour of runtime, so a 22-minute and a 90-minute episode are judged alike. Around 2 to 3 GB per hour of 1080p HEVC looks clean; typical 1080p web downloads are 3 to 5 GB per hour.</div>
-                    <div class="row g-2 mb-2">
-                        <div class="col-6"><label for="setTvMax" class="form-label small mb-1">Over (GB per hour)</label><input type="number" min="0.5" step="0.5" class="form-control form-control-sm" id="setTvMax" value="{{ '%g' % size.tv_max_gb_per_hour }}"></div>
-                        <div class="col-6"><label for="setTvTarget" class="form-label small mb-1">Down to (GB per hour)</label><input type="number" min="0.5" step="0.5" class="form-control form-control-sm" id="setTvTarget" value="{{ '%g' % size.tv_target_gb_per_hour }}"></div>
-                    </div>
-                    <div class="row g-2 mb-2">
-                        <div class="col-6"><label for="setGpu" class="form-label small mb-1">GPU encoding</label>
-                            <select class="form-select form-select-sm" id="setGpu"><option value="0"{% if not size.gpu %} selected{% endif %}>Off (CPU, best quality per GB)</option><option value="1"{% if size.gpu %} selected{% endif %}>Use a worker's GPU when it has one</option></select></div>
-                        <div class="col-6"><label for="setVmaf" class="form-label small mb-1">Quality score (VMAF)</label>
-                            <select class="form-select form-select-sm" id="setVmaf">{% for m, label in [('off', 'Off'), ('warn', 'Record the score'), ('hold', 'Hold low scores for review')] %}<option value="{{ m }}"{% if m == size.vmaf_mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-                    </div>
-                    <div class="d-flex gap-2 align-items-center"><button type="button" class="btn btn-sm btn-outline-secondary" id="sizePreviewBtn">How many files would this compress?</button><span class="small text-body-secondary" id="sizePreviewOut"></span></div>
-                </div>
-                <div class="border rounded p-2 mb-2">
-                    <div class="fw-bold small mb-1">Preview clips before compressing</div>
-                    <div class="row g-2 mb-2">
-                        <div class="col-8"><label for="setReviewFirst" class="form-label small mb-1">Ask me to watch a preview</label>
-                            <select class="form-select form-select-sm" id="setReviewFirst">{% for m, label in [('always', 'Every time (while I learn to trust it)'), ('until_trusted', 'Until I have approved a few like it'), ('low_confidence_only', 'Only when it is close to the edge'), ('never', 'Never, compress as soon as the rules say so')] %}<option value="{{ m }}"{% if m == review_first %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-                        <div class="col-2"><label for="setTrustAfter" class="form-label small mb-1">Trust after</label><input type="number" min="1" max="50" class="form-control form-control-sm" id="setTrustAfter" value="{{ trust_after }}" title="Similar files approved without changes: resolution, codec, HDR type, bit depth and size band"></div>
-                        <div class="col-2"><label for="setPreviewSeconds" class="form-label small mb-1">Clip (s)</label><input type="number" min="30" max="60" class="form-control form-control-sm" id="setPreviewSeconds" value="{{ preview_seconds }}"></div>
-                    </div>
-                    <div class="form-check"><input class="form-check-input" type="checkbox" id="setPreviewAuto"{% if preview_auto %} checked{% endif %}><label class="form-check-label small" for="setPreviewAuto">Make the preview for me when a compression is waiting</label></div>
-                    <div class="form-text">A worker cuts a short window, compresses it exactly as the real job would and makes the matching original; you watch both side by side. The clips are removed after {{ preview_keep_days }} days. This applies to new Radarr/Sonarr downloads; for a file already in the Library, press Preview on its page.</div>
-                </div>
-                <div class="mb-2"><label for="setProfile" class="form-label small mb-1">Convert with (default profile)</label>
-                    <select class="form-select form-select-sm" id="setProfile">{% for p in profiles %}<option value="{{ p.id }}"{% if p.id == default_profile_id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select>
-                    <div class="form-text">Used for every file unless you pick another when approving it. Profiles are listed below.</div></div>
-                <div class="row g-2 mb-2">
-                    <div class="col-12"><label for="setSourceDelete" class="form-label small mb-1">Delete the source after a verified migration</label>
-                        <select class="form-select form-select-sm" id="setSourceDelete">{% for d, label in [('0', 'Never (off)'), ('7', 'After 7 days'), ('14', 'After 14 days'), ('30', 'After 30 days')] %}<option value="{{ d }}"{% if d == cleanup.days|string %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
-                        <div class="form-text">A worker deletes the source only after checking the library copy is still whole and the source is unchanged. You can keep any file's source on its page. Switching this off stops pending deletions.</div></div>
-                    <div class="col-7"><label for="setArr" class="form-label small mb-1">Radarr / Sonarr after a migration</label>
-                        <select class="form-select form-select-sm" id="setArr">{% for m, label in [('none', 'Leave them alone'), ('update_location', 'Tell them the new location'), ('unmonitor', 'Stop monitoring the title'), ('remove', 'Stop tracking the title (no files deleted)')] %}<option value="{{ m }}"{% if m == cleanup.arr_mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-                    <div class="col-5"><label for="setArrWhen" class="form-label small mb-1">When</label>
-                        <select class="form-select form-select-sm" id="setArrWhen">{% for m, label in [('after_copy', 'Right after the copy'), ('with_source_delete', 'When the source is deleted')] %}<option value="{{ m }}"{% if m == cleanup.arr_when %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-                    <div class="form-text">Sonarr cannot forget a single episode without deleting its file, so for TV &ldquo;stop tracking&rdquo; means &ldquo;stop monitoring&rdquo;. A rename inside a share always passes on the new location. Set each share's Radarr and Sonarr path on the Storage page.</div>
-                </div>
-                <button type="submit" class="btn btn-sm btn-outline-success">Save settings</button>
-                <div class="form-text">A new destination or folder name changes which files count as already in place.</div>
-            </form>
-        </div>
-    </div>
-</div>
-
-<div class="panel p-3 p-md-4 mb-5" id="profilesPanel">
-    <h5>Conversion profiles</h5>
-    <p class="small text-body-secondary">A profile says how a file is converted: the video codec and quality, and what happens to subtitles. Choose one per file when you approve it, or set the default under Settings. The built-in profiles cannot be changed; make your own below.</p>
-    <div class="table-responsive"><table class="table table-sm align-middle">
-        <thead><tr><th>Name</th><th>What it does</th><th class="text-end"></th></tr></thead>
-        <tbody>{% for p in profiles %}<tr><td class="small fw-bold">{{ p.name }}{% if p.id == default_profile_id %} <span class="badge bg-success">default</span>{% endif %}{% if p.builtin %} <span class="badge bg-secondary">built in</span>{% endif %}</td>
-            <td class="small">{{ p.summary }}{% if p.audio_kbps != 192 and not p.move_only %} Audio {{ p.audio_kbps }} kbps.{% endif %}</td>
-            <td class="text-end text-nowrap"><button type="button" class="btn btn-sm btn-outline-secondary" data-profile-edit="{{ p|tojson|forceescape }}">{{ 'Copy' if p.builtin else 'Edit' }}</button>
-                {% if not p.builtin %}<button type="button" class="btn btn-sm btn-outline-danger" data-profile-delete="{{ p.id }}">Delete</button>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
-    <form id="profileForm" class="row g-2">
-        <input type="hidden" id="pfId">
-        <div class="col-md-4"><label for="pfName" class="form-label small mb-1">Name</label><input class="form-control form-control-sm" id="pfName" maxlength="60" required></div>
-        <div class="col-md-4"><label for="pfCodec" class="form-label small mb-1">Video</label>
-            <select class="form-select form-select-sm" id="pfCodec"><option value="keep">Keep as it is</option><option value="hevc">HEVC (H.265)</option><option value="h264">H.264</option></select></div>
-        <div class="col-md-4"><label for="pfSubs" class="form-label small mb-1">Subtitles</label>
-            <select class="form-select form-select-sm" id="pfSubs">{% for k, label in profile_options.subtitles.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select></div>
-        <div class="col-6 col-md-3"><label for="pfCrf" class="form-label small mb-1">Quality (CRF)</label><input type="number" class="form-control form-control-sm" id="pfCrf" min="12" max="35" placeholder="23" title="Lower is better and larger. About 20 to 28 for HEVC."></div>
-        <div class="col-6 col-md-3"><label for="pfPreset" class="form-label small mb-1">Encoder speed</label>
-            <select class="form-select form-select-sm" id="pfPreset">{% for p in profile_options.presets %}<option value="{{ p }}"{% if p == 'medium' %} selected{% endif %}>{{ p }}</option>{% endfor %}</select></div>
-        <div class="col-6 col-md-3"><label for="pfAudio" class="form-label small mb-1">Audio (kbps)</label><input type="number" class="form-control form-control-sm" id="pfAudio" min="64" max="640" value="192"></div>
-        <div class="col-6 col-md-3 d-flex flex-column justify-content-end gap-1">
-            <div class="form-check"><input class="form-check-input" type="checkbox" id="pfTenBit" checked><label class="form-check-label small" for="pfTenBit">10-bit (HEVC)</label></div>
-            <div class="form-check"><input class="form-check-input" type="checkbox" id="pfMoveOnly"><label class="form-check-label small" for="pfMoveOnly">Move only: change nothing</label></div></div>
-        <div class="col-12"><label for="pfDesc" class="form-label small mb-1">Note (optional)</label><input class="form-control form-control-sm" id="pfDesc" maxlength="300"></div>
-        <div class="col-12"><button type="submit" class="btn btn-sm btn-outline-success">Save profile</button> <button type="button" class="btn btn-sm btn-outline-secondary" id="pfClear">Clear</button></div>
-    </form>
 </div>

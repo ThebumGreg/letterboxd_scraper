@@ -461,7 +461,7 @@ def test_the_menu_groups_workers_library_and_storage_and_tools_logs_and_payloads
     shown = menu(text(browser.get("/")))
     assert shown["links"] == ["Dashboard", "Remote", "Settings"]
     assert shown["dropdowns"] == {"Discover": ["New &amp; trending", "Find &amp; request", "My watchlist"], "Media": ["Library", "Resolution Center"],       # Workers and Storage are tabs of Library
-                                  "System": ["Tools &amp; Operations", "System status", "What it&#39;s doing now", "Logs", "Jellyfin events", "Payloads", "Dynamic DNS", "People", "Remote Apps", "TVs", "Remote Tools"]}
+                                  "System": ["Tools &amp; Operations", "System status", "Sessions", "What it&#39;s doing now", "Logs", "Jellyfin events", "Payloads", "Dynamic DNS", "People", "Remote Apps", "TVs", "Remote Tools"]}
     page = text(browser.get("/"))
     assert re.findall(r'class="dropdown-header">(.*?)</h6>', page) == ["Run", "Monitor", "Admin", "TV"]
 
@@ -532,7 +532,7 @@ def test_a_menu_heading_with_nothing_under_it_is_left_out(browser, v2, conn):
     sign_in(browser, pid, "3333")
     page = text(browser.get("/logs"))
     assert re.findall(r'class="dropdown-header">(.*?)</h6>', page) == ["Monitor", "TV"]
-    assert menu(page)["dropdowns"] == {"System": ["System status", "What it&#39;s doing now", "Logs", "Jellyfin events", "Remote Apps"]}
+    assert menu(page)["dropdowns"] == {"System": ["System status", "Sessions", "What it&#39;s doing now", "Logs", "Jellyfin events", "Remote Apps"]}
 
 
 def test_the_last_person_who_can_manage_access_cannot_be_deleted(browser, v2, conn, people):

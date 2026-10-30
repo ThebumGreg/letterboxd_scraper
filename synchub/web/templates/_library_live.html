@@ -14,7 +14,7 @@
         {% if migration.failed %}<span class="badge bg-danger">{{ migration.failed }} failed</span>{% endif %}
         {% if migration.cancelled %}<span class="badge bg-dark" title="Cancelled files stay cancelled until you queue them again">{{ migration.cancelled }} cancelled</span>{% endif %}
         <span class="badge bg-success" title="Converted, copied into the destination share and verified">{{ migration.completed }} completed</span>
-        <a class="ms-auto small" href="{{ url_for('workers_page') }}">Workers and jobs</a>
+        <a class="ms-auto small" href="{{ url_for('jobs_page') }}">Jobs</a>
     </div>
     <p class="small text-body-secondary mb-0 mt-2">Approving a file queues it; the next free worker converts it if needed, brings it into the destination share and only then is it counted as completed. Jellyfin is asked to scan after each one arrives.</p>
     {% if attention %}
@@ -84,7 +84,7 @@
             </div>
             <p class="small text-body-secondary flex-grow-1">{{ g.hint }}</p>
             <div class="d-flex gap-2 flex-wrap">
-                {% if g.total and g.key != 'done' %}<a class="btn btn-sm btn-success" href="{{ url_for('library_review', group=g.key) }}">Review one by one</a>{% endif %}
+                {% if g.total and g.key not in ('done', 'queued') %}<a class="btn btn-sm btn-success" href="{{ url_for('library_review', group=g.key) }}">Review one by one</a>{% endif %}
                 <a class="btn btn-sm btn-outline-secondary{% if not g.total %} disabled{% endif %}" href="{{ url_for('library_queue', group=g.key) }}"{% if not g.total %} aria-disabled="true" tabindex="-1"{% endif %}>Open list</a>
             </div>
         </div>
