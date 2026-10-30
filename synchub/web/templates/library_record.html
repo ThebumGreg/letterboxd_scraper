@@ -109,6 +109,17 @@
             <h6>Playback in Jellyfin</h6>
             <div class="d-flex flex-wrap gap-1">{% for b in r.badges %}<span class="badge bg-{{ 'success' if b.ok else 'warning text-dark' }}" title="{{ b.hint }}">{{ b.label }}</span>{% endfor %}</div>
         </div>
+        {% if quality and (quality.mbps or quality.vmaf or quality.vmaf_skipped or quality.to_gb) %}
+        <div class="panel p-3 mb-3" id="qualityFacts">
+            <h6>Picture quality</h6>
+            <dl class="row small mb-0">
+                {% if quality.mbps %}<dt class="col-5 text-body-secondary fw-normal">Video bitrate</dt><dd class="col-7">{{ quality.mbps }} Mbps <span class="text-body-secondary">(ceiling {{ quality.ceiling_mbps }} Mbps for {{ {'2160': '4K', '1080': '1080p', '720': '720p', 'sd': 'smaller'}[quality.picture] }}; compressed only above {{ quality.trigger_mbps }})</span></dd>{% endif %}
+                <dt class="col-5 text-body-secondary fw-normal">Compression</dt><dd class="col-7">{% if quality.to_gb %}{{ 'Would compress' if quality.action == 'compress' else 'Needs a look before compressing' }}: {{ quality.from_gb }} GB to about {{ quality.to_gb }} GB <span class="text-body-secondary">({{ quality.profile }})</span>{% else %}Left as it is <span class="text-body-secondary">({{ quality.profile }})</span>{% endif %}</dd>
+                {% if quality.vmaf %}<dt class="col-5 text-body-secondary fw-normal">Quality score (VMAF)</dt><dd class="col-7"><span class="badge bg-{{ 'success' if quality.vmaf.floor is none or quality.vmaf.mean >= quality.vmaf.floor else 'warning text-dark' }}">{{ quality.vmaf.mean }}</span> <span class="text-body-secondary">worst part {{ quality.vmaf.min }}{% if quality.vmaf.floor %}, floor {{ quality.vmaf.floor }}{% endif %}</span></dd>
+                {% elif quality.vmaf_skipped %}<dt class="col-5 text-body-secondary fw-normal">Quality score (VMAF)</dt><dd class="col-7 text-body-secondary">Not scored: {{ quality.vmaf_skipped }}</dd>{% endif %}
+            </dl>
+        </div>
+        {% endif %}
         <div class="panel p-3 mb-3">
             <h6>About the file</h6>
             <dl class="row small mb-0">

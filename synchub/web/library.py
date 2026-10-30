@@ -98,7 +98,7 @@ def scan_options_for_page(conn):
             "naming_style": cfg.naming_style, "audio_mode": settings.get("audio_mode", conn=conn), "clean_names": cfg.clean_names}
 
 
-def describe_record(rec, rcm, cfg, profile=None):
+def describe_record(rec, rcm, cfg, profile=None, quality=None):
     """A record and its recommendation as the record page shows them. Once a decision is made the tracks are read-only and show what the job does."""
     streams = [s for s in v.json_list(rec.get("streams_json")) if isinstance(s, dict)]
     removals = {r["index"]: r for r in rcm.removals}
@@ -115,7 +115,7 @@ def describe_record(rec, rcm, cfg, profile=None):
     plans = [p for p in v.json_list(rec.get("proposed_track_changes_json")) if isinstance(p, dict)]
     return {"rec": rec, "r": rcm, "streams": streams, "plans": plans, "size": _size(rec.get("size_bytes")), "duration": _duration(rec.get("duration_seconds")),
             "warnings": v.json_list(rec.get("warnings_json")), "errors": v.json_list(rec.get("errors_json")), "reasons": v.json_list(rec.get("review_reasons_json")),
-            "final_name": v.final_name(rec), "in_place": findings.in_place(rec, cfg), "missing": bool(rec.get("missing_since"))}
+            "quality": quality, "final_name": v.final_name(rec), "in_place": findings.in_place(rec, cfg), "missing": bool(rec.get("missing_since"))}
 
 
 def queue_rows(conn, cfg, group, f):
@@ -196,6 +196,7 @@ def register(app):
         with db.connection() as conn:
             size = size_policy.decide(rec, previews.plans_of(rec, approved=rec["approval_status"] == v.APPROVAL_APPROVED), size_policy.load(conn, chosen))
             latest = previews.latest_for(conn, "library_file", record_id)
+            data["quality"] = rule_steps.quality_facts(conn, rec, previews.plans_of(rec, approved=rec["approval_status"] == v.APPROVAL_APPROVED))
         preview_info = {"summary": size.summary or "The size rules would compress this file; watch a short window first.", "latest": previews.describe(latest) if latest else None} if size.profile is not None else None
         data.update(preview_info=preview_info, cfg=cfg, profiles=all_profiles, chosen_profile=chosen, rename_to=rc.rename_path(rec, cfg), source_cleanup=cleanup.source_days())
         return render_template("library_record.html", group=group, group_title=rc.GROUP_TITLES.get(group, group), events=events, siblings=siblings, f=_filters(), **data)

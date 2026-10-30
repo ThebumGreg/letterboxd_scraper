@@ -286,3 +286,23 @@ def test_the_agent_benchmark_times_an_encoder_and_reports_it(tmp_path):
     assert "CPU (libx265)" in agent.format_benchmark(report) and not list(tmp_path.iterdir())         # the scratch folder is removed
     broken = agent.benchmark_report(Cfg, {**caps, "ffmpeg": None}, seconds=2)
     assert broken["ok"] is False
+
+
+# ---------------------------------------------------------------- quality facts on the record page
+def test_the_record_page_shows_the_bitrate_against_the_ceiling_and_the_vmaf_of_a_finished_job(client, conn):
+    from .library_helpers import add
+    settings.set_value("size_mode", "bitrate", conn=conn)
+    settings.set_value("size_policy", "1", conn=conn)
+    conn.commit()
+    rec_id = add(conn, rel="Heat (1995)/Heat (1995).mkv", name="Heat (1995).mkv", size=int(60 * GIB), media_type="Movie/Unknown")
+    info = {"hdr": "sdr", "bit_depth": 10, "width": 3840, "height": 2160, "video_kbps": 60000}
+    conn.execute("UPDATE library_file SET duration_seconds = 7200, video_codec = 'hevc', resolution = '3840x2160', video_info_json = ? WHERE id = ?", (json.dumps(info), rec_id))
+    conn.commit()
+    page = client.get(f"/library/record/{rec_id}").get_data(as_text=True)
+    assert "Picture quality" in page and "60.0 Mbps" in page and "ceiling 18.0 Mbps for 4K" in page and "Would compress" in page
+    from synchub import jobs
+    job = jobs.create(conn, "library", title="x", ref=("library_file", rec_id), plan={"op": "convert"}, now="2026-10-30T10:00:00+00:00")
+    conn.execute("UPDATE job SET status = 'done', result = ? WHERE id = ?", (json.dumps({"vmaf": {"mean": 96.4, "min": 94.8, "floor": 95.0}}), job))
+    conn.commit()
+    page = client.get(f"/library/record/{rec_id}").get_data(as_text=True)
+    assert "96.4" in page and "floor 95.0" in page
