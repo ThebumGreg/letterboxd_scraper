@@ -87,7 +87,7 @@ def overview(conn):
             "roots": [r["name"] for r in storage.list_all(conn)], "migration": migration,
             "downloads": _with_previews(conn, downloads.recent(conn, 15)), "preview_summary": previews.summary(conn), "review_first": previews.review_first(conn), "trust_after": previews.trust_after(conn),
             "preview_seconds": previews.clip_seconds(conn), "preview_keep_days": previews.keep_days(conn), "preview_auto": previews.auto_make(conn), "download_summary": downloads.summary(conn), "originals_days": downloads.retention_days(conn), "size": size_policy.load(conn), "lookups": {"confidence": CONFIDENCE_FLOORS},
-            "profiles": profiles.all_profiles(conn), "default_profile_id": profiles.default(conn)["id"], "cleanup": cleanup.summary(conn), "attention": migrate.attention(conn),
+            "profiles": profiles.all_profiles(conn), "default_profile_id": profiles.default(conn)["id"], "cleanup": cleanup.summary(conn), "attention": migrate.attention(conn), "missing_count": store.count_missing(conn),
             "versions_config": dataclasses.asdict(versions.load(conn)), "heights": (480, 720, 1080, 1440),
             "profile_options": {"codecs": profiles.VIDEO_CODECS, "presets": profiles.PRESETS, "subtitles": profiles.SUBTITLE_LABELS}}
 
@@ -232,6 +232,21 @@ def register(app):
                             message += " The folder is being scanned again."
                         except v.LibraryError as exc:
                             message += f" It was not scanned again: {exc}"
+                elif action == "forget":
+                    if not store.forget_missing(conn, [record_id]):
+                        raise v.LibraryError("Only a file that is gone from its share, and that nobody is working on, can be taken off the list.")
+                    message = "Taken off the list."
+                elif action == "exclude-folder":
+                    rec = store.get_record(conn, record_id)
+                    folder = os.path.dirname(rec["relative_path"])
+                    if not folder:
+                        raise v.LibraryError("This file is at the top of its share; scan with a folder and use Folders to leave out under Settings instead.")
+                    rule = f"{rec['root_name']}:{folder}"
+                    current = scan.exclude_list(settings.get("library_exclude_folders", conn=conn))
+                    if rule not in current:
+                        settings.set_value("library_exclude_folders", "\n".join([*current, rule]), conn=conn)
+                    removed = store.forget_folder(conn, rec["root_name"], folder)
+                    message = f"Later scans leave out {folder}. {removed} undecided file(s) from it were taken off the list."
                 elif action == "keep-source":
                     cleanup.hold(conn, record_id, by)
                     message = "The source will be kept."
@@ -247,7 +262,7 @@ def register(app):
 
     @app.route("/api/library/record/<int:record_id>/<action>", methods=["POST"])
     def api_library_decide(record_id, action):
-        if action not in ("approve", "reject", "undo", "tested", "requeue", "redo", "keep-source", "release-source"):
+        if action not in ("approve", "reject", "undo", "tested", "requeue", "redo", "forget", "exclude-folder", "keep-source", "release-source"):
             return _fail("Unknown action.", 404)
         return _decide(record_id, action)
 
@@ -352,6 +367,13 @@ def register(app):
                     jobs.cancel(conn, job["id"], _who(conn))
                     stopped += 1
         return jsonify(ok=True, message="Cancelling: the worker stops at its next report." if stopped else "Nothing was running.")
+
+    @app.route("/api/library/forget_missing", methods=["POST"])
+    def api_library_forget_missing():
+        """Takes every record whose file is gone off the list (the Library page shows the count first)."""
+        with db.connection() as conn:
+            removed = store.forget_missing(conn)
+        return jsonify(ok=True, removed=removed, message=f"Took {removed} missing file(s) off the list." if removed else "Nothing to clear.")
 
     @app.route("/api/library/settings", methods=["POST"])
     def api_library_settings():

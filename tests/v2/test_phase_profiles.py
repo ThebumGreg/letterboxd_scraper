@@ -382,3 +382,39 @@ def test_the_person_who_requested_a_title_hears_about_its_download(v2, conn):
     assert len(got) == 1 and got[0]["profile_id"] == pid and "Heat" in got[0]["title"] and "eligible for import" in got[0]["body"]
     assert progress.from_webhook(conn, "ManualInteractionRequired", payload) >= 0
     assert progress.from_webhook(conn, "Grab", {"movie": {"tmdbId": 1}}) == 0           # nobody asked for that title
+
+
+# ---------------------------------------------------------------- taking records off the list
+def test_records_whose_file_is_gone_can_be_cleared_but_working_records_stay(client, conn):
+    from synchub.library import store
+    from .library_helpers import add
+    gone = add(conn, rel="Old/A.mkv", name="A (2000).mkv")
+    gone2 = add(conn, rel="Old/B.mkv", name="B (2000).mkv")
+    here = add(conn, rel="Old/C.mkv", name="C (2000).mkv")
+    approved = add(conn, rel="Old/D.mkv", name="D (2000).mkv")
+    conn.execute("UPDATE library_file SET missing_since = '2026-10-30 10:00:00' WHERE id IN (?, ?, ?)", (gone, gone2, approved))
+    conn.execute("UPDATE library_file SET approval_status = 'approved' WHERE id = ?", (approved,))
+    conn.commit()
+    assert store.count_missing(conn) == 2
+    assert client.post(f"/api/library/record/{here}/forget").get_json()["ok"] is False          # its file is still there
+    assert client.post(f"/api/library/record/{approved}/forget").get_json()["ok"] is False      # approved: someone is working on it
+    assert client.post(f"/api/library/record/{gone}/forget").get_json()["ok"] is True
+    answer = client.post("/api/library/forget_missing").get_json()
+    assert answer["ok"] and answer["removed"] == 1
+    ids = {r[0] for r in conn.execute("SELECT id FROM library_file")}
+    assert ids == {here, approved}
+
+
+def test_leaving_a_folder_out_stops_later_scans_and_clears_what_was_undecided(client, conn):
+    from synchub import settings
+    from synchub.library import scan, store
+    from .library_helpers import add
+    one = add(conn, rel="Skip/Me/A.mkv", name="A (2000).mkv")
+    two = add(conn, rel="Skip/Me/B.mkv", name="B (2000).mkv")
+    keep = add(conn, rel="Other/C.mkv", name="C (2000).mkv")
+    answer = client.post(f"/api/library/record/{one}/exclude-folder").get_json()
+    assert answer["ok"] and "2 undecided" in answer["message"]
+    assert {r[0] for r in conn.execute("SELECT id FROM library_file")} == {keep}
+    rules = scan.ExcludeRules(scan.exclude_list(settings.get("library_exclude_folders", conn=conn)), "tfiles")
+    assert rules.path("Skip/Me/new.mkv") and not rules.path("Other/new.mkv")
+    assert two not in {r[0] for r in conn.execute("SELECT id FROM library_file")}

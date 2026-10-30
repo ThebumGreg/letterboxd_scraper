@@ -86,6 +86,7 @@
             <div class="d-flex gap-2 flex-wrap">
                 {% if g.total and g.key not in ('done', 'queued') %}<a class="btn btn-sm btn-success" href="{{ url_for('library_review', group=g.key) }}">Review one by one</a>{% endif %}
                 <a class="btn btn-sm btn-outline-secondary{% if not g.total %} disabled{% endif %}" href="{{ url_for('library_queue', group=g.key) }}"{% if not g.total %} aria-disabled="true" tabindex="-1"{% endif %}>Open list</a>
+                {% if g.key == 'needs' and missing_count %}<button type="button" class="btn btn-sm btn-outline-danger" data-forget-missing="{{ missing_count }}" title="Removes the records of files that are gone from their share. No file is touched.">Clear {{ missing_count }} missing</button>{% endif %}
             </div>
         </div>
     </div>

@@ -281,6 +281,37 @@ def _apply_keep_streams(proposal_json, keep_streams):
     return json.dumps(result) if result else None
 
 
+# Records nobody is working on: no job waiting or running, not being migrated, not already migrated.
+_FREE = ("migration_status = 'pending' AND approval_status != 'approved' AND NOT EXISTS (SELECT 1 FROM job j WHERE j.ref_type = 'library_file' AND j.ref_id = library_file.id "
+         "AND j.status IN ('queued', 'running', 'needs_review'))")
+
+
+def count_missing(conn):
+    """Records whose file is gone from the share and that can be taken off the list."""
+    return conn.execute(f"SELECT COUNT(*) FROM library_file WHERE missing_since IS NOT NULL AND {_FREE}").fetchone()[0]
+
+
+def forget_missing(conn, record_ids=None):
+    """Takes records whose file is gone off the list for good (their history goes with them). Files are never touched, and a record someone is
+    working on, or one that was migrated, stays. Returns how many were removed."""
+    begin(conn)
+    sql = f"SELECT id FROM library_file WHERE missing_since IS NOT NULL AND {_FREE}"
+    ids = [r["id"] for r in conn.execute(sql)]
+    if record_ids is not None:
+        wanted = {int(i) for i in record_ids}
+        ids = [i for i in ids if i in wanted]
+    conn.executemany("DELETE FROM library_file WHERE id = ?", [(i,) for i in ids])
+    return len(ids)
+
+
+def forget_folder(conn, root, folder):
+    """Takes every undecided or rejected record under root/folder off the list (see forget_missing). Returns how many."""
+    begin(conn)
+    ids = [r["id"] for r in conn.execute(f"SELECT id, relative_path FROM library_file WHERE root_name = ? AND {_FREE}", (root,)) if v.under(r["relative_path"], folder)]
+    conn.executemany("DELETE FROM library_file WHERE id = ?", [(i,) for i in ids])
+    return len(ids)
+
+
 def set_approval(conn, record_id, status, by, action=None, note=None, mark_reviewed=False, name=None, accept_track_changes=False, keep_streams=None,
                  profile_id=None, mode=None):
     """Records a person's decision. Approving needs a finished analysis and a migratable action; a file that needs manual review can only

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixes and list clean-up.**
+  - The job details dialog no longer freezes the page when opened from the Jobs tab (the dialogs now open from any tab).
+  - **Taking records off the Library list.** A record whose file is gone has *Take off the list*; *Clear N missing* in Needs you does them all after a count; *Leave this folder out of scans* adds the folder to the scan exclusions and clears its undecided records. No file is ever touched; approved, queued and finished records stay.
 - **Follow-up to the phase PR (no new migration).**
   - **Picture quality on the record page.** The video bitrate against the ceiling for its size, what the compression rule would do and the size it would give, and the VMAF score (with its floor) of a finished job.
   - **Approve together** has a profile dropdown (convert all of them with one profile) and a *What will happen* summary: how many files are compressed and about how many GB that saves, Dolby Vision conversions, compatible audio tracks and extra copies.
