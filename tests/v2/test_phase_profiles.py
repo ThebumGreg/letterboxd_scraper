@@ -223,3 +223,66 @@ def test_the_entrypoint_adds_the_extra_port_to_gunicorn(tmp_path):
     assert out == "--bind 0.0.0.0:80 --bind 0.0.0.0:5001 app"
     env.pop("SYNCHUB_EXTRA_PORT")
     assert subprocess.run(["sh", str(script), "gunicorn", "--bind", "0.0.0.0:5001", "app"], env=env, capture_output=True, text=True, check=True).stdout.strip() == "--bind 0.0.0.0:5001 app"
+
+
+# ---------------------------------------------------------------- worker benchmark
+def _worker(conn):
+    from synchub import workers
+    wid, _token = workers.create(conn, "bench-1")
+    conn.execute("UPDATE worker SET capabilities = ? WHERE id = ?", (json.dumps({"features": ["benchmark"], "encoders": ["libx265"]}), wid))
+    conn.commit()
+    return wid
+
+
+REPORT = {"agent": "1.4.0", "when": "2026-10-30T10:00:00Z", "seconds": 30, "cpu": "Test CPU", "cores": 8, "gpus": [], "source": "synthetic", "ok": True, "took_seconds": 90,
+          "health": [{"name": "ffmpeg", "ok": True, "detail": "ffmpeg 7"}],
+          "results": [{"encoder": "cpu", "label": "CPU (libx265)", "ok": True, "speed": 1.2, "fps": 28.8, "vmaf": 96.1, "vmaf_floor": 95.0, "passed": True},
+                      {"encoder": "vaapi", "label": "GPU (VAAPI, hevc_vaapi)", "ok": False, "reason": "no device"}]}
+
+
+def test_a_benchmark_is_requested_stored_and_shown_on_the_worker(conn):
+    from synchub import workers
+    wid = _worker(conn)
+    workers.request_benchmark(conn, wid)
+    assert workers.get(conn, wid)["benchmark_requested"] == 1
+    workers.store_benchmark(conn, wid, REPORT)
+    assert workers.get(conn, wid)["benchmark_requested"] == 0
+    last = workers.last_benchmark(conn, wid)
+    assert last["ok"] == 1 and "CPU 1.2x" in last["summary"] and last["report"]["results"][1]["reason"] == "no device"
+    for _ in range(12):
+        workers.store_benchmark(conn, wid, REPORT)
+    assert conn.execute("SELECT COUNT(*) FROM worker_benchmark WHERE worker_id = ?", (wid,)).fetchone()[0] == workers.BENCHMARK_KEEP
+    conn.execute("UPDATE worker SET capabilities = '{}' WHERE id = ?", (wid,))
+    with pytest.raises(workers.WorkerError):
+        workers.request_benchmark(conn, wid)                          # an agent without the feature cannot run it
+
+
+def test_the_workers_page_shows_the_last_benchmark(client, conn):
+    from synchub import workers
+    wid = _worker(conn)
+    assert "Not run yet" in client.get("/workers").get_data(as_text=True)
+    workers.store_benchmark(conn, wid, REPORT)
+    conn.commit()
+    page = client.get("/workers").get_data(as_text=True)
+    assert "Last benchmark" in page and "CPU (libx265)" in page and "failed: no device" in page
+    assert client.post(f"/api/workers/{wid}/benchmark").get_json()["ok"] is True
+    assert "Benchmark queued" in client.get("/workers").get_data(as_text=True)
+
+
+def test_the_agent_benchmark_times_an_encoder_and_reports_it(tmp_path):
+    import shutil
+    import sys
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg is not installed")
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "agent"))
+    import synchub_agent as agent
+
+    class Cfg:
+        ffmpeg, ffprobe, vaapi_device, work_dir = "ffmpeg", "ffprobe", "/dev/dri/renderD128", str(tmp_path)
+
+    caps = {"ffmpeg": "ffmpeg", "ffprobe": "ffprobe", "encoders": ["libx265"], "vmaf": False, "cores": 2, "host": {"cpu": {"model": "Test CPU"}}}
+    report = agent.benchmark_report(Cfg, caps, seconds=2)
+    assert report["ok"] and report["results"][0]["encoder"] == "cpu" and report["results"][0]["speed"] > 0 and report["results"][0]["passed"]
+    assert "CPU (libx265)" in agent.format_benchmark(report) and not list(tmp_path.iterdir())         # the scratch folder is removed
+    broken = agent.benchmark_report(Cfg, {**caps, "ffmpeg": None}, seconds=2)
+    assert broken["ok"] is False

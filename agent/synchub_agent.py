@@ -47,7 +47,7 @@ __version__ = "1.4.0"      # kept equal to SyncHub's version (synchub/__init__.p
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
 OPS = ["copy", "rename", "delete_source", "originals"]     # the operations (plan.op) every agent can do; scan, hash and convert are added when the analysis module and ffmpeg are there
-FEATURES = ["profiles", "scale", "audio_add"]   # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run). "dovi" is added when dovi_tool and mkvmerge work
+FEATURES = ["profiles", "scale", "audio_add", "benchmark"]   # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run). "dovi" is added when dovi_tool and mkvmerge work
 MANIFEST_VERSION = 1
 HASH_BUFFER = 8 * 1024 * 1024
 SPACE_MARGIN = 1024 ** 3           # room left over on a disk after a copy
@@ -2596,6 +2596,7 @@ class Agent:
         self.roots = Roots(cfg.root_overrides)
         self.monitor = RootMonitor(self.roots, log)
         self.stopping = threading.Event()
+        self._benchmarking = threading.Event()
         self.active = {}                               # job id -> JobRunner
         self.progress = {}                             # job id -> (stage, fraction), for the status summary
         self.lock = threading.Lock()
@@ -2717,6 +2718,8 @@ class Agent:
             self.upload_log(job_id)
         if answer.get("worker_log"):
             self.upload_worker_log()
+        if answer.get("benchmark") and not active and not self._benchmarking.is_set() and not self.stopping.is_set():
+            self.start_benchmark()
         if not self.stopping.is_set():
             for job in (answer.get("resume") or []) + (answer.get("jobs") or []):
                 self.start(job)
@@ -2784,6 +2787,25 @@ class Agent:
             self.log.warning(f"SyncHub did not accept the log of job {job_id}: {exc}")
         except Unreachable as exc:
             self.log.warning(f"Could not upload the log of job {job_id}: {exc}")
+
+    def start_benchmark(self):
+        """The Workers page's Run benchmark button: run it in the background when no job is running, then send the report."""
+        self._benchmarking.set()
+
+        def work():
+            try:
+                self.log.info("Running the benchmark as SyncHub asked")
+                caps = detect_capabilities(self.cfg)
+                report = benchmark_report(self.cfg, caps, say=lambda text: self.log.info(text))
+                self.api.post("/benchmark", {"report": report})
+                self.log.info("Benchmark sent", ok=report["ok"])
+            except (ApiError, Unreachable) as exc:
+                self.log.warning(f"Could not send the benchmark: {exc}")
+            except Exception as exc:                       # noqa: B902  (a benchmark must never take the worker down)
+                self.log.warning(f"The benchmark failed: {exc}")
+            finally:
+                self._benchmarking.clear()
+        threading.Thread(target=work, name="benchmark", daemon=True).start()
 
     def upload_worker_log(self):
         """The Workers page's Get logs button: send the tail of this agent's own log (worker.jsonl and its rotated files)."""
@@ -2905,6 +2927,113 @@ class Agent:
 
 
 # ============================================================================ command line
+BENCHMARK_SECONDS = 30
+BENCHMARK_PROFILE = {"video_codec": "hevc", "crf": 22, "preset": "medium", "ten_bit": True, "audio_kbps": 192, "gpu": True, "name": "benchmark"}
+
+
+def benchmark_label(kind, caps):
+    if kind == "cpu":
+        model = ((caps.get("host") or {}).get("cpu") or {}).get("model")
+        return f"CPU (libx265){' ' + model if model else ''}"[:80]
+    return f"GPU ({kind.upper()}, {GPU_ENCODERS[kind]})"
+
+
+def benchmark_report(cfg, caps, source=None, seconds=BENCHMARK_SECONDS, say=lambda text: None):
+    """Times each working encoder on a short clip and scores the result with VMAF. Health first (ffmpeg, work folder, a two-second try of every encoder),
+    then speed and quality. `source` is a real file to take the clip from; without one a synthetic 1080p clip with film-like noise is made.
+    Returns a report dict that SyncHub stores and shows (see synchub.workers.store_benchmark). Never raises: a step that fails is reported as failed."""
+    started = time.time()
+    health, results = [], []
+    host = caps.get("host") or {}
+    report = {"agent": __version__, "when": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "seconds": int(seconds),
+              "cpu": ((host.get("cpu") or {}).get("model")), "cores": caps.get("cores"), "gpus": [g.get("name") for g in host.get("gpus") or [] if g.get("name")][:4],
+              "source": "your file" if source else f"synthetic 1080p, 24 fps, {int(seconds)} s", "health": health, "results": results, "ok": False}
+    health.append({"name": "ffmpeg", "ok": bool(caps.get("ffmpeg")), "detail": caps.get("ffmpeg") or "not found"})
+    health.append({"name": "VMAF", "ok": bool(caps.get("vmaf")), "detail": "available" if caps.get("vmaf") else "libvmaf is not in this ffmpeg, so quality is not scored"})
+    if not caps.get("ffmpeg"):
+        return report
+    work = tempfile.mkdtemp(prefix="benchmark-", dir=cfg.work_dir)
+    try:
+        health.append({"name": "work folder", "ok": True, "detail": f"{human_bytes(shutil.disk_usage(cfg.work_dir).free)} free"})
+        clip = os.path.join(work, "source.mkv")
+        if source:
+            code, out = run_quiet([cfg.ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-y", "-ss", "60", "-t", str(int(seconds)), "-i", source, "-map", "0:v:0", "-an", "-sn", "-c:v", "copy", clip], timeout=300)
+        else:
+            code, out = run_quiet([cfg.ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc2=size=1920x1080:rate=24,noise=alls=8:allf=t",
+                                   "-t", str(int(seconds)), "-c:v", "libx264", "-crf", "16", "-preset", "veryfast", "-pix_fmt", "yuv420p", clip], timeout=300)
+        if code != 0 or not os.path.exists(clip) or os.path.getsize(clip) == 0:
+            health.append({"name": "test clip", "ok": False, "detail": (out or "ffmpeg could not make or cut the clip").strip()[-300:]})
+            return report
+        health.append({"name": "test clip", "ok": True, "detail": human_bytes(os.path.getsize(clip))})
+        fps = 24.0
+        if source and caps.get("ffprobe"):
+            code, out = run_quiet([cfg.ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate", "-of", "csv=p=0", clip], timeout=30)
+            try:
+                num, _, den = out.strip().partition("/")
+                fps = float(num) / float(den or 1) or fps
+            except (ValueError, ZeroDivisionError):
+                pass
+        kinds = ["cpu"] + [k for k in GPU_ORDER if GPU_ENCODERS[k] in (caps.get("encoders") or [])]
+        profile = clean_profile(BENCHMARK_PROFILE)
+        for kind in kinds:
+            row = {"encoder": kind, "label": benchmark_label(kind, caps), "ok": False}
+            results.append(row)
+            say(f"Trying {row['label']}...")
+            pre, video_args = video_plan({}, profile, kind, cfg.vaapi_device)
+            out_path = os.path.join(work, f"out-{kind}.mkv")
+            base = [cfg.ffmpeg, "-nostdin", "-hide_banner", "-y", "-v", "error"]
+            code, out = run_quiet(base + pre + ["-t", "2", "-i", clip, "-map", "0:v:0", "-an"] + video_args + ["-f", "null", "-"], timeout=120)
+            if code != 0:
+                row["reason"] = (out or "the encoder did not start").strip().splitlines()[-1][:200] if (out or "").strip() else "the encoder did not start"
+                continue
+            began = time.monotonic()
+            code, out = run_quiet(base + pre + ["-i", clip, "-map", "0:v:0", "-an"] + video_args + ["-f", "matroska", out_path], timeout=1800)
+            took = time.monotonic() - began
+            if code != 0 or not os.path.exists(out_path):
+                row["reason"] = (out or "the encode failed").strip().splitlines()[-1][:200] if (out or "").strip() else "the encode failed"
+                continue
+            speed = seconds / took if took > 0 else None
+            row.update(ok=True, seconds=round(took, 1), speed=round(speed, 2) if speed else None, fps=round(speed * fps, 1) if speed else None, size_mb=round(os.path.getsize(out_path) / 1024 ** 2, 1))
+            if caps.get("vmaf"):
+                say(f"Scoring {row['label']} with VMAF...")
+                code, text = run_quiet(vmaf_command(cfg.ffmpeg, out_path, clip, 0, float(seconds), caps.get("cores") or 2), timeout=1800)
+                score = parse_vmaf(text) if code == 0 else None
+                row.update(vmaf=round(score, 1) if score is not None else None, vmaf_floor=vmaf_floor(1080))
+            row["passed"] = row.get("vmaf") is None or row["vmaf"] >= row["vmaf_floor"]
+    except OSError as exc:
+        health.append({"name": "benchmark", "ok": False, "detail": str(exc)[:200]})
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    report["ok"] = all(h["ok"] for h in health if h["name"] != "VMAF") and any(r["ok"] for r in results)
+    report["took_seconds"] = round(time.time() - started)
+    return report
+
+
+def format_benchmark(report):
+    """The report as a table for the terminal."""
+    lines = [f"SyncHub worker benchmark ({report.get('agent')}), {report.get('source')}", f"CPU: {report.get('cpu') or 'unknown'}   cores: {report.get('cores')}   GPU: {', '.join(report.get('gpus') or []) or 'none seen'}", ""]
+    lines += [f"  [{'ok' if h['ok'] else '!!'}] {h['name']}: {h['detail']}" for h in report.get("health") or []]
+    lines += ["", f"{'Encoder':<44}{'Speed':>9}{'fps':>8}{'VMAF':>8}  Result"]
+    for r in report.get("results") or []:
+        if not r.get("ok"):
+            lines.append(f"{r['label']:<44}{'':>9}{'':>8}{'':>8}  failed: {r.get('reason') or 'unknown'}")
+            continue
+        vmaf = f"{r['vmaf']:.1f}" if r.get("vmaf") is not None else "n/a"
+        lines.append(f"{r['label']:<44}{(str(r['speed']) + 'x') if r.get('speed') else '':>9}{r.get('fps') or '':>8}{vmaf:>8}  {'passed' if r.get('passed') else 'below the quality floor ' + str(r.get('vmaf_floor'))}")
+    lines.append("")
+    lines.append("The benchmark passed." if report.get("ok") else "The benchmark found problems.")
+    return "\n".join(lines)
+
+
+def command_benchmark(cfg, source=None):
+    """--benchmark: runs the benchmark here and prints it. SyncHub is not needed; use the Workers page to run it and keep the result."""
+    caps = detect_capabilities(cfg)
+    report = benchmark_report(cfg, caps, source=source, say=print)
+    print()
+    print(format_benchmark(report))
+    return 0 if report["ok"] else 1
+
+
 def command_check(cfg):
     """Prints what works and what does not. Exit code 0 when everything needed is in order."""
     problems = 0
@@ -3019,6 +3148,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="SyncHub worker agent")
     parser.add_argument("--config", help="settings file (default: ./synchub-agent.ini or /etc/synchub-agent.ini; environment variables override it)")
     parser.add_argument("--check", action="store_true", help="check the settings, SyncHub, ffmpeg and every share, then exit")
+    parser.add_argument("--benchmark", action="store_true", help="time each encoder (CPU, GPU) on a short clip, score it with VMAF, print the table, then exit")
+    parser.add_argument("--benchmark-file", help="with --benchmark: cut the clip from this film instead of making a synthetic one")
     parser.add_argument("--init-roots", action="store_true", help=f"write the {MARKER} marker file into each share, then exit")
     parser.add_argument("--force", action="store_true", help="with --init-roots: replace a marker that names a different share")
     parser.add_argument("--healthcheck", action="store_true", help="exit 0 if a running agent's loop is alive (for Docker)")
@@ -3035,9 +3166,11 @@ def main(argv=None):
     except ConfigError as exc:
         print(f"Settings problem: {exc}", file=sys.stderr)
         return 2
-    log = build_logger(cfg, console=not (args.check or args.init_roots))
+    log = build_logger(cfg, console=not (args.check or args.init_roots or args.benchmark))
     if args.check:
         return command_check(cfg)
+    if args.benchmark:
+        return command_benchmark(cfg, args.benchmark_file)
     if args.init_roots:
         return command_init_roots(cfg, args.force)
     agent = Agent(cfg, log)

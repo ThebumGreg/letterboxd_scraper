@@ -68,7 +68,24 @@
             <h5 class="mb-1">{{ w.name }} <span class="badge bg-{{ w.state_color }}{% if w.state_color in ['info', 'warning'] %} text-dark{% endif %} fs-6">{{ w.state }}</span></h5>
             <div class="small text-body-secondary">{{ w.hostname or 'not connected yet' }}{% if w.os %} &middot; {{ w.os }}{% endif %}{% if w.version %} &middot; agent {{ w.version }}{% endif %} &middot; seen {{ w.seen }}{% if not w.online and h.known %} (the figures below are from then){% endif %}</div>
         </div>
-        {% if not w.revoked and w.enabled %}<button type="button" class="btn btn-sm btn-outline-info" data-worker-logs="{{ w.id }}" data-name="{{ w.name }}"><i class="bi bi-card-text" aria-hidden="true"></i> Logs</button>{% endif %}
+        {% if not w.revoked and w.enabled %}<div class="d-flex gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" data-worker-action="benchmark" data-id="{{ w.id }}"{% if not w.benchmark.can_run %} disabled title="Update this worker's agent to run benchmarks"{% elif w.benchmark.pending %} disabled{% endif %}><i class="bi bi-speedometer2" aria-hidden="true"></i> {{ 'Benchmark queued' if w.benchmark.pending else 'Run benchmark' }}</button>
+            <button type="button" class="btn btn-sm btn-outline-info" data-worker-logs="{{ w.id }}" data-name="{{ w.name }}"><i class="bi bi-card-text" aria-hidden="true"></i> Logs</button></div>{% endif %}
+    </div>
+    {% set b = w.benchmark.last %}
+    <div class="border rounded p-2 mb-3 small" data-benchmark="{{ w.id }}">
+        <div class="fw-bold mb-1">Last benchmark{% if b %} <span class="badge bg-{{ 'success' if b.ok else 'danger' }}">{{ 'passed' if b.ok else 'problems' }}</span> <span class="text-body-secondary fw-normal">{{ b.when }}</span>{% endif %}</div>
+        {% if not b %}<div class="text-body-secondary">Not run yet. It times each encoder on a short clip and scores the picture, so you can compare the CPU with a GPU. It runs when the worker has no job.</div>
+        {% else %}
+        <div class="text-body-secondary mb-1">{{ b.report.source }}{% if b.report.took_seconds %} &middot; took {{ b.report.took_seconds }} s{% endif %}</div>
+        <div class="table-responsive"><table class="table table-sm mb-1 align-middle">
+            <thead><tr><th>Encoder</th><th class="text-end">Speed</th><th class="text-end">fps</th><th class="text-end">VMAF</th><th>Result</th></tr></thead>
+            <tbody>{% for r in b.report.results %}<tr><td>{{ r.label }}</td>
+                {% if r.ok %}<td class="text-end">{{ r.speed }}x</td><td class="text-end">{{ r.fps }}</td><td class="text-end">{{ r.vmaf if r.vmaf is not none else 'n/a' }}</td>
+                <td>{% if r.passed %}<span class="text-success">passed</span>{% else %}<span class="text-danger">below {{ r.vmaf_floor }}</span>{% endif %}</td>
+                {% else %}<td colspan="3"></td><td class="text-danger">failed: {{ r.reason or 'unknown' }}</td>{% endif %}</tr>{% endfor %}</tbody></table></div>
+        {% for hc in b.report.health if not hc.ok %}<div class="text-danger">{{ hc.name }}: {{ hc.detail }}</div>{% endfor %}
+        {% endif %}
     </div>
     {% if not h.known %}
     <div class="alert alert-secondary mb-0 small">
