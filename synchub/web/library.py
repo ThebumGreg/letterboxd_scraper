@@ -93,7 +93,8 @@ def overview(conn):
 
 def scan_options_for_page(conn):
     options, cfg = scan.scan_options(conn), scan.config(conn)
-    return {**options, "exclude_text": "\n".join(options["exclude"]), "destination": cfg.destination_root, "tv_folder": cfg.tv_folder, "movie_folder": cfg.movie_folder}
+    return {**options, "exclude_text": "\n".join(options["exclude"]), "destination": cfg.destination_root, "tv_folder": cfg.tv_folder, "movie_folder": cfg.movie_folder,
+            "naming_style": cfg.naming_style, "audio_mode": settings.get("audio_mode", conn=conn), "clean_names": cfg.clean_names}
 
 
 def describe_record(rec, rcm, cfg, profile=None):
@@ -316,7 +317,7 @@ def register(app):
         try:
             with db.connection() as conn:
                 run_id = scan.start_scan(conn, data.get("root"), data.get("prefix") or "", _who(conn), data.get("integrity") or None, bool(data.get("force")),
-                                         data.get("exclude") if isinstance(data.get("exclude"), str) else None)
+                                         data.get("exclude") if isinstance(data.get("exclude"), str) else None, data.get("profile_id") or None)
         except v.LibraryError as exc:
             return _fail(str(exc))
         return jsonify(ok=True, run=run_id, message="Scan queued. A worker starts it within seconds; progress shows below.")
@@ -349,7 +350,8 @@ def register(app):
     def api_library_settings():
         data = request.get_json(silent=True) or {}
         keys = ("library_destination_root", "library_tv_folder", "library_movie_folder", "library_integrity_mode", "library_tail_seconds", "library_exclude_folders", "download_pipeline", "originals_retention_days",
-                "size_policy", "movie_max_gb", "movie_target_gb", "size_crf", "tv_size_policy", "tv_max_gb_per_hour", "tv_target_gb_per_hour", "gpu_encoding", "vmaf_mode", "dolby_vision_profile_5", "dolby_vision_profile_7_8",
+                "size_policy", "size_mode", "cap_mbps_2160", "cap_mbps_1080", "cap_mbps_720", "cap_mbps_sd", "size_trigger_factor", "safety_gb_2160", "safety_gb_1080", "tv_cap_share",
+                "naming_style", "audio_mode", "clean_names", "size_crf", "tv_size_policy", "gpu_encoding", "vmaf_mode", "dolby_vision_profile_5", "dolby_vision_profile_7_8",
                 "review_first", "trust_after", "preview_seconds", "preview_keep_days", "preview_auto",
                 "library_default_profile", "source_delete_after_days", "arr_after_migration", "arr_apply_when")
         cleaned, errors = {}, []
@@ -375,14 +377,16 @@ def register(app):
         """How many scanned files the size rules would compress with the values on the form (nothing is saved or queued)."""
         data = request.get_json(silent=True) or {}
         values = {}
-        for key in ("movie_max_gb", "movie_target_gb", "tv_max_gb_per_hour", "tv_target_gb_per_hour"):
+        for key in ("cap_mbps_2160", "cap_mbps_1080", "cap_mbps_720", "cap_mbps_sd", "size_trigger_factor", "safety_gb_2160", "safety_gb_1080", "tv_cap_share"):
             ok, result = validate_setting(key, str(data.get(key, "")))
             if not ok:
                 return jsonify(ok=False, error=result), 400
             values[key] = float(result)
         with db.connection() as conn:
-            cfg = dataclasses.replace(size_policy.load(conn), on=True, tv_on=data.get("tv_size_policy") == "1", movie_max_gb=values["movie_max_gb"], movie_target_gb=values["movie_target_gb"],
-                                      tv_max_gb_per_hour=values["tv_max_gb_per_hour"], tv_target_gb_per_hour=values["tv_target_gb_per_hour"])
+            base = size_policy.load(conn)
+            cfg = dataclasses.replace(base, on=True, tv_on=data.get("tv_size_policy") == "1", mode="bitrate", tv_cap_share=values["tv_cap_share"], trigger_factor=values["size_trigger_factor"],
+                                      caps_mbps={"2160": values["cap_mbps_2160"], "1080": values["cap_mbps_1080"], "720": values["cap_mbps_720"], "sd": values["cap_mbps_sd"]},
+                                      safety_gb={"2160": values["safety_gb_2160"], "1080": values["safety_gb_1080"]})
             count = {"movies": [0, 0], "episodes": [0, 0]}
             for row in conn.execute("SELECT * FROM library_file WHERE size_bytes > 0 AND missing_since IS NULL"):
                 rec = dict(row)

@@ -84,17 +84,18 @@ def test_the_size_preview_counts_what_the_numbers_would_compress_without_queuing
     from .library_helpers import add
     shares(conn)
     record = add(conn, rel="Shows/Show/S01E01.mkv", name="Show S01E01.mkv", size=int(6 * GIB), media_type="TV Episode")
-    conn.execute("UPDATE library_file SET duration_seconds = 3600, media_type = 'TV Episode' WHERE id = ?", (record,))
+    info = '{"hdr": "sdr", "bit_depth": 10, "width": 1920, "height": 1080, "video_kbps": 14000}'
+    conn.execute("UPDATE library_file SET duration_seconds = 3600, media_type = 'TV Episode', video_codec = 'hevc', resolution = '1920x1080', video_info_json = ? WHERE id = ?", (info, record))
     conn.commit()
-    body = {"movie_max_gb": "30", "movie_target_gb": "25", "tv_max_gb_per_hour": "4", "tv_target_gb_per_hour": "2.5"}
+    body = {"cap_mbps_2160": "18", "cap_mbps_1080": "8", "cap_mbps_720": "4", "cap_mbps_sd": "2", "size_trigger_factor": "1.5", "safety_gb_2160": "45", "safety_gb_1080": "15", "tv_cap_share": "0.5"}
     off = client.post("/api/library/size_preview", json={**body, "tv_size_policy": "0"}).get_json()
     on = client.post("/api/library/size_preview", json={**body, "tv_size_policy": "1"}).get_json()
     assert off["ok"] and "Nothing" in off["message"] and on["ok"] and "1 episodes" in on["message"]
-    assert client.post("/api/library/size_preview", json={**body, "tv_max_gb_per_hour": "x", "tv_size_policy": "1"}).status_code == 400
-    saved = client.post("/api/library/settings", json={"tv_size_policy": "1", "tv_max_gb_per_hour": "5", "tv_target_gb_per_hour": "3", "gpu_encoding": "1", "vmaf_mode": "hold"}).get_json()
+    assert client.post("/api/library/size_preview", json={**body, "cap_mbps_1080": "x", "tv_size_policy": "1"}).status_code == 400
+    saved = client.post("/api/library/settings", json={"size_mode": "bitrate", "tv_size_policy": "1", "tv_cap_share": "0.6", "gpu_encoding": "1", "vmaf_mode": "hold"}).get_json()
     assert saved["ok"]
     cfg = sp.load(conn)
-    assert cfg.tv_on and cfg.tv_max_gb_per_hour == 5 and cfg.gpu and cfg.vmaf_mode == "hold"
+    assert cfg.tv_on and cfg.tv_cap_share == 0.6 and cfg.gpu and cfg.vmaf_mode == "hold"
     assert not client.post("/api/library/settings", json={"vmaf_mode": "sometimes"}).get_json()["ok"]
 
 

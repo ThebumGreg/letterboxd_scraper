@@ -100,7 +100,7 @@ def test_the_library_settings_are_validated_saved_and_change_what_is_in_place(cl
     assert (settings.get("library_destination_root", conn=conn), settings.get("library_movie_folder", conn=conn), settings.get("library_exclude_folders", conn=conn)) == ("tfiles", "Films", "Extras\nSample")
     assert f'data-record="{placed}"' not in client.get("/library/queue/done").get_data(as_text=True)        # media is no longer where things belong
     page = client.get("/library").get_data(as_text=True)
-    assert 'value="Films"' in page and "Last 45 s" in page and "Films/&lt;name&gt;/&lt;name&gt;" in page
+    assert 'value="Films"' in page and "Last 45 s" in page and "Films/Film Name (Year)/Film Name (Year).ext" in page
 
 
 def test_no_library_page_reuses_an_id_the_site_wide_script_attaches_to(client, conn):

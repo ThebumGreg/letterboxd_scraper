@@ -144,8 +144,8 @@ def list_runs(conn, limit=15, active_only=False):
 
 
 # ---------------------------------------------------------------- starting work
-def start_scan(conn, root, prefix="", by="someone", integrity=None, force=False, exclude=None):
-    """Queues a scan of a share, or a folder in it. Returns the run id."""
+def start_scan(conn, root, prefix="", by="someone", integrity=None, force=False, exclude=None, profile_id=None):
+    """Queues a scan of a share, or a folder in it. `profile_id` is the conversion profile its suggestions are built from (see profiles.effective). Returns the run id."""
     root = str(root or "").strip().lower()
     row = storage.by_name(conn, root)
     if row is None:
@@ -154,6 +154,15 @@ def start_scan(conn, root, prefix="", by="someone", integrity=None, force=False,
         prefix = storage.clean_rel(prefix) if str(prefix or "").strip().strip("/\\") else ""
     except storage.StorageError as exc:
         raise v.LibraryError(str(exc))
+    if profile_id not in (None, ""):
+        try:
+            profile_id = int(profile_id)
+        except (TypeError, ValueError):
+            raise v.LibraryError("Choose a conversion profile from the list.")
+        if conn.execute("SELECT 1 FROM conversion_profile WHERE id = ?", (profile_id,)).fetchone() is None:
+            raise v.LibraryError("That conversion profile no longer exists.")
+    else:
+        profile_id = None
     options = scan_options(conn)
     if integrity is not None:
         if integrity not in v.INTEGRITY_MODES:
@@ -167,7 +176,7 @@ def start_scan(conn, root, prefix="", by="someone", integrity=None, force=False,
     run_id = create_run(conn, "scan", root, prefix, {**options, "force": bool(force)}, by)
     jobs.create(conn, "scan", title=f"Scan {root}" + (f"/{prefix}" if prefix else ""), ref=(RUN_REF + run_id, None), source=(root, prefix),
                 plan={"op": "scan", "run_id": run_id, "root": root, "prefix": prefix, "integrity": options["integrity"], "tail_seconds": options["tail_seconds"],
-                      "exclude": options["exclude"], "force": bool(force), "logic_version": v.ANALYSIS_LOGIC_VERSION})
+                      "exclude": options["exclude"], "force": bool(force), "logic_version": v.ANALYSIS_LOGIC_VERSION, "profile_id": profile_id})
     return run_id
 
 
@@ -231,6 +240,8 @@ def inventory(conn, job, files, unreadable=(), now=None):
         else:
             seen.append(row["path_key"])
     store.touch_seen(conn, seen, run_id, now)
+    if plan.get("profile_id"):                                        # the profile picked for this scan applies to every file it looked at, new or not
+        conn.executemany("UPDATE library_file SET scan_profile_id = ? WHERE path_key = ?", [(plan["profile_id"], v.record_key(root, _rel(item["rel"]))) for item in files])
     source_dir = f"{root}:{plan.get('prefix') or ''}"
     placeholders = []
     for item in unreadable:
@@ -272,6 +283,8 @@ def build_record(conn, plan, rec, existing):
     derived = findings.derive(out)
     out.update({k: derived[k] for k in store.DERIVED_COLUMNS})
     out["review_status"] = derived["new_review"]
+    if plan.get("profile_id"):
+        out["scan_profile_id"] = plan["profile_id"]
     return out
 
 

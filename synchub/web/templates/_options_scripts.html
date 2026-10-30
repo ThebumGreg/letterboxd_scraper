@@ -2,13 +2,13 @@
 (() => {
     const $ = (id) => document.getElementById(id);
     const say = (text, ok) => librarySay(text, ok, 'optMessage');
+    const sizeValues = () => ({ size_policy: '1', tv_size_policy: $('setTvPolicy').checked ? '1' : '0', cap_mbps_2160: $('setCap2160').value, cap_mbps_1080: $('setCap1080').value, cap_mbps_720: $('setCap720').value,
+        cap_mbps_sd: $('setCapSd').value, size_trigger_factor: $('setTrigger').value, safety_gb_2160: $('setSafety2160').value, safety_gb_1080: $('setSafety1080').value, tv_cap_share: $('setTvShare').value });
     $('sizePreviewBtn').addEventListener('click', async () => {
         const out = $('sizePreviewOut');
         out.textContent = 'Counting...';
         try {
-            const r = await fetch('/api/library/size_preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-                size_policy: '1', tv_size_policy: $('setTvPolicy').checked ? '1' : '0', movie_max_gb: $('setMaxGb').value, movie_target_gb: $('setTargetGb').value,
-                tv_max_gb_per_hour: $('setTvMax').value, tv_target_gb_per_hour: $('setTvTarget').value }) });
+            const r = await fetch('/api/library/size_preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sizeValues()) });
             const d = await r.json();
             out.textContent = d.message || d.error || 'No answer.';
         } catch (e) { out.textContent = 'Could not count.'; }
@@ -18,8 +18,8 @@
         const data = await libraryPost('/api/library/settings', { library_destination_root: $('setDest').value, library_movie_folder: $('setMovies').value, library_tv_folder: $('setTv').value,
             library_integrity_mode: $('setIntegrity').value, library_tail_seconds: $('setTail').value, library_exclude_folders: $('setExclude').value,
             download_pipeline: $('setDownloads').value, originals_retention_days: $('setOriginals').value,
-            size_policy: $('setSizePolicy').checked ? '1' : '0', movie_max_gb: $('setMaxGb').value, movie_target_gb: $('setTargetGb').value, size_crf: $('setSizeCrf').value,
-            tv_size_policy: $('setTvPolicy').checked ? '1' : '0', tv_max_gb_per_hour: $('setTvMax').value, tv_target_gb_per_hour: $('setTvTarget').value, gpu_encoding: $('setGpu').value, vmaf_mode: $('setVmaf').value,
+            ...sizeValues(), size_mode: 'bitrate', size_policy: $('setSizePolicy').checked ? '1' : '0', size_crf: $('setSizeCrf').value,
+            naming_style: $('setNaming').value, audio_mode: $('setAudio').value, clean_names: $('setCleanNames').checked ? '1' : '0', gpu_encoding: $('setGpu').value, vmaf_mode: $('setVmaf').value,
             dolby_vision_profile_5: $('setDv5').value, dolby_vision_profile_7_8: $('setDv78').value,
             review_first: $('setReviewFirst').value, trust_after: $('setTrustAfter').value, preview_seconds: $('setPreviewSeconds').value, preview_auto: $('setPreviewAuto').checked ? '1' : '0',
             library_default_profile: $('setProfile').value, source_delete_after_days: $('setSourceDelete').value, arr_after_migration: $('setArr').value, arr_apply_when: $('setArrWhen').value });
