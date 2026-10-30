@@ -762,6 +762,7 @@ def test_a_radarr_import_is_scanned_converted_in_place_and_radarr_is_asked_to_re
     assert row()["status"] == "awaiting_approval", row()["message"]
     assert client.post(f"/api/downloads/{row()['id']}/approve").get_json()["ok"] is True
     wait(lambda: row()["status"] in ("replaced", "failed", "blocked") and row()["rescan_status"] in ("done", "failed"), timeout=90, what="the replacement")
+    wait(lambda: told, timeout=10, what="Jellyfin to be told (it happens just after the job is saved)")
     final = row()
     assert final["status"] == "replaced", final["message"]
     assert final["rescan_status"] == "done" and rescans == [9] and told
