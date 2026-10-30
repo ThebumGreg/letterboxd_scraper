@@ -3,7 +3,9 @@
     <div>
         <h3 class="h4 mb-2">Library</h3>
         <p class="text-body-secondary mb-0">Look at every video file on your shares, see what we suggest for each one in plain words, and approve what is right. Everything is brought into
-            <strong>{{ cfg.destination_root }}</strong>, laid out as <code>{{ cfg.movie_folder }}/&lt;name&gt;/&lt;name&gt;</code> and <code>{{ cfg.tv_folder }}/&lt;show&gt;/Season NN/&lt;name&gt;</code>.
+            <strong>{{ cfg.destination_root }}</strong>, laid out as <code>{{ cfg.movie_folder }}/Film Name (Year)/Film Name (Year).ext</code> and
+            <code>{{ cfg.tv_folder }}/Show Name/Season NN/{{ 'Show Name SNNENN' if cfg.naming_style == 'jellyfin' else 'Show Name - SNNENN' }}.ext</code>{% if cfg.naming_style == 'jellyfin' %}, the way Jellyfin recommends{% endif %}.
+            File names are cleaned (release tags, dots and junk removed) unless the profile says otherwise, and Jellyfin is told when a file is renamed or arrives.
             Nothing is changed on a share by looking at it or approving it.</p>
     </div>
     <a class="btn btn-outline-secondary" href="{{ url_for('library_export') }}"><i class="bi bi-download" aria-hidden="true"></i> Export CSV</a>
@@ -28,6 +30,12 @@
                             <option value="metadata"{% if options.integrity == 'metadata' %} selected{% endif %}>Details only</option>
                             <option value="tail"{% if options.integrity == 'tail' %} selected{% endif %}>Last {{ options.tail_seconds }} s</option>
                             <option value="full"{% if options.integrity == 'full' %} selected{% endif %}>Whole file (slow)</option></select></div>
+                </div>
+                <div class="row g-2 mt-1">
+                    <div class="col-md-6"><label for="scanProfile" class="form-label small mb-1">Suggest with this profile</label>
+                        <select class="form-select" id="scanProfile" title="The profile that builds each file's suggestion (compression, audio, names, extra copy). You can change it for any file when you approve it.">
+                            {% for p in profiles %}<option value="{{ p.id }}"{% if p.id == default_profile_id %} selected{% endif %}>{{ p.name }}{% if p.id == default_profile_id %} (default){% endif %}</option>{% endfor %}</select></div>
+                    <div class="col-md-6 small text-body-secondary align-self-end" id="scanProfileHelp">Looking at a file does not depend on the profile, so you can change it later without scanning again.</div>
                 </div>
                 <div class="form-check mt-2"><input class="form-check-input" type="checkbox" id="scanForce"><label class="form-check-label small" for="scanForce">Look at every file again, even if it has not changed</label></div>
                 <details class="mt-2"><summary class="small">Folders to leave out</summary>

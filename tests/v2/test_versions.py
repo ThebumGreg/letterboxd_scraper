@@ -114,7 +114,7 @@ def test_a_person_can_choose_another_height_for_one_film(conn):
 
 def test_approving_the_conversion_replaces_the_file_in_place_and_needs_a_worker_with_the_tools(conn):
     record_id = film(conn, info=DV7)
-    job = jobs.get(conn, versions.approve(conn, "dv_remux", record_id, "Greg"))
+    job = jobs.get(conn, versions.approve(conn, "dv_remux", record_id, "Greg", with_copy=False))
     plan = job["plan"]
     assert job["dest_rel"] == REL and plan["replace"] is True and plan["needs"] == ["dovi"] and plan["change"]["video"] == {"action": "copy", "dv": "p8_1"}
     assert plan["source_size"] == 60 * GIB and plan["originals_retention_days"] == 30 and job["policy"] == {"originals_retention_days": 30}
@@ -228,3 +228,38 @@ def test_the_settings_are_checked_and_saved(client, conn):
     assert client.post("/api/library/versions/settings", json={"variant_label": "a/b"}).status_code == 400
     ok = client.post("/api/library/versions/settings", json={"variant_height": "720", "variant_label": "720p", "variant_stereo": "0", "dv7_remux": "0"})
     assert ok.get_json()["ok"] and settings.get("variant_height") == "720" and settings.get("dv7_remux") == "0"
+
+
+# ---------------------------------------------------------------- one job, two outputs
+def test_a_dolby_vision_job_carries_the_smaller_copy_as_a_second_output(conn):
+    record_id = film(conn, info=DV7, size_gb=60)
+    job_id = versions.approve(conn, "dv_remux", record_id, "Greg")
+    conn.commit()
+    plan = jobs.get(conn, job_id)["plan"]
+    assert plan["extra"]["rel"].endswith("Heat (1995) - 1080p.mkv") and plan["extra"]["height"] == 1080 and plan["extra"]["profile"]["max_height"] == 1080
+    assert {"dovi", "scale", "two_outputs"} <= set(plan["needs"])
+    rows = {(r["kind"], r["label"]): r for r in conn.execute("SELECT * FROM library_action")}
+    assert rows[("variant", "1080p")]["job_id"] == job_id == rows[("dv_remux", "")]["job_id"]
+    assert kinds(conn)["variant"] == []                                                         # the copy is not offered a second time
+
+
+def test_the_smaller_copy_can_be_left_out_of_the_conversion(conn):
+    record_id = film(conn, info=DV7, size_gb=60)
+    job_id = versions.approve(conn, "dv_remux", record_id, "Greg", with_copy=False)
+    assert "extra" not in jobs.get(conn, job_id)["plan"] and conn.execute("SELECT COUNT(*) FROM library_action WHERE kind = 'variant'").fetchone()[0] == 0
+
+
+def test_both_rows_follow_the_job_and_a_missing_copy_is_reported_not_hidden(conn):
+    record_id = film(conn, info=DV7, size_gb=60)
+    job_id = versions.approve(conn, "dv_remux", record_id, "Greg")
+    conn.commit()
+    finish_job(conn, job_id, result={"kept_original": True, "extra": {"bytes": 5 * GIB, "rel": "x"}})
+    rows = {r["kind"]: dict(r) for r in conn.execute("SELECT * FROM library_action")}
+    assert rows["dv_remux"]["status"] == "done" and rows["variant"]["status"] == "done" and "5.0 GB" in rows["variant"]["message"]
+    other = film(conn, rel="Movies/Alien (1979)/Alien (1979).mkv", name="Alien (1979).mkv", info=DV7, size_gb=60)
+    job2 = versions.approve(conn, "dv_remux", other, "Greg")
+    conn.commit()
+    finish_job(conn, job2, result={"kept_original": True, "extra": {"error": "not enough room"}})
+    rows = {(r["path_key"], r["kind"]): dict(r) for r in conn.execute("SELECT * FROM library_action")}
+    second = [v for k, v in rows.items() if "alien" in k[0].lower()]
+    assert {r["kind"]: r["status"] for r in second} == {"dv_remux": "done", "variant": "failed"} and "not enough room" in next(r for r in second if r["kind"] == "variant")["message"]

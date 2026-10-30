@@ -18,7 +18,8 @@
         const rows = () => [...section.querySelectorAll('tbody tr')];
         section.querySelector('[data-select-all]')?.addEventListener('change', (ev) => rows().forEach((r) => { const c = r.querySelector('[data-pick]'); if (c && !c.disabled) c.checked = ev.target.checked; }));
         section.querySelector('[data-approve="selected"]')?.addEventListener('click', async () => {
-            const items = rows().filter((r) => r.querySelector('[data-pick]')?.checked).map((r) => ({ id: Number(r.dataset.id), height: r.querySelector('[data-height]') ? Number(r.querySelector('[data-height]').value) : undefined }));
+            const items = rows().filter((r) => r.querySelector('[data-pick]')?.checked).map((r) => ({ id: Number(r.dataset.id), height: r.querySelector('[data-height]') ? Number(r.querySelector('[data-height]').value) : undefined,
+                with_copy: r.querySelector('[data-with-copy]') ? r.querySelector('[data-with-copy]').checked : undefined }));
             if (!items.length) { say(false, 'Tick at least one film.'); return; }
             if (!confirm('Queue ' + items.length + ' film' + (items.length === 1 ? '' : 's') + ' for a worker?')) return;
             done(await post('/api/library/versions/approve', { kind, items }));
@@ -35,13 +36,5 @@
     pane.querySelectorAll('[data-cancel]').forEach((b) => b.addEventListener('click', async () => {
         if (confirm('Cancel this job? A running one stops at its next report.')) done(await post('/api/library/versions/cancel/' + b.dataset.cancel));
     }));
-    document.getElementById('versionsSettings')?.addEventListener('submit', async (ev) => {
-        ev.preventDefault();
-        const $ = (id) => document.getElementById(id);
-        done(await post('/api/library/versions/settings', {
-            versions_on: $('vOn').checked ? '1' : '0', variant_min_gb: $('vMinGb').value, variant_height: $('vHeight').value, variant_label: $('vLabel').value, variant_crf: $('vCrf').value,
-            variant_maxrate_kbps: $('vRate').value, variant_audio_kbps: $('vAudio').value, variant_stereo: $('vStereo').checked ? '1' : '0', dv7_remux: $('vDv7').checked ? '1' : '0',
-        }));
-    });
 })();
 </script>

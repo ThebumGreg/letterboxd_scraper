@@ -28,24 +28,30 @@
                     <div class="col-5"><label for="setOriginals" class="form-label small mb-1">Keep originals (days)</label><input type="number" min="0" max="3650" class="form-control form-control-sm" id="setOriginals" value="{{ originals_days }}" title="0 drops the original once the replacement is verified"></div>
                 </div>
                 <div class="border rounded p-2 mb-2">
-                    <div class="form-check"><input class="form-check-input" type="checkbox" id="setSizePolicy"{% if size.on %} checked{% endif %}><label class="form-check-label small fw-bold" for="setSizePolicy">Compress movies that are too big</label></div>
-                    <div class="form-text mb-2">A movie over the limit is re-encoded to HEVC with a bitrate cap so it ends under the target, never padded up to it. Removing unwanted tracks is tried first. HDR10 and HLG are kept. <strong>TV episodes have their own switch below.</strong></div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="setSizePolicy"{% if size.on %} checked{% endif %}><label class="form-check-label small fw-bold" for="setSizePolicy">Compress films that run well over a bitrate ceiling</label></div>
+                    <div class="form-text mb-2">A film is re-encoded to HEVC 10-bit, down to the ceiling for its picture size (the video bitrate, so a short and a long film are judged alike). It is only touched when it is more than the trigger times the ceiling, so files that are already efficient are left alone. Removing unwanted tracks comes first, and HDR10 and HLG are kept. Every conversion profile can use its own numbers; these are the defaults they follow.</div>
                     <div class="row g-2 mb-2">
-                        <div class="col-4"><label for="setMaxGb" class="form-label small mb-1">Over (GB)</label><input type="number" min="1" step="1" class="form-control form-control-sm" id="setMaxGb" value="{{ '%g' % size.movie_max_gb }}"></div>
-                        <div class="col-4"><label for="setTargetGb" class="form-label small mb-1">Down to (GB)</label><input type="number" min="1" step="1" class="form-control form-control-sm" id="setTargetGb" value="{{ '%g' % size.movie_target_gb }}"></div>
-                        <div class="col-4"><label for="setSizeCrf" class="form-label small mb-1">Quality (CRF)</label><input type="number" min="14" max="35" class="form-control form-control-sm" id="setSizeCrf" value="{{ size.crf }}" title="Lower is better and larger"></div>
+                        <div class="col-3"><label for="setCap2160" class="form-label small mb-1">4K ceiling (Mbps)</label><input type="number" min="2" max="80" step="0.5" class="form-control form-control-sm" id="setCap2160" value="{{ '%g' % size.caps_mbps['2160'] }}"></div>
+                        <div class="col-3"><label for="setCap1080" class="form-label small mb-1">1080p (Mbps)</label><input type="number" min="1" max="40" step="0.5" class="form-control form-control-sm" id="setCap1080" value="{{ '%g' % size.caps_mbps['1080'] }}"></div>
+                        <div class="col-3"><label for="setCap720" class="form-label small mb-1">720p (Mbps)</label><input type="number" min="0.5" max="20" step="0.5" class="form-control form-control-sm" id="setCap720" value="{{ '%g' % size.caps_mbps['720'] }}"></div>
+                        <div class="col-3"><label for="setCapSd" class="form-label small mb-1">Smaller (Mbps)</label><input type="number" min="0.3" max="10" step="0.1" class="form-control form-control-sm" id="setCapSd" value="{{ '%g' % size.caps_mbps['sd'] }}"></div>
                     </div>
-                    <div class="row g-2">
-                        <div class="col-6"><label for="setDv5" class="form-label small mb-1">Dolby Vision profile 5</label>
+                    <div class="row g-2 mb-2">
+                        <div class="col-4"><label for="setTrigger" class="form-label small mb-1">Only above (× ceiling)</label><input type="number" min="1" max="5" step="0.1" class="form-control form-control-sm" id="setTrigger" value="{{ '%g' % size.trigger_factor }}"></div>
+                        <div class="col-4"><label for="setSafety2160" class="form-label small mb-1">Any 4K film over (GB)</label><input type="number" min="0" max="500" step="1" class="form-control form-control-sm" id="setSafety2160" value="{{ '%g' % size.safety_gb['2160'] }}"></div>
+                        <div class="col-4"><label for="setSafety1080" class="form-label small mb-1">Any 1080p film over (GB)</label><input type="number" min="0" max="500" step="1" class="form-control form-control-sm" id="setSafety1080" value="{{ '%g' % size.safety_gb['1080'] }}"></div>
+                        <div class="form-text">The GB limits catch a huge file whose bitrate looks fine; 0 turns one off.</div>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-4"><label for="setSizeCrf" class="form-label small mb-1">Quality (CRF)</label><input type="number" min="14" max="35" class="form-control form-control-sm" id="setSizeCrf" value="{{ size.crf }}"></div>
+                        <div class="col-4"><label for="setDv5" class="form-label small mb-1">Dolby Vision profile 5</label>
                             <select class="form-select form-select-sm" id="setDv5">{% for m, label in [('review', 'Leave it alone'), ('hdr10', 'Compress as HDR10 (wrong colours)')] %}<option value="{{ m }}"{% if m == size.dv_profile_5 %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-                        <div class="col-6"><label for="setDv78" class="form-label small mb-1">Dolby Vision profile 7 and 8</label>
-                            <select class="form-select form-select-sm" id="setDv78">{% for m, label in [('hdr10', 'Compress as HDR10 (Dolby layer lost)'), ('review', 'Ask me first')] %}<option value="{{ m }}"{% if m == size.dv_profile_7_8 %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+                        <div class="col-4"><label for="setDv78" class="form-label small mb-1">Dolby Vision profile 7 and 8</label>
+                            <select class="form-select form-select-sm" id="setDv78">{% for m, label in [('remux', 'Convert 7 to 8.1, no re-encode'), ('hdr10', 'Compress as HDR10 (Dolby layer lost)'), ('review', 'Ask me first'), ('leave', 'Leave it as it is')] %}<option value="{{ m }}"{% if m == size.dv_profile_7_8 %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
                     </div>
-                    <div class="form-check mt-3"><input class="form-check-input" type="checkbox" id="setTvPolicy"{% if size.tv_on %} checked{% endif %}><label class="form-check-label small fw-bold" for="setTvPolicy">Also compress TV episodes that are too big</label></div>
-                    <div class="form-text mb-2">Limits are per hour of runtime, so a 22-minute and a 90-minute episode are judged alike. Around 2 to 3 GB per hour of 1080p HEVC looks clean; typical 1080p web downloads are 3 to 5 GB per hour.</div>
+                    <div class="form-check mt-2"><input class="form-check-input" type="checkbox" id="setTvPolicy"{% if size.tv_on %} checked{% endif %}><label class="form-check-label small fw-bold" for="setTvPolicy">Also compress TV episodes</label></div>
                     <div class="row g-2 mb-2">
-                        <div class="col-6"><label for="setTvMax" class="form-label small mb-1">Over (GB per hour)</label><input type="number" min="0.5" step="0.5" class="form-control form-control-sm" id="setTvMax" value="{{ '%g' % size.tv_max_gb_per_hour }}"></div>
-                        <div class="col-6"><label for="setTvTarget" class="form-label small mb-1">Down to (GB per hour)</label><input type="number" min="0.5" step="0.5" class="form-control form-control-sm" id="setTvTarget" value="{{ '%g' % size.tv_target_gb_per_hour }}"></div>
+                        <div class="col-6"><label for="setTvShare" class="form-label small mb-1">Episode ceiling (share of a film's)</label><input type="number" min="0.2" max="1" step="0.05" class="form-control form-control-sm" id="setTvShare" value="{{ '%g' % size.tv_cap_share }}"></div>
                     </div>
                     <div class="row g-2 mb-2">
                         <div class="col-6"><label for="setGpu" class="form-label small mb-1">GPU encoding</label>
@@ -54,6 +60,35 @@
                             <select class="form-select form-select-sm" id="setVmaf">{% for m, label in [('off', 'Off'), ('warn', 'Record the score'), ('hold', 'Hold low scores for review')] %}<option value="{{ m }}"{% if m == size.vmaf_mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
                     </div>
                     <div class="d-flex gap-2 align-items-center"><button type="button" class="btn btn-sm btn-outline-secondary" id="sizePreviewBtn">How many files would this compress?</button><span class="small text-body-secondary" id="sizePreviewOut"></span></div>
+                </div>
+                <div class="border rounded p-2 mb-2">
+                    <div class="fw-bold small mb-1">Names and audio</div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-6"><label for="setNaming" class="form-label small mb-1">Naming style</label>
+                            <select class="form-select form-select-sm" id="setNaming">{% for m, label in [('jellyfin', 'Jellyfin recommended (Show S01E01)'), ('current', 'Keep the dash (Show - S01E01)')] %}<option value="{{ m }}"{% if m == options.naming_style %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+                        <div class="col-6"><label for="setAudio" class="form-label small mb-1">Audio that many players cannot decode</label>
+                            <select class="form-select form-select-sm" id="setAudio">{% for m, label in [('add_compatible', 'Add a compatible track, keep the original'), ('compatible_only', 'Replace it with a compatible track'), ('keep', 'Leave the audio alone')] %}<option value="{{ m }}"{% if m == options.audio_mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+                    </div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="setTmdbIds"{% if options.tmdb_ids %} checked{% endif %}><label class="form-check-label small" for="setTmdbIds">Add the TMDB id to new show folders, like <code>Show (2018) [tmdbid-1234]</code> (helps Jellyfin match them)</label></div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="setCleanNames"{% if options.clean_names %} checked{% endif %}><label class="form-check-label small" for="setCleanNames">Clean file names (remove release tags, dots and junk) when files are brought in</label></div>
+                    <div class="form-text">Show folders for files brought in get the year SyncHub knows for the show (<code>Show (2018)</code>) in the Jellyfin style. Folders already in the library are never renamed for this.</div>
+                    <div class="form-text">A compatible track is E-AC-3 5.1 (AAC stereo for stereo sources), placed first and set as the default, so players that cannot decode TrueHD or DTS-HD pick it. Jellyfin does not choose a track by codec. A conversion profile can change any of these.</div>
+                </div>
+                <div class="border rounded p-2 mb-2">
+                    <div class="fw-bold small mb-1">Extra copies and Dolby Vision 7 (default for every profile)</div>
+                    <div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" id="vOn"{% if versions_config.on %} checked{% endif %}><label class="form-check-label small" for="vOn">Recommend a smaller extra copy of big films</label></div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-6 col-md-3"><label class="form-label small mb-1" for="vMinGb">For films over (GB)</label><input class="form-control form-control-sm" id="vMinGb" type="number" min="0" step="1" value="{{ '%g'|format(versions_config.min_gb) }}"></div>
+                        <div class="col-6 col-md-3"><label class="form-label small mb-1" for="vHeight">Copy height</label>
+                            <select class="form-select form-select-sm" id="vHeight">{% for h in heights %}<option value="{{ h }}"{% if h == versions_config.height %} selected{% endif %}>{{ h }}p</option>{% endfor %}</select></div>
+                        <div class="col-6 col-md-3"><label class="form-label small mb-1" for="vLabel">Name added to the file</label><input class="form-control form-control-sm" id="vLabel" maxlength="20" value="{{ versions_config.label }}"></div>
+                        <div class="col-6 col-md-3"><label class="form-label small mb-1" for="vCrf">Quality (CRF)</label><input class="form-control form-control-sm" id="vCrf" type="number" min="14" max="35" value="{{ versions_config.crf }}"></div>
+                        <div class="col-6 col-md-4"><label class="form-label small mb-1" for="vRate">Highest video bitrate (kbps)</label><input class="form-control form-control-sm" id="vRate" type="number" min="500" step="100" value="{{ versions_config.maxrate_kbps }}"></div>
+                        <div class="col-6 col-md-4"><label class="form-label small mb-1" for="vAudio">Audio bitrate (kbps)</label><input class="form-control form-control-sm" id="vAudio" type="number" min="64" max="640" value="{{ versions_config.audio_kbps }}"></div>
+                        <div class="col-12 col-md-4 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" id="vStereo"{% if versions_config.stereo %} checked{% endif %}><label class="form-check-label small" for="vStereo">Stereo audio in the copy</label></div></div>
+                    </div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="vDv7"{% if versions_config.dv7 %} checked{% endif %}><label class="form-check-label small" for="vDv7">Recommend converting Dolby Vision profile 7 to 8.1</label></div>
+                    <div class="form-text">The copy keeps HDR10 when the film is HDR and never goes bigger than the original. A conversion profile can turn the extra copy on or off and change these values.</div>
                 </div>
                 <div class="border rounded p-2 mb-2">
                     <div class="fw-bold small mb-1">Preview clips before compressing</div>
@@ -109,6 +144,28 @@
         <div class="col-6 col-md-3 d-flex flex-column justify-content-end gap-1">
             <div class="form-check"><input class="form-check-input" type="checkbox" id="pfTenBit" checked><label class="form-check-label small" for="pfTenBit">10-bit (HEVC)</label></div>
             <div class="form-check"><input class="form-check-input" type="checkbox" id="pfMoveOnly"><label class="form-check-label small" for="pfMoveOnly">Move only: change nothing</label></div></div>
+        <div class="col-12"><details><summary class="small fw-bold">Rules for this profile (blank = follow the Options page)</summary>
+            <div class="row g-2 mt-1">
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">Compress films</label><select class="form-select form-select-sm" data-rule="size_policy"><option value="">Follow Options</option><option value="1">On</option><option value="0">Off</option></select></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">Compress TV</label><select class="form-select form-select-sm" data-rule="tv_size_policy"><option value="">Follow Options</option><option value="1">On</option><option value="0">Off</option></select></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">4K ceiling (Mbps)</label><input type="number" class="form-control form-control-sm" data-rule="cap_2160" min="2" max="80" step="0.5" placeholder="Follow Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">1080p ceiling (Mbps)</label><input type="number" class="form-control form-control-sm" data-rule="cap_1080" min="1" max="40" step="0.5" placeholder="Follow Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">720p ceiling (Mbps)</label><input type="number" class="form-control form-control-sm" data-rule="cap_720" min="0.5" max="20" step="0.5" placeholder="Follow Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">Smaller ceiling (Mbps)</label><input type="number" class="form-control form-control-sm" data-rule="cap_sd" min="0.3" max="10" step="0.1" placeholder="Follow Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">Only above (x ceiling)</label><input type="number" class="form-control form-control-sm" data-rule="trigger_factor" min="1" max="5" step="0.1" placeholder="Follow Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">4K safety (GB)</label><input type="number" class="form-control form-control-sm" data-rule="safety_gb_2160" min="0" max="500" step="1" placeholder="Follow Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">1080p safety (GB)</label><input type="number" class="form-control form-control-sm" data-rule="safety_gb_1080" min="0" max="500" step="1" placeholder="Follow Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">Dolby Vision 7 and 8</label><select class="form-select form-select-sm" data-rule="dv_profile_7_8"><option value="">Follow Options</option><option value="remux">Convert 7 to 8.1</option><option value="hdr10">Compress as HDR10</option><option value="review">Ask me first</option><option value="leave">Leave it</option></select></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">Dolby Vision 5</label><select class="form-select form-select-sm" data-rule="dv_profile_5"><option value="">Follow Options</option><option value="review">Leave it</option><option value="hdr10">Compress as HDR10</option></select></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">Audio</label><select class="form-select form-select-sm" data-rule="audio_mode"><option value="">Follow Options</option><option value="add_compatible">Add compatible track</option><option value="compatible_only">Compatible only</option><option value="keep">Leave alone</option></select></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">Clean file names</label><select class="form-select form-select-sm" data-rule="clean_names"><option value="">Follow Options</option><option value="1">On</option><option value="0">Off</option></select></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">GPU encoding</label><select class="form-select form-select-sm" data-rule="gpu"><option value="">Follow Options</option><option value="1">On</option><option value="0">Off</option></select></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">Quality score</label><select class="form-select form-select-sm" data-rule="vmaf_mode"><option value="">Follow Options</option><option value="off">Off</option><option value="warn">Record</option><option value="hold">Hold low</option></select></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">Make an extra copy</label><select class="form-select form-select-sm" data-rule="extra_copy"><option value="">Follow Options</option><option value="1">On</option><option value="0">Off</option></select></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">Extra copy: films over (GB)</label><input type="number" class="form-control form-control-sm" data-rule="extra_min_gb" min="0" max="500" step="1" placeholder="Follow Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">Extra copy height</label><input type="number" class="form-control form-control-sm" data-rule="extra_height" min="240" max="2160" step="1" placeholder="Follow Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">Extra copy label</label><input class="form-control form-control-sm" data-rule="extra_label" maxlength="20" placeholder="Follow Options"></div>
+            </div></details></div>
         <div class="col-12"><label for="pfDesc" class="form-label small mb-1">Note (optional)</label><input class="form-control form-control-sm" id="pfDesc" maxlength="300"></div>
         <div class="col-12"><button type="submit" class="btn btn-sm btn-outline-success">Save profile</button> <button type="button" class="btn btn-sm btn-outline-secondary" id="pfClear">Clear</button></div>
     </form>

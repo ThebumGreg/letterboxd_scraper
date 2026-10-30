@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 _SWITCH_KEYS = {
     "disable_jellyfin_connection", "radarr_enable_library_sync", "radarr_enable_queue_addition", "radarr_dry_run",
     "sonarr_enable_library_sync", "sonarr_enable_queue_addition", "sonarr_dry_run", "enable_notifications",
-    "payload_logging_enabled", "dvr_enabled", "dvr_counts_as_library", "versions_on", "variant_stereo", "dv7_remux", "size_policy", "tv_size_policy", "gpu_encoding", "preview_auto", "log_service_jellyfin", "log_service_radarr", "log_service_sonarr",
+    "payload_logging_enabled", "dvr_enabled", "dvr_counts_as_library", "versions_on", "variant_stereo", "dv7_remux", "clean_names", "naming_tmdb_ids", "size_policy", "tv_size_policy", "gpu_encoding", "preview_auto", "log_service_jellyfin", "log_service_radarr", "log_service_sonarr",
     "log_service_tmdb", "log_service_dynu",
 }
 _INT_RANGES = {
@@ -16,10 +16,10 @@ _INT_RANGES = {
     "library_tail_seconds": (5, 600), "jellyfin_events_keep_days": (0, 36500), "notify_history_keep_days": (0, 36500), "ddns_interval_minutes": (1, 60), "access_session_days": (1, 365), "backup_keep": (0, 365), "size_crf": (14, 35), "trust_after": (1, 50), "preview_seconds": (30, 60), "preview_keep_days": (1, 365), "originals_retention_days": (0, 3650), "variant_height": (240, 2160), "variant_crf": (14, 35), "variant_maxrate_kbps": (500, 100000), "variant_audio_kbps": (64, 640),
     "library_default_profile": (1, 1_000_000),
 }
-_FLOAT_KEYS = {"variant_min_gb", "request_delay_min", "request_delay_max", "user_delay_min", "user_delay_max", "movie_max_gb", "movie_target_gb", "tv_max_gb_per_hour", "tv_target_gb_per_hour"}
+_FLOAT_KEYS = {"cap_mbps_2160", "cap_mbps_1080", "cap_mbps_720", "cap_mbps_sd", "tv_cap_share", "size_trigger_factor", "safety_gb_2160", "safety_gb_1080", "variant_min_gb", "request_delay_min", "request_delay_max", "user_delay_min", "user_delay_max", "movie_max_gb", "movie_target_gb", "tv_max_gb_per_hour", "tv_target_gb_per_hour"}
 _URL_KEYS = {"jellyfin_url", "radarr_url", "sonarr_url", "synchub_url"}
 _PATH_KEYS = {"radarr_root_folder", "sonarr_root_folder"}
-_CHOICES = {"tv_metadata_provider": {"tmdb", "sonarr"}, "library_integrity_mode": {"metadata", "tail", "full"}, "download_pipeline": {"off", "review", "auto"}, "vmaf_mode": {"off", "warn", "hold"}, "size_preset": {"fast", "medium", "slow", "slower"}, "review_first": {"always", "until_trusted", "low_confidence_only", "never"}, "dolby_vision_profile_5": {"review", "hdr10"}, "dolby_vision_profile_7_8": {"review", "hdr10"},
+_CHOICES = {"size_mode": {"bitrate", "size"}, "audio_mode": {"keep", "add_compatible", "compatible_only"}, "naming_style": {"jellyfin", "current"}, "tv_metadata_provider": {"tmdb", "sonarr"}, "library_integrity_mode": {"metadata", "tail", "full"}, "download_pipeline": {"off", "review", "auto"}, "vmaf_mode": {"off", "warn", "hold"}, "size_preset": {"fast", "medium", "slow", "slower"}, "review_first": {"always", "until_trusted", "low_confidence_only", "never"}, "dolby_vision_profile_5": {"review", "hdr10"}, "dolby_vision_profile_7_8": {"review", "hdr10", "remux", "leave"},
             "source_delete_after_days": {"0", "7", "14", "30"}, "arr_after_migration": {"none", "update_location", "unmonitor", "remove"}, "arr_apply_when": {"after_copy", "with_source_delete"}}
 _FOLDER_NAME_KEYS = {"library_tv_folder", "library_movie_folder"}
 

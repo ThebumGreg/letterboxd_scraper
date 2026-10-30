@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 
 from flask import Response, jsonify, redirect, render_template, request, send_file, url_for
 
-from synchub import db, downloads, jobs, previews, settings, storage
-from synchub.library import cleanup, findings, migrate, profiles, recommend as rc, report, scan, size_policy, store
+from synchub import db, downloads, jobs, previews, settings, storage, versions
+from synchub.library import cleanup, findings, migrate, profiles, recommend as rc, report, rule_steps, scan, size_policy, store
 from synchub.library import vocab as v
 from settings_validation import validate_setting
 
@@ -88,15 +88,17 @@ def overview(conn):
             "downloads": _with_previews(conn, downloads.recent(conn, 15)), "preview_summary": previews.summary(conn), "review_first": previews.review_first(conn), "trust_after": previews.trust_after(conn),
             "preview_seconds": previews.clip_seconds(conn), "preview_keep_days": previews.keep_days(conn), "preview_auto": previews.auto_make(conn), "download_summary": downloads.summary(conn), "originals_days": downloads.retention_days(conn), "size": size_policy.load(conn), "lookups": {"confidence": CONFIDENCE_FLOORS},
             "profiles": profiles.all_profiles(conn), "default_profile_id": profiles.default(conn)["id"], "cleanup": cleanup.summary(conn), "attention": migrate.attention(conn),
+            "versions_config": dataclasses.asdict(versions.load(conn)), "heights": (480, 720, 1080, 1440),
             "profile_options": {"codecs": profiles.VIDEO_CODECS, "presets": profiles.PRESETS, "subtitles": profiles.SUBTITLE_LABELS}}
 
 
 def scan_options_for_page(conn):
     options, cfg = scan.scan_options(conn), scan.config(conn)
-    return {**options, "exclude_text": "\n".join(options["exclude"]), "destination": cfg.destination_root, "tv_folder": cfg.tv_folder, "movie_folder": cfg.movie_folder}
+    return {**options, "exclude_text": "\n".join(options["exclude"]), "destination": cfg.destination_root, "tv_folder": cfg.tv_folder, "movie_folder": cfg.movie_folder,
+            "naming_style": cfg.naming_style, "audio_mode": settings.get("audio_mode", conn=conn), "clean_names": cfg.clean_names, "tmdb_ids": settings.get("naming_tmdb_ids", conn=conn) == "1"}
 
 
-def describe_record(rec, rcm, cfg, profile=None):
+def describe_record(rec, rcm, cfg, profile=None, quality=None):
     """A record and its recommendation as the record page shows them. Once a decision is made the tracks are read-only and show what the job does."""
     streams = [s for s in v.json_list(rec.get("streams_json")) if isinstance(s, dict)]
     removals = {r["index"]: r for r in rcm.removals}
@@ -113,7 +115,7 @@ def describe_record(rec, rcm, cfg, profile=None):
     plans = [p for p in v.json_list(rec.get("proposed_track_changes_json")) if isinstance(p, dict)]
     return {"rec": rec, "r": rcm, "streams": streams, "plans": plans, "size": _size(rec.get("size_bytes")), "duration": _duration(rec.get("duration_seconds")),
             "warnings": v.json_list(rec.get("warnings_json")), "errors": v.json_list(rec.get("errors_json")), "reasons": v.json_list(rec.get("review_reasons_json")),
-            "final_name": v.final_name(rec), "in_place": findings.in_place(rec, cfg), "missing": bool(rec.get("missing_since"))}
+            "quality": quality, "final_name": v.final_name(rec), "in_place": findings.in_place(rec, cfg), "missing": bool(rec.get("missing_since"))}
 
 
 def queue_rows(conn, cfg, group, f):
@@ -180,7 +182,8 @@ def register(app):
             rec = store.get_record(conn, record_id)
             if rec is None:
                 return redirect(url_for("library_page"))
-            rcm = rc.recommend(rec, cfg)
+            cfg = rc.cfg_for(conn, rec, cfg, {})
+            rcm = rc.recommend(rec, cfg, lambda plans: rule_steps.for_record(conn, rec, plans))
             events = store.events_for(conn, record_id)
             siblings = []
             if rec.get("duplicate_group"):
@@ -191,8 +194,9 @@ def register(app):
         group = request.args.get("group") or rcm.group
         data = describe_record(rec, rcm, cfg, chosen)
         with db.connection() as conn:
-            size = size_policy.decide(rec, previews.plans_of(rec, approved=rec["approval_status"] == v.APPROVAL_APPROVED), size_policy.load(conn))
+            size = size_policy.decide(rec, previews.plans_of(rec, approved=rec["approval_status"] == v.APPROVAL_APPROVED), size_policy.load(conn, chosen))
             latest = previews.latest_for(conn, "library_file", record_id)
+            data["quality"] = rule_steps.quality_facts(conn, rec, previews.plans_of(rec, approved=rec["approval_status"] == v.APPROVAL_APPROVED))
         preview_info = {"summary": size.summary or "The size rules would compress this file; watch a short window first.", "latest": previews.describe(latest) if latest else None} if size.profile is not None else None
         data.update(preview_info=preview_info, cfg=cfg, profiles=all_profiles, chosen_profile=chosen, rename_to=rc.rename_path(rec, cfg), source_cleanup=cleanup.source_days())
         return render_template("library_record.html", group=group, group_title=rc.GROUP_TITLES.get(group, group), events=events, siblings=siblings, f=_filters(), **data)
@@ -259,8 +263,13 @@ def register(app):
             candidates = [(rec, r) for rec, r in rc.bulk_candidates(conn, group, floor, f["q"] or None, f["root"] or None, cfg) if r.kind not in ("keep_duplicate", "skip_duplicate")]
         sample = [{"rec": rec, "r": r} for rec, r in candidates[:25]]
         size = sum(rec["size_bytes"] or 0 for rec, _ in candidates)
+        with db.connection() as conn:
+            all_profiles = profiles.all_profiles(conn)
+            chosen = request.args.get("profile", type=int)
+            chosen = chosen if chosen and any(p["id"] == chosen for p in all_profiles) else None
+            summary = rule_steps.batch_summary(conn, [rec for rec, _ in candidates], chosen)
         return render_template("library_bulk.html", group=group, title=rc.GROUP_TITLES[group], f=f, floor="high" if floor == rc.HIGH else "high and medium", candidates=len(candidates),
-                               sample=sample, size=_size(size))
+                               sample=sample, size=_size(size), profiles=all_profiles, chosen_profile=chosen, summary=summary)
 
     @app.route("/api/library/bulk/<group>", methods=["POST"])
     def api_library_bulk(group):
@@ -270,7 +279,7 @@ def register(app):
         floor = CONFIDENCE_FLOORS.get(str(data.get("conf") or ""), rc.MEDIUM)
         try:
             with db.connection() as conn:
-                done, skipped = rc.bulk_approve(conn, group, _who(conn), floor, (data.get("q") or None), (data.get("root") or None), scan.config(conn))
+                done, skipped = rc.bulk_approve(conn, group, _who(conn), floor, (data.get("q") or None), (data.get("root") or None), scan.config(conn), data.get("profile_id") or None)
         except (ValueError, v.LibraryError) as exc:
             return _fail(str(exc))
         left = f" {len(skipped)} left for you: {skipped[0][1]}." if skipped else ""
@@ -315,7 +324,7 @@ def register(app):
         try:
             with db.connection() as conn:
                 run_id = scan.start_scan(conn, data.get("root"), data.get("prefix") or "", _who(conn), data.get("integrity") or None, bool(data.get("force")),
-                                         data.get("exclude") if isinstance(data.get("exclude"), str) else None)
+                                         data.get("exclude") if isinstance(data.get("exclude"), str) else None, data.get("profile_id") or None)
         except v.LibraryError as exc:
             return _fail(str(exc))
         return jsonify(ok=True, run=run_id, message="Scan queued. A worker starts it within seconds; progress shows below.")
@@ -348,7 +357,8 @@ def register(app):
     def api_library_settings():
         data = request.get_json(silent=True) or {}
         keys = ("library_destination_root", "library_tv_folder", "library_movie_folder", "library_integrity_mode", "library_tail_seconds", "library_exclude_folders", "download_pipeline", "originals_retention_days",
-                "size_policy", "movie_max_gb", "movie_target_gb", "size_crf", "tv_size_policy", "tv_max_gb_per_hour", "tv_target_gb_per_hour", "gpu_encoding", "vmaf_mode", "dolby_vision_profile_5", "dolby_vision_profile_7_8",
+                "size_policy", "size_mode", "cap_mbps_2160", "cap_mbps_1080", "cap_mbps_720", "cap_mbps_sd", "size_trigger_factor", "safety_gb_2160", "safety_gb_1080", "tv_cap_share",
+                "naming_style", "audio_mode", "clean_names", "naming_tmdb_ids", "versions_on", "variant_min_gb", "variant_height", "variant_label", "variant_crf", "variant_maxrate_kbps", "variant_audio_kbps", "variant_stereo", "dv7_remux", "size_crf", "tv_size_policy", "gpu_encoding", "vmaf_mode", "dolby_vision_profile_5", "dolby_vision_profile_7_8",
                 "review_first", "trust_after", "preview_seconds", "preview_keep_days", "preview_auto",
                 "library_default_profile", "source_delete_after_days", "arr_after_migration", "arr_apply_when")
         cleaned, errors = {}, []
@@ -374,14 +384,16 @@ def register(app):
         """How many scanned files the size rules would compress with the values on the form (nothing is saved or queued)."""
         data = request.get_json(silent=True) or {}
         values = {}
-        for key in ("movie_max_gb", "movie_target_gb", "tv_max_gb_per_hour", "tv_target_gb_per_hour"):
+        for key in ("cap_mbps_2160", "cap_mbps_1080", "cap_mbps_720", "cap_mbps_sd", "size_trigger_factor", "safety_gb_2160", "safety_gb_1080", "tv_cap_share"):
             ok, result = validate_setting(key, str(data.get(key, "")))
             if not ok:
                 return jsonify(ok=False, error=result), 400
             values[key] = float(result)
         with db.connection() as conn:
-            cfg = dataclasses.replace(size_policy.load(conn), on=True, tv_on=data.get("tv_size_policy") == "1", movie_max_gb=values["movie_max_gb"], movie_target_gb=values["movie_target_gb"],
-                                      tv_max_gb_per_hour=values["tv_max_gb_per_hour"], tv_target_gb_per_hour=values["tv_target_gb_per_hour"])
+            base = size_policy.load(conn)
+            cfg = dataclasses.replace(base, on=True, tv_on=data.get("tv_size_policy") == "1", mode="bitrate", tv_cap_share=values["tv_cap_share"], trigger_factor=values["size_trigger_factor"],
+                                      caps_mbps={"2160": values["cap_mbps_2160"], "1080": values["cap_mbps_1080"], "720": values["cap_mbps_720"], "sd": values["cap_mbps_sd"]},
+                                      safety_gb={"2160": values["safety_gb_2160"], "1080": values["safety_gb_1080"]})
             count = {"movies": [0, 0], "episodes": [0, 0]}
             for row in conn.execute("SELECT * FROM library_file WHERE size_bytes > 0 AND missing_since IS NULL"):
                 rec = dict(row)

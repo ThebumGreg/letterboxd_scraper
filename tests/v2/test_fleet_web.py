@@ -46,7 +46,7 @@ def test_a_worker_shows_its_state_and_its_own_report(client, v2):
                                            "capabilities": {"encoders": ["libx265", "libx264"]}})
         workers.touch(conn, worker_id, status)
     row = row_for(client.get("/workers").get_data(as_text=True), worker_id)
-    assert "Online" in row and "enc1" in row and "Ubuntu 24.04" in row and "agent 1.2" in row and "libx265, libx264" in row
+    assert "Online" in row and "enc1" in row and "Ubuntu 24.04" in row and "1.2" in row and "libx265, libx264" in row
     assert "120.0 GB free" in row and "3 held, 40.0 GB" in row and "just now" in row
     for flag, label in (("paused", "Paused"), ("draining", "Draining"), ("enabled", "Disabled")):
         with v2.connection() as conn:

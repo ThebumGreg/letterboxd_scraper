@@ -46,6 +46,11 @@ class Settings:
     dv_profile_7_8: str = "hdr10"          # hdr10 | review
     gpu: bool = False                      # let a worker with a working GPU encoder use it (faster, larger files than the CPU encoder at the same quality)
     vmaf_mode: str = "warn"                # off | warn (record the score) | hold (a low score pauses the job for review)
+    mode: str = "size"                     # size: the GB limits above | bitrate: a video bitrate ceiling per picture height (what `load` gives; see docs/DESIGN_ENCODING.md)
+    caps_mbps: dict = dataclasses.field(default_factory=lambda: {"2160": 18.0, "1080": 8.0, "720": 4.0, "sd": 2.0})
+    tv_cap_share: float = 0.5              # an episode's ceiling as a share of a film's
+    trigger_factor: float = 1.5            # compress only when the video bitrate is this many times over the ceiling
+    safety_gb: dict = dataclasses.field(default_factory=lambda: {"2160": 45.0, "1080": 15.0})       # a film this big is compressed whatever its bitrate (0 = never)
 
 
 @dataclasses.dataclass
@@ -71,8 +76,21 @@ def _float(key, default, conn=None):
         return default
 
 
-def load(conn=None):
-    """The policy's settings. `size_policy` off (the default) means nothing is ever compressed."""
+def load(conn=None, profile=None):
+    """The policy's settings for a conversion profile (None = the Options page). `size_policy` off (the default) means nothing is ever compressed."""
+    from synchub.library import rules as profile_rules
+    r = profile_rules.resolve(conn, profile)
+    if settings.get("size_mode", conn=conn) == "size":            # the older rule: limits in GB (a hidden setting, kept so the old numbers still work)
+        return dataclasses.replace(load_legacy(conn), on=r["size_policy"], tv_on=r["tv_size_policy"], crf=r["crf"], preset=r["preset"], gpu=r["gpu"], vmaf_mode=r["vmaf_mode"],
+                                   dv_profile_5=r["dv_profile_5"], dv_profile_7_8=r["dv_profile_7_8"])
+    return Settings(on=r["size_policy"], tv_on=r["tv_size_policy"], crf=r["crf"], preset=r["preset"], gpu=r["gpu"], vmaf_mode=r["vmaf_mode"],
+                    dv_profile_5=r["dv_profile_5"], dv_profile_7_8=r["dv_profile_7_8"], mode="bitrate",
+                    caps_mbps={"2160": r["cap_2160"], "1080": r["cap_1080"], "720": r["cap_720"], "sd": r["cap_sd"]}, tv_cap_share=r["tv_cap_share"],
+                    trigger_factor=r["trigger_factor"], safety_gb={"2160": r["safety_gb_2160"], "1080": r["safety_gb_1080"]})
+
+
+def load_legacy(conn=None):
+    """The GB-limit settings (movie_max_gb, movie_target_gb, ...) as before bitrate mode; kept for the size preview and for tests of the old rules."""
     try:
         crf = min(40, max(10, int(settings.get("size_crf", conn=conn))))
     except (TypeError, ValueError):
@@ -103,6 +121,16 @@ def _track_kbps(track):
     return float(AUDIO_GUESS.get(str(track.get("codec") or "").lower(), AUDIO_DEFAULT_KBPS))
 
 
+def picture_class(width, height):
+    """'2160', '1080', '720' or 'sd': the ceiling class of a picture. Width decides, so a wide film cropped to 800 lines still counts as 1080."""
+    width, height = width or 0, height or 0
+    if width >= 3200 or height >= 1800:
+        return "2160"
+    if width >= 1800 or height >= 1000:
+        return "1080"
+    return "720" if width >= 1200 or height >= 700 else "sd"
+
+
 def _height_floor(height):
     return next(floor for limit, floor in BPP_FLOORS if (height or 0) >= limit)
 
@@ -130,14 +158,19 @@ def decide(rec, plans=(), cfg=None):
     if not movie and not cfg.tv_on:
         return Decision(NONE)
     duration = float(rec.get("duration_seconds") or 0)
-    if movie:
+    bitrate_mode = cfg.mode == "bitrate"
+    if bitrate_mode:
+        ceiling = target_gb = 0.0                                       # worked out below from the bitrate ceiling
+    elif movie:
         ceiling, target_gb = cfg.movie_max_gb, cfg.movie_target_gb
     else:                                                               # TV: the limits are per hour of runtime, so a 22-minute and a 90-minute episode are judged alike
         ceiling, target_gb = cfg.tv_max_gb_per_hour * duration / 3600, cfg.tv_target_gb_per_hour * duration / 3600
-    if rec.get("size_target_gb") and ceiling > 0:                       # a target chosen for this one title on the review screen
+    if rec.get("size_target_gb") and (ceiling > 0 or bitrate_mode):     # a target chosen for this one title on the review screen
         target_gb = float(rec["size_target_gb"])
     size = rec.get("size_bytes") or 0
-    if (duration > 0 and (ceiling <= 0 or target_gb <= 0)) or size <= 0 or (movie and (ceiling <= 0 or target_gb <= 0)):
+    if not bitrate_mode and ((duration > 0 and (ceiling <= 0 or target_gb <= 0)) or size <= 0 or (movie and (ceiling <= 0 or target_gb <= 0))):
+        return Decision(NONE)
+    if size <= 0:
         return Decision(NONE)
     tracks = [t for t in _json(rec.get("streams_json"), []) if isinstance(t, dict)]
     kept, removed = _size(list(plans), tracks)
@@ -145,9 +178,6 @@ def decide(rec, plans=(), cfg=None):
         return Decision(BLOCKED, ["The video's length is not known, so a size budget cannot be worked out. Scan it again."])
     removed_bytes = sum(_track_kbps(t) for t in removed) * 1000 / 8 * duration
     after = size - removed_bytes
-    if after <= ceiling * GIB:
-        return Decision(NONE, notes=[f"About {after / GIB:.1f} GB once the unwanted tracks are gone: under the {ceiling:g} GB limit."] if removed else [])
-
     info = _json(rec.get("video_info_json"), {})
     reasons, notes = [], []
     width, height = _resolution(rec, info)
@@ -157,14 +187,33 @@ def decide(rec, plans=(), cfg=None):
     audio_kbps = sum(_track_kbps(t) for t in kept if t.get("type") == "audio")
     sub_kbps = sum(_track_kbps(t) for t in kept if t.get("type") == "subtitle")
     kept_bytes = (audio_kbps + sub_kbps) * 1000 / 8 * duration
+    source_kbps = info.get("video_kbps") or max(0.0, (rec.get("bitrate_kbps") or 0) - sum(_track_kbps(t) for t in tracks if t.get("type") == "audio"))
+    if not source_kbps:
+        source_kbps = max(0.0, size * 8 / duration / 1000 - sum(_track_kbps(t) for t in tracks if t.get("type") in ("audio", "subtitle")))
+    if bitrate_mode:
+        height_class = picture_class(width, height)
+        cap_kbps = cfg.caps_mbps[height_class] * 1000 * (1 if movie else cfg.tv_cap_share)
+        safety = (cfg.safety_gb.get(height_class) or 0) if movie else 0
+        over_bitrate = source_kbps > cap_kbps * cfg.trigger_factor
+        over_size = bool(safety) and after > safety * GIB
+        if not (over_bitrate or over_size):
+            return Decision(NONE, notes=[f"The video runs at about {source_kbps / 1000:.1f} Mbps; the ceiling for this picture is {cap_kbps / 1000:g} Mbps and it is only touched above "
+                                         f"{cap_kbps * cfg.trigger_factor / 1000:.1f} Mbps."])
+        target_kbps_plan = min(cap_kbps, source_kbps * SOURCE_SHARE)
+        if target_gb:
+            target_kbps_plan = max(1.0, (target_gb * GIB * BUDGET_SHARE - kept_bytes) * 8 / duration / 1000)
+        target_gb = (target_kbps_plan * 1000 / 8 * duration + kept_bytes) / GIB
+        ceiling = target_gb * 1.1
+    elif after <= ceiling * GIB:
+        return Decision(NONE, notes=[f"About {after / GIB:.1f} GB once the unwanted tracks are gone: under the {ceiling:g} GB limit."] if removed else [])
+
     target_bytes = target_gb * GIB
     budget = target_bytes * BUDGET_SHARE - kept_bytes
-    numbers = {"size_gb": round(size / GIB, 1), "after_tracks_gb": round(after / GIB, 1), "target_gb": target_gb, "max_gb": ceiling,
+    numbers = {"size_gb": round(size / GIB, 1), "after_tracks_gb": round(after / GIB, 1), "target_gb": round(target_gb, 2), "max_gb": round(ceiling, 2),
                "audio_kbps": round(audio_kbps), "subtitle_kbps": round(sub_kbps), "duration": round(duration)}
     if budget <= 0:
         return Decision(BLOCKED, [f"The audio and subtitles alone ({kept_bytes / GIB:.1f} GB) leave no room under {target_gb:g} GB. Remove tracks or raise the target for this film."], numbers=numbers)
     target_kbps = budget * 8 / duration / 1000
-    source_kbps = info.get("video_kbps") or max(0.0, (rec.get("bitrate_kbps") or 0) - sum(_track_kbps(t) for t in tracks if t.get("type") == "audio"))
     if source_kbps:
         target_kbps = min(target_kbps, source_kbps * SOURCE_SHARE)
     numbers.update(target_video_kbps=round(target_kbps), source_video_kbps=round(source_kbps) if source_kbps else None)
@@ -185,6 +234,8 @@ def decide(rec, plans=(), cfg=None):
                 return Decision(BLOCKED, ["Dolby Vision profile 5 cannot be compressed safely: without its Dolby layer the colours turn green and purple. It is left as it is."], numbers=numbers)
             notes.append("Dolby Vision profile 5 is encoded as plain HDR10 (your setting); expect wrong colours on any player.")
         elif profile in ("7", "8"):
+            if cfg.dv_profile_7_8 == "leave" or (profile == "7" and cfg.dv_profile_7_8 == "remux"):
+                return Decision(NONE, notes=[f"Dolby Vision profile {profile} is not compressed: " + ("it is converted to profile 8.1 instead (no re-encode)." if cfg.dv_profile_7_8 == "remux" else "this profile leaves it as it is.")], numbers=numbers)
             if cfg.dv_profile_7_8 == "review":
                 reasons.append(f"Dolby Vision profile {profile}: compressing drops the Dolby layer and keeps HDR10 only.")
             else:

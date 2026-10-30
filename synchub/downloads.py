@@ -14,7 +14,7 @@ import os
 import posixpath
 
 from synchub import db, jobs, previews, settings, storage
-from synchub.library import scan, size_policy, store
+from synchub.library import audio, profiles, scan, size_policy, store
 from synchub.library import vocab as v
 
 logger = logging.getLogger(__name__)
@@ -215,14 +215,24 @@ def risks(rec, plans):
     return reasons
 
 
+def _plans(conn, rec):
+    """(track changes, profile, size-policy settings) for an import: the analysis' proposals with the profile's audio rule applied. A move-only profile changes nothing."""
+    profile = profiles.effective(conn, rec)
+    plans = [p for p in v.json_list(rec.get("proposed_track_changes_json")) if isinstance(p, dict) and p.get("op") in ("keep_tracks", "convert")]
+    if not profile["move_only"]:
+        change, _ = audio.apply(rec, plans[0] if plans else None, profiles.rules(conn, profile).get("audio_mode"))
+        plans = [change] if change else []
+    return plans, profile, size_policy.load(conn, profile)
+
+
 def decide(conn, row, rec, now=None):
     """What to do with an analysed import: nothing, ask, or queue the replacement."""
     now = now or db.now()
     if rec["analysis_status"] != v.ANALYSIS_COMPLETED or rec.get("unreadable_reason"):
         why = rec.get("unreadable_reason") or rec.get("audit_error") or rec.get("integrity_status") or "the analysis did not finish"
         return _set(conn, row["id"], now, record_id=rec["id"], status="blocked", message=f"Could not analyse the file: {why}")
-    plans = [p for p in v.json_list(rec.get("proposed_track_changes_json")) if isinstance(p, dict) and p.get("op") in ("keep_tracks", "convert")]
-    size = size_policy.decide(rec, plans, size_policy.load(conn))
+    plans, profile, cfg = _plans(conn, rec)
+    size = size_policy.decide(rec, plans, cfg)
     if not plans and size.action != size_policy.COMPRESS and size.action != size_policy.REVIEW:
         if size.action == size_policy.BLOCKED:
             return _set(conn, row["id"], now, record_id=rec["id"], status="blocked", message=size.summary)
@@ -254,8 +264,8 @@ def queue(conn, intake_id, by, now=None):
         raise ValueError("The file has not been analysed yet.")
     if rec["path_key"] != row["path_key"]:
         raise ValueError("The record no longer matches the file.")
-    plans = [p for p in v.json_list(rec.get("proposed_track_changes_json")) if isinstance(p, dict) and p.get("op") in ("keep_tracks", "convert")]
-    size = size_policy.decide(rec, plans, size_policy.load(conn))
+    plans, profile, cfg = _plans(conn, rec)
+    size = size_policy.decide(rec, plans, cfg)
     if not plans and size.profile is None:
         raise ValueError("There is nothing to change in this file.")
     change = plans[0] if plans else {}
@@ -266,6 +276,8 @@ def queue(conn, intake_id, by, now=None):
     now = now or db.now()
     plan = {"op": "convert", "replace": True, "change": change, "revision": rec["source_revision"], "duration": rec.get("duration_seconds"),
             "source_size": rec["size_bytes"], "source_mtime": rec["mtime"], "originals_retention_days": retention_days(conn), "import": row["id"]}
+    if change.get("audio_add") or any(isinstance(c, dict) and c.get("kbps") for c in (change.get("audio_convert") or {}).values()):
+        plan["needs"] = ["audio_add"]
     if size.profile is not None:                         # compress (or a quality-floor review the person has just accepted by approving)
         plan, dest_rel = size_policy.apply(plan, size, dest_rel)
     job_id = jobs.create(conn, "download", title=f"Replace: {rec['file_name']}", ref=(REF, row["id"]), source=(row["root_name"], row["relative_path"]), dest=(row["root_name"], dest_rel),

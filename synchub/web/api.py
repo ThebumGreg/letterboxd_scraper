@@ -14,6 +14,7 @@ from synchub.clients.arr import RadarrClient, SonarrClient
 from synchub.clients.jellyfin import JellyfinClient
 from synchub.clients.tmdb import TmdbClient
 from synchub.web import current_limit, title_allowed
+from synchub.notifications import progress
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,11 @@ def register(app):
                     downloads.record_event(conn, service, event, payload)
             except Exception as exc:
                 logger.warning(f"Could not note the {service} {event} import for the download pipeline: {exc}")
+            try:
+                with db.connection() as conn:
+                    progress.from_webhook(conn, event, payload)
+            except Exception as exc:
+                logger.warning(f"Could not raise a request notice for the {service} {event} event: {exc}")
             if event in ("Grab", "Download"):
                 movie, series = payload.get("movie") or {}, payload.get("series") or {}
                 announcer.announce(sse(json.dumps({"service": service, "event": event, "tmdb_id": movie.get("tmdbId"), "tvdb_id": series.get("tvdbId"),

@@ -199,14 +199,14 @@ def test_video_facts_read_hdr_dolby_vision_and_bitrate_from_ffprobe():
 
 
 def test_the_settings_can_be_saved_from_the_library_page_and_are_validated(app, client):
-    saved = client.post("/api/library/settings", json={"size_policy": "1", "movie_max_gb": "40", "movie_target_gb": "30", "size_crf": "20", "dolby_vision_profile_5": "hdr10", "dolby_vision_profile_7_8": "review"})
+    saved = client.post("/api/library/settings", json={"size_mode": "bitrate", "size_policy": "1", "cap_mbps_2160": "20", "safety_gb_2160": "40", "size_crf": "20", "dolby_vision_profile_5": "hdr10", "dolby_vision_profile_7_8": "review"})
     assert saved.get_json()["ok"] is True
     loaded = sp.load()
-    assert (loaded.on, loaded.movie_max_gb, loaded.movie_target_gb, loaded.crf, loaded.dv_profile_5, loaded.dv_profile_7_8) == (True, 40.0, 30.0, 20, "hdr10", "review")
+    assert (loaded.on, loaded.mode, loaded.caps_mbps["2160"], loaded.safety_gb["2160"], loaded.crf, loaded.dv_profile_5, loaded.dv_profile_7_8) == (True, "bitrate", 20.0, 40.0, 20, "hdr10", "review")
     assert client.post("/api/library/settings", json={"size_crf": "5"}).get_json()["ok"] is False
     assert client.post("/api/library/settings", json={"dolby_vision_profile_5": "yes"}).get_json()["ok"] is False
     page = client.get("/library").get_data(as_text=True)
-    assert "Compress movies that are too big" in page and 'id="setMaxGb" value="40"' in page
+    assert "Compress films that run well over" in page and 'id="setCap2160" value="20"' in page
 
 
 def test_a_download_of_a_big_film_is_compressed_automatically_when_the_policy_and_the_pipeline_are_on(conn):

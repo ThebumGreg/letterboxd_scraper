@@ -640,7 +640,7 @@ def test_approving_a_file_gets_it_converted_by_the_worker_and_the_library_record
     from .library_helpers import CFG, add, plan
     from .test_library_findings import rec_of
     told = []
-    monkeypatch.setattr(migrate, "tell_jellyfin", lambda count=1: told.append(count) or True)
+    monkeypatch.setattr(migrate, "tell_jellyfin", lambda count=1, updates=None: told.append(count) or True)
     make_avi(rig.roots["tfiles"] / "Old/Heat.avi", audio_tracks=1)
     record_id = add(conn, rel="Old/Heat.avi", name="Heat (1995).mkv", container="avi", video="mpeg4", action="remux_copy", size=(rig.roots["tfiles"] / "Old/Heat.avi").stat().st_size,
                     proposals=[plan(convert={"remux": True}, keep_audio=(1,))])
@@ -650,6 +650,7 @@ def test_approving_a_file_gets_it_converted_by_the_worker_and_the_library_record
     assert rec_of(conn, record_id)["migration_status"] == "pending" and migrate.queue_summary(conn)["queued"] == 1
     rig.start()
     wait(lambda: (conn.commit() or True) and rec_of(conn, record_id)["migration_status"] == "completed", timeout=60, what="the record to complete")
+    wait(lambda: told, timeout=10, what="Jellyfin to be told (it happens just after the record is saved)")
     rec = rec_of(conn, record_id)
     dest = rig.roots["media"] / "Movies/Heat (1995)/Heat (1995).mkv"
     assert dest.exists() and rec["migration_destination_path"] == "media:Movies/Heat (1995)/Heat (1995).mkv" and rec["migration_verification_status"] == "verified"
@@ -742,7 +743,7 @@ def test_a_radarr_import_is_scanned_converted_in_place_and_radarr_is_asked_to_re
     from synchub.library import migrate
     import synchub.clients.arr as arr
     rescans, told = [], []
-    monkeypatch.setattr(migrate, "tell_jellyfin", lambda count=1: told.append(count) or True)
+    monkeypatch.setattr(migrate, "tell_jellyfin", lambda count=1, updates=None: told.append(count) or True)
     monkeypatch.setattr(arr, "RadarrClient", type("R", (), {"rescan_movie": lambda self, movie_id: rescans.append(movie_id)}))
     conn.execute("UPDATE storage_root SET radarr_path = '/movies' WHERE name = 'media'")
     settings.set_value("download_pipeline", "review", conn=conn)
@@ -761,6 +762,7 @@ def test_a_radarr_import_is_scanned_converted_in_place_and_radarr_is_asked_to_re
     assert row()["status"] == "awaiting_approval", row()["message"]
     assert client.post(f"/api/downloads/{row()['id']}/approve").get_json()["ok"] is True
     wait(lambda: row()["status"] in ("replaced", "failed", "blocked") and row()["rescan_status"] in ("done", "failed"), timeout=90, what="the replacement")
+    wait(lambda: told, timeout=10, what="Jellyfin to be told (it happens just after the job is saved)")
     final = row()
     assert final["status"] == "replaced", final["message"]
     assert final["rescan_status"] == "done" and rescans == [9] and told

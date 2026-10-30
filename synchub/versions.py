@@ -58,7 +58,33 @@ def _int(key, default, conn, low, high):
         return default
 
 
-def load(conn=None):
+_PROFILE_FIELDS = {"extra_copy": "on", "extra_min_gb": "min_gb", "extra_height": "height", "extra_label": "label", "extra_crf": "crf", "extra_maxrate_kbps": "maxrate_kbps",
+                   "extra_audio_kbps": "audio_kbps", "extra_stereo": "stereo"}
+
+
+def load(conn=None, profile=None):
+    """The extra-version settings: the Options page, with whatever the conversion profile overrides on top."""
+    cfg = _load_global(conn)
+    overrides = (profile or {}).get("rules") or {}
+    changes = {field: overrides[key] for key, field in _PROFILE_FIELDS.items() if key in overrides}
+    if "dv_profile_7_8" in overrides:
+        changes["dv7"] = overrides["dv_profile_7_8"] == "remux"
+    return dataclasses.replace(cfg, **changes) if changes else cfg
+
+
+def load_for(conn, rec, cache=None):
+    """The settings for one Library record: those of the profile that applies to it (approved, else scan, else default)."""
+    from synchub.library import profiles
+    profile = profiles.effective(conn, rec)
+    if cache is not None and profile["id"] in cache:
+        return cache[profile["id"]]
+    cfg = load(conn, profile)
+    if cache is not None:
+        cache[profile["id"]] = cfg
+    return cfg
+
+
+def _load_global(conn=None):
     try:
         min_gb = max(0.0, float(settings.get("variant_min_gb", conn=conn)))
     except (TypeError, ValueError):
@@ -173,22 +199,32 @@ def variant_entry(rec, cfg, height=None):
     return _entry(rec, VARIANT, f"Make a {height}p copy", notes, True, dest=dest, height=height)
 
 
+def companion_copy(rec, cfg):
+    """The variant entry that can ride along with a Dolby Vision conversion (one copy-in, two outputs), or None."""
+    entry = variant_entry(rec, cfg)
+    return entry if entry and entry["can_approve"] else None
+
+
 def dv_entry(rec, cfg):
     if not cfg.dv7 or not _readable(rec) or dv_profile(rec) != "7":
         return None
     notes = ["The picture is not re-encoded, so it takes minutes and the size stays about the same.", "The Dolby Vision enhancement layer is dropped (HDR10 and Dolby Vision 8.1 keep working).",
              "The original is kept on the worker for the retention period, so it can be restored from the Originals tab."]
-    return _entry(rec, DV_REMUX, "Convert Dolby Vision 7 to 8.1", notes, True, dest=rec["relative_path"])
+    copy = companion_copy(rec, cfg)
+    if copy:
+        notes.append(f"A {copy['height']}p copy named “{cfg.label}” is made in the same job, from the same copy of the film.")
+    return _entry(rec, DV_REMUX, "Convert Dolby Vision 7 to 8.1", notes, True, dest=rec["relative_path"], also_copy=bool(copy), height=copy["height"] if copy else None)
 
 
 def recommendations(conn, cfg=None):
     """{'variant': [...], 'dv_remux': [...], 'declined': [...]}: what could be done, what a person declined, and what failed and can be tried again."""
-    cfg = cfg or load(conn)
     taken = _actions(conn)
+    cache = {}
     out = {VARIANT: [], DV_REMUX: [], "declined": []}
     for row in conn.execute("SELECT * FROM library_file WHERE analysis_status = 'completed' AND missing_since IS NULL AND unreadable_reason IS NULL ORDER BY recommended_name, file_name"):
         rec = dict(row)
-        for kind, label, make in ((VARIANT, cfg.label, lambda r: variant_entry(r, cfg)), (DV_REMUX, "", lambda r: dv_entry(r, cfg))):
+        rcfg = cfg or load_for(conn, rec, cache)
+        for kind, label, make in ((VARIANT, rcfg.label, lambda r: variant_entry(r, rcfg)), (DV_REMUX, "", lambda r: dv_entry(r, rcfg))):
             entry = make(rec)
             if entry is None:
                 continue
@@ -241,7 +277,8 @@ def variant_plan(conn, rec, cfg, height):
     return dest, plan
 
 
-def dv_plan(conn, rec):
+def dv_plan(conn, rec, extra=None):
+    """(destination, job plan, policy) for the Dolby Vision 7 to 8.1 conversion. `extra` = (variant destination, variant plan) adds the smaller copy as a second output of the same job."""
     from synchub import downloads
     dest = rec["relative_path"]
     change = {"op": "convert", "container": "matroska", "video": {"action": "copy", "dv": "p8_1"}}
@@ -251,11 +288,15 @@ def dv_plan(conn, rec):
     days = downloads.retention_days(conn)
     plan = {"op": "convert", "replace": True, "change": change, "needs": ["dovi"], "revision": rec["source_revision"], "duration": rec.get("duration_seconds"),
             "source_size": rec["size_bytes"], "source_mtime": rec["mtime"], "originals_retention_days": days}
+    if extra:
+        extra_dest, extra_plan = extra
+        plan["extra"] = {"rel": extra_dest, "label": extra_plan["variant"]["label"], "height": extra_plan["variant"]["height"], "change": extra_plan["change"], "profile": extra_plan["profile"]}
+        plan["needs"] = sorted(set(plan["needs"]) | set(extra_plan["needs"]) | {"two_outputs"})
     return dest, plan, {"originals_retention_days": days}
 
 
 # ------------------------------------------------------------------------------------------- approving and skipping
-def approve(conn, kind, record_id, by, height=None, now=None):
+def approve(conn, kind, record_id, by, height=None, now=None, with_copy=True):
     """Queues the job for one film. Returns the job id. Raises VersionError with a message for the page."""
     if kind not in KINDS:
         raise VersionError("Unknown kind of action.")
@@ -263,7 +304,7 @@ def approve(conn, kind, record_id, by, height=None, now=None):
     rec = store.get_record(conn, record_id)
     if rec is None:
         raise VersionError("That file is not in the Library any more. Scan again.")
-    cfg = load(conn)
+    cfg = load_for(conn, rec)
     if height is not None and kind == VARIANT:
         try:
             height = int(height)
@@ -290,14 +331,20 @@ def approve(conn, kind, record_id, by, height=None, now=None):
         raise VersionError("A worker is already busy with this file.")
     now = now or db.now()
     options = {"height": height} if kind == VARIANT else {}
+    companion = None
     if kind == VARIANT:
         dest, plan = variant_plan(conn, rec, cfg, height)
         policy, need = None, (rec["size_bytes"] or 0) + migrate.WORK_MARGIN_BYTES
         title = f"{cfg.label} copy: {rec['file_name']}"
     else:
-        dest, plan, policy = dv_plan(conn, rec)
-        need = (rec["size_bytes"] or 0) * 3 + migrate.WORK_MARGIN_BYTES
-        title = f"Dolby Vision 7 to 8.1: {rec['file_name']}"
+        extra = None
+        copy = companion_copy(rec, cfg) if with_copy else None
+        if copy and not _variant_taken(conn, rec, cfg.label):
+            extra = variant_plan(conn, rec, cfg, cfg.height)
+            companion = (extra[0], cfg.label, cfg.height)
+        dest, plan, policy = dv_plan(conn, rec, extra)
+        need = (rec["size_bytes"] or 0) * 3 + migrate.WORK_MARGIN_BYTES + ((rec["size_bytes"] or 0) // 2 if extra else 0)
+        title = f"Dolby Vision 7 to 8.1{' and ' + cfg.label + ' copy' if extra else ''}: {rec['file_name']}"
     conn.execute(
         """INSERT INTO library_action (kind, path_key, root_name, relative_path, label, status, dest_rel, options_json, decided_by, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)
@@ -308,7 +355,23 @@ def approve(conn, kind, record_id, by, height=None, now=None):
     job_id = jobs.create(conn, "library", title=title, ref=(REF, action["id"]), source=(rec["root_name"], rec["relative_path"]), dest=(rec["root_name"], dest), plan=plan,
                          policy=policy, need_bytes=need, now=now)
     conn.execute("UPDATE library_action SET job_id = ?, message = ? WHERE id = ?", (job_id, "Queued for a worker.", action["id"]))
+    if companion:                                     # the smaller copy is a row of its own on the tab, followed by the same job
+        extra_dest, extra_label, extra_height = companion
+        conn.execute(
+            """INSERT INTO library_action (kind, path_key, root_name, relative_path, label, status, dest_rel, options_json, decided_by, job_id, message, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (kind, path_key, label) DO UPDATE SET status = 'queued', dest_rel = excluded.dest_rel, options_json = excluded.options_json, decided_by = excluded.decided_by,
+                                                                 job_id = excluded.job_id, message = excluded.message, result_json = NULL, finished_at = NULL, updated_at = excluded.updated_at""",
+            (VARIANT, rec["path_key"], rec["root_name"], rec["relative_path"], extra_label, extra_dest, json.dumps({"height": extra_height, "with_job": job_id}), by, job_id,
+             "Queued with the Dolby Vision conversion.", now, now))
+        conn.execute("UPDATE library_action SET options_json = ? WHERE id = ?", (json.dumps({"companion_label": extra_label}), action["id"]))
     return job_id
+
+
+def _variant_taken(conn, rec, label):
+    """Whether the smaller copy is already queued or made (then the conversion does not make it again)."""
+    existing = action_for(conn, VARIANT, rec["path_key"], label)
+    return bool(existing and existing["status"] in OPEN + ("blocked", "done"))
 
 
 def approve_many(conn, kind, items, by):
@@ -316,7 +379,7 @@ def approve_many(conn, kind, items, by):
     done, skipped = 0, []
     for item in items:
         try:
-            approve(conn, kind, int(item.get("id")), by, height=item.get("height"))
+            approve(conn, kind, int(item.get("id")), by, height=item.get("height"), with_copy=item.get("with_copy", True) is not False)
             done += 1
         except (VersionError, TypeError, ValueError) as exc:
             skipped.append((item.get("id"), str(exc)))
@@ -334,7 +397,7 @@ def skip(conn, kind, record_id, by, now=None):
     rec = store.get_record(conn, record_id)
     if rec is None or kind not in KINDS:
         raise VersionError("That file is not in the Library any more.")
-    label = load(conn).label if kind == VARIANT else ""
+    label = load_for(conn, rec).label if kind == VARIANT else ""
     existing = action_for(conn, kind, rec["path_key"], label)
     if existing and existing["status"] in OPEN + ("blocked", "done"):
         raise VersionError("This one is already queued or done.")
@@ -351,7 +414,7 @@ def restore(conn, kind, record_id):
     rec = store.get_record(conn, record_id)
     if rec is None or kind not in KINDS:
         raise VersionError("That file is not in the Library any more.")
-    label = load(conn).label if kind == VARIANT else ""
+    label = load_for(conn, rec).label if kind == VARIANT else ""
     conn.execute("DELETE FROM library_action WHERE kind = ? AND path_key = ? AND label = ? AND status = 'skipped'", (kind, rec["path_key"], label))
 
 
@@ -385,7 +448,32 @@ def sync(conn, job_id, now=None):
     else:
         values.update(message="Queued for a worker.", finished_at=None)
     conn.execute(f"UPDATE library_action SET {', '.join(f'{k} = ?' for k in values)} WHERE id = ?", (*values.values(), row["id"]))
+    _sync_companion(conn, row, job, target, now)
     return target == "done"
+
+
+def _sync_companion(conn, row, job, target, now):
+    """The smaller copy made by a Dolby Vision job follows the job; when the job is done, the worker's report of the second output says whether the copy was made."""
+    label = _json(row.get("options_json"), {}).get("companion_label")
+    if row["kind"] != DV_REMUX or not label:
+        return
+    companion = action_for(conn, VARIANT, row["path_key"], label)
+    if companion is None or companion["job_id"] != job["id"]:
+        return
+    values = {"status": target, "updated_at": now}
+    if target == "done":
+        made = ((job["result"] if isinstance(job["result"], dict) else {}).get("extra")) or {}
+        if made.get("error") or not made.get("bytes"):
+            values.update(status="failed", finished_at=now, message=("The smaller copy could not be made: " + (made.get("error") or "the worker did not report it") + " The Dolby Vision conversion itself is done. You can try the copy again.")[:500])
+        else:
+            values.update(finished_at=now, result_json=json.dumps(made)[:4000], message=f"Made a smaller copy ({round(made['bytes'] / GIB, 1)} GB).")
+    elif target in ("failed", "blocked"):
+        values.update(message=(job["error"] or job["review_reason"] or job["message"] or "")[:500], finished_at=now)
+    elif target == "converting":
+        values.update(message="A worker is converting it.", finished_at=None)
+    else:
+        values.update(message="Queued with the Dolby Vision conversion.", finished_at=None)
+    conn.execute(f"UPDATE library_action SET {', '.join(f'{k} = ?' for k in values)} WHERE id = ?", (*values.values(), companion["id"]))
 
 
 def sync_active(conn):
@@ -401,7 +489,7 @@ LABELS = {"queued": "Waiting for a worker", "converting": "Working", "done": "Do
 def listing(conn):
     """Everything the Versions tab shows."""
     cfg = load(conn)
-    rec = recommendations(conn, cfg)
+    rec = recommendations(conn)
     rows = [dict(r) for r in conn.execute("SELECT * FROM library_action WHERE status != 'skipped' ORDER BY (status IN ('queued', 'converting', 'blocked')) DESC, updated_at DESC, id DESC LIMIT 80")]
     for r in rows:
         r["status_label"] = LABELS.get(r["status"], r["status"])

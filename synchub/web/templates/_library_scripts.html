@@ -20,7 +20,7 @@
 
     $('scanForm').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const data = await libraryPost('/api/library/scan', { root: $('scanRoot').value, prefix: $('scanPrefix').value, integrity: $('scanIntegrity').value, force: $('scanForce').checked, exclude: $('scanExclude').value });
+        const data = await libraryPost('/api/library/scan', { root: $('scanRoot').value, prefix: $('scanPrefix').value, integrity: $('scanIntegrity').value, profile_id: $('scanProfile').value, force: $('scanForce').checked, exclude: $('scanExclude').value });
         librarySay(data.message || (data.ok ? 'Scan queued.' : 'Failed.'), data.ok);
         if (data.ok) refresh();
     });
