@@ -58,7 +58,33 @@ def _int(key, default, conn, low, high):
         return default
 
 
-def load(conn=None):
+_PROFILE_FIELDS = {"extra_copy": "on", "extra_min_gb": "min_gb", "extra_height": "height", "extra_label": "label", "extra_crf": "crf", "extra_maxrate_kbps": "maxrate_kbps",
+                   "extra_audio_kbps": "audio_kbps", "extra_stereo": "stereo"}
+
+
+def load(conn=None, profile=None):
+    """The extra-version settings: the Options page, with whatever the conversion profile overrides on top."""
+    cfg = _load_global(conn)
+    overrides = (profile or {}).get("rules") or {}
+    changes = {field: overrides[key] for key, field in _PROFILE_FIELDS.items() if key in overrides}
+    if "dv_profile_7_8" in overrides:
+        changes["dv7"] = overrides["dv_profile_7_8"] == "remux"
+    return dataclasses.replace(cfg, **changes) if changes else cfg
+
+
+def load_for(conn, rec, cache=None):
+    """The settings for one Library record: those of the profile that applies to it (approved, else scan, else default)."""
+    from synchub.library import profiles
+    profile = profiles.effective(conn, rec)
+    if cache is not None and profile["id"] in cache:
+        return cache[profile["id"]]
+    cfg = load(conn, profile)
+    if cache is not None:
+        cache[profile["id"]] = cfg
+    return cfg
+
+
+def _load_global(conn=None):
     try:
         min_gb = max(0.0, float(settings.get("variant_min_gb", conn=conn)))
     except (TypeError, ValueError):
@@ -183,12 +209,13 @@ def dv_entry(rec, cfg):
 
 def recommendations(conn, cfg=None):
     """{'variant': [...], 'dv_remux': [...], 'declined': [...]}: what could be done, what a person declined, and what failed and can be tried again."""
-    cfg = cfg or load(conn)
     taken = _actions(conn)
+    cache = {}
     out = {VARIANT: [], DV_REMUX: [], "declined": []}
     for row in conn.execute("SELECT * FROM library_file WHERE analysis_status = 'completed' AND missing_since IS NULL AND unreadable_reason IS NULL ORDER BY recommended_name, file_name"):
         rec = dict(row)
-        for kind, label, make in ((VARIANT, cfg.label, lambda r: variant_entry(r, cfg)), (DV_REMUX, "", lambda r: dv_entry(r, cfg))):
+        rcfg = cfg or load_for(conn, rec, cache)
+        for kind, label, make in ((VARIANT, rcfg.label, lambda r: variant_entry(r, rcfg)), (DV_REMUX, "", lambda r: dv_entry(r, rcfg))):
             entry = make(rec)
             if entry is None:
                 continue
@@ -263,7 +290,7 @@ def approve(conn, kind, record_id, by, height=None, now=None):
     rec = store.get_record(conn, record_id)
     if rec is None:
         raise VersionError("That file is not in the Library any more. Scan again.")
-    cfg = load(conn)
+    cfg = load_for(conn, rec)
     if height is not None and kind == VARIANT:
         try:
             height = int(height)
@@ -334,7 +361,7 @@ def skip(conn, kind, record_id, by, now=None):
     rec = store.get_record(conn, record_id)
     if rec is None or kind not in KINDS:
         raise VersionError("That file is not in the Library any more.")
-    label = load(conn).label if kind == VARIANT else ""
+    label = load_for(conn, rec).label if kind == VARIANT else ""
     existing = action_for(conn, kind, rec["path_key"], label)
     if existing and existing["status"] in OPEN + ("blocked", "done"):
         raise VersionError("This one is already queued or done.")
@@ -351,7 +378,7 @@ def restore(conn, kind, record_id):
     rec = store.get_record(conn, record_id)
     if rec is None or kind not in KINDS:
         raise VersionError("That file is not in the Library any more.")
-    label = load(conn).label if kind == VARIANT else ""
+    label = load_for(conn, rec).label if kind == VARIANT else ""
     conn.execute("DELETE FROM library_action WHERE kind = ? AND path_key = ? AND label = ? AND status = 'skipped'", (kind, rec["path_key"], label))
 
 
@@ -401,7 +428,7 @@ LABELS = {"queued": "Waiting for a worker", "converting": "Working", "done": "Do
 def listing(conn):
     """Everything the Versions tab shows."""
     cfg = load(conn)
-    rec = recommendations(conn, cfg)
+    rec = recommendations(conn)
     rows = [dict(r) for r in conn.execute("SELECT * FROM library_action WHERE status != 'skipped' ORDER BY (status IN ('queued', 'converting', 'blocked')) DESC, updated_at DESC, id DESC LIMIT 80")]
     for r in rows:
         r["status_label"] = LABELS.get(r["status"], r["status"])

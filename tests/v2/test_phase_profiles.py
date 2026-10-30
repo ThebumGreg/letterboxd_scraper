@@ -169,3 +169,15 @@ def test_an_existing_library_file_in_the_old_style_is_offered_a_rename(conn):
     rec = store.get_record(conn, rec_id)
     r = rc.recommend(rec, cfg)
     assert r.kind == "rename" and "Cold Case S02E05.mkv" in r.headline
+
+
+# ---------------------------------------------------------------- extra copy per profile
+def test_the_extra_copy_follows_the_profile_of_the_film(conn):
+    from synchub import versions
+    assert versions.load(conn, profiles.get(conn, 1)).on == versions.load(conn).on
+    pid = profiles.save(conn, {"name": "Phone copy", "video_codec": "keep", "rules": {"extra_copy": True, "extra_label": "720p", "extra_height": 720, "extra_min_gb": 5, "dv_profile_7_8": "remux"}}, by="t")
+    cfg = versions.load(conn, profiles.get(conn, pid))
+    assert (cfg.on, cfg.label, cfg.height, cfg.min_gb, cfg.dv7) == (True, "720p", 720, 5.0, True)
+    off = profiles.save(conn, {"name": "No copy", "video_codec": "keep", "rules": {"extra_copy": False}}, by="t")
+    assert versions.load(conn, profiles.get(conn, off)).on is False
+    assert versions.load_for(conn, {"scan_profile_id": pid}).label == "720p"
