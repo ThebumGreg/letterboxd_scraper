@@ -101,6 +101,12 @@
             {% elif r.group not in ('done', 'queued') %}
                 <div class="d-flex gap-2"><button type="button" class="btn btn-outline-danger" data-act="reject">Reject</button><a class="btn btn-outline-secondary" href="{{ url_for('library_review', group=group, after=rec.id) }}">Skip</a></div>
             {% else %}<p class="text-body-secondary mb-0">Nothing to decide here.</p>{% endif %}
+            {% if rec.approval_status != 'approved' and rec.migration_status == 'pending' %}
+            <div class="d-flex flex-wrap gap-2 align-items-center border-top pt-3 mt-3">
+                {% if rec.missing_since %}<button type="button" class="btn btn-sm btn-outline-secondary" data-act="forget" title="Removes this record from the list. No file is touched.">Take off the list</button>{% endif %}
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-act="exclude-folder" title="Later scans skip this folder, and the undecided files from it leave the list. No file is touched.">Leave this folder out of scans</button>
+            </div>
+            {% endif %}
         </div>
     </div>
 

@@ -30,6 +30,14 @@
         if (data.ok) refresh();
     });
     document.addEventListener('click', async (e) => {
+        const forget = e.target.closest('[data-forget-missing]');
+        if (forget) {
+            if (!confirm(`Take ${forget.dataset.forgetMissing} file(s) that are gone from their share off the list? Nothing on the shares is touched.`)) return;
+            const data = await libraryPost('/api/library/forget_missing');
+            librarySay(data.message || (data.ok ? 'Done.' : 'Failed.'), data.ok);
+            refresh();
+            return;
+        }
         const requeue = e.target.closest('[data-requeue]');
         if (requeue) {
             const data = await libraryPost(`/api/library/record/${requeue.dataset.requeue}/requeue`);

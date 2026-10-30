@@ -2,7 +2,12 @@
 (() => {
     const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
     const fleet = document.getElementById('fleet');
-    const modal = (id) => bootstrap.Modal.getOrCreateInstance(document.getElementById(id));
+    // These dialogs sit inside the Workers tab; opened from the Jobs tab they would stay hidden behind their own backdrop and freeze the page. On <body> they show from any tab.
+    const modal = (id) => {
+        const el = document.getElementById(id);
+        if (el.parentElement !== document.body) document.body.appendChild(el);
+        return bootstrap.Modal.getOrCreateInstance(el);
+    };
     const post = async (url, body) => {
         try {
             const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(body || {}) });
