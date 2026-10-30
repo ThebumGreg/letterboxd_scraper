@@ -318,3 +318,25 @@ def test_the_workers_page_flags_a_worker_that_is_not_on_this_version(client, con
     conn.execute("UPDATE worker SET version = ? WHERE id = ?", (__version__, wid))
     conn.commit()
     assert "update available" not in client.get("/workers").get_data(as_text=True)
+
+
+# ---------------------------------------------------------------- approving together
+def test_the_bulk_page_says_what_will_happen_and_can_set_the_profile_for_all(client, conn):
+    from .library_helpers import add
+    settings.set_value("size_mode", "bitrate", conn=conn)
+    settings.set_value("size_policy", "1", conn=conn)
+    conn.commit()
+    ids = []
+    for n in range(2):
+        rec_id = add(conn, rel=f"Film {n} (200{n})/Film {n} (200{n}).mkv", name=f"Film {n} (200{n}).mkv", size=int(60 * GIB), media_type="Movie/Unknown")
+        info = {"hdr": "sdr", "bit_depth": 10, "width": 3840, "height": 2160, "video_kbps": 60000}
+        conn.execute("UPDATE library_file SET duration_seconds = 7200, video_codec = 'hevc', resolution = '3840x2160', video_info_json = ? WHERE id = ?", (json.dumps(info), rec_id))
+        ids.append(rec_id)
+    conn.commit()
+    page = client.get("/library/bulk/convert").get_data(as_text=True)
+    assert "What will happen" in page and "2 compressed, about" in page
+    page = client.get("/library/bulk/convert?profile=3").get_data(as_text=True)          # Move only: no rule applies
+    assert "2 copied without a rule applying" in page and "compressed, about" not in page
+    done = client.post("/api/library/bulk/convert", json={"profile_id": 8, "conf": "medium"}).get_json()
+    assert done["ok"] and done["done"] == 2
+    assert {conn.execute("SELECT approved_profile_id FROM library_file WHERE id = ?", (i,)).fetchone()[0] for i in ids} == {8}

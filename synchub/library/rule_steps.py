@@ -13,6 +13,8 @@ class RuleSteps:
     steps: list
     notes: list
     headline: str
+    kinds: tuple = ()                 # compress, review, dv, audio, copy
+    saved_gb: float = 0.0
 
 
 def for_record(conn, rec, plans, cache=None):
@@ -25,33 +27,40 @@ def for_record(conn, rec, plans, cache=None):
     if profile["id"] not in cache:
         cache[profile["id"]] = (profiles.rules(conn, profile), size_policy.load(conn, profile), versions.load(conn, profile))
     rules, size, extras = cache[profile["id"]]
-    steps, notes, headlines = [], [], []
+    steps, notes, headlines, kinds, saved = [], [], [], [], 0.0
     change, audio_note = audio.apply(rec, plans[0] if plans else None, rules.get("audio_mode"))
     if audio_note:
         steps.append(_audio_step(change))
         notes.append(audio_note)
         headlines.append("Add a compatible audio track")
+        kinds.append("audio")
     decision = size_policy.decide(rec, [change] if change else [], size)
     if decision.action == size_policy.COMPRESS:
         steps.append(decision.summary)
         notes += decision.notes
         headlines.insert(0, "Compress to HEVC")
+        kinds.append("compress")
+        saved = max(0.0, decision.numbers["size_gb"] - decision.numbers["target_gb"])
     elif decision.action == size_policy.REVIEW:
         steps.append("Ask before compressing: " + " ".join(decision.reasons))
         headlines.insert(0, "Compress (needs a look)")
+        kinds.append("review")
     elif decision.notes and "8.1" in " ".join(decision.notes):
         steps.append("Convert Dolby Vision 7 to 8.1 (no re-encode)")
         headlines.insert(0, "Convert Dolby Vision 7 to 8.1")
+        kinds.append("dv")
     elif versions.dv_entry(rec, extras):
         steps.append("Convert Dolby Vision 7 to 8.1 (no re-encode)")
         headlines.insert(0, "Convert Dolby Vision 7 to 8.1")
+        kinds.append("dv")
     entry = versions.variant_entry(rec, extras)
     if entry and entry["can_approve"]:
         steps.append(f"Make a {entry['height']}p copy named “{extras.label}”")
         headlines.append(f"{extras.label} copy")
+        kinds.append("copy")
     if not steps:
         return None
-    return RuleSteps(steps, notes, " + ".join(headlines[:3]))
+    return RuleSteps(steps, notes, " + ".join(headlines[:3]), tuple(kinds), saved)
 
 
 def _audio_step(change):
@@ -91,4 +100,23 @@ def quality_facts(conn, rec, plans=()):
         out["vmaf"] = {"mean": vmaf["mean"], "min": vmaf.get("min"), "floor": vmaf.get("floor")}
     elif isinstance(vmaf, dict) and vmaf.get("skipped"):
         out["vmaf_skipped"] = vmaf["skipped"]
+    return out
+
+
+def batch_summary(conn, records, profile_id=None):
+    """What approving `records` will do, in numbers: how many files get each rule step and about how many GB compression saves. With `profile_id` the rules of that
+    profile are used for every file (the choice made on the approve screen)."""
+    cache = {}
+    out = {"files": len(records), "compress": 0, "review": 0, "dv": 0, "audio": 0, "copy": 0, "saved_gb": 0.0, "unchanged": 0}
+    for rec in records:
+        rec = dict(rec, approved_profile_id=profile_id) if profile_id else rec
+        plans = [p for p in size_policy._json(rec.get("proposed_track_changes_json"), []) if isinstance(p, dict) and p.get("op") in ("keep_tracks", "convert")]
+        found = for_record(conn, rec, plans, cache)
+        if not found:
+            out["unchanged"] += 1
+            continue
+        for kind in found.kinds:
+            out[kind] += 1
+        out["saved_gb"] += found.saved_gb
+    out["saved_gb"] = round(out["saved_gb"])
     return out

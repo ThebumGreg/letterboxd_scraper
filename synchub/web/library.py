@@ -263,8 +263,13 @@ def register(app):
             candidates = [(rec, r) for rec, r in rc.bulk_candidates(conn, group, floor, f["q"] or None, f["root"] or None, cfg) if r.kind not in ("keep_duplicate", "skip_duplicate")]
         sample = [{"rec": rec, "r": r} for rec, r in candidates[:25]]
         size = sum(rec["size_bytes"] or 0 for rec, _ in candidates)
+        with db.connection() as conn:
+            all_profiles = profiles.all_profiles(conn)
+            chosen = request.args.get("profile", type=int)
+            chosen = chosen if chosen and any(p["id"] == chosen for p in all_profiles) else None
+            summary = rule_steps.batch_summary(conn, [rec for rec, _ in candidates], chosen)
         return render_template("library_bulk.html", group=group, title=rc.GROUP_TITLES[group], f=f, floor="high" if floor == rc.HIGH else "high and medium", candidates=len(candidates),
-                               sample=sample, size=_size(size))
+                               sample=sample, size=_size(size), profiles=all_profiles, chosen_profile=chosen, summary=summary)
 
     @app.route("/api/library/bulk/<group>", methods=["POST"])
     def api_library_bulk(group):
@@ -274,7 +279,7 @@ def register(app):
         floor = CONFIDENCE_FLOORS.get(str(data.get("conf") or ""), rc.MEDIUM)
         try:
             with db.connection() as conn:
-                done, skipped = rc.bulk_approve(conn, group, _who(conn), floor, (data.get("q") or None), (data.get("root") or None), scan.config(conn))
+                done, skipped = rc.bulk_approve(conn, group, _who(conn), floor, (data.get("q") or None), (data.get("root") or None), scan.config(conn), data.get("profile_id") or None)
         except (ValueError, v.LibraryError) as exc:
             return _fail(str(exc))
         left = f" {len(skipped)} left for you: {skipped[0][1]}." if skipped else ""

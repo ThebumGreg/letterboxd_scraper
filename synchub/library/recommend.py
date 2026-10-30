@@ -470,7 +470,7 @@ def bulk_candidates(conn, group, min_confidence=MEDIUM, match=None, root=None, c
             if r.group == group and r.can_approve and not r.needs_name and _RANK[r.confidence] >= floor]
 
 
-def bulk_approve(conn, group, by, min_confidence=MEDIUM, match=None, root=None, cfg=None):
+def bulk_approve(conn, group, by, min_confidence=MEDIUM, match=None, root=None, cfg=None, profile_id=None):
     """Apply the recommendation to every candidate. Returns (done, [(id, why)]).
     Duplicate groups are skipped: they need a person to choose which copy to keep."""
     done, skipped = 0, []
@@ -479,7 +479,7 @@ def bulk_approve(conn, group, by, min_confidence=MEDIUM, match=None, root=None, 
             skipped.append((rec["id"], "duplicates are decided one at a time"))
             continue
         try:
-            apply_recommendation(conn, rec["id"], by, note=f"bulk approved on the Library page ({group})", cfg=cfg)
+            apply_recommendation(conn, rec["id"], by, note=f"bulk approved on the Library page ({group})", cfg=cfg, profile_id=profile_id)
             done += 1
         except (ValueError, db.StateError) as exc:
             skipped.append((rec["id"], str(exc)))
