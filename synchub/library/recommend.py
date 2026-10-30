@@ -267,7 +267,7 @@ def recommend(rec, cfg=None) -> Recommendation:
             levels.append(HIGH)
     if "naming" in cats or needs_name:
         kind = "naming" if kind == "plain" else kind
-        steps.insert(0, f"Use the name: {rec['recommended_name']}")
+        steps.insert(0, f"Use the name: {media_layout.file_name(rec, cfg)}")
         levels.append(LOW if needs_name else _confidence_from_naming(rec))
     if cats & {"audio", "subtitle"}:
         kind = "check" if kind == "plain" else kind
@@ -292,14 +292,14 @@ def recommend(rec, cfg=None) -> Recommendation:
                         else "Convert audio to AAC" if convert_plan and convert_plan["audio_convert"]
                         else "Remux to MKV (lossless)")
     headline = {"plain": "Looks good: ready to copy", "convert": convert_headline, "tracks": "Keep English tracks only",
-                "naming": f"Rename to “{rec['recommended_name']}”", "check": "Copy unchanged (worth a look)",
+                "naming": f"Rename to “{media_layout.file_name(rec, cfg)}”", "check": "Copy unchanged (worth a look)",
                 "keep_duplicate": "Keep this copy"}[kind]
     if needs_name:
         notes.insert(0, f"No valid destination yet: {path_error}. Enter a valid name to continue.")
     confidence = _lowest(HIGH, *levels) if levels else HIGH
     if (rec["root_name"] == cfg.destination_root and path and kind in ("plain", "naming") and not plans and action == db.ACTION_COPY_RENAME and not needs_name):
         # already on the destination share, just not at the right path: moving it inside the share beats copying it next to itself
-        return Recommendation(G_SUGGESTED, "rename", "approve", f"Rename in place to “{db.final_name(rec)}”",
+        return Recommendation(G_SUGGESTED, "rename", "approve", f"Rename in place to “{media_layout.file_name(rec, cfg)}”",
                               [f"Move it inside {rec['root_name']} to {path}. Nothing is copied and nothing in the file changes."], notes, confidence, True,
                               action=action, mode="rename_only", **base)
     can_approve = action in db.MIGRATABLE_ACTIONS and not (needs_name)
@@ -320,16 +320,25 @@ def all_records(conn):
     return [dict(r) for r in conn.execute("SELECT * FROM library_file")]
 
 
+def cfg_for(conn, rec, cfg, cache):
+    """The library config with the naming rule of the profile that applies to `rec`. `cache` ({profile id: config}) spares a lookup per file."""
+    from synchub.library import profiles
+    profile = profiles.effective(conn, rec)
+    if profile["id"] not in cache:
+        cache[profile["id"]] = dataclasses.replace(cfg, clean_names=bool(profiles.rules(conn, profile)["clean_names"]))
+    return cache[profile["id"]]
+
+
 def classify(conn, cfg=None, match=None, root=None):
     """[(record, Recommendation)] for every record (optionally filtered), in display order."""
     cfg = cfg or LibraryConfig()
-    rows = []
+    rows, cache = [], {}
     for rec in sorted(all_records(conn), key=_sort_key):
         if match and match.lower() not in (rec["source_path"] + " " + rec["file_name"]).lower():
             continue
         if root and rec.get("root_name") != root:
             continue
-        rows.append((rec, recommend(rec, cfg)))
+        rows.append((rec, recommend(rec, cfg_for(conn, rec, cfg, cache))))
     return rows
 
 
@@ -369,6 +378,7 @@ def apply_recommendation(conn, record_id, by, name=None, keep_streams=None, note
     rec = store.get_record(conn, record_id)
     if rec is None:
         raise ValueError(f"no record {record_id}")
+    cfg = cfg_for(conn, dict(rec, approved_profile_id=profile_id or rec.get("approved_profile_id")), cfg, {})        # the naming rule of the profile it is approved with
     r = recommend(rec, cfg)
     if r.needs_name:
         if not name:

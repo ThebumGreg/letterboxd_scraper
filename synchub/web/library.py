@@ -180,6 +180,7 @@ def register(app):
             rec = store.get_record(conn, record_id)
             if rec is None:
                 return redirect(url_for("library_page"))
+            cfg = rc.cfg_for(conn, rec, cfg, {})
             rcm = rc.recommend(rec, cfg)
             events = store.events_for(conn, record_id)
             siblings = []

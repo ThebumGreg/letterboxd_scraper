@@ -5,6 +5,7 @@ Approving a file queues one `library` job (source share + path, destination shar
 been copied into the destination share and verified. Nothing here touches a media file; the worker does that.
 """
 import copy
+import dataclasses
 import json
 import logging
 import os
@@ -147,7 +148,8 @@ def queue(conn, record_id, cfg, by="someone", force=False):
         return None
     try:
         profile = profile_for(conn, rec)
-        dest_root, dest_rel, plan = plan_for(rec, cfg, profile, size=size_policy.load(conn, profile), rules=profiles.rules(conn, profile))
+        rules = profiles.rules(conn, profile)
+        dest_root, dest_rel, plan = plan_for(rec, dataclasses.replace(cfg, clean_names=bool(rules["clean_names"])), profile, size=size_policy.load(conn, profile), rules=rules)
     except layout.LayoutError as exc:
         raise ValueError(f"cannot plan the destination: {exc}")
     need = 0 if plan["op"] == "rename" else (rec["size_bytes"] or 0) * (2 if plan["op"] == "convert" else 1) + WORK_MARGIN_BYTES

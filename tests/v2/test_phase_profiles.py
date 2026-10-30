@@ -129,3 +129,43 @@ def test_the_main_track_is_the_english_one_that_is_kept():
     english = {"index": 2, "type": "audio", "codec": "truehd", "lang": "eng", "channels": 8}
     change, _ = audio.apply({"streams_json": json.dumps([french, english])}, None, "add_compatible")
     assert change["audio_add"]["from"] == 2 and change["keep_audio"] == [1, 2]
+
+
+# ---------------------------------------------------------------- names
+def tv_record(**extra):
+    return {"media_type": "TV Episode", "show_title": "Cold Case", "season_number": 2, "recommended_name": "Cold Case - S02E05.mkv", "file_name": "cold.case.s02e05.720p.mkv", "relative_path": "x/y.mkv",
+            "root_name": "tfiles", **extra}
+
+
+def test_jellyfin_style_drops_the_dash_in_tv_names():
+    from synchub.library import layout
+    from synchub.library import vocab as v
+    jf, cur = v.LibraryConfig(naming_style="jellyfin"), v.LibraryConfig(naming_style="current")
+    assert layout.relative_display(tv_record(), jf) == "TV Shows/Cold Case/Season 02/Cold Case S02E05.mkv"
+    assert layout.relative_display(tv_record(), cur) == "TV Shows/Cold Case/Season 02/Cold Case - S02E05.mkv"
+    assert layout.jellyfin_tv_name("Show - S01E01-E02.mkv") == "Show S01E01-E02.mkv" and layout.jellyfin_tv_name("Heat (1995).mkv") == "Heat (1995).mkv"
+
+
+def test_a_profile_that_does_not_clean_names_keeps_the_files_own_name():
+    from synchub.library import layout
+    from synchub.library import vocab as v
+    keep = v.LibraryConfig(naming_style="jellyfin", clean_names=False)
+    assert layout.relative_display(tv_record(), keep).endswith("Season 02/cold.case.s02e05.720p.mkv")
+    assert layout.relative_display(tv_record(approved_name="Cold Case S02E05.mkv"), keep).endswith("Cold Case S02E05.mkv")        # a name the person typed always wins
+
+
+def test_an_existing_library_file_in_the_old_style_is_offered_a_rename(conn):
+    from .library_helpers import add
+    from synchub.library import recommend as rc
+    from synchub.library import vocab as v
+    settings.set_value("naming_style", "jellyfin", conn=conn)
+    conn.commit()
+    rec_id = add(conn, root="media", rel="TV Shows/Cold Case/Season 02/Cold Case - S02E05.mkv", name="Cold Case - S02E05.mkv", media_type="TV Episode")
+    conn.execute("UPDATE library_file SET show_title = 'Cold Case', season_number = 2 WHERE id = ?", (rec_id,))
+    conn.commit()
+    from synchub.library import scan, store
+    cfg = scan.config(conn)
+    assert cfg.naming_style == "jellyfin"
+    rec = store.get_record(conn, rec_id)
+    r = rc.recommend(rec, cfg)
+    assert r.kind == "rename" and "Cold Case S02E05.mkv" in r.headline

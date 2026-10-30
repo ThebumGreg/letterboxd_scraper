@@ -134,3 +134,35 @@ def test_a_worker_converts_the_dolby_vision_data_in_place_and_keeps_the_original
     assert dovi["dv_profile"] == 8 and dovi["dv_bl_signal_compatibility_id"] == 1 and sum(1 for s in data["streams"] if s["codec_type"] == "audio") == 1
     originals = list((rig.work / "originals").glob("*/meta.json"))
     assert originals and json.loads(originals[0].read_text())["rel"] == "Movies/Heat (1995)/Heat (1995) Bluray-2160p.mkv"
+
+
+# ---------------------------------------------------------------- a compatible audio track
+def test_an_added_audio_track_is_first_and_the_default():
+    change = {"keep_audio": [1, 2], "keep_subtitle": [], "audio_add": {"from": 1, "codec": "eac3", "channels": 6, "kbps": 640, "title": "Compatible (E-AC-3 5.1)"}}
+    maps, codecs = agent._track_arguments(change, None, 0)
+    assert maps[:2] == ["-map", "0:1"] and maps[2:6] == ["-map", "0:1", "-map", "0:2"]        # the added track, then the two kept ones
+    assert codecs[codecs.index("-c:a:0") + 1] == "eac3" and "640k" in codecs and "title=Compatible (E-AC-3 5.1)" in codecs
+    assert codecs[-4:] == ["-disposition:a", "0", "-disposition:a:0", "default"]
+
+
+def test_a_bad_added_audio_track_is_refused():
+    for bad in ({"from": 1, "codec": "mp3"}, {"from": "x", "codec": "aac"}, {"from": 1, "codec": "aac", "channels": 12}, {"from": 1, "codec": "eac3", "kbps": 5000}):
+        with pytest.raises(agent.JobFailure):
+            agent.clean_audio_add({"audio_add": bad})
+    assert agent.clean_audio_add({}) is None
+    assert agent.clean_audio_add({"audio_add": {"from": 1, "codec": "aac", "title": "x;rm -rf"}})["title"] == "xrm -rf"
+
+
+@needs_ffmpeg
+def test_ffmpeg_makes_the_compatible_track_first_and_keeps_the_original(tmp_path):
+    src, out = str(tmp_path / "in.mkv"), str(tmp_path / "out.mkv")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=2:r=10", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-ac", "6", "-c:v", "libx264",
+                    "-c:a", "flac", "-t", "2", src], check=True)
+    streams = probe(src)["streams"]
+    audio_index = next(s["index"] for s in streams if s["codec_type"] == "audio")
+    change = {"op": "keep_tracks", "container": "matroska", "keep_audio": [audio_index], "keep_subtitle": [],
+              "audio_add": {"from": audio_index, "codec": "eac3", "channels": 6, "kbps": 640, "title": "Compatible (E-AC-3 5.1)"}}
+    subprocess.run(agent.build_convert_command("ffmpeg", src, out, change), check=True, capture_output=True)
+    audio = [s for s in probe(out)["streams"] if s["codec_type"] == "audio"]
+    assert [a["codec_name"] for a in audio] == ["eac3", "flac"] and audio[0]["disposition"]["default"] == 1 and audio[1]["disposition"]["default"] == 0
+    assert audio[0]["channels"] == 6 and audio[0]["tags"].get("title") == "Compatible (E-AC-3 5.1)"

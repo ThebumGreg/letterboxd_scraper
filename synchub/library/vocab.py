@@ -72,6 +72,8 @@ class LibraryConfig:
     destination_root: str = "media"
     tv_folder: str = "TV Shows"
     movie_folder: str = "Movies"
+    naming_style: str = "current"      # 'jellyfin': TV files are named `Show S01E01` as Jellyfin recommends | 'current': `Show - S01E01` as the worker names them
+    clean_names: bool = True           # False keeps each file's own name (a profile can say so)
 
 
 # FLAG_TIERS from the original tool: info = never needs review; change = a deterministic, approvable change; hold = a person decides.

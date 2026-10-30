@@ -32,7 +32,8 @@ AGENT_FIELDS = (
 def config(conn=None):
     """Where approved files go and how they are laid out."""
     return v.LibraryConfig(destination_root=settings.get("library_destination_root", conn=conn) or "media", tv_folder=settings.get("library_tv_folder", conn=conn) or "TV Shows",
-                           movie_folder=settings.get("library_movie_folder", conn=conn) or "Movies")
+                           movie_folder=settings.get("library_movie_folder", conn=conn) or "Movies",
+                           naming_style="current" if settings.get("naming_style", conn=conn) == "current" else "jellyfin")
 
 
 def exclude_list(text):
