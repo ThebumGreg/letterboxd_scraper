@@ -33,14 +33,15 @@ _RANK = {HIGH: 3, MEDIUM: 2, LOW: 1}
 
 G_READY, G_SUGGESTED, G_CHECK = "ready", "suggested", "check"
 G_CONVERT, G_NEEDS, G_DONE = "convert", "needs_you", "done"
+G_REJECTED = "rejected"                # a person said no: not migrated, kept here so Done only means finished
 G_QUEUED = "queued"                    # approved and waiting for, or being worked on by, a worker: not done until the job finishes
-GROUP_ORDER = (G_READY, G_SUGGESTED, G_CHECK, G_CONVERT, G_NEEDS, G_QUEUED, G_DONE)
+GROUP_ORDER = (G_READY, G_SUGGESTED, G_CHECK, G_CONVERT, G_NEEDS, G_QUEUED, G_DONE, G_REJECTED)
 
 # Rough speed of a re-encode relative to the video's length (1.5 = 1.5x faster than real time); only used for estimates shown to people.
 TRANSCODE_SPEED = 1.5
 GROUP_TITLES = {
     G_READY: "Ready to approve", G_SUGGESTED: "Suggested changes", G_CHECK: "Worth a look",
-    G_CONVERT: "Format conversion", G_NEEDS: "Needs you", G_QUEUED: "Approved and queued", G_DONE: "Done",
+    G_CONVERT: "Format conversion", G_NEEDS: "Needs you", G_QUEUED: "Approved and queued", G_DONE: "Done", G_REJECTED: "Rejected",
 }
 GROUP_HINTS = {
     G_READY: "Nothing unusual found. Approve and they are copied as they are.",
@@ -49,7 +50,8 @@ GROUP_HINTS = {
     G_CONVERT: "Older formats Jellyfin may have to transcode. We convert the copy to MKV/H.264: a lossless remux where possible, a re-encode (slower) where needed.",
     G_NEEDS: "These cannot be approved yet (unreadable files, incomplete scans, integrity problems), or an approved job failed or stopped and needs a person.",
     G_QUEUED: "Approved. A worker is, or soon will be, doing the move or conversion.",
-    G_DONE: "Finished: migrated, already in place, another version of a film, or rejected.",
+    G_DONE: "Finished: migrated, already in place, or another version of a film.",
+    G_REJECTED: "You said no to these. They are not migrated. Open one to undo the rejection.",
 }
 
 LANGUAGES = {
@@ -176,7 +178,7 @@ def recommend(rec, cfg=None, rule_steps=None) -> Recommendation:
                  else ["Will be copied" + (" with the approved track changes" if rec.get("approved_track_changes_json") else " unchanged") + ", using the conversion profile"])
         return Recommendation(G_QUEUED, "done", "none", "Approved for migration", steps, [], HIGH, False, **base)
     if rec["approval_status"] == db.APPROVAL_REJECTED:
-        return Recommendation(G_DONE, "done", "none", "Rejected: will not be migrated", [], [], HIGH, False, **base)
+        return Recommendation(G_REJECTED, "done", "none", "Rejected: will not be migrated", [], [], HIGH, False, **base)
     from synchub import versions                       # imported here: versions uses the Library, not the other way round
     if rec["root_name"] == cfg.destination_root and versions.is_version_file(rec["file_name"]):
         return Recommendation(G_DONE, "version", "none", "Another version of a film: left as it is",
