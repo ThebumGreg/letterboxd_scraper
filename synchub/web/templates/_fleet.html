@@ -26,6 +26,7 @@
                     <td class="small">
                         {{ w.hostname or '-' }}{% if w.os %}<div class="text-body-secondary">{{ w.os }}</div>{% endif %}
                         {% if w.version %}<div class="text-body-secondary">agent {{ w.version }}</div>{% endif %}
+                        {% if w.auto_update %}<div class="{{ 'text-body-secondary' if w.auto_update.ok else 'text-danger' }}"{% if w.auto_update.error %} title="{{ w.auto_update.error }}"{% endif %}>auto-update: {{ w.auto_update.text }}</div>{% endif %}
                         {% if w.encoders %}<div class="text-body-secondary" title="Encoders this worker can use">{{ w.encoders }}</div>{% endif %}
                     </td>
                     <td>{{ w.running }} / {{ w.slots }}</td>

@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+# auto-update.sh: keeps a worker on the newest SyncHub code, safely, and tells you what happened.
+#
+#   sudo ./agent/auto-update.sh --install [--dir /opt/synchub-worker] [--window 02:00-06:00]   run once; a systemd timer then checks every hour
+#   sudo ./agent/auto-update.sh --status         what the timer is doing (and the last log lines)
+#   sudo ./agent/auto-update.sh --uninstall      remove the timer, the script and the settings file
+#   sudo ./agent/auto-update.sh                  one check, by hand
+#   sudo ./agent/auto-update.sh --now            one check that updates even if the worker is busy
+#
+# One check does this, and only this:
+#   1. git fetch in the checkout the worker builds from. Nothing new on origin: stop.
+#   2. New code, but the same commit already failed here: stop (it is tried again when there is newer code).
+#   3. Only updates when SyncHub says the worker is running no job, or when the time is inside the maintenance window (if you set one).
+#      Inside the window a running job is cut off: SyncHub gives it to a worker again when the lease runs out.
+#   4. git merge --ff-only, then update-worker.sh --no-pull (rebuild and restart, wait until the container is healthy).
+#   5. If that fails the running container is kept when the build failed; if the new container does not become healthy, or anything else goes wrong,
+#      the checkout is put back to the last good commit and update-worker.sh rebuilds that, so the worker ends up on the old code.
+#   6. SyncHub is told, success or failure (version or the error tail): a line on the Workers page and a notification through your
+#      notification settings ("A worker updated itself", "A worker's automatic update failed"). If SyncHub cannot be reached the report
+#      is kept and sent on the next check.
+# Settings (optional) are read from /etc/synchub-auto-update.conf, a shell file:
+#   SYNCHUB_REPO=/home/greg/letterboxd_scraper   SYNCHUB_WORKER_DIR=/opt/synchub-worker   SYNCHUB_UPDATE_WINDOW=02:00-06:00 (empty: only when idle)
+# The SyncHub address and the worker's token are read from SYNCHUB_URL and SYNCHUB_TOKEN in <SYNCHUB_WORKER_DIR>/.env.
+# Log: journalctl -t synchub-auto-update
+set -uo pipefail
+
+CONF="${SYNCHUB_UPDATE_CONF:-/etc/synchub-auto-update.conf}"
+[ -f "$CONF" ] && . "$CONF"
+SELF="$(readlink -f "$0")"
+REPO="${SYNCHUB_REPO:-$(git -C "$(dirname "$SELF")" rev-parse --show-toplevel 2>/dev/null || true)}"
+DIR="${SYNCHUB_WORKER_DIR:-/opt/synchub-worker}"
+WINDOW="${SYNCHUB_UPDATE_WINDOW:-}"
+STATE="${SYNCHUB_UPDATE_STATE:-/var/lib/synchub-auto-update}"
+LOCK="${SYNCHUB_UPDATE_LOCK:-/run/synchub-auto-update.lock}"
+UPDATER="${SYNCHUB_UPDATE_SCRIPT:-$REPO/agent/update-worker.sh}"
+BIN="${SYNCHUB_UPDATE_BIN:-/usr/local/bin/synchub-auto-update}"
+UNIT_DIR="${SYNCHUB_UNIT_DIR:-/etc/systemd/system}"
+
+log() { echo "$*"; logger -t synchub-auto-update -- "$*" 2>/dev/null || true; }
+
+# ------------------------------------------------------------------ install / uninstall / status
+install_updater() {
+    local dry="$1" dir="$2" window="$3"
+    run() { if [ "$dry" = 1 ]; then echo "[dry run] $*"; else "$@"; fi; }
+    write() { if [ "$dry" = 1 ]; then echo "[dry run] write $1:"; sed 's/^/    /'; else cat > "$1"; fi; }
+    [ "$dry" = 1 ] || [ "$(id -u)" = 0 ] || { echo "ERROR: run with sudo" >&2; exit 1; }
+    [ -n "$REPO" ] && [ -f "$REPO/agent/update-worker.sh" ] || { echo "ERROR: run this from a clone of the SyncHub repository (or set SYNCHUB_REPO)." >&2; exit 1; }
+    if [ -n "$window" ]; then parse_window "$window" || { echo "ERROR: --window must look like 02:00-06:00" >&2; exit 1; }; fi
+    echo "==> Installing the automatic worker update"
+    run install -m 0755 "$SELF" "$BIN"
+    run install -d -m 0755 "$STATE"
+    if [ ! -f "$CONF" ] || [ "$dry" = 1 ]; then
+        write "$CONF" <<EOF
+# Read by $BIN. The checkout the worker builds from, the worker's folder, and the maintenance window (HH:MM-HH:MM, local time; empty = only when idle).
+SYNCHUB_REPO="$REPO"
+SYNCHUB_WORKER_DIR="$dir"
+SYNCHUB_UPDATE_WINDOW="$window"
+EOF
+    else
+        echo "    keeping the existing $CONF (edit it to change the folder or the window)"
+    fi
+    write "$UNIT_DIR/synchub-auto-update.service" <<EOF
+[Unit]
+Description=Update the SyncHub worker to the newest code when it is idle
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=$BIN
+TimeoutStartSec=2h
+EOF
+    write "$UNIT_DIR/synchub-auto-update.timer" <<EOF
+[Unit]
+Description=Check for new SyncHub worker code every hour
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target
+EOF
+    run systemctl daemon-reload
+    run systemctl enable --now synchub-auto-update.timer
+    echo "==> Done. Checkout: $REPO   worker folder: $dir   window: ${window:-none (only when idle)}"
+    echo "    Log: journalctl -t synchub-auto-update      Status: $0 --status"
+}
+
+uninstall_updater() {
+    [ "$(id -u)" = 0 ] || { echo "ERROR: run with sudo" >&2; exit 1; }
+    systemctl disable --now synchub-auto-update.timer 2>/dev/null || true
+    rm -f "$UNIT_DIR/synchub-auto-update.service" "$UNIT_DIR/synchub-auto-update.timer" "$BIN" "$CONF"
+    systemctl daemon-reload
+    echo "Removed the automatic update. (State kept in $STATE.)"
+}
+
+status_updater() {
+    systemctl list-timers synchub-auto-update.timer --no-pager 2>&1 | head -4
+    [ -f "$STATE/failed" ] && echo "--- skipping commit $(cat "$STATE/failed") until newer code arrives (it failed here)"
+    [ -f "$STATE/pending.json" ] && echo "--- a report is waiting to be sent to SyncHub"
+    echo "--- last log lines"
+    journalctl -t synchub-auto-update -n 15 --no-pager 2>&1 | tail -15
+}
+
+# ------------------------------------------------------------------ helpers
+# parse_window "02:00-06:00": sets W_START and W_END as minutes since midnight. Fails on anything else.
+parse_window() {
+    [[ "$1" =~ ^([01][0-9]|2[0-3]):([0-5][0-9])-([01][0-9]|2[0-3]):([0-5][0-9])$ ]] || return 1
+    W_START=$((10#${BASH_REMATCH[1]} * 60 + 10#${BASH_REMATCH[2]}))
+    W_END=$((10#${BASH_REMATCH[3]} * 60 + 10#${BASH_REMATCH[4]}))
+}
+
+# True inside the maintenance window. No window set means never. A window that ends before it starts runs over midnight.
+in_window() {
+    [ -n "$WINDOW" ] || return 1
+    parse_window "$WINDOW" || { log "WARNING the window '$WINDOW' is not HH:MM-HH:MM: ignoring it"; return 1; }
+    local now
+    now=$((10#$(date +%H) * 60 + 10#$(date +%M)))
+    if [ "$W_START" -le "$W_END" ]; then [ "$now" -ge "$W_START" ] && [ "$now" -lt "$W_END" ]; else [ "$now" -ge "$W_START" ] || [ "$now" -lt "$W_END" ]; fi
+}
+
+# git in the checkout, as the folder's owner when run as root (so root never leaves files in someone's repository).
+OWNER=""
+git_run() {
+    if [ "$(id -u)" = 0 ] && [ -n "$OWNER" ] && [ "$OWNER" != root ] && command -v runuser >/dev/null; then runuser -u "$OWNER" -- git -C "$REPO" "$@"; else git -C "$REPO" "$@"; fi
+}
+
+env_value() { sed -n "s/^$1=//p" "$DIR/.env" 2>/dev/null | tail -n1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"; }
+
+# api PATH [JSON]: POST to the worker API with the worker's token; prints the answer. Fails when SyncHub does not answer or refuses.
+api() {
+    local data="${2:-}"; [ -n "$data" ] || data="{}"
+    curl -fsS --max-time 30 -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" --data "$data" "$URL/api/worker/v1$1"
+}
+
+json_escape() { python3 -c 'import json,sys; sys.stdout.write(json.dumps(sys.stdin.read()))'; }
+
+agent_version() { git_run show "${1:-HEAD}:agent/synchub_agent.py" 2>/dev/null | sed -n 's/^__version__ *= *["'\'']\([^"'\'']*\)["'\''].*/\1/p' | head -n1; }
+
+# Sends a report to SyncHub now; keeps it for the next check when SyncHub cannot be reached. A report SyncHub refuses is dropped (it would never be accepted).
+send_report() {
+    local body="$1"
+    if [ -z "${URL:-}" ] || [ -z "${TOKEN:-}" ]; then log "WARNING no SYNCHUB_URL or SYNCHUB_TOKEN in $DIR/.env: cannot tell SyncHub"; return 0; fi
+    if api /update/report "$body" >/dev/null 2>"$STATE/curl.err"; then rm -f "$STATE/pending.json"; return 0; fi
+    if grep -q 'error: 4' "$STATE/curl.err"; then log "WARNING SyncHub refused the report: $(tail -n1 "$STATE/curl.err")"; rm -f "$STATE/pending.json"; return 0; fi
+    log "WARNING SyncHub could not be reached; the report is kept for the next check"
+    printf '%s' "$body" > "$STATE/pending.json"
+}
+
+# ------------------------------------------------------------------ one check
+FORCE=0
+case "${1:-}" in
+    --install)
+        shift; dry=0; idir="$DIR"; iwin="$WINDOW"
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --dry-run) dry=1; shift ;;
+                --dir) idir="${2:?--dir needs a folder}"; shift 2 ;;
+                --window) iwin="${2?--window needs HH:MM-HH:MM}"; shift 2 ;;
+                *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
+            esac
+        done
+        install_updater "$dry" "$idir" "$iwin"; exit 0 ;;
+    --uninstall) uninstall_updater; exit 0 ;;
+    --status) status_updater; exit 0 ;;
+    --now) FORCE=1 ;;
+    -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    "") ;;
+    *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
+esac
+
+[ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || { log "ERROR $REPO is not a git checkout (set SYNCHUB_REPO)"; exit 1; }
+mkdir -p "$STATE" 2>/dev/null || true
+if { exec 9>"$LOCK"; } 2>/dev/null; then flock -n 9 || exit 0; fi
+OWNER="$(stat -c %U "$REPO" 2>/dev/null || true)"
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$REPO"      # root running in someone's checkout; passed on to update-worker.sh
+URL="$(env_value SYNCHUB_URL)"; URL="${URL%/}"
+TOKEN="$(env_value SYNCHUB_TOKEN)"
+
+[ -f "$STATE/pending.json" ] && send_report "$(cat "$STATE/pending.json")"
+
+git_run fetch --quiet origin 2>"$STATE/git.err" || { log "WARNING git fetch failed: $(tail -n1 "$STATE/git.err")"; exit 0; }
+LOCAL="$(git_run rev-parse HEAD)"
+REMOTE="$(git_run rev-parse '@{u}' 2>/dev/null)" || { log "ERROR the checkout's branch has no upstream"; exit 1; }
+[ "$LOCAL" = "$REMOTE" ] && exit 0
+if ! git_run merge-base --is-ancestor "$LOCAL" "$REMOTE"; then log "WARNING $REPO has commits that are not on origin: not updating"; exit 0; fi
+if [ -f "$STATE/failed" ] && [ "$(cat "$STATE/failed")" = "$REMOTE" ]; then exit 0; fi       # already failed here; wait for newer code
+
+short="$(git_run rev-parse --short "$REMOTE")"
+if [ "$FORCE" = 1 ]; then
+    log "New code $short: updating now (--now)"
+else
+    answer="$(api /update/check 2>/dev/null || true)"
+    if printf '%s' "$answer" | grep -Eq '"idle": ?true'; then
+        log "New code $short and the worker is idle: updating"
+    elif in_window; then
+        log "New code $short; the worker is busy or SyncHub did not answer, but it is inside the maintenance window ($WINDOW): updating"
+    else
+        log "New code $short is waiting: the worker is busy or SyncHub did not answer${WINDOW:+; it updates inside the window $WINDOW}"
+        exit 0
+    fi
+fi
+
+previous="$(agent_version HEAD)"
+if ! git_run merge --ff-only --quiet "$REMOTE" 2>"$STATE/git.err"; then
+    error="git merge --ff-only failed: $(tail -n3 "$STATE/git.err")"
+    echo "$REMOTE" > "$STATE/failed"; log "FAILED $error"
+    send_report "{\"status\":\"failed\",\"commit\":\"$short\",\"previous\":\"$previous\",\"error\":$(printf '%s' "$error" | json_escape)}"
+    exit 1
+fi
+version="$(agent_version HEAD)"
+
+output="$("$UPDATER" --dir "$DIR" --no-pull 2>&1)"; status=$?
+if [ "$status" = 0 ]; then
+    rm -f "$STATE/failed"
+    log "Updated $previous -> $version ($short)"
+    send_report "{\"status\":\"ok\",\"version\":\"$version\",\"previous\":\"$previous\",\"commit\":\"$short\"}"
+    exit 0
+fi
+
+# Failed. Put the code back and rebuild it, so the folder the worker builds from, the image and the container agree again.
+tail_text="$(printf '%s' "$output" | tail -n 25 | cut -c1-300 | tail -c 1800)"
+log "FAILED updating to $short: $(printf '%s' "$output" | tail -n 1)"
+git_run reset --hard --quiet "$LOCAL"
+restored=""
+if "$UPDATER" --dir "$DIR" --no-pull >"$STATE/restore.out" 2>&1; then
+    restored="$(git_run rev-parse --short "$LOCAL") ($previous)"
+    log "Put the worker back on $restored"
+else
+    log "ERROR putting the worker back on the old code failed too: $(tail -n 1 "$STATE/restore.out")"
+    tail_text="$tail_text"$'\n'"-- and putting the old code back failed: $(tail -n 3 "$STATE/restore.out" | cut -c1-300)"
+fi
+echo "$REMOTE" > "$STATE/failed"
+send_report "{\"status\":\"failed\",\"commit\":\"$short\",\"previous\":\"$previous\",\"restored\":\"$restored\",\"error\":$(printf '%s' "$tail_text" | json_escape)}"
+exit 1

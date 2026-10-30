@@ -153,6 +153,10 @@ If your compose file bind-mounts host folders (`/mnt/tower/Media:/mnt/tower/Medi
 
 Do **not** make Docker depend on the mounts (`RequiresMountsFor=` in a `docker.service` drop-in). It is a hard dependency: with the server down at boot, Docker, and every container on the PC, would not start.
 
+## Updating automatically
+
+`agent/auto-update.sh` is a host script like the watchdog. From `~/letterboxd_scraper`: `sudo ./agent/auto-update.sh --install --dir /opt/synchub-worker` (add `--window 02:00-06:00` for a maintenance window, `--dry-run` first to see what it writes). A systemd timer then checks every hour: `git fetch`, and if `origin` has new code it updates, but only when SyncHub says the worker is running no job, or when the time is inside the window (a job running then is cut off; SyncHub gives it to a worker again). It runs `git merge --ff-only` and `update-worker.sh --no-pull`. If that fails, a failed build leaves the running container alone, and in every failure the checkout goes back to the last good commit and that code is rebuilt, so the worker ends on the old code. The failed commit is not tried again until newer code arrives. SyncHub is told either way: a line on the Workers page and a notification ("A worker updated itself" with the version, "A worker's automatic update failed" with the error tail), both switchable per person under *What to tell me about*. If SyncHub cannot be reached the report is kept and sent on the next check. It reads `SYNCHUB_URL` and `SYNCHUB_TOKEN` from the worker folder's `.env`; settings (`SYNCHUB_REPO`, `SYNCHUB_WORKER_DIR`, `SYNCHUB_UPDATE_WINDOW`) are in `/etc/synchub-auto-update.conf`. Look: `sudo ./agent/auto-update.sh --status` or `journalctl -t synchub-auto-update`. Update right now, even when busy: `sudo synchub-auto-update --now`. Remove: `--uninstall`.
+
 ## When something is wrong
 
 | You see | Likely cause and fix |

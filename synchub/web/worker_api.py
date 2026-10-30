@@ -97,6 +97,24 @@ def register(app):
             files = storage.setup_files(g.worker["name"], request.host_url.rstrip("/"), _bearer(), storage.list_all(conn), host_mounts=request.args.get("mounts") == "host")
         return Response(files[filename], mimetype="text/plain")
 
+    @route("/update/check", "update_check")
+    def update_check():
+        """For agent/auto-update.sh: is the worker running anything a restart would cut off?"""
+        with db.connection() as conn:
+            running = workers.idle(conn, g.worker["id"])
+        return jsonify(ok=True, idle=running == 0, running=running)
+
+    @route("/update/report", "update_report")
+    def update_report():
+        """For agent/auto-update.sh: what the automatic update did ('ok' or 'failed', the version, the error tail). The administrators are told."""
+        with db.connection() as conn:
+            try:
+                report = workers.report_update(conn, g.worker["id"], _body())
+            except ValueError as exc:
+                return _error(str(exc), 400)
+        logger.info(f"[workers] {g.worker['name']} automatic update: {report['status']} {report['commit']}")
+        return jsonify(ok=True)
+
     @route("/poll", "poll")
     def poll():
         data = _body()
