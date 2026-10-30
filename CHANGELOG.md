@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Follow-up to the phase PR (no new migration).**
+  - **Picture quality on the record page.** The video bitrate against the ceiling for its size, what the compression rule would do and the size it would give, and the VMAF score (with its floor) of a finished job.
+  - **Approve together** has a profile dropdown (convert all of them with one profile) and a *What will happen* summary: how many files are compressed and about how many GB that saves, Dolby Vision conversions, compatible audio tracks and extra copies.
+  - **Rejected files have their own queue,** so *Done* only means finished. A failed job stays under *Needs you*.
+  - **Workers page version column,** green when the worker matches this SyncHub and "update available" when it does not.
+  - **Show folders for files being brought in** get the year SyncHub knows (`Show (2018)`), and optionally `[tmdbid-N]` (Options, off by default). A folder already in the library is never renamed for this.
+  - **Request notices** for the person who asked for a title: a download problem (Radarr/Sonarr *manual interaction required* or a failed download; on by default) and a download started (off by default). SyncHub switches on the *manual interaction required* webhook in Radarr/Sonarr when it creates the webhook and the service supports it.
 - **Phase PR: profile rules, bitrate compression, a compatible audio track, Jellyfin naming, two outputs in one job, worker benchmark (migrations 025 and 026).** Rebuild every worker image (`docs/UPGRADE.md`); jobs that need the new agent features (`audio_add`, `two_outputs`, `benchmark`) only go to a worker that has them.
   - **Rules per conversion profile.** A profile can override compression (on/off, a ceiling per picture size, the safety limits), the Dolby Vision action, GPU use, the quality score, clean names, the audio mode and the extra copy. A rule left blank follows the Options page, so changing a default still reaches every profile that did not override it. New built-in profiles: *Direct play*, *Space saver*, *Archive*. *Move only* never inherits compression or naming.
   - **Compression by bitrate, not by GB.** Ceilings in Mbps of video: 4K 18, 1080p 8, 720p 4, smaller 2 (TV episodes half of the film ceiling). A video is only compressed when it is more than 1.5 times its ceiling, so efficient HEVC is left alone. A GB limit (4K 45, 1080p 15) catches a huge file with an ordinary bitrate. The old GB settings are hidden; saving the Options page switches to the new rule. Dolby Vision 7 and 8 can be converted to 8.1 without re-encoding, left as they are, asked about, or compressed as HDR10.

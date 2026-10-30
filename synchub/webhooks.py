@@ -23,8 +23,8 @@ JELLYFIN_ITEM_FLAGS = ("EnableMovies", "EnableEpisodes", "EnableSeries", "Enable
 
 # The notification settings SyncHub switches on when it creates the webhook (only those the service supports).
 EVENT_FLAGS = {
-    "radarr": ("onGrab", "onDownload", "onUpgrade", "onRename", "onMovieAdded", "onMovieDelete", "onMovieFileDelete", "onMovieFileDeleteForUpgrade"),
-    "sonarr": ("onGrab", "onDownload", "onUpgrade", "onRename", "onSeriesAdd", "onSeriesDelete", "onEpisodeFileDelete", "onEpisodeFileDeleteForUpgrade", "onImportComplete"),
+    "radarr": ("onGrab", "onDownload", "onUpgrade", "onRename", "onMovieAdded", "onMovieDelete", "onMovieFileDelete", "onMovieFileDeleteForUpgrade", "onManualInteractionRequired"),
+    "sonarr": ("onGrab", "onDownload", "onUpgrade", "onRename", "onSeriesAdd", "onSeriesDelete", "onEpisodeFileDelete", "onEpisodeFileDeleteForUpgrade", "onImportComplete", "onManualInteractionRequired"),
 }
 
 

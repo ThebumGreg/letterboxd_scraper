@@ -94,6 +94,20 @@ register(EventType(
                              + (" The first episode has arrived." if p.get("kind") == "show" else ""), ttl_seconds=7 * 86400),
     description="A movie on your watchlist or that you requested reaches the library, or the first episode of a show you wanted does.", expires_hours=24 * 7,
 ))
+register(EventType(
+    "request_started", "A title I requested started downloading", USER,
+    render=lambda p: Message(f"Downloading: {p.get('title') or 'a title'}", f"{p.get('title') or 'A title'}{' (' + str(p['year']) + ')' if p.get('year') else ''} was found and is downloading.",
+                             priority=-1, ttl_seconds=2 * 86400),
+    description="Radarr or Sonarr has found something for a title you asked for and started to download it. You are told again when it reaches the library.",
+    expires_hours=48, default_on=False,
+))
+register(EventType(
+    "request_failed", "A download for a title I requested needs attention", USER,
+    render=lambda p: Message(f"Problem: {p.get('title') or 'a title'}", f"The download for {p.get('title') or 'a title'}{' (' + str(p['year']) + ')' if p.get('year') else ''} needs attention"
+                             + (f": {p['reason']}" if p.get("reason") else "") + ". An admin can look in Radarr or Sonarr.", priority=0, ttl_seconds=2 * 86400),
+    description="Radarr or Sonarr reports that the download of a title you asked for failed or cannot be imported without a person.",
+    expires_hours=48, default_on=True,
+))
 def _episodes(p):
     """'S2E5', 'S2E5 and S2E6' or '3 new episodes' from the episodes in a payload."""
     eps = p.get("episodes") or []

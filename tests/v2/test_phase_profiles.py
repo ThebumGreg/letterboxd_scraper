@@ -362,3 +362,23 @@ def test_a_new_episode_gets_the_show_year_and_tag_but_a_library_folder_is_left_a
     settings.set_value("naming_style", "current", conn=conn)
     conn.commit()
     assert rc.cfg_for(conn, new, cfg, {}).show_folders == ()
+
+
+# ---------------------------------------------------------------- request progress notices
+def test_the_person_who_requested_a_title_hears_about_its_download(v2, conn):
+    from synchub.notifications import progress
+    from .test_new_episodes import following
+    from .test_notification_rules import notes
+    from synchub.notifications import store
+    pid = following(conn)
+    media_id = conn.execute("INSERT INTO media (kind, title, year, tmdb_id) VALUES ('movie', 'Heat', 1995, '949')").lastrowid
+    conn.execute("INSERT INTO manual_request (media_id, profile_id) VALUES (?, ?)", (media_id, pid))
+    conn.commit()
+    payload = {"movie": {"tmdbId": 949, "title": "Heat"}, "downloadId": "abc"}
+    assert progress.from_webhook(conn, "Download", payload) == 0                        # an import is the arrival notice, not this one
+    assert progress.from_webhook(conn, "Grab", payload) == 0                              # 'started' is off until a person switches it on
+    assert progress.from_webhook(conn, "ManualInteractionRequired", {**payload, "message": "No files found are eligible for import"}) == 1
+    got = notes(conn, "request_failed")
+    assert len(got) == 1 and got[0]["profile_id"] == pid and "Heat" in got[0]["title"] and "eligible for import" in got[0]["body"]
+    assert progress.from_webhook(conn, "ManualInteractionRequired", payload) >= 0
+    assert progress.from_webhook(conn, "Grab", {"movie": {"tmdbId": 1}}) == 0           # nobody asked for that title
