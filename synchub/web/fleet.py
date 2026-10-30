@@ -1,6 +1,7 @@
 """Pages for the worker fleet: the Workers page, its live fragment and the actions behind its buttons."""
 from flask import jsonify, render_template, request
 
+from synchub import __version__
 from synchub import db, jobs, storage, versions, webhooks, workers
 from synchub.library import cleanup, migrate
 
@@ -189,7 +190,7 @@ def snapshot(conn):
     listed = [describe_job(j) for j in jobs.recent(conn, 50)]
     for j in listed:
         j["waiting_for"] = _waiting_for(j, able)
-    return {"workers": [describe_worker(w, root_names) for w in raw], "jobs": listed, "counts": counts, "summary": summary, "root_names": root_names}
+    return {"workers": [describe_worker(w, root_names) for w in raw], "jobs": listed, "counts": counts, "summary": summary, "root_names": root_names, "app_version": __version__}
 
 
 def _setup(conn, name, token=None):

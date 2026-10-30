@@ -4,7 +4,7 @@
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0" id="workerTable">
             <thead class="table-light">
-                <tr><th class="ps-4">Worker</th><th>Status</th><th>Machine</th><th>Jobs</th><th>Space</th><th>Shares</th><th>Seen</th><th class="pe-4 text-end">Actions</th></tr>
+                <tr><th class="ps-4">Worker</th><th>Status</th><th>Machine</th><th>Version</th><th>Jobs</th><th>Space</th><th>Shares</th><th>Seen</th><th class="pe-4 text-end">Actions</th></tr>
             </thead>
             <tbody>
                 {% for w in workers %}
@@ -17,9 +17,9 @@
                     <td><span class="badge bg-{{ w.state_color }}{% if w.state_color in ['info', 'warning'] %} text-dark{% endif %}">{{ w.state }}</span></td>
                     <td class="small">
                         {{ w.hostname or '-' }}{% if w.os %}<div class="text-body-secondary">{{ w.os }}</div>{% endif %}
-                        {% if w.version %}<div class="text-body-secondary">agent {{ w.version }}</div>{% endif %}
                         {% if w.encoders %}<div class="text-body-secondary" title="Encoders this worker can use">{{ w.encoders }}</div>{% endif %}
                     </td>
+                    <td class="small">{% if not w.version %}-{% else %}<span class="badge bg-{{ 'success' if w.version == app_version else 'warning text-dark' }}" title="{{ 'Matches this SyncHub' if w.version == app_version else 'SyncHub is ' ~ app_version ~ '. Rebuild this worker (docs/UPGRADE.md).' }}">{{ w.version }}</span>{% if w.version != app_version %}<div class="text-body-secondary">update available</div>{% endif %}{% endif %}</td>
                     <td>{{ w.running }} / {{ w.slots }}</td>
                     <td class="small">
                         {% if w.free %}{{ w.free }} free{% else %}-{% endif %}
@@ -52,7 +52,7 @@
                     </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="8" class="text-center text-muted py-4">No workers yet. Add one to get a token for its settings file.</td></tr>
+                <tr><td colspan="9" class="text-center text-muted py-4">No workers yet. Add one to get a token for its settings file.</td></tr>
                 {% endfor %}
             </tbody>
         </table>

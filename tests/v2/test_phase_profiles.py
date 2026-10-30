@@ -306,3 +306,15 @@ def test_the_record_page_shows_the_bitrate_against_the_ceiling_and_the_vmaf_of_a
     conn.commit()
     page = client.get(f"/library/record/{rec_id}").get_data(as_text=True)
     assert "96.4" in page and "floor 95.0" in page
+
+
+def test_the_workers_page_flags_a_worker_that_is_not_on_this_version(client, conn):
+    from synchub import __version__, workers
+    wid = _worker(conn)
+    conn.execute("UPDATE worker SET version = '0.9.0' WHERE id = ?", (wid,))
+    conn.commit()
+    page = client.get("/workers").get_data(as_text=True)
+    assert "update available" in page and "0.9.0" in page
+    conn.execute("UPDATE worker SET version = ? WHERE id = ?", (__version__, wid))
+    conn.commit()
+    assert "update available" not in client.get("/workers").get_data(as_text=True)
