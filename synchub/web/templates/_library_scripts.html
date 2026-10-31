@@ -24,6 +24,13 @@
         librarySay(data.message || (data.ok ? 'Scan queued.' : 'Failed.'), data.ok);
         if (data.ok) refresh();
     });
+    $('clearScanBtn').addEventListener('click', async () => {
+        const root = $('scanRoot').value, folder = $('scanPrefix').value.trim();
+        if (!confirm(`Take the undecided and rejected files ${folder ? 'under "' + folder + '" in' : 'of'} the share "${root}" off the list? Queued, approved and converted files stay. Nothing on the share is touched.`)) return;
+        const data = await libraryPost('/api/library/forget_folder', { root, folder });
+        librarySay(data.message || (data.ok ? 'Done.' : 'Failed.'), data.ok);
+        refresh();
+    });
     $('dupBtn').addEventListener('click', async () => {
         const data = await libraryPost('/api/library/duplicates');
         librarySay(data.message || (data.ok ? 'Done.' : 'Failed.'), data.ok);

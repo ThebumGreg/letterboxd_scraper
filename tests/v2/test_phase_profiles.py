@@ -418,3 +418,18 @@ def test_leaving_a_folder_out_stops_later_scans_and_clears_what_was_undecided(cl
     rules = scan.ExcludeRules(scan.exclude_list(settings.get("library_exclude_folders", conn=conn)), "tfiles")
     assert rules.path("Skip/Me/new.mkv") and not rules.path("Other/new.mkv")
     assert two not in {r[0] for r in conn.execute("SELECT id FROM library_file")}
+
+
+def test_a_wrong_scan_can_be_cleared_by_share_and_folder_but_decided_files_stay(client, conn):
+    from synchub.library import store  # noqa: F401
+    from .library_helpers import add
+    a = add(conn, rel="Wrong/A.mkv", name="A (2000).mkv")
+    b = add(conn, rel="Right/B.mkv", name="B (2000).mkv")
+    c = add(conn, rel="Wrong/C.mkv", name="C (2000).mkv")
+    conn.execute("UPDATE library_file SET approval_status = 'approved' WHERE id = ?", (c,))
+    conn.commit()
+    root = conn.execute("SELECT root_name FROM library_file WHERE id = ?", (a,)).fetchone()[0]
+    assert client.post("/api/library/forget_folder", json={"root": "", "folder": "Wrong"}).status_code == 400
+    answer = client.post("/api/library/forget_folder", json={"root": root, "folder": "Wrong"}).get_json()
+    assert answer["ok"] and answer["removed"] == 1
+    assert {r[0] for r in conn.execute("SELECT id FROM library_file")} == {b, c}

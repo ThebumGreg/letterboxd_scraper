@@ -89,7 +89,7 @@ class Setup:
         env = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "SHIM_LOG": str(self.log), "SHIM_STATE": str(self.state), "SHIM_FAIL_MOUNT": self.fail_mount,
                "SYNCHUB_FSTAB": str(self.fstab), "SYNCHUB_CRED_FILE": str(self.cred), "SYNCHUB_INI_FILE": str(self.root / "synchub-agent.ini"),
                "SYNCHUB_AGENT_DIR": str(self.root / "agent-install"), "SYNCHUB_SYSTEMD_DIR": str(self.root / "systemd"),
-               "SYNCHUB_EXTRAS_FLAGS": "--dry-run", "SYNCHUB_DRI_DIR": str(self.root / "no-dri"), "SYNCHUB_SETUP_ALLOW_NONROOT": "1", "SYNCHUB_SETUP_ALLOW_LOCALHOST": "1", "HOME": str(self.root), **(extra_env or {})}
+               "SYNCHUB_EXTRAS_FLAGS": "--dry-run", "SYNCHUB_DRI_DIR": str(self.root / "no-dri"), "SYNCHUB_SETUP_ALLOW_NONROOT": "1", "SYNCHUB_SETUP_ALLOW_TEMP_CHECKOUT": "1", "SYNCHUB_SETUP_ALLOW_LOCALHOST": "1", "HOME": str(self.root), **(extra_env or {})}
         for name in ("SYNCHUB_URL", "SYNCHUB_TOKEN", "SMB_USER", "SMB_PASSWORD", "GITHUB_TOKEN"):
             env.pop(name, None)
         command = ["bash", str(SCRIPT), "-y"]
@@ -419,3 +419,8 @@ def test_the_login_can_be_saved_and_removed_on_the_storage_page_and_a_lost_key_i
     client.post("/api/storage/smb_login/clear", json={})
     with v2.connection() as conn:
         assert storage.smb_login_status(conn) == {"set": False, "user": None, "lost": False}
+
+
+def test_a_checkout_in_a_temporary_folder_is_refused(tmp_path):
+    text = (__import__("pathlib").Path(__file__).resolve().parents[2] / "agent" / "setup-worker.sh").read_text()
+    assert "/tmp/*|/var/tmp/*" in text and "SYNCHUB_SETUP_ALLOW_TEMP_CHECKOUT" in text
