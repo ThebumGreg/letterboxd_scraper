@@ -100,6 +100,13 @@
                         <input type="text" class="form-control" id="protect_viewer_app" name="protect_viewer_app" value="{{ settings.protect_viewer_app }}" autocomplete="off">
                         <div class="form-text">An Android package name. VLC for Android (<code>org.videolan.vlc</code>) opens the camera streams; install it on the TV first.</div>
                     </div>
+                    <div class="mb-3">
+                        <label class="form-label">Cameras to serve</label>
+                        <input type="hidden" id="protect_cameras" name="protect_cameras" value="{{ settings.protect_cameras }}">
+                        <div id="cameraPicker" class="small"><span class="text-body-secondary">Not loaded.</span></div>
+                        <button type="button" class="btn btn-outline-secondary btn-sm mt-1" id="loadCameras">Load cameras from the console</button>
+                        <div class="form-text">Only the ticked cameras go to go2rtc and the TV's pop-up. With none ticked, every connected camera is served. Save after changing.</div>
+                    </div>
                     <button type="button" class="btn btn-outline-info btn-sm" data-test-service="protect" data-test-fields="protect_host,protect_api_key,protect_verify_tls">Test connection</button>
                     <span class="small ms-2" data-test-result="protect" role="status"></span>
                     <hr>
@@ -407,6 +414,28 @@
 
 {% block scripts %}
 <script>
+    // Cameras to serve: tick the ones the relay and the TV pop-up should offer (all when none is ticked).
+    (function () {
+        const box = document.getElementById('cameraPicker'), hidden = document.getElementById('protect_cameras'), btn = document.getElementById('loadCameras');
+        if (!box || !btn) return;
+        const sync = () => { const all = box.querySelectorAll('input'), on = [...box.querySelectorAll('input:checked')]; hidden.value = on.length === all.length ? '' : on.map((i) => i.value).join(','); };
+        btn.addEventListener('click', async () => {
+            box.textContent = 'Loading...';
+            try {
+                const r = await (await fetch('/api/protect/cameras', { headers: { Accept: 'application/json' } })).json();
+                if (!r.ok) { box.textContent = r.message || 'Could not load the cameras. Save the address and key first.'; return; }
+                const picked = hidden.value ? hidden.value.split(',') : null;
+                box.replaceChildren(...r.cameras.map((c) => {
+                    const label = document.createElement('label'), input = document.createElement('input');
+                    label.className = 'd-block'; input.type = 'checkbox'; input.className = 'form-check-input me-2'; input.value = c.id;
+                    input.checked = picked ? picked.includes(c.id) : true; input.addEventListener('change', sync);
+                    label.append(input, c.name + (c.state && c.state !== 'CONNECTED' ? ' (' + c.state.toLowerCase() + ')' : ''));
+                    return label;
+                }));
+                
+            } catch (e) { box.textContent = 'Failed: ' + e.message; }
+        });
+    })();
     // Camera relay card: the checklist from the chosen worker to cameras being served, refreshed while the page is open.
     (function () {
         const list = document.getElementById('relaySteps');

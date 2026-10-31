@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Protect Test connection obeys the certificate switch.** The Test button sent a switch's fixed value ("1") whether it was on or off, so the check was always on and a console's own certificate always failed. It now sends the real state.
+- **Choose which cameras are served.** *Cameras to serve* in the Protect settings loads the console's cameras with tick boxes; only the ticked ones go to go2rtc and the TV's pop-up (none ticked: all connected cameras).
+- **Integrated graphics shown in a container.** With no `lspci`, the agent reads the vendor and driver of each passed-in render device from `/sys/class/drm`, so the Workers page shows "Intel graphics (renderD128)" instead of "no graphics card".
+- **Update helper hardening.** It replaces its own installed copy when the checkout has a newer one; before setting up the camera relay it checks that Compose will actually load the override (not when `COMPOSE_FILE` or `-f` chooses other files) and reports the reason instead of "no such service".
 - **Auto-update repairs root-owned git files.** If a past `sudo git` left files in the checkout's `.git` that its owner cannot write, the update timer now hands them back once and retries the fetch instead of failing every minute.
 - **Update problems show in SyncHub.** A failed fetch (or a checkout with no upstream) is reported once as an "auto-update problem" with its message and raises the update-failed notice; the worker row has an "Update log" with the last lines of the update log, so `journalctl` is not needed. The next good fetch clears it.
 
