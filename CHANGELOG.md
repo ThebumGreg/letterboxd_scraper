@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+**Workers can update themselves.** `sudo ./agent/auto-update.sh --install` on a worker PC adds an hourly timer that pulls new code and rebuilds, but only when the worker is idle or inside a maintenance window you set. A failed update leaves (or puts back) the old version and is not retried until newer code arrives. SyncHub shows the result on the Workers page and sends the new *A worker updated itself* and *A worker's automatic update failed* notifications. `update-worker.sh` now says whether the old worker kept running when a build failed. Needs the SyncHub update first (two new worker API calls); no migration.
+
 - **Fixes and list clean-up.**
   - The job details dialog no longer freezes the page when opened from the Jobs tab (the dialogs now open from any tab).
   - **Taking records off the Library list.** A record whose file is gone has *Take off the list*; *Clear N missing* in Needs you does them all after a count; *Leave this folder out of scans* adds the folder to the scan exclusions and clears its undecided records. No file is ever touched; approved, queued and finished records stay.

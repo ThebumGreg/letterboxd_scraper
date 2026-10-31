@@ -102,7 +102,13 @@ fi
 if mount | grep -q ' /mnt/tower/'; then :; else echo "WARNING: nothing is mounted under /mnt/tower/. The worker will start but cannot reach the shares." >&2; fi
 
 say "Rebuilding and restarting the worker"
-( cd "$DIR" && run docker compose up -d --build ) || die "Docker could not rebuild the worker. 'cd $DIR && docker compose logs' may say more."
+if ! ( cd "$DIR" && run docker compose up -d --build ); then
+    # docker compose builds the image before it touches the container, so a failed build leaves the running worker alone; say so, and prove it.
+    if [ -n "$(cd "$DIR" && docker compose ps -q --status running 2>/dev/null)" ]; then
+        die "Docker could not rebuild the worker. The worker that was running is still running, on its old code."
+    fi
+    die "Docker could not rebuild the worker, and no worker container is running. 'cd $DIR && docker compose logs' may say more."
+fi
 [ "$DRY_RUN" = 1 ] && exit 0
 
 for _ in $(seq 1 18); do

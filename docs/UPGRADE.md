@@ -165,6 +165,10 @@ Then, in SyncHub: *Library settings > GPU encoding > Use a worker's GPU when it 
 
 Workers already report their agent version to SyncHub. A possible design: SyncHub shows "update available" per worker (its version is behind the repository's), and a worker with an *Auto-update* switch runs a small host-side updater, a systemd timer that calls `update-worker.sh --no-pull` after a `git pull --ff-only`, only when the worker is idle (no running job). A failed health check afterwards would roll back to the previous commit and tell SyncHub. A container cannot safely rebuild itself, which is why the updater would live on the host. Say if you want this built; the manual flow above stays as the fallback.
 
+## Updating a worker automatically
+
+Instead of running `update-worker.sh` by hand, install the hourly check once on the worker PC: `sudo ./agent/auto-update.sh --install --dir /opt/synchub-worker [--window 02:00-06:00]`. It updates only when the worker is idle (or inside the window), keeps or restores the old version if anything fails, does not retry a failed commit, and tells SyncHub either way. Update SyncHub first: the worker reports to two API calls that older SyncHub versions do not have. Details in `agent/README.md`, "Updating automatically".
+
 ## Worker features added by the profile-rules release
 
 A job only goes to a worker that lists the features it needs, so an old worker simply gets fewer jobs until it is rebuilt: `audio_add` (a compatible audio track), `two_outputs` (a Dolby Vision conversion plus the smaller copy in one job) and `benchmark` (the *Run benchmark* button). After rebuilding, `python3 synchub_agent.py --benchmark` on the worker prints the same table the Workers page shows. Port 80 is optional: see `docker-compose.port80.yml`.
