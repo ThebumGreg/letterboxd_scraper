@@ -311,7 +311,7 @@ def stored_log(conn, worker_id):
 
 # ---------------------------------------------------------------- the automatic update (agent/auto-update.sh on the worker PC)
 UPDATE_KEY = "worker_update:{}"
-UPDATE_FIELDS = ("status", "version", "previous", "commit", "restored", "error", "at")
+UPDATE_FIELDS = ("status", "version", "previous", "commit", "restored", "error", "log", "at")
 
 
 HOST_REQUESTS = ("update", "restart")
@@ -358,9 +358,9 @@ def report_update(conn, worker_id, info, now=None):
     Returns the stored report. Raises ValueError for a status that is neither."""
     info = info if isinstance(info, dict) else {}
     status = info.get("status")
-    if status not in ("ok", "failed", "current"):
-        raise ValueError("The update report needs a status of 'ok', 'failed' or 'current'.")
-    report = {k: str(info.get(k) or "")[:2000 if k == "error" else 80] for k in UPDATE_FIELDS if k != "at"}
+    if status not in ("ok", "failed", "current", "problem"):
+        raise ValueError("The update report needs a status of 'ok', 'failed', 'current' or 'problem'.")
+    report = {k: str(info.get(k) or "")[:{"error": 2000, "log": 6000}.get(k, 80)] for k in UPDATE_FIELDS if k != "at"}
     report["status"], report["at"] = status, now or db.now()
     settings.set_value(UPDATE_KEY.format(worker_id), json.dumps(report), conn=conn)
     if status == "current":                                          # asked to update and there was nothing new: shown on the page, nothing to tell anyone
@@ -368,7 +368,8 @@ def report_update(conn, worker_id, info, now=None):
     w = get(conn, worker_id)
     name = (w or {}).get("name") or f"worker {worker_id}"
     kind = "worker_update_done" if status == "ok" else "worker_update_failed"
-    emit.notify(conn, kind, f"worker:{worker_id}:{kind}:{report['at']}:{report['commit']}", {"worker": name, **report}, now=report["at"])
+    same = f"{report['at']}:{report['commit']}" if status != "problem" else "problem:" + hashlib.sha1(report["error"].encode()).hexdigest()[:12]      # the same problem is told once
+    emit.notify(conn, kind, f"worker:{worker_id}:{kind}:{same}", {"worker": name, **{k: v for k, v in report.items() if k != "log"}}, now=report["at"])
     return report
 
 

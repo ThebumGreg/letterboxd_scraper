@@ -129,9 +129,11 @@ def describe_update(report):
         return None
     if report.get("status") == "current":
         return {"ok": True, "text": f"checked, already up to date ({webhooks.ago(report['at']) if report.get('at') else 'earlier'})", "error": None}
+    if report.get("status") == "problem":
+        return {"ok": False, "text": f"problem, see the log ({webhooks.ago(report['at']) if report.get('at') else 'earlier'})", "error": report.get("error"), "log": report.get("log")}
     ok = report.get("status") == "ok"
     what = f"updated to {report.get('version') or report.get('commit') or 'the newest code'}" if ok else f"update to {report.get('commit') or 'the newest code'} failed"
-    return {"ok": ok, "text": f"{what} ({webhooks.ago(report['at']) if report.get('at') else 'earlier'})", "error": None if ok else report.get("error")}
+    return {"ok": ok, "text": f"{what} ({webhooks.ago(report['at']) if report.get('at') else 'earlier'})", "error": None if ok else report.get("error"), "log": report.get("log")}
 
 
 def describe_worker(w, root_names=(), update=None, host_seen=False):

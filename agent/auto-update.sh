@@ -145,6 +145,10 @@ agent_version() { git_run show "${1:-HEAD}:agent/synchub_agent.py" 2>/dev/null |
 # Sends a report to SyncHub now; keeps it for the next check when SyncHub cannot be reached. A report SyncHub refuses is dropped (it would never be accepted).
 send_report() {
     local body="$1"
+    body="$(printf '%s' "$body" | LOGTEXT="$(journalctl -t synchub-auto-update -n 50 --no-pager -o cat 2>/dev/null | tail -n 50)" python3 -c 'import json,os,sys
+d = json.load(sys.stdin)
+if os.environ.get("LOGTEXT"): d["log"] = os.environ["LOGTEXT"][-5000:]
+sys.stdout.write(json.dumps(d, separators=(",", ":")))' 2>/dev/null || printf '%s' "$1")"
     if [ -z "${URL:-}" ] || [ -z "${TOKEN:-}" ]; then log "WARNING no SYNCHUB_URL or SYNCHUB_TOKEN in $DIR/.env: cannot tell SyncHub"; return 0; fi
     if api /update/report "$body" >/dev/null 2>"$STATE/curl.err"; then rm -f "$STATE/pending.json"; return 0; fi
     if grep -q 'error: 4' "$STATE/curl.err"; then log "WARNING SyncHub refused the report: $(tail -n1 "$STATE/curl.err")"; rm -f "$STATE/pending.json"; return 0; fi
@@ -208,9 +212,27 @@ if [ "$REQUEST" != update ] && [ "$FORCE" != 1 ]; then
 fi
 if [ "$REQUEST" = update ]; then log "SyncHub asked for an update now"; rm -f "$STATE/failed"; fi
 
-git_run fetch --quiet origin 2>"$STATE/git.err" || { log "WARNING git fetch failed: $(tail -n1 "$STATE/git.err")"; exit 0; }
+fetch_origin() { git_run fetch --quiet origin 2>"$STATE/git.err"; }
+# problem MESSAGE: logs a problem and tells SyncHub once per distinct message (not every minute); the next good fetch clears it.
+problem() {
+    log "WARNING $1"
+    [ "$(cat "$STATE/problem" 2>/dev/null)" = "$1" ] && return 0
+    printf '%s' "$1" > "$STATE/problem"
+    send_report "{\"status\":\"problem\",\"error\":$(printf '%s' "$1" | json_escape)}"
+}
+fetch_origin || {
+    # A past `sudo git ...` leaves root-owned files in .git that the owner cannot write: hand them back once.
+    if grep -q 'Permission denied' "$STATE/git.err" && [ "$(id -u)" = 0 ] && [ -n "$OWNER" ] && [ "$OWNER" != root ]; then
+        log "Fixing root-owned files in $REPO/.git, then retrying the fetch"
+        chown -R "$OWNER": "$REPO/.git" 2>/dev/null
+        fetch_origin
+    else
+        false
+    fi
+} || { problem "git fetch failed: $(tail -n1 "$STATE/git.err")"; exit 0; }
+if [ -f "$STATE/problem" ]; then rm -f "$STATE/problem"; log "git fetch works again"; send_report "{\"status\":\"current\",\"commit\":\"$(git_run rev-parse --short HEAD)\"}"; fi
 LOCAL="$(git_run rev-parse HEAD)"
-REMOTE="$(git_run rev-parse '@{u}' 2>/dev/null)" || { log "ERROR the checkout's branch has no upstream"; exit 1; }
+REMOTE="$(git_run rev-parse '@{u}' 2>/dev/null)" || { problem "the checkout's branch has no upstream"; exit 1; }
 if [ "$LOCAL" = "$REMOTE" ]; then
     touch "$CHECKED"; rm -f "$STATE/waiting"
     [ "$REQUEST" = update ] && { log "Already on the newest code ($(agent_version HEAD))"; send_report "{\"status\":\"current\",\"version\":\"$(agent_version HEAD)\",\"commit\":\"$(git_run rev-parse --short HEAD)\"}"; }
