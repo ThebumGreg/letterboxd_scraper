@@ -1,5 +1,7 @@
 # Dynamic DNS: where the 30 to 45 seconds go
 
+> **Findings note (October 2026), kept for reference.** What was added from it is in [CHANGELOG.md](../../CHANGELOG.md).
+
 **Question.** An update takes about 30 to 45 seconds to show. Is that SyncHub, Dynu, or something else?
 
 **Short answer.** From the code and from how DNS works, the most likely cause is **not SyncHub**: after the address changes, resolvers that already hold the old answer keep serving it until its life (the *TTL*) runs out. Dynu's API documents a default TTL of 90 seconds; a record with a 90 s TTL is stale for anything from 0 to 90 seconds at a resolver that cached it just before the change, **45 seconds on average**. That matches what was seen. It is a hypothesis: the services could not be reached from where this was written (a restricted network), so nothing below was measured against your Dynu account. The tools added to SyncHub measure it on your own network, and the next section says what each result would mean.

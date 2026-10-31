@@ -1,5 +1,7 @@
 # SyncHub — Data Model and Logic Design
 
+> **Status: built (the data model SyncHub runs on).** The schema in `synchub/migrations/` is the truth; this is the reasoning behind it.
+
 Status: **Phases 0-5 done.** The app lives in `synchub/` and runs with `python -m synchub.web`. The original app (`app.py`, `database.py` and its modules) has been removed.
 
 ## 1. Decisions already made

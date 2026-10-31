@@ -1,5 +1,7 @@
 # SyncHub Encoding and Library Migration: Plan (v2.2)
 
+> **Status: built, plus notes.** Sections 1 to 15 are the plan for workers, the Library and conversions (v2.2), with "as built" notes added as each phase landed; Appendix A is the worker protocol as built and is the API reference. For how to run a worker, use [WORKERS.md](WORKERS.md). Where this file and the code differ, the code wins.
+
 Status: **v2.2: Phases 1 (control plane) and 2 (worker agent and storage) are built and tested.** The agent copies files with verification, survives being killed mid-copy, and the site manages shares and generates the worker's setup files. The next piece is Phase 3, the Library page. See §14 for the order, §16 for what is still open and Appendix A for the worker protocol exactly as built. v1 was written from the Media Analysis and Migration tool you attached (`main.py`, `migrate.py`, `media_db.py`, `media_jobs.py`, `media_config.py`, `webui.py`, `media_recommend.py`, `media_layout.py`, `media_roots.py`, `media_report.py`, `review.py` and the three `.md` files). Nothing from the tool was run.
 
 ## 1. Requirements and decisions

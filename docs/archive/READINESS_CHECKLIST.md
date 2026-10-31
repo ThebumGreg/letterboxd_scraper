@@ -1,5 +1,7 @@
 # Readiness checklist
 
+> **Historical.** This is the checklist for the V1.1 branch (a copy of the database tested in WSL). It is kept for the ideas; for a current release use [RELEASING.md](../RELEASING.md) and the notes in [CHANGELOG.md](../../CHANGELOG.md).
+
 A basic list of things to try before this branch goes to `main` as V1.1. It assumes you run the branch in WSL against a **copy** of your live database, with the live SyncHub still running in Docker on another machine.
 
 Items marked ★ could not be checked without your hardware or devices, so they matter most. If something fails, copy the matching line from the Log on **System, Remote Tools** and send it along.
