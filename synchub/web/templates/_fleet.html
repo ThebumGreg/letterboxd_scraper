@@ -17,6 +17,7 @@
                     <td><span class="badge bg-{{ w.state_color }}{% if w.state_color in ['info', 'warning'] %} text-dark{% endif %}">{{ w.state }}</span></td>
                     <td class="small">
                         {{ w.hostname or '-' }}{% if w.os %}<div class="text-body-secondary">{{ w.os }}</div>{% endif %}
+                        {% if w.auto_update %}<div class="{{ 'text-body-secondary' if w.auto_update.ok else 'text-danger' }}"{% if w.auto_update.error %} title="{{ w.auto_update.error }}"{% endif %}>auto-update: {{ w.auto_update.text }}</div>{% endif %}
                         {% if w.encoders %}<div class="text-body-secondary" title="Encoders this worker can use">{{ w.encoders }}</div>{% endif %}
                     </td>
                     <td class="small">{% if not w.version %}-{% else %}<span class="badge bg-{{ 'success' if w.version == app_version else 'warning text-dark' }}" title="{{ 'Matches this SyncHub' if w.version == app_version else 'SyncHub is ' ~ app_version ~ '. Rebuild this worker (docs/UPGRADE.md).' }}">{{ w.version }}</span>{% if w.version != app_version %}<div class="text-body-secondary">update available</div>{% endif %}{% endif %}</td>

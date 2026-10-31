@@ -8,7 +8,8 @@ import json
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from synchub import db
+from synchub import db, settings
+from synchub.notifications import emit
 
 PROTOCOL = 1                  # bumped when the worker API changes incompatibly; older agents are refused
 ONLINE_SECONDS = 60           # a worker that has not polled for this long shows as offline
@@ -239,6 +240,40 @@ def stored_log(conn, worker_id):
     r = conn.execute("SELECT * FROM worker_log WHERE worker_id = ?", (worker_id,)).fetchone()
     return dict(r) if r else None
 
+
+# ---------------------------------------------------------------- the automatic update (agent/auto-update.sh on the worker PC)
+UPDATE_KEY = "worker_update:{}"
+UPDATE_FIELDS = ("status", "version", "previous", "commit", "restored", "error", "at")
+
+
+def idle(conn, worker_id):
+    """How many jobs the worker is running right now (0 = nothing would be cut off by a restart)."""
+    return conn.execute("SELECT COUNT(*) FROM job WHERE worker_id = ? AND status = 'running'", (worker_id,)).fetchone()[0]
+
+
+def report_update(conn, worker_id, info, now=None):
+    """Records what the automatic update did on a worker and tells the administrators. `info` is the PC's own report: status 'ok' or 'failed'.
+
+    Returns the stored report. Raises ValueError for a status that is neither."""
+    info = info if isinstance(info, dict) else {}
+    status = info.get("status")
+    if status not in ("ok", "failed"):
+        raise ValueError("The update report needs a status of 'ok' or 'failed'.")
+    report = {k: str(info.get(k) or "")[:2000 if k == "error" else 80] for k in UPDATE_FIELDS if k != "at"}
+    report["status"], report["at"] = status, now or db.now()
+    settings.set_value(UPDATE_KEY.format(worker_id), json.dumps(report), conn=conn)
+    w = get(conn, worker_id)
+    name = (w or {}).get("name") or f"worker {worker_id}"
+    kind = "worker_update_done" if status == "ok" else "worker_update_failed"
+    emit.notify(conn, kind, f"worker:{worker_id}:{kind}:{report['at']}:{report['commit']}", {"worker": name, **report}, now=report["at"])
+    return report
+
+
+def last_update(conn, worker_id):
+    """The last update report of a worker (a dict, see UPDATE_FIELDS), or None."""
+    text = settings.get(UPDATE_KEY.format(worker_id), "", conn=conn)
+    report = _load(text, {})
+    return report or None
 
 # ---------------------------------------------------------------- the benchmark ("Run benchmark")
 BENCHMARK_KEEP = 10

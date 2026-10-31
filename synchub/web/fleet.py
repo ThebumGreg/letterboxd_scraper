@@ -123,7 +123,16 @@ def describe_roots(w, names):
     return out
 
 
-def describe_worker(w, root_names=()):
+def describe_update(report):
+    """The last automatic update as a short line for the Workers page, or None."""
+    if not report:
+        return None
+    ok = report.get("status") == "ok"
+    what = f"updated to {report.get('version') or report.get('commit') or 'the newest code'}" if ok else f"update to {report.get('commit') or 'the newest code'} failed"
+    return {"ok": ok, "text": f"{what} ({webhooks.ago(report['at']) if report.get('at') else 'earlier'})", "error": None if ok else report.get("error")}
+
+
+def describe_worker(w, root_names=(), update=None):
     """The worker plus what the page shows: a state, encoders, space, its shares and when it was last heard from."""
     if w["revoked"]:
         state, color = "Revoked", "danger"
@@ -141,7 +150,7 @@ def describe_worker(w, root_names=()):
     held = status.get("originals_count")
     w.update(state=state, state_color=color, encoders=", ".join(str(e) for e in _items(w["capabilities"].get("encoders"))),
              free=_gb(status.get("work_free_bytes")), originals=(f"{held} held, {_gb(status.get('originals_bytes')) or '?'}" if held else None),
-             seen=webhooks.ago(w["last_seen"]) if w["last_seen"] else "never", roots=describe_roots(w, root_names), host=describe_host(w))
+             seen=webhooks.ago(w["last_seen"]) if w["last_seen"] else "never", roots=describe_roots(w, root_names), host=describe_host(w), auto_update=describe_update(update))
     w["benchmark"] = describe_benchmark(w)
     return w
 
@@ -190,7 +199,7 @@ def snapshot(conn):
     listed = [describe_job(j) for j in jobs.recent(conn, 50)]
     for j in listed:
         j["waiting_for"] = _waiting_for(j, able)
-    return {"workers": [describe_worker(w, root_names) for w in raw], "jobs": listed, "counts": counts, "summary": summary, "root_names": root_names, "app_version": __version__}
+    return {"workers": [describe_worker(w, root_names, workers.last_update(conn, w["id"])) for w in raw], "jobs": listed, "counts": counts, "summary": summary, "root_names": root_names, "app_version": __version__}
 
 
 def _setup(conn, name, token=None):

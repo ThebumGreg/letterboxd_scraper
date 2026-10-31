@@ -71,6 +71,19 @@ register(EventType(
     description="A worker that was offline is back.",
 ))
 register(EventType(
+    "worker_update_done", "A worker updated itself", ADMIN,
+    render=lambda p: Message("Worker updated", f"{p.get('worker') or 'A worker'} now runs {p.get('version') or 'the latest code'}"
+                             + (f" ({p['commit']})" if p.get("commit") else "") + (f", up from {p['previous']}" if p.get("previous") and p.get("previous") != p.get("version") else "") + ".",
+                             priority=-1, ttl_seconds=86400),
+    description="The automatic update on a worker installed the newest code and the worker is running it.",
+))
+register(EventType(
+    "worker_update_failed", "A worker's automatic update failed", ADMIN,
+    render=lambda p: Message("Worker update failed", f"{p.get('worker') or 'A worker'} could not update to {p.get('commit') or 'the newest code'}"
+                             f"{'; it was put back to ' + p['restored'] if p.get('restored') else ''}. {p.get('error') or 'No reason given.'}"[:1000], priority=0),
+    description="The automatic update on a worker failed. The old version keeps running. The update is not tried again until there is newer code.",
+))
+register(EventType(
     "share_problem", "A share is not mounted", ADMIN,
     render=lambda p: Message("Share problem", f"{p.get('worker') or 'A worker'} reports that '{p.get('root')}' is {p.get('state') or 'not ready'}.", priority=1, ttl_seconds=86400),
     description="A worker cannot reach one of its shares (not mounted, or its marker file is missing). Urgent.",
