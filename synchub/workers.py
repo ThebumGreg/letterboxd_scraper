@@ -314,7 +314,7 @@ UPDATE_KEY = "worker_update:{}"
 UPDATE_FIELDS = ("status", "version", "previous", "commit", "restored", "error", "log", "at")
 
 
-HOST_REQUESTS = ("update", "restart")
+HOST_REQUESTS = ("update", "restart", "relay")
 HOST_SEEN_KEY = "worker_host_seen:{}"
 HOST_SEEN_SECONDS = 300           # the PC's timer asks every minute; this long without it and the buttons say it is not installed
 
@@ -334,11 +334,13 @@ def host_check(conn, worker_id, now=None):
     w = get(conn, worker_id)
     running = idle(conn, worker_id)
     request = w["host_request"] if w else None
-    if request == "update" and running:
+    if request in ("update", "relay") and running:
         request = None                                              # it stays requested until the worker is idle
     if request:
         conn.execute("UPDATE worker SET host_request = NULL WHERE id = ? AND host_request = ?", (worker_id, request))
-    return {"idle": running == 0, "running": running, "auto_update": bool(setting(w, "auto_update")), "window": setting(w, "update_window"), "request": request}
+    from synchub import protect
+    return {"idle": running == 0, "running": running, "auto_update": bool(setting(w, "auto_update")), "window": setting(w, "update_window"), "request": request,
+            **protect.host_instruction(conn, worker_id)}
 
 
 def host_seen(conn, worker_id, now=None):

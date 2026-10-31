@@ -87,7 +87,7 @@ def box(tmp_path):
     calls.write_text("")
     # curl: the idle check answers $SHIM_IDLE; a report is written down. SHIM_HUB_DOWN makes every call fail.
     curl = ('echo "curl $*" >> "$SHIM_LOG"\n[ -z "${SHIM_HUB_DOWN:-}" ] || { echo "curl: (7) down" >&2; exit 7; }\n'
-            'case "$*" in *update/check*) if [ -n "${SHIM_ANSWER:-}" ]; then echo "$SHIM_ANSWER"; else echo "{\\"ok\\":true,\\"idle\\":${SHIM_IDLE:-true}}"; fi;; *) echo "{\\"ok\\":true}";; esac')
+            'case "$*" in *update/check*) if [ -n "${SHIM_ANSWER:-}" ]; then printf \"%s\\n\" \"$SHIM_ANSWER\"; else echo "{\\"ok\\":true,\\"idle\\":${SHIM_IDLE:-true}}"; fi;; *) echo "{\\"ok\\":true}";; esac')
     # the updater: succeeds, or fails with a build error while $SHIM_FAIL_UPDATE exists; writes down which version it was asked to deploy
     updater = ('echo "update $* $(sed -n "s/.*\\"\\(.*\\)\\".*/\\1/p" "$SYNCHUB_REPO/agent/synchub_agent.py")" >> "$SHIM_LOG"\n'
                'if [ -f "$SHIM_FAIL_UPDATE" ] && grep -q 2.0.0 "$SYNCHUB_REPO/agent/synchub_agent.py"; then echo "ERROR: build failed: no space left"; exit 1; fi')

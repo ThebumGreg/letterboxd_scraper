@@ -25,6 +25,7 @@
                     <td class="small">
                         {% if w.free %}{{ w.free }} free{% else %}-{% endif %}
                         {% if w.originals %}<div class="text-body-secondary" title="Original files kept for the retention period">originals: {{ w.originals }}</div>{% endif %}
+                        {% if w.relay %}<div><span class="badge bg-{{ w.relay.color }}{% if w.relay.color == 'warning' %} text-dark{% endif %}" title="{{ w.relay.title or 'go2rtc, the camera relay UniFi Protect cameras are shown through' }}">{{ w.relay.text }}</span></div>{% endif %}
                     </td>
                     <td class="small">
                         {% for r in w.roots %}<div class="{{ '' if w.online else 'opacity-50' }}"><span class="badge bg-{{ r.color }}{% if r.color == 'warning' %} text-dark{% endif %}" title="{{ r.message or '' }}">{{ r.label }}</span> {{ r.name }}</div>

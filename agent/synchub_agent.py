@@ -2720,6 +2720,7 @@ class Agent:
         self.stopping = threading.Event()
         self._benchmarking = threading.Event()
         self._relay_digest, self._relay_at, self._relay_names = None, 0.0, set()
+        self.relay_state, self._relay_probed = None, 0.0
         self.gpu_busy = 0                              # GPU encodes running now (see gpu_take)
         self.active = {}                               # job id -> JobRunner
         self.progress = {}                             # job id -> (stage, fraction), for the status summary
@@ -2790,7 +2791,7 @@ class Agent:
         host, self._cpu_sample = live_host_stats(self._cpu_sample)
         count, held = self.originals_held()
         return {"version": __version__, "uptime_seconds": int(time.monotonic() - self.started), "work_free_bytes": self.work_free(), "roots": roots, "jobs": jobs, "host": host,
-                "originals_count": count, "originals_bytes": held}
+                "originals_count": count, "originals_bytes": held, **({"relay": self.relay_state} if self.relay_state else {})}
 
     def originals(self):
         """(folder, meta) for each original kept after a file was replaced in place."""
@@ -2882,16 +2883,22 @@ class Agent:
         return answer
 
     RELAY_RESEND = 300           # seconds; go2rtc forgets streams added through its web address when it restarts, so they are given again now and then
+    RELAY_PROBE = 30             # seconds between looks at what go2rtc really serves (SyncHub shows it)
 
     def sync_relay(self, relay):
-        """The camera relay (go2rtc, in the same compose file as this worker): SyncHub says which streams it should serve, this puts them there.
-        The stream addresses carry Protect's stream keys, so only the names are ever logged. Nothing happens unless GO2RTC_URL is set."""
+        """The camera relay (go2rtc, in the same compose project as this worker): SyncHub says which streams it should serve, this puts them there,
+        and then reads back what go2rtc serves so SyncHub can show it. The stream addresses carry Protect's stream keys, so only the names are ever
+        logged or reported. Nothing happens unless GO2RTC_URL is set."""
         base = os.environ.get("GO2RTC_URL", "").rstrip("/")
         streams = {str(n): str(src) for n, src in ((relay or {}).get("streams") or {}).items()} if isinstance(relay, dict) else {}
+        nonce = str((relay or {}).get("nonce") or "") if isinstance(relay, dict) else ""
         if not base:
             return
-        digest = hashlib.sha1(json.dumps(streams, sort_keys=True).encode("utf-8")).hexdigest()
-        if digest == self._relay_digest and time.monotonic() - self._relay_at < self.RELAY_RESEND:
+        digest = hashlib.sha1(json.dumps([streams, nonce], sort_keys=True).encode("utf-8")).hexdigest()
+        now = time.monotonic()
+        if digest == self._relay_digest and now - self._relay_at < self.RELAY_RESEND:
+            if now - self._relay_probed >= self.RELAY_PROBE:
+                self._relay_look(base, streams)
             return
 
         def call(method, query):
@@ -2906,11 +2913,25 @@ class Agent:
         except (urllib.error.URLError, OSError, ValueError) as exc:
             if self._relay_digest is not None or self._relay_at == 0.0:
                 self.log.warning(f"Could not give the camera relay at {base} its cameras: {exc}")
-            self._relay_digest, self._relay_at = None, time.monotonic()
+            self._relay_digest, self._relay_at = None, now
+            self.relay_state = {"up": False, "streams": [], "error": f"go2rtc did not answer at {base} ({exc.__class__.__name__})"}
             return
         if digest != self._relay_digest:
             self.log.info(f"The camera relay now serves {len(streams)} camera(s): {', '.join(sorted(streams)) or 'none'}")
-        self._relay_digest, self._relay_at, self._relay_names = digest, time.monotonic(), set(streams)
+        self._relay_digest, self._relay_at, self._relay_names = digest, now, set(streams)
+        self._relay_look(base, streams)
+
+    def _relay_look(self, base, wanted):
+        """What go2rtc serves right now, as the worker's status tells SyncHub: {"up", "streams": [names], "error"}."""
+        self._relay_probed = time.monotonic()
+        try:
+            with urllib.request.urlopen(f"{base}/api/streams", timeout=5) as response:
+                served = json.load(response)
+            names = sorted(served) if isinstance(served, dict) else []
+            missing = sorted(set(wanted) - set(names))
+            self.relay_state = {"up": True, "streams": names, "error": f"missing: {', '.join(missing)}" if missing else ""}
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            self.relay_state = {"up": False, "streams": [], "error": f"go2rtc did not answer at {base} ({exc.__class__.__name__})"}
 
     # ---- jobs
     def start(self, job):

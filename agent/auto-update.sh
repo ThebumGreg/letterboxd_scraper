@@ -21,6 +21,8 @@
 #   6. SyncHub is told, success or failure (version or the error tail): a line on the Workers page and a notification through your
 #      notification settings ("A worker updated itself", "A worker's automatic update failed"). If SyncHub cannot be reached the report
 #      is kept and sent on the next check.
+# Also every minute: if SyncHub's Protect settings choose this worker to run the camera relay, it writes docker-compose.override.yml (go2rtc) next to the
+# worker's compose file and starts it when the worker is idle, and tells SyncHub how it went. See docs/CAMERAS.md.
 # Settings (optional) are read from /etc/synchub-auto-update.conf, a shell file:
 #   SYNCHUB_REPO=/home/greg/letterboxd_scraper   SYNCHUB_WORKER_DIR=/opt/synchub-worker   SYNCHUB_UPDATE_WINDOW=02:00-06:00 (empty: only when idle)
 # The SyncHub address and the worker's token are read from SYNCHUB_URL and SYNCHUB_TOKEN in <SYNCHUB_WORKER_DIR>/.env.
@@ -197,6 +199,63 @@ print("" if v is None else "true" if v is True else "false" if v is False else v
 REQUEST="$(jget request)"
 if [ -n "$answer" ] && printf '%s' "$answer" | grep -q '"window"'; then WINDOW="$(jget window)"; fi        # the window chosen in SyncHub wins over the conf file
 AUTO="$(jget auto_update)"
+
+# The camera relay (go2rtc) chosen in SyncHub's Protect settings. SyncHub sends the text of a docker-compose.override.yml; Docker Compose loads that file
+# next to the worker's own docker-compose.yml, which this never edits. A worker whose compose file already has a go2rtc service (one made by SyncHub's
+# setup files) is left alone. The file is only replaced when it carries SyncHub's mark, and only while the worker is idle: starting go2rtc recreates the
+# worker container once (it gets the GO2RTC_URL setting), which resumes unfinished jobs but costs them a restart.
+RELAY_FILE="$DIR/docker-compose.override.yml"
+RELAY_MARK="# Managed by SyncHub (camera relay)."
+relay_report() { # relay_report STATUS [ERROR]: tells SyncHub, once per distinct outcome
+    local key="$1|${2:-}"
+    [ "$(cat "$STATE/relay-reported" 2>/dev/null)" = "$key" ] && return 0
+    if api /relay/report "{\"status\":\"$1\",\"error\":$(printf '%s' "${2:-}" | json_escape)}" >/dev/null 2>&1; then printf '%s' "$key" > "$STATE/relay-reported"; fi
+}
+go2rtc_running() { ( cd "$DIR" && docker compose ps --status running --services 2>/dev/null ) | grep -qx go2rtc; }
+relay_sync() {
+    local mode hash want idle; mode="$(jget relay_mode)"; [ -n "$mode" ] || return 0
+    [ -f "$DIR/docker-compose.yml" ] || return 0
+    if [ "$mode" = remove ]; then
+        [ -f "$RELAY_FILE" ] && grep -qF "$RELAY_MARK" "$RELAY_FILE" || { rm -f "$STATE/relay-hash"; return 0; }
+        rm -f "$RELAY_FILE" "$STATE/relay-hash"
+        log "The camera relay is no longer chosen for this worker: removing go2rtc"
+        if ( cd "$DIR" && docker compose up -d --remove-orphans ) >"$STATE/relay.out" 2>&1; then relay_report removed; else relay_report failed "removing go2rtc failed: $(tail -n 2 "$STATE/relay.out" | cut -c1-300)"; fi
+        return 0
+    fi
+    hash="$(jget relay_hash)"
+    if grep -q '^  go2rtc:' "$DIR/docker-compose.yml"; then        # the worker's own compose file runs it
+        go2rtc_running && relay_report native && return 0
+        [ "$(jget idle)" = true ] || return 0
+        log "go2rtc is in this worker's compose file but not running: starting it"
+        if ( cd "$DIR" && docker compose up -d ) >"$STATE/relay.out" 2>&1 && go2rtc_running; then relay_report native; else relay_report failed "starting go2rtc failed: $(tail -n 2 "$STATE/relay.out" | cut -c1-300)"; fi
+        return 0
+    fi
+    if [ -e "$RELAY_FILE" ] && ! grep -qF "$RELAY_MARK" "$RELAY_FILE"; then
+        relay_report failed "$RELAY_FILE exists and was not made by SyncHub, so it was left alone. Add the go2rtc service by hand (docs/CAMERAS.md) or move that file away."; return 0
+    fi
+    want=0
+    [ "$(cat "$STATE/relay-hash" 2>/dev/null)" = "$hash" ] || want=1
+    go2rtc_running || want=1
+    [ "$REQUEST" = relay ] && want=1
+    [ "$want" = 1 ] || { relay_report installed; return 0; }
+    idle="$(jget idle)"
+    if [ "$idle" != true ] && [ "$REQUEST" != relay ]; then
+        [ "$(cat "$STATE/relay-waiting" 2>/dev/null)" = "$hash" ] || { log "The camera relay is waiting: the worker is busy (go2rtc is set up when it is idle)"; echo "$hash" > "$STATE/relay-waiting"; relay_report waiting; }
+        return 0
+    fi
+    rm -f "$STATE/relay-waiting"
+    local text; text="$(jget relay_override)"; [ -n "$text" ] || return 0
+    printf '%s\n' "$text" > "$RELAY_FILE.tmp" && mv -f "$RELAY_FILE.tmp" "$RELAY_FILE"
+    log "Setting up the camera relay (go2rtc) for this worker"
+    if ( cd "$DIR" && docker compose up -d ) >"$STATE/relay.out" 2>&1; then
+        for _ in 1 2 3 4 5 6 7 8 9 10; do go2rtc_running && break; sleep 3; done
+        if go2rtc_running; then echo "$hash" > "$STATE/relay-hash"; log "go2rtc is running"; relay_report installed; return 0; fi
+        relay_report failed "docker compose started, but go2rtc is not running: $(cd "$DIR" && docker compose logs --tail 3 go2rtc 2>&1 | cut -c1-200 | tail -n 3)"
+    else
+        relay_report failed "docker compose up failed: $(tail -n 3 "$STATE/relay.out" | cut -c1-300)"
+    fi
+}
+[ "$FORCE" = 1 ] || [ -z "$answer" ] || relay_sync
 
 if [ "$REQUEST" = restart ]; then
     log "SyncHub asked for a restart of the worker"

@@ -123,6 +123,17 @@ def register(app):
         logger.info(f"[workers] {g.worker['name']} automatic update: {report['status']} {report['commit']}")
         return jsonify(ok=True)
 
+    @route("/relay/report", "relay_report")
+    def relay_report():
+        """For agent/auto-update.sh: what installing (or taking away) the camera relay's go2rtc did on the PC."""
+        with db.connection() as conn:
+            try:
+                report = protect.report_install(conn, g.worker["id"], _body())
+            except ValueError as exc:
+                return _error(str(exc), 400)
+        logger.info(f"[workers] {g.worker['name']} camera relay: {report['status']}{' ' + report['error'] if report['error'] else ''}")
+        return jsonify(ok=True)
+
     @route("/poll", "poll")
     def poll():
         data = _body()
