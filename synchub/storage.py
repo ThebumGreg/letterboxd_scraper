@@ -297,8 +297,9 @@ def quick_setup(url, token):
     """The command that does everything else on this page, for a fresh Ubuntu or Debian PC."""
     return "\n".join(["# On the worker PC (Ubuntu or Debian). This one script installs Docker and the mount tools, pulls the latest SyncHub code from GitHub,",
                       "# adds the shares to /etc/fstab (with a backup), writes the .env file, starts the worker and checks it. Run it again later to update.",
-                      f"git clone {REPO_URL}",
-                      "cd letterboxd_scraper",
+                      "# Keep this folder: the worker is built from it and its updates are pulled into it. ~/letterboxd_scraper is a good place.",
+                      f"git clone {REPO_URL} ~/letterboxd_scraper",
+                      "cd ~/letterboxd_scraper",
                       f"sudo ./agent/setup-worker.sh --url {url} --token {token}",
                       "",
                       "# If the repository is private, use a GitHub token with read access to Contents:  export GITHUB_TOKEN=...  then  sudo -E ./agent/setup-worker.sh ...",

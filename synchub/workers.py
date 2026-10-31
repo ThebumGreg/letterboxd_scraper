@@ -291,6 +291,21 @@ def request_log(conn, worker_id):
     """Asks a worker for the tail of its own log. It answers with its next poll."""
     if conn.execute("UPDATE worker SET log_requested = 1 WHERE id = ? AND revoked_at IS NULL", (worker_id,)).rowcount != 1:
         raise WorkerError("That worker no longer exists." if get(conn, worker_id) is None else "That worker's token is revoked, so it cannot answer. Make a new token first.")
+    settings.set_value(UPDATER_WANT_KEY.format(worker_id), "1", conn=conn)           # the PC's update helper is asked for its own log at its next check
+
+
+UPDATER_WANT_KEY = "worker_updater_log_wanted:{}"
+UPDATER_LOG_KEY = "worker_updater_log:{}"
+
+
+def store_updater_log(conn, worker_id, text, now=None):
+    """The update helper's own log (it runs on the PC, outside the container, so the worker cannot read it). Latest only."""
+    text = str(text or "")[-6000:]
+    settings.set_value(UPDATER_LOG_KEY.format(worker_id), json.dumps({"content": text, "at": now or db.now()}), conn=conn)
+
+
+def updater_log(conn, worker_id):
+    return _load(settings.get(UPDATER_LOG_KEY.format(worker_id), "", conn=conn), {}) or None
 
 
 def store_log(conn, worker_id, text, truncated=False, now=None):
@@ -339,7 +354,10 @@ def host_check(conn, worker_id, now=None):
     if request:
         conn.execute("UPDATE worker SET host_request = NULL WHERE id = ? AND host_request = ?", (worker_id, request))
     from synchub import protect
-    return {"idle": running == 0, "running": running, "auto_update": bool(setting(w, "auto_update")), "window": setting(w, "update_window"), "request": request,
+    want_log = settings.get(UPDATER_WANT_KEY.format(worker_id), "", conn=conn) == "1"
+    if want_log:
+        settings.set_value(UPDATER_WANT_KEY.format(worker_id), "", conn=conn)
+    return {"want_log": want_log, "idle": running == 0, "running": running, "auto_update": bool(setting(w, "auto_update")), "window": setting(w, "update_window"), "request": request,
             **protect.host_instruction(conn, worker_id)}
 
 

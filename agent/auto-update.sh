@@ -200,6 +200,19 @@ REQUEST="$(jget request)"
 if [ -n "$answer" ] && printf '%s' "$answer" | grep -q '"window"'; then WINDOW="$(jget window)"; fi        # the window chosen in SyncHub wins over the conf file
 AUTO="$(jget auto_update)"
 
+# The Workers page's Logs button also wants this helper's own lines (they live in the PC's journal, outside the worker container).
+if [ "$(jget want_log)" = true ] && [ -n "${URL:-}" ] && [ -n "${TOKEN:-}" ]; then
+    {
+        echo "Update helper $(readlink -f "$0" 2>/dev/null) on $(hostname), checkout ${REPO:-unknown} at $(git_run rev-parse --short HEAD 2>/dev/null || echo '?') (agent $(agent_version HEAD))"
+        if [ -f "$STATE/last-check" ]; then echo "Last check for new code: $(date -u -r "$STATE/last-check" '+%Y-%m-%d %H:%M:%SZ')"; else echo "No check for new code yet."; fi
+        [ -f "$STATE/problem" ] && echo "Problem: $(cat "$STATE/problem")"
+        [ -f "$STATE/failed" ] && echo "Last failed commit: $(cat "$STATE/failed")"
+        echo "--- journalctl -t synchub-auto-update"
+        journalctl -t synchub-auto-update -n 60 --no-pager -o short-iso 2>&1 | tail -n 60
+    } 2>&1 | python3 -c 'import json,sys; sys.stdout.write(json.dumps({"log": sys.stdin.read()[-5500:]}))' > "$STATE/log-upload.json" 2>/dev/null \
+        && api /update/log "$(cat "$STATE/log-upload.json")" >/dev/null 2>&1
+fi
+
 # The camera relay (go2rtc) chosen in SyncHub's Protect settings. SyncHub sends the text of a docker-compose.override.yml; Docker Compose loads that file
 # next to the worker's own docker-compose.yml, which this never edits. A worker whose compose file already has a go2rtc service (one made by SyncHub's
 # setup files) is left alone. The file is only replaced when it carries SyncHub's mark, and only while the worker is idle: starting go2rtc recreates the

@@ -123,6 +123,13 @@ def register(app):
         logger.info(f"[workers] {g.worker['name']} automatic update: {report['status']} {report['commit']}")
         return jsonify(ok=True)
 
+    @route("/update/log", "update_log")
+    def update_log():
+        """For agent/auto-update.sh: its own recent log lines, sent when the Workers page's Logs button asked for them."""
+        with db.connection() as conn:
+            workers.store_updater_log(conn, g.worker["id"], _text(_body().get("log"), 6000))
+        return jsonify(ok=True)
+
     @route("/relay/report", "relay_report")
     def relay_report():
         """For agent/auto-update.sh: what installing (or taking away) the camera relay's go2rtc did on the PC."""

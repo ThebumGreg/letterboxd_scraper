@@ -355,3 +355,26 @@ def test_a_problem_report_is_shown_with_its_log_and_told_once(client, v2, push):
         shown = fleet.describe_update(workers.last_update(conn, w["id"]))
         assert shown["ok"] is False and "problem" in shown["text"] and "Permission denied" in shown["error"]
         assert len(notes(conn, "worker_update_failed")) == 1
+
+
+def test_the_logs_button_asks_the_helper_for_its_own_log_once_and_the_log_is_kept(client, v2):
+    wid, headers = authed(v2)
+    with v2.connection() as conn:
+        workers.request_log(conn, wid)
+    assert client.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()["want_log"] is True
+    assert client.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()["want_log"] is False        # asked once
+    assert client.post("/api/worker/v1/update/log", json={"log": "Last check for new code: 19:12"}, headers=headers).status_code == 200
+    with v2.connection() as conn:
+        assert "Last check" in workers.updater_log(conn, wid)["content"]
+
+
+def test_the_helper_uploads_its_log_when_asked():
+    text = AUTO.read_text()
+    assert 'jget want_log' in text and "/update/log" in text and "Last check for new code" in text
+
+
+def test_the_quick_setup_says_where_to_clone_and_a_temporary_folder_is_refused():
+    from synchub import storage
+    quick = storage.quick_setup("http://hub:5001", "sw_x")
+    assert "git clone" in quick and "~/letterboxd_scraper" in quick and "cd ~/letterboxd_scraper" in quick
+    assert "a temporary folder" in (AUTO.parent / "setup-worker.sh").read_text()

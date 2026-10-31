@@ -43,6 +43,7 @@
                     <div class="form-text" id="excludeHelp">One per line: a folder name or wildcard (<code>Extras</code>, <code>*Sample*</code>) or <code>share:folder/path</code>. The default is for this scan only; change it for good under Settings below.</div></details>
                 <div class="d-flex flex-wrap gap-2 mt-3">
                     <button type="submit" class="btn btn-success" {% if not roots %}disabled{% endif %}><i class="bi bi-search" aria-hidden="true"></i> Start scan</button>
+                    <button type="button" class="btn btn-outline-danger" id="clearScanBtn" {% if not roots %}disabled{% endif %} title="Takes the undecided and rejected files of the chosen share (and folder, if typed) off the list. Files already queued, approved or converted stay. No file on the share is touched."><i class="bi bi-eraser" aria-hidden="true"></i> Clear results</button>
                     <button type="button" class="btn btn-outline-info" id="dupBtn" title="Reads files of the same size to see whether they are the same file, across every share"><i class="bi bi-files" aria-hidden="true"></i> Find duplicates</button>
                 </div>
             </form>

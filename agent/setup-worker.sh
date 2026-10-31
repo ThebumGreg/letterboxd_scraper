@@ -257,6 +257,9 @@ choose_code_location() {
         if [ -d "$REPO_DIR/.git" ]; then REPO_URL="$(git_repo config --get remote.origin.url 2>/dev/null || true)"; fi
         [ -n "$REPO_URL" ] || REPO_URL="$REPO_URL_DEFAULT"
     fi
+    case "$REPO_DIR" in
+        /tmp/*|/var/tmp/*|/dev/shm/*|/run/*) [ -n "${SYNCHUB_SETUP_ALLOW_TEMP_CHECKOUT:-}" ] || die "'$REPO_DIR' is a temporary folder. The worker is built from this checkout and its updates are pulled into it, so clone it somewhere permanent, for example: git clone <repository> ~/letterboxd_scraper" ;;
+    esac
     [[ "$REPO_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "'$REPO_DIR' is not usable: use an absolute path of letters, numbers and . _ / - only."
 }
 

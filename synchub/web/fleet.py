@@ -338,9 +338,12 @@ def register(app):
             if worker is None:
                 return _fail("That worker no longer exists.", 404)
             log = workers.stored_log(conn, worker_id)
+            updater = workers.updater_log(conn, worker_id)
         if log:
             log["received"] = webhooks.ago(log["received_at"])
-        return jsonify(ok=True, log=log, pending=bool(worker["log_requested"]), name=worker["name"], online=worker["online"], version=worker["version"])
+        if updater:
+            updater["received"] = webhooks.ago(updater["at"])
+        return jsonify(ok=True, log=log, updater_log=updater, pending=bool(worker["log_requested"]), name=worker["name"], online=worker["online"], version=worker["version"])
 
     @app.route("/api/workers/<int:worker_id>/setup")
     def api_worker_setup(worker_id):

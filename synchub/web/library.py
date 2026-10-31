@@ -375,6 +375,17 @@ def register(app):
             removed = store.forget_missing(conn)
         return jsonify(ok=True, removed=removed, message=f"Took {removed} missing file(s) off the list." if removed else "Nothing to clear.")
 
+    @app.route("/api/library/forget_folder", methods=["POST"])
+    def api_library_forget_folder():
+        """Takes the undecided and rejected records of a share (or of one folder in it) off the list, so a scan of the wrong place can be cleared and redone."""
+        data = request.get_json(silent=True) or {}
+        root, folder = str(data.get("root") or "").strip(), str(data.get("folder") or "").strip().strip("/")
+        with db.connection() as conn:
+            if not root:
+                return jsonify(ok=False, message="Choose a share first."), 400
+            removed = store.forget_folder(conn, root, folder)
+        return jsonify(ok=True, removed=removed, message=f"Took {removed} file(s) off the list. Nothing on the share was touched." if removed else "Nothing to clear there.")
+
     @app.route("/api/library/settings", methods=["POST"])
     def api_library_settings():
         data = request.get_json(silent=True) or {}

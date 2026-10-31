@@ -118,9 +118,16 @@
         if (ask !== undefined) el.dataset.ask = ask;
         el.textContent = [el.dataset.shown, el.dataset.ask, el.dataset.count].filter(Boolean).join(' \u00b7 ');
     }
+    function wlHelper(data) {
+        if (!data.updater_log || wl.helperAt === data.updater_log.at) return;
+        wl.helperAt = data.updater_log.at;
+        wlEl('wlUpdaterText').textContent = data.updater_log.content;
+        wlEl('wlUpdaterWhen').textContent = '(' + data.updater_log.received + ')';
+    }
     async function wlLook(waiting) {
         const data = await (await fetch(`/api/workers/${wl.id}/log`)).json();
         if (!data.ok) { wlStatusText('', data.message || 'Could not read the log.'); wlStop(); return; }
+        wlHelper(data);
         const fresh = data.log && data.log.received_at !== wl.received;
         if (data.log && (!waiting || fresh)) {
             wl.raw = data.log.content; wl.received = data.log.received_at;
@@ -146,10 +153,13 @@
         }, 2000);
     }
     async function openWorkerLog(id, name) {
-        Object.assign(wl, { id, name, raw: null, received: null });
+        Object.assign(wl, { id, name, raw: null, received: null, helperAt: null });
         wlEl('workerLogTitle').textContent = `Log of ${name}`;
         wlEl('wlSearch').value = ''; Object.assign(wlEl('wlStatus').dataset, { count: '', shown: '', ask: '' });
         wlPaint(); wlStatusText('', '');
+        wlEl('wlUpdaterText').textContent = 'Asked for. It answers within a minute.'; wlEl('wlUpdaterWhen').textContent = '';
+        clearInterval(wl.helperTimer); let helperTries = 0;
+        wl.helperTimer = setInterval(() => { if (++helperTries > 45) clearInterval(wl.helperTimer); else fetch(`/api/workers/${wl.id}/log`).then((r) => r.json()).then(wlHelper).catch(() => {}); }, 4000);
         modal('workerLogModal').show();
         await wlLook(false);          // the last log it sent, if any, while a fresh one is on its way
         wlAsk();
@@ -166,7 +176,7 @@
         const a = Object.assign(document.createElement('a'), { href: url, download: `synchub-worker-${wl.name.replace(/[^A-Za-z0-9._-]+/g, '_')}.jsonl` });
         document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     });
-    wlEl('workerLogModal').addEventListener('hidden.bs.modal', () => { wlStop(); wl.raw = null; wlEl('wlText').textContent = ''; });
+    wlEl('workerLogModal').addEventListener('hidden.bs.modal', () => { wlStop(); clearInterval(wl.helperTimer); wl.raw = null; wlEl('wlText').textContent = ''; });
 
     // Add or edit a worker
     let editing = null;

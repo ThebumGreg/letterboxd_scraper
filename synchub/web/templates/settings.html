@@ -103,7 +103,7 @@
                     <div class="mb-3">
                         <label class="form-label">Cameras to serve</label>
                         <input type="hidden" id="protect_cameras" name="protect_cameras" value="{{ settings.protect_cameras }}">
-                        <div id="cameraPicker" class="small"><span class="text-body-secondary">Not loaded.</span></div>
+                        <div id="cameraPicker" class="small" data-autoload="{{ '1' if settings.protect_host and settings.protect_api_key else '' }}"><span class="text-body-secondary">{{ (settings.protect_cameras.split(',')|length ~ ' camera(s) chosen. Loading the list...') if settings.protect_cameras else 'All connected cameras are served. Loading the list...' }}</span></div>
                         <button type="button" class="btn btn-outline-secondary btn-sm mt-1" id="loadCameras">Load cameras from the console</button>
                         <div class="form-text">Only the ticked cameras go to go2rtc and the TV's pop-up. With none ticked, every connected camera is served. Save after changing.</div>
                     </div>
@@ -435,6 +435,7 @@
                 
             } catch (e) { box.textContent = 'Failed: ' + e.message; }
         });
+        if (box.dataset.autoload) btn.click();
     })();
     // Camera relay card: the checklist from the chosen worker to cameras being served, refreshed while the page is open.
     (function () {

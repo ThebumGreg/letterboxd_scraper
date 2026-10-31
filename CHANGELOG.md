@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Worker Logs also show the update helper.** The Logs dialog has an "Update helper on the PC" section: when you open it the helper sends its last journal lines, its checkout and version, and when it last checked for new code. No SSH or `journalctl` needed.
+- **Setup steps say where to clone.** The command now clones to `~/letterboxd_scraper` and says to keep the folder; `setup-worker.sh` refuses a checkout in `/tmp` and similar.
+- **Clear results of a wrong scan.** *Clear results* next to Start scan takes the undecided and rejected files of the chosen share (and folder) off the list; queued, approved and converted files stay, no file on the share is touched.
+- **Camera list on the Protect settings** loads itself and shows the saved choice after a reload.
 - **Protect Test connection obeys the certificate switch.** The Test button sent a switch's fixed value ("1") whether it was on or off, so the check was always on and a console's own certificate always failed. It now sends the real state.
 - **Choose which cameras are served.** *Cameras to serve* in the Protect settings loads the console's cameras with tick boxes; only the ticked ones go to go2rtc and the TV's pop-up (none ticked: all connected cameras).
 - **Integrated graphics shown in a container.** With no `lspci`, the agent reads the vendor and driver of each passed-in render device from `/sys/class/drm`, so the Workers page shows "Intel graphics (renderD128)" instead of "no graphics card".
