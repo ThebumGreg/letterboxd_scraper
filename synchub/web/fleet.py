@@ -127,12 +127,14 @@ def describe_update(report):
     """The last automatic update as a short line for the Workers page, or None."""
     if not report:
         return None
+    if report.get("status") == "current":
+        return {"ok": True, "text": f"checked, already up to date ({webhooks.ago(report['at']) if report.get('at') else 'earlier'})", "error": None}
     ok = report.get("status") == "ok"
     what = f"updated to {report.get('version') or report.get('commit') or 'the newest code'}" if ok else f"update to {report.get('commit') or 'the newest code'} failed"
     return {"ok": ok, "text": f"{what} ({webhooks.ago(report['at']) if report.get('at') else 'earlier'})", "error": None if ok else report.get("error")}
 
 
-def describe_worker(w, root_names=(), update=None):
+def describe_worker(w, root_names=(), update=None, host_seen=False):
     """The worker plus what the page shows: a state, encoders, space, its shares and when it was last heard from."""
     if w["revoked"]:
         state, color = "Revoked", "danger"
@@ -150,7 +152,8 @@ def describe_worker(w, root_names=(), update=None):
     held = status.get("originals_count")
     w.update(state=state, state_color=color, encoders=", ".join(str(e) for e in _items(w["capabilities"].get("encoders"))),
              free=_gb(status.get("work_free_bytes")), originals=(f"{held} held, {_gb(status.get('originals_bytes')) or '?'}" if held else None),
-             seen=webhooks.ago(w["last_seen"]) if w["last_seen"] else "never", roots=describe_roots(w, root_names), host=describe_host(w), auto_update=describe_update(update))
+             seen=webhooks.ago(w["last_seen"]) if w["last_seen"] else "never", roots=describe_roots(w, root_names), host=describe_host(w), auto_update=describe_update(update),
+             remote={"seen": host_seen, "request": w.get("host_request"), "settings": {k: workers.setting(w, k) for k in workers.SETTINGS}})
     w["benchmark"] = describe_benchmark(w)
     return w
 
@@ -199,7 +202,7 @@ def snapshot(conn):
     listed = [describe_job(j) for j in jobs.recent(conn, 50)]
     for j in listed:
         j["waiting_for"] = _waiting_for(j, able)
-    return {"workers": [describe_worker(w, root_names, workers.last_update(conn, w["id"])) for w in raw], "jobs": listed, "counts": counts, "summary": summary, "root_names": root_names, "app_version": __version__}
+    return {"workers": [describe_worker(w, root_names, workers.last_update(conn, w["id"]), workers.host_seen(conn, w["id"])) for w in raw], "jobs": listed, "counts": counts, "summary": summary, "root_names": root_names, "app_version": __version__}
 
 
 def _setup(conn, name, token=None):
@@ -254,7 +257,7 @@ def register(app):
         data = request.get_json(silent=True) or {}
         try:
             with db.connection() as conn:
-                worker_id, token = workers.create(conn, data.get("name"), data.get("tags") or [], data.get("slots") or 1)
+                worker_id, token = workers.create(conn, data.get("name"), data.get("tags") or [], data.get("slots") or 1, settings=data.get("settings"))
         except workers.WorkerError as exc:
             return _fail(str(exc))
         name = " ".join(str(data.get("name")).split())
@@ -268,7 +271,7 @@ def register(app):
         data = request.get_json(silent=True) or {}
         try:
             with db.connection() as conn:
-                workers.update(conn, worker_id, name=data.get("name"), tags=data.get("tags"), slots=data.get("slots"))
+                workers.update(conn, worker_id, name=data.get("name"), tags=data.get("tags"), slots=data.get("slots"), settings=data.get("settings"))
         except workers.WorkerError as exc:
             return _fail(str(exc))
         return jsonify(ok=True, message="Saved.")
@@ -285,6 +288,16 @@ def register(app):
                     online = workers.get(conn, worker_id)["online"]
                     return jsonify(ok=True, online=online, message="Asked the worker for its log." if online
                                    else "Asked. The worker is offline, so the log arrives when it is back.")
+                if action in ("host_update", "host_restart"):
+                    what = action.split("_", 1)[1]
+                    workers.request_host(conn, worker_id, what)
+                    seen = workers.host_seen(conn, worker_id)
+                    busy = workers.idle(conn, worker_id)
+                    note = "" if seen else " The update timer on that PC has not checked in recently, so this waits until it does (install it once with agent/auto-update.sh --install)."
+                    if what == "restart":
+                        return jsonify(ok=True, message="Asked the PC to restart the worker. It happens within a minute; unfinished jobs resume." + note)
+                    return jsonify(ok=True, message=("Asked the PC to update the worker. It is running " + str(busy) + " job(s), so the update starts when it is idle." if busy
+                                                     else "Asked the PC to update the worker. It starts within a minute.") + note)
                 if action == "benchmark":
                     workers.request_benchmark(conn, worker_id)
                     return jsonify(ok=True, message="Asked the worker to run a benchmark. It starts when the worker has no job running, and the result appears here when it is done (a few minutes).")

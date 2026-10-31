@@ -643,3 +643,33 @@ def test_the_unmodified_clip_is_copied_when_mp4_can_hold_it_and_re_encoded_other
 def test_the_browser_clip_has_stereo_aac_and_the_index_up_front():
     command = agent.clip_command("ffmpeg", "in.mkv", "out.mp4", ["-c:v", "copy"])
     assert command[-1] == "out.mp4" and "+faststart" in command and command[command.index("-ac") + 1] == "2" and command[command.index("-c:a") + 1] == "aac" and "-sn" in command
+
+
+# ---------------------------------------------------------------- settings chosen in SyncHub
+def test_settings_from_synchub_win_over_the_env_and_bad_ones_are_ignored(tmp_path):
+    cfg = config(tmp_path, SYNCHUB_SLOTS="2", SYNCHUB_VIDEO_ENCODER="cpu")
+    changed = cfg.apply_remote({"slots": 4, "gpu_slots": 1, "max_copy_mb_s": 25.5, "scan_threads": 3, "encoder": "VAAPI", "log_level": "debug"})
+    assert (cfg.slots, cfg.gpu_slots, cfg.max_copy_mb_s, cfg.scan_threads, cfg.video_encoder, cfg.log_level) == (4, 1, 25.5, 3, "vaapi", "DEBUG")
+    assert set(changed) == {"slots", "max_copy_mb_s", "scan_threads", "encoder", "log_level"}                  # gpu_slots was already 1
+    cfg.apply_remote({"slots": 99, "encoder": "tpu", "scan_threads": "x", "log_level": "loud", "new_thing": 1})        # nothing understood: the local values stand
+    assert (cfg.slots, cfg.video_encoder, cfg.scan_threads, cfg.log_level) == (2, "cpu", 2, "INFO")
+    cfg.apply_remote({"slots": 4})
+    assert cfg.apply_remote(None) == {} and cfg.slots == 4
+    back = cfg.apply_remote({"slots": 2})                                                                         # everything else cleared in SyncHub: the .env values return
+    assert (cfg.video_encoder, cfg.max_copy_mb_s, cfg.scan_threads, cfg.log_level, cfg.slots) == ("cpu", 0.0, 2, "INFO", 2) and back == {"slots": 2}
+
+
+def test_the_gpu_is_not_given_more_encodes_than_the_limit():
+    class Holder:
+        pass
+    a = agent.Agent.__new__(agent.Agent)
+    a.lock, a.gpu_busy = threading.Lock(), 0
+    a.cfg = Holder()
+    a.cfg.gpu_slots = 1
+    assert a.gpu_take() is True and a.gpu_take() is False
+    a.gpu_give()
+    assert a.gpu_take() is True
+    a.cfg.gpu_slots = 2
+    assert a.gpu_take() is True and a.gpu_take() is False
+    a.gpu_give(); a.gpu_give(); a.gpu_give(); a.gpu_give()                                                        # never goes below zero
+    assert a.gpu_busy == 0

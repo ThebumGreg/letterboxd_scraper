@@ -37,11 +37,15 @@
                         <button type="button" class="btn btn-sm btn-outline-secondary" data-worker-action="{{ 'resume' if w.paused else 'pause' }}" data-id="{{ w.id }}">{{ 'Resume' if w.paused else 'Pause' }}</button>
                         <button type="button" class="btn btn-sm btn-outline-secondary" data-worker-action="{{ 'undrain' if w.draining else 'drain' }}" data-id="{{ w.id }}"
                                 title="A draining worker finishes its jobs and takes no more">{{ 'Stop draining' if w.draining else 'Drain' }}</button>
+                        <button type="button" class="btn btn-sm btn-outline-primary" data-worker-action="host_update" data-id="{{ w.id }}"{% if w.remote.request == 'update' %} disabled{% endif %}
+                                data-confirm="Update {{ w.name }} to the newest code now? It waits until the worker has no running job, rebuilds, and goes back to the old version if anything fails."
+                                title="{{ 'The PC has not asked SyncHub for requests recently: install agent/auto-update.sh on it first.' if not w.remote.seen else 'Update this worker to the newest code when it is idle' }}"><i class="bi bi-arrow-repeat" aria-hidden="true"></i> {{ 'Update queued' if w.remote.request == 'update' else 'Update' }}</button>
                         {% endif %}
                         <div class="btn-group">
                             <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" aria-label="More for {{ w.name }}">More</button>
                             <ul class="dropdown-menu dropdown-menu-end">
-                                <li><button type="button" class="dropdown-item" data-edit-worker="{{ w.id }}" data-name="{{ w.name }}" data-tags="{{ w.tags|join(' ') }}" data-slots="{{ w.slots }}">Edit name, tags, slots</button></li>
+                                <li><button type="button" class="dropdown-item" data-edit-worker="{{ w.id }}" data-name="{{ w.name }}" data-tags="{{ w.tags|join(' ') }}" data-slots="{{ w.slots }}" data-settings='{{ w.remote.settings|tojson }}'>Edit name, tags, settings</button></li>
+                                <li><button type="button" class="dropdown-item" data-worker-action="host_restart" data-id="{{ w.id }}" data-confirm="Restart {{ w.name }}'s worker container? Running jobs resume afterwards."{% if w.remote.request == 'restart' %} disabled{% endif %}>Restart worker</button></li>
                                 <li><button type="button" class="dropdown-item" data-setup-worker="{{ w.id }}">Setup files (Docker, fstab)</button></li>
                                 <li><button type="button" class="dropdown-item" data-worker-action="{{ 'enable' if not w.enabled else 'disable' }}" data-id="{{ w.id }}">{{ 'Enable' if not w.enabled else 'Disable' }}</button></li>
                                 <li><button type="button" class="dropdown-item" data-worker-action="rotate" data-id="{{ w.id }}" data-confirm="Make a new token for {{ w.name }}? The old one stops working at once.">New token</button></li>

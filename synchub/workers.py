@@ -5,6 +5,7 @@ lost token is replaced (rotated), never recovered.
 """
 import hashlib
 import json
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -80,6 +81,7 @@ def row(r, now=None):
     w = dict(r)
     for key, default in (("tags", []), ("capabilities", {}), ("status", {}), ("originals", [])):
         w[key] = _load(w.get(key), default)
+    w["settings"] = _load(w.get("settings"), {})
     w["token_hash"] = bool(w["token_hash"])            # never hand the hash around
     w["revoked"] = bool(w.get("revoked_at"))
     w["online"] = is_online(w.get("last_seen"), now)
@@ -98,14 +100,79 @@ def is_online(last_seen, now=None):
 
 
 # ---------------------------------------------------------------- managing workers (the web UI)
-def create(conn, name, tags=(), slots=1):
+# What a worker's owner chooses in SyncHub instead of in the PC's .env: field -> (kind, default, low, high or choices).
+# 'agent' fields are sent to the agent in its register and poll answers; 'host' fields are read by agent/auto-update.sh on the PC.
+SETTINGS = {
+    "encoder": ("agent", "choice", "auto", ("auto", "cpu", "nvenc", "qsv", "vaapi")),
+    "gpu_slots": ("agent", "int", 1, (1, 16)),                 # GPU encodes at once; a job over the limit uses the CPU instead of waiting
+    "max_copy_mb_s": ("agent", "float", 0, (0, 100000)),       # 0 = no limit
+    "scan_threads": ("agent", "int", 2, (1, 16)),
+    "log_level": ("agent", "choice", "INFO", ("DEBUG", "INFO", "WARNING", "ERROR")),
+    "auto_update": ("host", "bool", True, None),
+    "update_window": ("host", "window", "", None),              # HH:MM-HH:MM local time on the PC, empty = only when idle
+}
+_WINDOW = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$")
+
+
+def clean_settings(given, current=None):
+    """The worker's settings with what `given` changes: unknown fields are ignored, a bad value raises WorkerError naming the field."""
+    out = {k: v for k, v in (current or {}).items() if k in SETTINGS}
+    for key, (_, kind, default, rule) in SETTINGS.items():
+        if not isinstance(given, dict) or key not in given:
+            continue
+        value = given[key]
+        if value in (None, ""):
+            out.pop(key, None)                                    # blank means the default
+            continue
+        try:
+            if kind == "choice":
+                value = str(value).strip()
+                value = value.upper() if key == "log_level" else value.lower()
+                if value not in rule:
+                    raise ValueError
+            elif kind in ("int", "float"):
+                value = int(value) if kind == "int" else float(value)
+                if isinstance(given[key], bool) or not rule[0] <= value <= rule[1]:
+                    raise ValueError
+            elif kind == "bool":
+                if value not in (True, False, 1, 0, "1", "0", "true", "false", "on", "off"):
+                    raise ValueError
+                value = value in (True, 1, "1", "true", "on")
+            elif kind == "window":
+                value = str(value).strip()
+                if not _WINDOW.match(value):
+                    raise ValueError
+        except ValueError:
+            raise WorkerError(f"The setting '{key.replace('_', ' ')}' is not valid.")
+        if value == default:
+            out.pop(key, None)
+        else:
+            out[key] = value
+    return out
+
+
+def setting(w, key):
+    """One setting of a worker (the dict from get/list_all), or its default."""
+    return w["settings"].get(key, SETTINGS[key][2])
+
+
+def agent_settings(w):
+    """What the agent is told in its register and poll answers: slots (kept in step with SyncHub's own limit) and the 'agent' settings that were chosen.
+    A setting left at its default is not sent: the worker then keeps what its own .env or ini says."""
+    out = {key: w["settings"][key] for key, (where, *_rest) in SETTINGS.items() if where == "agent" and key in w["settings"]}
+    out["slots"] = w["slots"]
+    return out
+
+
+def create(conn, name, tags=(), slots=1, settings=None):
     """Adds a worker. Returns (worker_id, token); the token is shown once and cannot be read again."""
     name, tags, slots = _name(name), _tags(tags), _slots(slots)
+    chosen = clean_settings(settings)
     if conn.execute("SELECT 1 FROM worker WHERE name = ?", (name,)).fetchone():
         raise WorkerError(f"There is already a worker called '{name}'.")
     token = new_token()
-    worker_id = conn.execute("INSERT INTO worker (name, token_hash, token_hint, tags, slots) VALUES (?, ?, ?, ?, ?)",
-                             (name, hash_token(token), token[-4:], json.dumps(tags), slots)).lastrowid
+    worker_id = conn.execute("INSERT INTO worker (name, token_hash, token_hint, tags, slots, settings) VALUES (?, ?, ?, ?, ?, ?)",
+                             (name, hash_token(token), token[-4:], json.dumps(tags), slots, json.dumps(chosen))).lastrowid
     return worker_id, token
 
 
@@ -122,15 +189,16 @@ def list_all(conn, now=None):
     return workers
 
 
-def update(conn, worker_id, name=None, tags=None, slots=None):
+def update(conn, worker_id, name=None, tags=None, slots=None, settings=None):
     w = get(conn, worker_id)
     if not w:
         raise WorkerError("That worker no longer exists.")
     new_name = _name(name) if name is not None else w["name"]
     if new_name != w["name"] and conn.execute("SELECT 1 FROM worker WHERE name = ? AND id <> ?", (new_name, worker_id)).fetchone():
         raise WorkerError(f"There is already a worker called '{new_name}'.")
-    conn.execute("UPDATE worker SET name = ?, tags = ?, slots = ? WHERE id = ?",
-                 (new_name, json.dumps(_tags(tags) if tags is not None else w["tags"]), _slots(slots) if slots is not None else w["slots"], worker_id))
+    conn.execute("UPDATE worker SET name = ?, tags = ?, slots = ?, settings = ? WHERE id = ?",
+                 (new_name, json.dumps(_tags(tags) if tags is not None else w["tags"]), _slots(slots) if slots is not None else w["slots"],
+                  json.dumps(clean_settings(settings, w["settings"])) if settings is not None else json.dumps(w["settings"]), worker_id))
 
 
 def set_flag(conn, worker_id, flag, value):
@@ -246,6 +314,39 @@ UPDATE_KEY = "worker_update:{}"
 UPDATE_FIELDS = ("status", "version", "previous", "commit", "restored", "error", "at")
 
 
+HOST_REQUESTS = ("update", "restart")
+HOST_SEEN_KEY = "worker_host_seen:{}"
+HOST_SEEN_SECONDS = 300           # the PC's timer asks every minute; this long without it and the buttons say it is not installed
+
+
+def request_host(conn, worker_id, what):
+    """Asks the worker's PC (agent/auto-update.sh) to update or restart the worker. An update waits until the worker is idle."""
+    if what not in HOST_REQUESTS:
+        raise WorkerError("Unknown request.")
+    if conn.execute("UPDATE worker SET host_request = ? WHERE id = ? AND revoked_at IS NULL", (what, worker_id)).rowcount != 1:
+        raise WorkerError("That worker no longer exists or its token is revoked.")
+
+
+def host_check(conn, worker_id, now=None):
+    """The PC's timer asked: what it should know. A request is handed over once (an update only when nothing is running) and cleared."""
+    now = now or db.now()
+    settings.set_value(HOST_SEEN_KEY.format(worker_id), now, conn=conn)
+    w = get(conn, worker_id)
+    running = idle(conn, worker_id)
+    request = w["host_request"] if w else None
+    if request == "update" and running:
+        request = None                                              # it stays requested until the worker is idle
+    if request:
+        conn.execute("UPDATE worker SET host_request = NULL WHERE id = ? AND host_request = ?", (worker_id, request))
+    return {"idle": running == 0, "running": running, "auto_update": bool(setting(w, "auto_update")), "window": setting(w, "update_window"), "request": request}
+
+
+def host_seen(conn, worker_id, now=None):
+    """True when the PC's timer has asked recently."""
+    seen = settings.get(HOST_SEEN_KEY.format(worker_id), "", conn=conn)
+    return is_online(seen, now) if seen else False
+
+
 def idle(conn, worker_id):
     """How many jobs the worker is running right now (0 = nothing would be cut off by a restart)."""
     return conn.execute("SELECT COUNT(*) FROM job WHERE worker_id = ? AND status = 'running'", (worker_id,)).fetchone()[0]
@@ -257,11 +358,13 @@ def report_update(conn, worker_id, info, now=None):
     Returns the stored report. Raises ValueError for a status that is neither."""
     info = info if isinstance(info, dict) else {}
     status = info.get("status")
-    if status not in ("ok", "failed"):
-        raise ValueError("The update report needs a status of 'ok' or 'failed'.")
+    if status not in ("ok", "failed", "current"):
+        raise ValueError("The update report needs a status of 'ok', 'failed' or 'current'.")
     report = {k: str(info.get(k) or "")[:2000 if k == "error" else 80] for k in UPDATE_FIELDS if k != "at"}
     report["status"], report["at"] = status, now or db.now()
     settings.set_value(UPDATE_KEY.format(worker_id), json.dumps(report), conn=conn)
+    if status == "current":                                          # asked to update and there was nothing new: shown on the page, nothing to tell anyone
+        return report
     w = get(conn, worker_id)
     name = (w or {}).get("name") or f"worker {worker_id}"
     kind = "worker_update_done" if status == "ok" else "worker_update_failed"

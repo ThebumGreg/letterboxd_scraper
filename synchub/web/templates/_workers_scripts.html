@@ -176,13 +176,23 @@
         document.getElementById('workerName').value = values.name || '';
         document.getElementById('workerTags').value = values.tags || '';
         document.getElementById('workerSlots').value = values.slots || 1;
+        const st = values.settings || {};
+        document.getElementById('setEncoder').value = st.encoder || 'auto';
+        document.getElementById('setGpuSlots').value = st.gpu_slots || 1;
+        document.getElementById('setCopy').value = st.max_copy_mb_s || 0;
+        document.getElementById('setScan').value = st.scan_threads || 2;
+        document.getElementById('setLog').value = st.log_level || 'INFO';
+        document.getElementById('setWindow').value = st.update_window || '';
+        document.getElementById('setAutoUpdate').checked = st.auto_update !== false;
         document.getElementById('workerError').textContent = '';
         modal('workerModal').show();
     }
     document.getElementById('addWorkerBtn').addEventListener('click', () => { editing = null; openForm('Add worker', {}); });
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const body = { name: document.getElementById('workerName').value, tags: document.getElementById('workerTags').value, slots: document.getElementById('workerSlots').value };
+        const body = { name: document.getElementById('workerName').value, tags: document.getElementById('workerTags').value, slots: document.getElementById('workerSlots').value,
+            settings: { encoder: document.getElementById('setEncoder').value, gpu_slots: document.getElementById('setGpuSlots').value, max_copy_mb_s: document.getElementById('setCopy').value, scan_threads: document.getElementById('setScan').value,
+                        log_level: document.getElementById('setLog').value, update_window: document.getElementById('setWindow').value, auto_update: document.getElementById('setAutoUpdate').checked } };
         const data = await post(editing ? `/api/workers/${editing}/update` : '/api/workers', body);
         if (!data.ok) { document.getElementById('workerError').textContent = data.message || 'Failed.'; return; }
         modal('workerModal').hide();
@@ -216,7 +226,7 @@
     let deciding = null;
     document.addEventListener('click', async (e) => {
         const edit = e.target.closest('[data-edit-worker]');
-        if (edit) { editing = edit.dataset.editWorker; openForm('Edit worker', { name: edit.dataset.name, tags: edit.dataset.tags, slots: edit.dataset.slots }); return; }
+        if (edit) { editing = edit.dataset.editWorker; openForm('Edit worker', { name: edit.dataset.name, tags: edit.dataset.tags, slots: edit.dataset.slots, settings: JSON.parse(edit.dataset.settings || '{}') }); return; }
 
         const logs = e.target.closest('[data-worker-logs]');
         if (logs) { openWorkerLog(logs.dataset.workerLogs, logs.dataset.name); return; }

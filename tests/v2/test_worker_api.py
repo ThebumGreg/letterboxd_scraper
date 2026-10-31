@@ -69,7 +69,7 @@ def test_the_api_is_not_behind_the_profile_chooser_and_only_accepts_post(fleet, 
 def test_register_returns_the_settings_an_agent_needs(fleet, v2):
     info = {"protocol": workers.PROTOCOL, "version": "1.0", "os": "Ubuntu 24.04", "hostname": "enc1", "slots": 2, "capabilities": {"encoders": ["libx265"]}}
     r = fleet.call("/register", info).get_json()
-    assert r == {"ok": True, "worker_id": fleet.id, "name": "encoder-1", "protocol": workers.PROTOCOL, "poll_seconds": 5, "lease_seconds": jobs.LEASE_SECONDS, "roots": [], "roots_hash": r["roots_hash"]}
+    assert r == {"ok": True, "worker_id": fleet.id, "name": "encoder-1", "protocol": workers.PROTOCOL, "poll_seconds": 5, "lease_seconds": jobs.LEASE_SECONDS, "roots": [], "roots_hash": r["roots_hash"], "settings": {"slots": 2}}
     with v2.connection() as conn:
         assert workers.get(conn, fleet.id)["capabilities"]["encoders"] == ["libx265"] and workers.get(conn, fleet.id)["online"]
 
