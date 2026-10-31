@@ -10,6 +10,7 @@
 | [docs/RELEASING.md](docs/RELEASING.md) | How a change reaches the server: CI, the published image, version tags |
 | [docs/DESIGN_NOTIFICATIONS.md](docs/DESIGN_NOTIFICATIONS.md) | Notifications: Pushover's rules, the design, what each phase adds |
 | [docs/TV_REMOTE.md](docs/TV_REMOTE.md) | How the TV remote works, supported devices, adding another kind |
+| [docs/CAMERAS.md](docs/CAMERAS.md) | UniFi Protect cameras on the TV remote, and the go2rtc relay on a worker |
 | [docs/READINESS_CHECKLIST.md](docs/READINESS_CHECKLIST.md) | A checklist to run through before trusting a new version |
 | [docs/DESIGN_V2.md](docs/DESIGN_V2.md), [docs/DESIGN_ENCODING.md](docs/DESIGN_ENCODING.md), [docs/DDNS_DELAY.md](docs/DDNS_DELAY.md) | Design notes: data model, the workers and Library plan, the Dynamic DNS findings |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes |

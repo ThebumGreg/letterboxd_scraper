@@ -2,7 +2,7 @@
 from flask import jsonify, render_template, request
 
 from synchub import __version__
-from synchub import db, jobs, storage, versions, webhooks, workers
+from synchub import db, jobs, protect, storage, versions, webhooks, workers
 from synchub.library import cleanup, migrate
 
 # What each worker button does: setting, new value.
@@ -206,7 +206,7 @@ def _setup(conn, name, token=None):
     """The setup files for a worker. Right after a token is made they hold it; afterwards a placeholder, since the token cannot be read again."""
     url = request.host_url.rstrip("/")
     shown = token or "<the token shown when this worker was added>"
-    files = {storage.QUICK_SETUP: storage.quick_setup(url, shown), **storage.setup_files(name, url, shown, storage.list_all(conn))}
+    files = {storage.QUICK_SETUP: storage.quick_setup(url, shown), **storage.setup_files(name, url, shown, storage.list_all(conn), relay=protect.is_relay_name(conn, name))}
     return {"url": url, "files": files, "order": [storage.QUICK_SETUP, *storage.SETUP_ORDER], "has_token": bool(token), "shares": len(storage.list_all(conn))}
 
 

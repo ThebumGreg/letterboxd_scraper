@@ -11,6 +11,7 @@ from pathlib import Path
 from . import Driver, DeviceError, register
 
 DREAM_APPS = {"com.google.android.apps.tv.dreamx"}   # the Google TV screensaver ("Ambient mode")
+STREAM_URL_RE = re.compile(r"^[a-z]{3,5}://[A-Za-z0-9._:/?=&%~-]{1,300}$")
 PACKAGE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$")
 KEY_RE = re.compile(r"^(KEYCODE_[A-Z0-9_]+|\d{1,3})$")
 TEXT_RE = re.compile(r"^[A-Za-z0-9 ._@-]{1,100}$")
@@ -104,7 +105,7 @@ class AndroidTVDriver(Driver):
     type = "androidtv"
     log_kind = "adb"
     label = "Google TV / Android TV (ADB)"
-    capabilities = frozenset({"keys", "apps", "text", "screenshot", "power_on", "power_off", "launch", "screensaver", "diagnose"})
+    capabilities = frozenset({"keys", "apps", "text", "screenshot", "power_on", "power_off", "launch", "screensaver", "diagnose", "stream_view"})
     keymap = {
         "home": "KEYCODE_HOME", "back": "KEYCODE_BACK",
         "up": "KEYCODE_DPAD_UP", "down": "KEYCODE_DPAD_DOWN", "left": "KEYCODE_DPAD_LEFT",
@@ -397,6 +398,26 @@ class AndroidTVDriver(Driver):
             if "No activities found" not in out and "monkey aborted" not in out:
                 return out
         raise DeviceError(f"No launchable activity found for {app_id}")
+
+    def view_stream(self, url, package):
+        """Opens a stream address full screen in a video player app (ADB `am start`, with and without a media type: players differ in which they
+        declare). Returns what happened, or raises DeviceError if the app would not open."""
+        if not STREAM_URL_RE.match(url) or not PACKAGE_RE.match(package):
+            raise DeviceError("bad stream address or player app")
+        self.leave_screensaver()
+        last = ""
+        for media in ("-t video/* ", ""):
+            last = self._adb("shell", f"am start -a android.intent.action.VIEW -d '{url}' {media}{package}", action=f"view {package}")
+            if not re.search(r"Error|unable to resolve|does not exist|Exception", last):
+                return f"opened in {package}"
+        raise DeviceError(f"{package} would not open the stream ({last.splitlines()[-1] if last else 'no answer'}). Is it installed on this TV?")
+
+    def close_stream(self, package):
+        """Closes the player app that is showing a stream; Android then brings back the app that was open before it."""
+        if not PACKAGE_RE.match(package):
+            raise DeviceError("bad package name")
+        self._adb("shell", "am", "force-stop", package, action=f"close {package}")
+        return f"closed {package}"
 
     def text(self, text):
         if not TEXT_RE.match(text):

@@ -11,8 +11,9 @@ from pathlib import Path
 from flask import Response, g, jsonify, redirect, render_template, request, url_for
 
 from config import BASE_DIR
-from synchub import db, ratings, watch
-from synchub.tv import discovery, orchestrator, runtime
+from synchub import db, protect, ratings, settings, watch
+from synchub.clients import ApiError, ConfigError
+from synchub.tv import camera, discovery, orchestrator, runtime
 from synchub.tv.devices import DeviceError
 from synchub.tv.jellyfin import JellyfinError, is_stale, item_label, match_session, summarize_session
 from synchub.tv.notices import NOTICES
@@ -628,6 +629,53 @@ def register(app):
                     session = again["session"]
                     resp, confirmed = attempt(session)
         return reply(resp.ok, "\n".join(steps), resp.status_code, steps=steps, sessionId=session["Id"], confirmed=confirmed)
+
+    # ------------------------------------------------------------------ cameras (UniFi Protect, shown through the go2rtc relay)
+    def camera_streams():
+        try:
+            return protect.streams()
+        except (ApiError, ConfigError) as e:
+            raise DeviceError(str(e))
+
+    @app.get("/api/tv/cameras")
+    def api_tv_cameras():
+        """The cameras the remote can put on a TV. `enabled` is false until UniFi Protect is switched on in Settings."""
+        if not protect.enabled():
+            return jsonify(enabled=False, cameras=[])
+        try:
+            found = protect.streams()
+        except (ApiError, ConfigError) as e:
+            return jsonify(enabled=True, cameras=[], error=str(e))
+        return jsonify(enabled=True, relay=bool(protect.relay_host()), cameras=[{"name": name, "title": item["title"]} for name, item in found.items()])
+
+    @app.get("/api/tv/devices/<dev_id>/camera")
+    def api_tv_device_camera(dev_id):
+        r = rt()
+        r.device(dev_id)
+        return jsonify(state=camera.status(r, dev_id))
+
+    @app.post("/api/tv/devices/<dev_id>/camera")
+    def api_tv_device_camera_show(dev_id):
+        """Pause what the TV is playing, remember it, and show this camera full screen (or switch to it when a camera is already showing)."""
+        r = rt()
+        d = r.device(dev_id)
+        name = str(json_body().get("camera") or "")
+        found = camera_streams()
+        if name not in found:
+            raise DeviceError("That camera is not on the list any more.")
+        try:
+            url = protect.play_url(name)
+        except ConfigError as e:
+            raise DeviceError(str(e))
+        result = camera.show(r, d, {"name": name, "title": found[name]["title"]}, url, settings.get("protect_viewer_app"))
+        return reply(result["ok"], "\n".join(result["steps"]), steps=result["steps"], state=result["state"])
+
+    @app.post("/api/tv/devices/<dev_id>/camera/close")
+    def api_tv_device_camera_close(dev_id):
+        """Close the camera and carry on with what the TV was playing."""
+        r = rt()
+        result = camera.close(r, r.device(dev_id), settings.get("protect_viewer_app"))
+        return reply(result["ok"], "\n".join(result["steps"]), steps=result["steps"], state=result["state"])
 
     # ------------------------------------------------------------------ Jellyfin
     @app.get("/api/tv/jf/sessions")

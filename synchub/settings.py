@@ -3,7 +3,7 @@ from config import DEFAULT_REQUEST_DELAY_RANGE, DEFAULT_USER_DELAY_RANGE
 from settings_validation import validate_setting
 from synchub import db
 
-SECRET_FIELDS = ("tmdb_api_key", "jellyfin_api_key", "radarr_api_key", "sonarr_api_key", "apprise_urls", "dynu_api_key", "pushover_app_token")
+SECRET_FIELDS = ("tmdb_api_key", "jellyfin_api_key", "radarr_api_key", "sonarr_api_key", "apprise_urls", "dynu_api_key", "pushover_app_token", "protect_api_key")
 
 DEFAULTS = {
     "scraper_interval_hours": "24", "radarr_interval_hours": "6", "sonarr_interval_hours": "6", "jellyfin_interval_hours": "6",
@@ -36,6 +36,8 @@ DEFAULTS = {
     # conversion profile used when none is chosen for a file; the source file is deleted this many days after a verified migration (0 = never);
     # what Radarr/Sonarr are told about the move (none, update_location, unmonitor, remove) and when (right after the copy, or only when the source is deleted)
     "library_default_profile": "1", "source_delete_after_days": "0", "arr_after_migration": "none", "arr_apply_when": "after_copy",
+    # UniFi Protect cameras on the TV remote: the console, the worker that runs the go2rtc relay and the app that shows a camera full screen (docs/CAMERAS.md)
+    "protect_enabled": "0", "protect_host": "", "protect_verify_tls": "0", "protect_quality": "medium", "protect_relay_worker": "", "protect_relay_host": "", "protect_relay_addr": "", "protect_viewer_app": "org.videolan.vlc",
     "library_exclude_folders": "@eaDir\n#recycle\n.Recycle.Bin\n$RECYCLE.BIN\nSystem Volume Information\nlost+found\n.Trash-*",
 }
 

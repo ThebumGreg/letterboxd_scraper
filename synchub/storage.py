@@ -214,7 +214,7 @@ def _volume_name(root):
     return "root_" + root["name"].replace("-", "_")
 
 
-def compose_file(worker_name, roots, host_mounts=False):
+def compose_file(worker_name, roots, host_mounts=False, relay=False):
     """The worker's docker-compose.yml. Docker mounts each share itself, so if one cannot be mounted the container does not start
     (instead of writing into an empty local folder).
 
@@ -227,6 +227,7 @@ def compose_file(worker_name, roots, host_mounts=False):
              "    restart: unless-stopped", "    stop_grace_period: 90s", "    environment:",
              "      SYNCHUB_URL: ${SYNCHUB_URL:?set SYNCHUB_URL in .env}", "      SYNCHUB_TOKEN: ${SYNCHUB_TOKEN:?set SYNCHUB_TOKEN in .env}",
              "      SYNCHUB_NAME: ${SYNCHUB_NAME:-}", f"      SYNCHUB_WORK: {WORK_MOUNT}      # the share login in .env is used by Docker to mount the shares and is not passed into the container",
+             *(["      GO2RTC_URL: http://go2rtc:1984      # the camera relay below: the worker gives it the cameras SyncHub learns from UniFi Protect"] if relay else []),
              "    volumes:",
              f"      - {_q('${WORK_DIR:-./work}:' + WORK_MOUNT)}      # job folders, kept originals and logs: use a big local disk"]
     declared = []
@@ -239,6 +240,10 @@ def compose_file(worker_name, roots, host_mounts=False):
         else:
             lines.append(f"      - {_q(_volume_name(root) + ':' + root['mount_point'])}      # {root['name']}")
             declared.append(root)
+    if relay:
+        lines += ["", "  # The camera relay chosen in SyncHub's Protect settings. It starts with no cameras; the worker adds them (nothing to configure here).",
+                  "  go2rtc:", "    image: alexxit/go2rtc", "    container_name: synchub-go2rtc", "    restart: unless-stopped",
+                  "    ports:", '      - "1984:1984"      # web page and HLS', '      - "8554:8554"      # RTSP, which the TV opens']
     if declared:
         lines += ["", "volumes:"]
     for root in declared:
@@ -300,7 +305,7 @@ def quick_setup(url, token):
                       "# --help lists the options (install folder, work folder, branch, running without Docker, --dry-run to see what it would do)."]) + "\n"
 
 
-def setup_files(worker_name, url, token, roots, host_mounts=False):
+def setup_files(worker_name, url, token, roots, host_mounts=False, relay=False):
     """Everything to set up one worker, as {file name: text}. `token` is the real token only right after it was made."""
-    return {".env": env_file(worker_name, url, token, roots, host_mounts), "docker-compose.yml": compose_file(worker_name, roots, host_mounts),
+    return {".env": env_file(worker_name, url, token, roots, host_mounts), "docker-compose.yml": compose_file(worker_name, roots, host_mounts, relay),
             "synchub-agent.ini": agent_ini(worker_name, url, token), "fstab": fstab_lines(roots)}

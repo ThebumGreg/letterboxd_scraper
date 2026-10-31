@@ -460,6 +460,16 @@ def register(app):
                 except RequestError as exc:
                     return jsonify(ok=False, message=f"{hello}, but adding titles would fail: {exc}")
                 return jsonify(ok=True, message=f"{hello}. The quality profile and root folder are valid.")
+            if service == "protect":
+                from synchub.protect import ProtectClient
+                host, key = typed("protect_host") or settings.get("protect_host"), typed("protect_api_key") or settings.get("protect_api_key")
+                if host != settings.get("protect_host") and not typed("protect_api_key"):
+                    return jsonify(ok=False, message="Enter the API key too when testing a different address.")
+                client = ProtectClient(host, key, verify=(fields.get("protect_verify_tls", settings.get("protect_verify_tls")) == "1"))
+                version = (client.info() or {}).get("applicationVersion") or ""
+                cams = client.cameras()
+                on = [c for c in cams if c["state"] == "CONNECTED"]
+                return jsonify(ok=True, message=f"Connected to UniFi Protect {version}".strip() + f". {len(on)} of {len(cams)} camera(s) are connected: {', '.join(c['name'] for c in on[:6])}{'...' if len(on) > 6 else ''}.")
             if service == "pushover":
                 from synchub.notifications import dispatch
                 from synchub.notifications.providers import pushover

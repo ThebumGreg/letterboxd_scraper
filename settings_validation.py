@@ -5,7 +5,7 @@ _SWITCH_KEYS = {
     "disable_jellyfin_connection", "radarr_enable_library_sync", "radarr_enable_queue_addition", "radarr_dry_run",
     "sonarr_enable_library_sync", "sonarr_enable_queue_addition", "sonarr_dry_run", "enable_notifications",
     "payload_logging_enabled", "dvr_enabled", "dvr_counts_as_library", "versions_on", "variant_stereo", "dv7_remux", "clean_names", "naming_tmdb_ids", "size_policy", "tv_size_policy", "gpu_encoding", "preview_auto", "log_service_jellyfin", "log_service_radarr", "log_service_sonarr",
-    "log_service_tmdb", "log_service_dynu",
+    "log_service_tmdb", "log_service_dynu", "protect_enabled", "protect_verify_tls",
 }
 _INT_RANGES = {
     "scraper_interval_hours": (0, 8760), "letterboxd_interval_hours": (0, 8760), "serializd_interval_hours": (0, 8760),
@@ -19,7 +19,7 @@ _INT_RANGES = {
 _FLOAT_KEYS = {"cap_mbps_2160", "cap_mbps_1080", "cap_mbps_720", "cap_mbps_sd", "tv_cap_share", "size_trigger_factor", "safety_gb_2160", "safety_gb_1080", "variant_min_gb", "request_delay_min", "request_delay_max", "user_delay_min", "user_delay_max", "movie_max_gb", "movie_target_gb", "tv_max_gb_per_hour", "tv_target_gb_per_hour"}
 _URL_KEYS = {"jellyfin_url", "radarr_url", "sonarr_url", "synchub_url"}
 _PATH_KEYS = {"radarr_root_folder", "sonarr_root_folder"}
-_CHOICES = {"size_mode": {"bitrate", "size"}, "audio_mode": {"keep", "add_compatible", "compatible_only"}, "naming_style": {"jellyfin", "current"}, "tv_metadata_provider": {"tmdb", "sonarr"}, "library_integrity_mode": {"metadata", "tail", "full"}, "download_pipeline": {"off", "review", "auto"}, "vmaf_mode": {"off", "warn", "hold"}, "size_preset": {"fast", "medium", "slow", "slower"}, "review_first": {"always", "until_trusted", "low_confidence_only", "never"}, "dolby_vision_profile_5": {"review", "hdr10"}, "dolby_vision_profile_7_8": {"review", "hdr10", "remux", "leave"},
+_CHOICES = {"size_mode": {"bitrate", "size"}, "audio_mode": {"keep", "add_compatible", "compatible_only"}, "naming_style": {"jellyfin", "current"}, "tv_metadata_provider": {"tmdb", "sonarr"}, "library_integrity_mode": {"metadata", "tail", "full"}, "download_pipeline": {"off", "review", "auto"}, "vmaf_mode": {"off", "warn", "hold"}, "protect_quality": {"high", "medium", "low"}, "size_preset": {"fast", "medium", "slow", "slower"}, "review_first": {"always", "until_trusted", "low_confidence_only", "never"}, "dolby_vision_profile_5": {"review", "hdr10"}, "dolby_vision_profile_7_8": {"review", "hdr10", "remux", "leave"},
             "source_delete_after_days": {"0", "7", "14", "30"}, "arr_after_migration": {"none", "update_location", "unmonitor", "remove"}, "arr_apply_when": {"after_copy", "with_source_delete"}}
 _FOLDER_NAME_KEYS = {"library_tv_folder", "library_movie_folder"}
 
@@ -96,6 +96,18 @@ def validate_setting(key, value):
         if any(not p.startswith("/") or "\x00" in p or len(p) > 200 for p in parts):
             return False, "dvr_path_prefixes must be folder paths as Jellyfin sees them, starting with /, separated by commas."
         return True, ",".join(parts)
+
+    if key in ("protect_host", "protect_relay_host"):
+        import re
+        host = re.sub(r"^[a-z]+://", "", value, flags=re.I).split("/")[0].strip()
+        return (True, host) if re.fullmatch(r"[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:\d{1,5})?", host) or not host else (False, f"{key} is an address such as 192.168.1.1, without http:// or a path.")
+
+    if key == "protect_relay_worker":
+        return (True, value) if value == "" or value.isdigit() else (False, "Choose a worker from the list.")
+
+    if key == "protect_viewer_app":
+        import re
+        return (True, value) if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+", value) else (False, "The viewer app is an Android package name such as org.videolan.vlc.")
 
     if key in _CHOICES:
         return (True, value) if value in _CHOICES[key] else (False, f"{key} must be one of {sorted(_CHOICES[key])}.")

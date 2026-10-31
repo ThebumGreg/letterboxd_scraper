@@ -19,6 +19,7 @@ function renderRemote() {
       <div id="now" class="np"></div>
       ${has('power_on') ? `<div class="rgrid r2"><button data-act="power" data-state="on" class="pwr">⏻ Power on</button><button data-act="power" data-state="off" class="pwr">☾ Sleep</button></div>` : ''}
       ${has('launch') ? `<button data-act="openjf" class="jfopen">▶ Open Jellyfin</button>` : ''}
+      ${has('stream_view') && CAM.enabled ? `<button data-act="cameras" class="jfopen">📹 Cameras</button>` : ''}
       <div id="quick" class="quick"></div>
     </div>
     <div class="r-pad">
@@ -108,6 +109,57 @@ function startFromLink() {
   watchOn(d.id);
 }
 
+/* ------------------------------------------------------------------ cameras (UniFi Protect)
+   Cameras pauses what the TV is playing and shows a camera full screen; this box then switches camera or closes it and carries on. */
+const CAM = {enabled: false, cameras: [], error: '', relay: true, state: null, busy: false, steps: ''};
+$('.tvr').insertAdjacentHTML('beforeend', `<dialog id="cam">
+  <div class="dlg-head"><b>Cameras</b><button data-act="camHide" class="small">✕</button></div>
+  <div id="camNow" class="small"></div>
+  <div id="camList"></div>
+  <div id="camMsg" class="small dim"></div>
+  <div class="tv-row"><button data-act="camClose" id="camCloseBtn" class="primary" hidden>✕ Close camera and carry on</button></div>
+</dialog>`);
+
+async function loadCameras() {
+  const r = await api('GET', '/api/tv/cameras');
+  Object.assign(CAM, {enabled: !!r.enabled, cameras: r.cameras || [], error: r.error || '', relay: r.relay !== false});
+  if (dev()) renderRemote();
+}
+async function loadCamState() {
+  const r = await api('GET', devPath('/camera'));
+  CAM.state = r.state || null; renderCam();
+}
+function renderCam() {
+  const st = CAM.state, d = dev();
+  $('#camNow').innerHTML = st ? `Showing <b>${esc(st.title)}</b> on ${esc(d.name)}.` + (st.resume ? ` Closing carries on with <b>${esc(st.resume.title)}</b>${st.resume.wasPlaying ? '' : ' (it was paused)'} at ${fmt(st.resume.ticks / TICKS)}.` : ' Nothing was playing, so there is nothing to carry on with.')
+    : `Pick a camera to show full screen on ${esc(d.name)}. What is playing in Jellyfin is paused and remembered.`;
+  $('#camList').innerHTML = CAM.error ? `<div class="pair">${esc(CAM.error)}</div>`
+    : !CAM.cameras.length ? '<div class="dim small">No cameras found. Check the Protect settings.</div>'
+    : (CAM.relay ? '' : '<div class="pair">SyncHub does not know where the camera relay is yet. Choose the relay worker in Settings and let it poll once, or type its address.</div>')
+      + CAM.cameras.map(c => `<button class="target" data-act="camShow" data-cam="${esc(c.name)}" ${CAM.busy ? 'disabled' : ''}><span class="dot ${st && st.camera === c.name ? 'on' : ''}"></span><div><div class="t-name">${esc(c.title)}</div></div></button>`).join('');
+  $('#camCloseBtn').hidden = !st;
+  $('#camCloseBtn').disabled = CAM.busy;
+  $('#camMsg').textContent = CAM.busy ? 'Working…' : CAM.steps;
+}
+async function camCall(btn, path, body) {
+  CAM.busy = true; renderCam();
+  const r = await run(btn, api('POST', devPath(path), body));
+  CAM.busy = false; CAM.steps = r.ok ? '' : lastLine(r.body);
+  if (r.state !== undefined) CAM.state = r.state;
+  renderCam(); setTimeout(() => pollStatus(dev()), 1500);
+  return r;
+}
+Object.assign(ACTIONS, {
+  cameras: async () => {
+    CAM.steps = ''; $('#cam').showModal();
+    await loadCameras(); await loadCamState();
+    if (!CAM.state && CAM.cameras.length === 1 && CAM.relay) camCall(null, '/camera', {camera: CAM.cameras[0].name});
+  },
+  camShow: b => camCall(b, '/camera', {camera: b.dataset.cam}),
+  camClose: async b => { await camCall(b, '/camera/close'); if (!CAM.state) $('#cam').close(); },
+  camHide: () => $('#cam').close(),
+});
+
 Object.assign(Page, {
   onStart: startFromLink,
   onSelect: renderRemote,
@@ -179,4 +231,5 @@ document.addEventListener('keydown', e => {
   sendKey(document.querySelector(`#remote [data-key="${key}"]`), key);
 });
 
+loadCameras();
 startApp();
