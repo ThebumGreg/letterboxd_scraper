@@ -185,6 +185,7 @@ class Config:
         self.verify = (pick("worker", "verify", "SYNCHUB_VERIFY", "hash") or "hash").lower()
         self.video_encoder = (pick("worker", "video_encoder", "SYNCHUB_VIDEO_ENCODER", "auto") or "auto").lower()      # which GPU encoder to use when a plan allows GPU encoding
         self.vaapi_device = pick("worker", "vaapi_device", "SYNCHUB_VAAPI_DEVICE", "/dev/dri/renderD128") or "/dev/dri/renderD128"
+        self.gpu_slots = 1                                 # GPU encodes at once; set from SyncHub (an integrated GPU should not be given more)
         self.use_proxy = (pick("synchub", "use_proxy", "SYNCHUB_USE_PROXY", "no") or "no").lower() in ("1", "yes", "true", "on")
         defaults = {"scan_threads": 2, "scan_batch": 25, "slots": 1, "log_max_mb": 10, "log_backups": 5, "copy_chunk_mb": 8, "checkpoint_mb": 256, "failed_retention_days": 14, "request_timeout": 30, "chunk_minutes": 10, "vmaf_samples": 5}
         for key, (low, high) in self.INTS.items():
@@ -211,6 +212,36 @@ class Config:
         for key, value in env.items():
             if key.startswith("SYNCHUB_ROOT_") and value.strip():
                 self.root_overrides[key[len("SYNCHUB_ROOT_"):].lower()] = value.strip()
+
+    REMOTE = {"slots": ("slots", int, 1, 16), "gpu_slots": ("gpu_slots", int, 1, 16), "max_copy_mb_s": ("max_copy_mb_s", float, 0, 100000), "scan_threads": ("scan_threads", int, 1, 16)}
+
+    def apply_remote(self, remote):
+        """Settings chosen on SyncHub's Workers page (they win over the .env and ini values). A setting SyncHub does not mention goes back to the local value.
+        Returns what changed. A value that is not understood is ignored, never an error: SyncHub being newer than this agent must not stop a worker."""
+        changed = {}
+        if not isinstance(remote, dict):
+            return changed
+        if not hasattr(self, "_local"):
+            self._local = {k: getattr(self, k) for k in ("slots", "gpu_slots", "max_copy_mb_s", "scan_threads", "video_encoder", "log_level")}
+        wanted = dict(self._local)
+        for key, (attr, kind, low, high) in self.REMOTE.items():
+            try:
+                value = kind(remote[key])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if low <= value <= high:
+                wanted[attr] = value
+        encoder = str(remote.get("encoder") or "").lower()
+        if encoder in ("auto", "cpu", "nvenc", "qsv", "vaapi"):
+            wanted["video_encoder"] = encoder
+        level = str(remote.get("log_level") or "").upper()
+        if level in ("DEBUG", "INFO", "WARNING", "ERROR"):
+            wanted["log_level"] = level
+        for attr, value in wanted.items():
+            if getattr(self, attr) != value:
+                changed["encoder" if attr == "video_encoder" else attr] = value
+                setattr(self, attr, value)
+        return changed
 
     def validate(self):
         if not self.url or not re.match(r"^https?://[^/\s]+", self.url):
@@ -270,6 +301,9 @@ class Log:
     @property
     def handlers(self):
         return self._logger.handlers
+
+    def set_level(self, name):
+        self._logger.setLevel(getattr(logging, name, logging.INFO))
 
     def log(self, level, message, *args, extra=None, exc_info=None, **fields):
         merged = dict((extra or {}).get("fields") or {})
@@ -2126,21 +2160,31 @@ class JobRunner(threading.Thread):
         if profile and profile.get("gpu") and transcode and kind == "cpu":
             self.log.info("The plan allows GPU encoding but this worker has no GPU encoder that works (or the picture is HDR); using the CPU encoder")
         started, tried = time.monotonic(), []
-        while True:
-            try:
-                command_text = self.encode_with(kind, local, partial, change, profile, expected_duration, transcode)
-                break
-            except JobFailure as exc:
-                if kind == "cpu" or exc.error_class not in ("encode_failed", "size_target_missed"):
-                    raise
-                tried.append(f"{kind}: {exc.message[:300]}")
-                self.log.warning(f"The {kind} GPU encoder did not work out ({exc.message[:300]}); encoding again with the CPU encoder", encoder=kind)
-                self.m["gpu_fallback"] = tried
-                self.save()
-                self._remove(partial)
-                shutil.rmtree(os.path.join(self.folder, "chunks"), ignore_errors=True)
-                self.m.pop("chunks", None)
+        holding = False
+        if kind != "cpu":
+            holding = self.agent.gpu_take()
+            if not holding:
+                self.log.info(f"The GPU is already encoding {self.cfg.gpu_slots} job(s) (the limit set in SyncHub); using the CPU encoder for this one")
                 kind = "cpu"
+        try:
+            while True:
+                try:
+                    command_text = self.encode_with(kind, local, partial, change, profile, expected_duration, transcode)
+                    break
+                except JobFailure as exc:
+                    if kind == "cpu" or exc.error_class not in ("encode_failed", "size_target_missed"):
+                        raise
+                    tried.append(f"{kind}: {exc.message[:300]}")
+                    self.log.warning(f"The {kind} GPU encoder did not work out ({exc.message[:300]}); encoding again with the CPU encoder", encoder=kind)
+                    self.m["gpu_fallback"] = tried
+                    self.save()
+                    self._remove(partial)
+                    shutil.rmtree(os.path.join(self.folder, "chunks"), ignore_errors=True)
+                    self.m.pop("chunks", None)
+                    kind = "cpu"
+        finally:
+            if holding:
+                self.agent.gpu_give()
         try:
             probe = self.check_conversion(settings, partial, change, expected_duration, profile)
             produced = os.path.getsize(partial)
@@ -2676,6 +2720,7 @@ class Agent:
         self.stopping = threading.Event()
         self._benchmarking = threading.Event()
         self._relay_digest, self._relay_at, self._relay_names = None, 0.0, set()
+        self.gpu_busy = 0                              # GPU encodes running now (see gpu_take)
         self.active = {}                               # job id -> JobRunner
         self.progress = {}                             # job id -> (stage, fraction), for the status summary
         self.lock = threading.Lock()
@@ -2702,6 +2747,27 @@ class Agent:
             self._warned[key] = time.monotonic()
             self.log.warning(text)
 
+    def apply_settings(self, answer):
+        """The settings SyncHub sent in a register or poll answer, applied at once."""
+        changed = self.cfg.apply_remote((answer or {}).get("settings"))
+        if changed:
+            if "log_level" in changed:
+                self.log.set_level(changed["log_level"])
+            self.log.info("Settings changed in SyncHub", **{k: v for k, v in changed.items()})
+        return changed
+
+    def gpu_take(self):
+        """True when a GPU encode may start (fewer than gpu_slots running); the caller must gpu_give() afterwards."""
+        with self.lock:
+            if self.gpu_busy >= self.cfg.gpu_slots:
+                return False
+            self.gpu_busy += 1
+            return True
+
+    def gpu_give(self):
+        with self.lock:
+            self.gpu_busy = max(self.gpu_busy - 1, 0)
+
     def register(self):
         if self.capabilities is None:
             self.capabilities = detect_capabilities(self.cfg)
@@ -2710,6 +2776,7 @@ class Agent:
         body = {"protocol": PROTOCOL, "version": __version__, "os": os_name(), "hostname": self.cfg.hostname, "slots": self.cfg.slots, "capabilities": self.capabilities}
         answer = self.api.post("/register", body)
         self.poll_seconds = max(self.MIN_POLL, float(answer.get("poll_seconds") or 5))
+        self.apply_settings(answer)
         self.roots.update(answer.get("roots"))
         self.roots_hash = answer.get("roots_hash")
         self.monitor.wake.set()
@@ -2783,6 +2850,7 @@ class Agent:
         if digest != self._originals_digest or time.monotonic() - self._originals_sent > 600:        # the list rides along when it changes, and now and then so SyncHub's copy stays fresh
             body["originals"] = listing
         answer = self.api.post("/poll", body)
+        self.apply_settings(answer)
         if "originals" in body:
             self._originals_digest, self._originals_sent = digest, time.monotonic()
         for job_id in answer.get("cancel") or []:

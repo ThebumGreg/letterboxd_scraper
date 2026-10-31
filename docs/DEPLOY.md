@@ -1,4 +1,4 @@
-# Deploying SyncHub with Docker: the app on Unraid, workers on Ubuntu
+# Installing SyncHub with Docker (the app on Unraid; workers are in WORKERS.md)
 
 ```
  Your PC (dev)          Unraid                                   Ubuntu worker PC(s)
@@ -153,56 +153,7 @@ Then **Library → Settings → Bring everything into** `media` (your clean-up d
 
 ## 5. Set up a worker (Ubuntu)
 
-### With the setup script (recommended)
-
-In SyncHub: **Workers → Add worker**, name it (for example `encoder-1`) and copy the token (shown **once**). Then on the worker PC (Ubuntu or Debian):
-
-```bash
-git clone https://github.com/ThebumGreg/letterboxd_scraper.git && cd letterboxd_scraper
-sudo ./agent/setup-worker.sh --url http://UNRAID_IP:5001 --token sw_...
-```
-
-(The dialog's first tab, `setup-worker.sh`, holds this command with your token in it. For a private repository: `export GITHUB_TOKEN=...` with read access to *Contents*, and `sudo -E`.) The script installs Docker and the mount tools, asks SyncHub for this worker's settings and shares, pulls the latest code, adds the shares to `/etc/fstab` (one marked block, with a backup), keeps the Unraid user and password in `/etc/synchub-smb.cred` (mode 600), mounts the shares, writes `.env`, builds and starts the worker, marks the shares and runs `--check`. It asks for the Unraid user and password if you did not pass `--smb-user` and `--smb-password`. The **Workers** page then shows the worker **online** with each share **ready**; press **Test copy** with a small file to prove the path end to end.
-
-To update the worker later, run the same command again (it needs no arguments: the address and token are read from the `.env` it wrote; it pulls the newest code and refreshes the settings from SyncHub). `--dry-run` shows what it would do first; `--help` lists the options, including `--mode native` for a PC without Docker. The full list of what it does and does not touch is in `agent/README.md`.
-
-### By hand
-
-The same thing, step by step. On the worker PC:
-
-```bash
-sudo apt update
-sudo apt install docker.io docker-compose-v2 cifs-utils      # cifs-utils is for SMB; Docker's SMB mount needs it on the PC itself
-sudo usermod -aG docker $USER                                # log out and in again
-```
-
-In SyncHub: **Workers → Add worker**. Name it (for example `encoder-1`), and in the *Setup files* dialog set the address to `http://UNRAID_IP:5001`. The token is shown **once**; the dialog gives you `.env`, `docker-compose.yml`, the agent settings and `fstab` lines.
-
-Make a folder on the worker PC:
-
-```
-synchub-worker/
-    docker-compose.yml     paste from the dialog
-    .env                   paste from the dialog; fill in SMB_USER and SMB_PASSWORD (the Unraid user), then:  chmod 600 .env
-    agent/                 the "agent" folder of the repository (Dockerfile, synchub_agent.py, media_analysis.py)
-```
-
-(From your PC: `scp -r agent user@WORKER_IP:~/synchub-worker/`.) A password with `$` is written `$$` and one with a comma is written as two commas.
-
-Optionally point the work folder at a big disk in `.env`: `WORK_DIR=/data/synchub-work`.
-
-Start it, mark the shares once, and check:
-
-```bash
-cd ~/synchub-worker
-docker compose up -d --build
-docker compose run --rm worker --init-roots    # writes a small .synchub-root file into each share; never creates folders. Once per share, from any worker.
-docker compose run --rm worker --check         # says what works and what does not
-```
-
-`--check` ends with `[ok]` lines for the SyncHub token and for each share (it will say `[!!] ffmpeg` only if the image was built without it). The **Workers** page now shows the worker **online** with each share **ready**. Press **Test copy** (Workers page) with a small file to prove the path end to end: the copy is read back and compared before it counts.
-
-More workers: repeat this section with another name; each gets its own token. Markers are only written once.
+Workers have their own guide: **[WORKERS.md](WORKERS.md)**. In short: add the shares and the share login on SyncHub's Storage page, add the worker on the Workers page, then run one command on the PC (`sudo ./agent/setup-worker.sh --url http://UNRAID_IP:5001 --token sw_...`). After that the Workers page does the rest (settings, Update, Restart, Logs).
 
 ## 6. Day to day
 
@@ -246,15 +197,8 @@ The database that was there is kept beside it as `synchub.db.before-restore-<tim
 | Banner "These addresses will not work from inside Docker" | A service address says `localhost`/`127.0.0.1`: use the real IP (Settings). |
 | Radarr/Sonarr/Jellyfin webhook says it cannot reach SyncHub | The *SyncHub address* is wrong for where that service runs: use `http://UNRAID_IP:5001`, not `localhost`. |
 | A page answers "This is not open to ..." | Permissions (System → People). Lost PINs: `docker exec synchub python -m synchub.access reset-all`. |
-| `setup-worker.sh` says "SyncHub does not accept this token" or "Cannot reach SyncHub" | The token was replaced (Workers page, More, *New token*), or the address is wrong or blocked: `curl http://UNRAID_IP:5001/healthz` from the worker PC should answer. Nothing on the PC was changed. |
-| `setup-worker.sh` ends with "needs your attention" (exit 3) | A line marked `WARNING` says what: a share that would not mount (the reason from `mount` is printed), an `/etc/fstab` line of yours for the same folder, a checkout with local changes. Fix it and run the script again. |
-| **Logs** says the worker has not answered | The worker is offline, or its agent is older than 0.4.0 (it cannot send its log): run the setup script again on it. |
-| The Workers tab says "has not reported its hardware" | The same: an agent older than 0.4.0. |
-| Worker will not mount a share | `cifs-utils` missing on the PC; wrong IP, share name, user or password in `.env`; for SMB try `vers=3.1.1` or `vers=2.1` in the share's options (Storage page), then regenerate the files. |
-| Worker online but a share says "no marker file" | Mounted but not set up: `docker compose run --rm worker --init-roots`. Or **not mounted** and you are looking at an empty folder: fix the mount first. |
+| Anything about a worker (setup script, shares, offline, token) | See [WORKERS.md, "When something is wrong"](WORKERS.md#6-when-something-is-wrong). |
 | Share says "wrong share" | The mounts are mixed up (`Media` mounted where `TFiles` belongs). |
-| Worker stays offline after an upgrade; the worker log says "SyncHub does not accept this worker's token" and `docker compose run --rm worker --check` shows `[!!] SyncHub accepts the token` | SyncHub only keeps a hash of each token, so a token it no longer knows (replaced, revoked, or the worker was re-added) is refused for good. Workers page, Worker-1, **More → New token** (copy it, it is shown once); put it in `SYNCHUB_TOKEN=` in the worker's `.env`, then `docker compose up -d` and `docker compose run --rm worker --check`. See also docs/UPGRADE.md. |
-| Worker not online | Wrong address or firewall (`curl http://UNRAID_IP:5001/healthz` from the worker PC should answer `{"ok":true,...}`), or a replaced token (401 in `docker compose logs`). |
 | `/healthz` works but pages show an error after a move | `docker logs synchub`; if it mentions a database version newer than this SyncHub, rebuild the image from the newer code. |
 | Dates and nightly times are off | Set `TZ`. |
 

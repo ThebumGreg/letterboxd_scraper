@@ -61,3 +61,10 @@ def client(app):
     browser = app.test_client()
     browser.set_cookie("synchub_profile", "0")
     return browser
+
+
+@pytest.fixture(autouse=True)
+def private_secret_key(tmp_path, monkeypatch):
+    """The encryption key for stored secrets lives in the test's own folder, never in the real data folder."""
+    from synchub import secrets_store
+    monkeypatch.setattr(secrets_store, "KEY_FILE", tmp_path / "keys" / "synchub.key")

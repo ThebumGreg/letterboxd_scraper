@@ -30,18 +30,24 @@ RUN apt-get update \
     && apt-get purge -y curl && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# VMAF quality scores need an ffmpeg built with libvmaf, which the distribution's is not. To have one, build with FFMPEG_URL set to a static GPL build tarball whose
-# bin/ folder holds ffmpeg and ffprobe, for example
-#   https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
-# (docker compose: build.args.FFMPEG_URL, see examples/docker-compose.gpu.yml). It also brings VAAPI, QSV and NVENC. Without it the agent reports that
-# VMAF is not available and jobs skip the score.
+# VMAF quality scores need an ffmpeg built with libvmaf, which the distribution's is not. So by default this image takes a static GPL build (one that also brings
+# VAAPI, QSV and NVENC) from BtbN's FFmpeg-Builds, on amd64 only. It is best-effort like the parts above: if the download or the unpacking fails the image keeps the
+# distribution's ffmpeg and the agent reports that VMAF is not available (jobs skip the score). To use another build, set FFMPEG_URL to a tarball whose bin/ folder holds
+# ffmpeg and ffprobe (compose: build.args.FFMPEG_URL); to keep the distribution's ffmpeg, set it to "none".
+ARG TARGETARCH
 ARG FFMPEG_URL=""
+ARG DEFAULT_FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
 RUN set -e; \
-    if [ -n "$FFMPEG_URL" ]; then \
-        apt-get update && apt-get install -y --no-install-recommends curl xz-utils ca-certificates libva2 libva-drm2 \
-        && curl -fsSL "$FFMPEG_URL" -o /tmp/ffmpeg.tar.xz && mkdir /tmp/ffmpeg && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg --strip-components=1 \
-        && install -m 0755 /tmp/ffmpeg/bin/ffmpeg /tmp/ffmpeg/bin/ffprobe /usr/local/bin/ \
-        && rm -rf /tmp/ffmpeg /tmp/ffmpeg.tar.xz /var/lib/apt/lists/*; \
+    [ -n "$FFMPEG_URL" ] || FFMPEG_URL="$DEFAULT_FFMPEG_URL"; \
+    if [ "$FFMPEG_URL" = "none" ] || { [ -z "${FFMPEG_URL##*linux64*}" ] && [ "${TARGETARCH:-amd64}" != "amd64" ]; }; then \
+        echo "NOTE: keeping the distribution's ffmpeg (FFMPEG_URL=none, or no static build for ${TARGETARCH})"; \
+    else \
+        ( apt-get update && apt-get install -y --no-install-recommends curl xz-utils ca-certificates libva2 libva-drm2 \
+          && curl -fsSL "$FFMPEG_URL" -o /tmp/ffmpeg.tar.xz && mkdir /tmp/ffmpeg && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg --strip-components=1 \
+          && /tmp/ffmpeg/bin/ffmpeg -hide_banner -version >/dev/null \
+          && install -m 0755 /tmp/ffmpeg/bin/ffmpeg /tmp/ffmpeg/bin/ffprobe /usr/local/bin/ \
+        ) || echo "WARNING: the static ffmpeg could not be installed; this image keeps the distribution's ffmpeg and has no VMAF"; \
+        rm -rf /tmp/ffmpeg /tmp/ffmpeg.tar.xz /var/lib/apt/lists/*; \
     fi; \
     if ffmpeg -hide_banner -filters | grep -q libvmaf; then echo "ffmpeg has libvmaf: quality scores are available"; else echo "NOTE: this ffmpeg has no libvmaf; quality scores will be skipped"; fi
 

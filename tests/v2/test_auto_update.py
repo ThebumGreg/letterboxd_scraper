@@ -86,11 +86,11 @@ def box(tmp_path):
     calls.write_text("")
     # curl: the idle check answers $SHIM_IDLE; a report is written down. SHIM_HUB_DOWN makes every call fail.
     curl = ('echo "curl $*" >> "$SHIM_LOG"\n[ -z "${SHIM_HUB_DOWN:-}" ] || { echo "curl: (7) down" >&2; exit 7; }\n'
-            'case "$*" in *update/check*) echo "{\\"ok\\":true,\\"idle\\":${SHIM_IDLE:-true}}";; *) echo "{\\"ok\\":true}";; esac')
+            'case "$*" in *update/check*) if [ -n "${SHIM_ANSWER:-}" ]; then echo "$SHIM_ANSWER"; else echo "{\\"ok\\":true,\\"idle\\":${SHIM_IDLE:-true}}"; fi;; *) echo "{\\"ok\\":true}";; esac')
     # the updater: succeeds, or fails with a build error while $SHIM_FAIL_UPDATE exists; writes down which version it was asked to deploy
     updater = ('echo "update $* $(sed -n "s/.*\\"\\(.*\\)\\".*/\\1/p" "$SYNCHUB_REPO/agent/synchub_agent.py")" >> "$SHIM_LOG"\n'
                'if [ -f "$SHIM_FAIL_UPDATE" ] && grep -q 2.0.0 "$SYNCHUB_REPO/agent/synchub_agent.py"; then echo "ERROR: build failed: no space left"; exit 1; fi')
-    for name, body in (("curl", curl), ("updater", updater), ("logger", "true")):
+    for name, body in (("curl", curl), ("updater", updater), ("logger", "true"), ("docker", 'echo "docker $*" >> "$SHIM_LOG"')):
         f = bin_dir / name
         f.write_text(f"#!/bin/sh\n{body}\n")
         f.chmod(f.stat().st_mode | stat.S_IXUSR)
@@ -164,7 +164,7 @@ def test_when_synchub_does_not_answer_it_waits_and_keeps_the_report(box):
     code, out, calls = box.run(SHIM_HUB_DOWN="1", SYNCHUB_UPDATE_WINDOW="00:00-23:59")           # window: updates anyway, cannot report
     assert head_version(box) == "1.1.0" and (box.state / "pending.json").exists()
     code, out, calls = box.run()                                                                   # SyncHub is back: the kept report goes out
-    assert not (box.state / "pending.json").exists() and calls.count("update/report") == 2 and '"status":"ok"' in calls.splitlines()[-1]
+    assert not (box.state / "pending.json").exists() and calls.count("update/report") == 2 and '"status":"ok"' in [c for c in calls.splitlines() if "update/report" in c][-1]
 
 
 def test_a_failed_update_puts_the_old_code_back_and_is_not_tried_again(box):
@@ -180,6 +180,7 @@ def test_a_failed_update_puts_the_old_code_back_and_is_not_tried_again(box):
         again = box.run()
         assert again[0] == 0 and again[2].count("update ") == 2 and again[2].count("update/report") == 1        # nothing more, nothing more reported
     box.fail.unlink()
+    (box.state / "last-check").unlink()                                              # an hour later
     publish(box, "2.1.0")
     code, out, calls = box.run()
     assert code == 0 and head_version(box) == "2.1.0"                                  # newer code is tried again
@@ -194,7 +195,7 @@ def test_commits_of_its_own_are_never_overwritten(box):
 
 def test_install_dry_run_writes_the_timer(box):
     code, out, _ = box.run("--install", "--dry-run", "--window", "02:00-06:00", "--dir", "/opt/w", SYNCHUB_UNIT_DIR="/x", SYNCHUB_REPO=str(AUTO.parents[1]))
-    assert code == 0 and "OnUnitActiveSec=1h" in out and 'SYNCHUB_UPDATE_WINDOW="02:00-06:00"' in out and 'SYNCHUB_WORKER_DIR="/opt/w"' in out
+    assert code == 0 and "OnUnitActiveSec=1min" in out and 'SYNCHUB_UPDATE_WINDOW="02:00-06:00"' in out and 'SYNCHUB_WORKER_DIR="/opt/w"' in out
     assert box.run("--install", "--dry-run", "--window", "tonight", SYNCHUB_REPO=str(AUTO.parents[1]))[0] == 1
 
 
@@ -223,3 +224,107 @@ def test_update_worker_says_the_old_worker_keeps_running_when_the_build_fails(tm
     done = subprocess.run(["bash", str(repo / "agent" / "update-worker.sh"), "--dir", str(worker), "--no-pull"], capture_output=True, text=True,
                           env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"})
     assert done.returncode == 1 and "still running, on its old code" in done.stderr
+
+
+# ---------------------------------------------------------------- requests from the Workers page, settings from SyncHub
+def answer(**fields):
+    import json
+    return json.dumps({"ok": True, "idle": True, "running": 0, "auto_update": True, "window": "", "request": None, **fields})
+
+
+def test_an_update_request_updates_now_without_waiting_for_the_hour(box):
+    publish(box, "1.1.0")
+    box.run()                                                                       # the hourly check ran a minute ago and found it
+    (box.clone.parent / "x").write_text("")
+    publish(box, "1.2.0")
+    code, out, calls = box.run(SHIM_ANSWER=answer(request="update"))
+    assert "asked for an update now" in out and head_version(box) == "1.2.0"
+
+
+def test_an_update_request_with_nothing_new_is_reported_as_current_and_retries_a_failed_commit(box):
+    code, out, calls = box.run(SHIM_ANSWER=answer(request="update"))
+    assert code == 0 and "Already on the newest code" in out and '"status":"current"' in calls
+    publish(box, "2.0.0")
+    box.fail.write_text("1")
+    box.run(SHIM_ANSWER=answer(request="update"))
+    assert head_version(box) == "1.0.0" and (box.state / "failed").exists()
+    box.fail.unlink()
+    box.run(SHIM_ANSWER=answer(request="update"))                                   # the person asked again: the failed commit is tried again
+    assert head_version(box) == "2.0.0"
+
+
+def test_a_restart_request_restarts_the_container_and_nothing_else(box):
+    publish(box, "1.1.0")
+    code, out, calls = box.run(SHIM_ANSWER=answer(request="restart"))
+    assert "Restarted the worker" in out and head_version(box) == "1.0.0" and "update " not in calls
+
+
+def test_automatic_updates_switched_off_in_synchub_stop_the_hourly_check(box):
+    publish(box, "1.1.0")
+    box.run(SHIM_ANSWER=answer(auto_update=False))
+    assert head_version(box) == "1.0.0"
+    box.run(SHIM_ANSWER=answer(auto_update=True))
+    assert head_version(box) == "1.1.0"
+
+
+def test_the_window_from_synchub_wins_over_the_conf_file(box):
+    publish(box, "1.1.0")
+    box.run(SHIM_ANSWER=answer(idle=False, running=1, window="00:00-23:59"), SYNCHUB_UPDATE_WINDOW="")
+    assert head_version(box) == "1.1.0"
+
+
+def test_a_busy_worker_is_looked_at_again_next_minute_and_logged_once(box):
+    publish(box, "1.1.0")
+    _, first, _ = box.run(SHIM_IDLE="false")
+    _, second, _ = box.run(SHIM_IDLE="false")
+    assert "waiting" in first and "waiting" not in second and head_version(box) == "1.0.0"
+    box.run()
+    assert head_version(box) == "1.1.0"
+
+
+# ---------------------------------------------------------------- SyncHub: worker settings and host requests
+def test_settings_are_validated_stored_and_sent_to_the_agent(client, v2):
+    wid, headers = authed(v2, "w2")
+    with v2.connection() as conn:
+        workers.update(conn, wid, slots=3, settings={"encoder": "VAAPI", "gpu_slots": "1", "max_copy_mb_s": "40", "log_level": "debug", "update_window": "02:00-06:00", "auto_update": False})
+        w = workers.get(conn, wid)
+    assert w["settings"] == {"encoder": "vaapi", "max_copy_mb_s": 40.0, "log_level": "DEBUG", "update_window": "02:00-06:00", "auto_update": False}     # gpu_slots 1 is the default: not stored
+    sent = client.post("/api/worker/v1/poll", json={}, headers=headers).get_json()["settings"]
+    assert sent == {"encoder": "vaapi", "max_copy_mb_s": 40.0, "log_level": "DEBUG", "slots": 3}               # only what was chosen
+    for bad in ({"encoder": "tpu"}, {"gpu_slots": 0}, {"update_window": "tonight"}, {"scan_threads": "x"}):
+        with v2.connection() as conn, pytest.raises(workers.WorkerError):
+            workers.update(conn, wid, settings=bad)
+    with v2.connection() as conn:
+        workers.update(conn, wid, settings={"encoder": "", "update_window": ""})              # blank = back to the default
+        assert "encoder" not in workers.get(conn, wid)["settings"]
+
+
+def test_host_requests_wait_for_idle_and_are_handed_over_once(client, v2):
+    wid, headers = authed(v2, "w3")
+    with v2.connection() as conn:
+        jobs.create(conn, "library", title="A job")
+        jobs.claim(conn, workers.get(conn, wid), 1)
+        workers.request_host(conn, wid, "update")
+    busy = client.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()
+    assert busy["request"] is None and busy["idle"] is False
+    with v2.connection() as conn:
+        conn.execute("UPDATE job SET status = 'done' WHERE worker_id = ?", (wid,))
+    assert client.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()["request"] == "update"
+    assert client.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()["request"] is None
+    with v2.connection() as conn:
+        workers.request_host(conn, wid, "restart")
+    assert client.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()["request"] == "restart"       # a restart does not wait
+    with v2.connection() as conn:
+        assert workers.host_seen(conn, wid)
+
+
+def test_the_workers_page_buttons_and_settings(client, v2):
+    wid, headers = authed(v2, "w4")
+    page = client.get("/workers").get_data(as_text=True)
+    assert 'data-worker-action="host_update"' in page and 'data-worker-action="host_restart"' in page and "setGpuSlots" in page
+    said = client.post(f"/api/workers/{wid}/host_update", json={}).get_json()
+    assert said["ok"] and "starts within a minute" in said["message"] and "has not checked in" in said["message"]
+    assert "Update queued" in client.get("/workers").get_data(as_text=True)
+    assert client.post(f"/api/workers/{wid}/update", json={"settings": {"encoder": "tpu"}}).get_json()["ok"] is False
+    client.post("/api/worker/v1/update/report", headers=headers, json={"status": "current", "version": "1.4.0", "commit": "abc"})
+    assert "already up to date" in client.get("/workers").get_data(as_text=True)

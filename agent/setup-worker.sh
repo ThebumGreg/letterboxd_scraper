@@ -48,6 +48,12 @@ SMB_PASSWORD_VALUE="${SMB_PASSWORD:-}"
 DO_MOUNTS=1
 DO_INIT_ROOTS=1
 DO_START=1
+DO_GPU=1
+DO_WATCHDOG=1
+DO_AUTO_UPDATE=1
+ADOPT=0
+GPU_FOUND=""
+DRI_DIR="${SYNCHUB_DRI_DIR:-/dev/dri}"
 DRY_RUN=0
 ASSUME_YES=0
 WARNINGS=0
@@ -93,6 +99,11 @@ Options:
   --no-mounts           do not touch /etc/fstab and do not mount anything (the shares are already mounted where SyncHub says)
   --no-init-roots       do not write the .synchub-root marker files into the shares
   --no-start            set everything up but do not build and start the worker
+  --no-gpu              do not give the container a GPU even if one is found (/dev/dri for Intel and AMD, nvidia-smi for NVIDIA)
+  --no-watchdog         do not install the mount watchdog (agent/mount-watchdog.sh) that remounts the shares after a network outage
+  --no-auto-update      do not install the update timer (agent/auto-update.sh) behind the Workers page's Update button
+  --adopt               take over a worker that was set up by hand: keep its /etc/fstab lines and mounts, back up its .env, compose file and fstab first
+                        (same as --no-mounts --no-init-roots, plus the backup)
   --dry-run             show what would be done; changes nothing (it still asks SyncHub for the settings, which proves the address and token)
   -y, --yes             never ask questions; fail instead
   -h, --help            this text
@@ -116,6 +127,10 @@ parse_args() {
             --no-mounts) DO_MOUNTS=0 ;;
             --no-init-roots) DO_INIT_ROOTS=0 ;;
             --no-start) DO_START=0 ;;
+            --no-gpu) DO_GPU=0 ;;
+            --no-watchdog) DO_WATCHDOG=0 ;;
+            --no-auto-update) DO_AUTO_UPDATE=0 ;;
+            --adopt) ADOPT=1; DO_MOUNTS=0; DO_INIT_ROOTS=0 ;;
             --url|--token|--mode|--dir|--work-dir|--repo|--repo-dir|--branch|--smb-user|--smb-password)
                 if [[ "$1" != *=* ]]; then
                     [ $# -ge 2 ] || die "$opt needs a value."
@@ -341,7 +356,17 @@ ensure_docker() {
 }
 
 write_credentials() {
+    local stored_login
     if [ "$DO_MOUNTS" != 1 ] || [ "$HAS_SMB" != 1 ]; then return 0; fi
+    if [ -z "$SMB_USER_VALUE$SMB_PASSWORD_VALUE" ] && stored_login="$(curl_setup smb.cred 2>/dev/null)"; then
+        # The login saved on SyncHub's Storage page: no question to answer.
+        if [ "$DRY_RUN" = 1 ]; then say "[dry run] would write $CRED_FILE from the login stored in SyncHub"; return 0; fi
+        ( umask 077; printf '%s\n' "$stored_login" >"$CRED_FILE.new" )
+        chmod 600 "$CRED_FILE.new"
+        mv -f "$CRED_FILE.new" "$CRED_FILE"
+        say "Wrote $CRED_FILE (readable by root only) from the share login stored in SyncHub"
+        return 0
+    fi
     if [ -z "$SMB_USER_VALUE" ] && [ -f "$CRED_FILE" ]; then
         say "Keeping the SMB login in $CRED_FILE (pass --smb-user and --smb-password to change it)"
         return 0
@@ -457,18 +482,70 @@ install_file() { # install_file SOURCE TARGET MODE [OWNER:GROUP]
     say "Wrote $target"
 }
 
+# --adopt: a copy of what the hand-made setup had, in a folder next to it, before anything is replaced.
+adopt_backup() {
+    local stamp backup file
+    stamp="$(date +%Y%m%d-%H%M%S)"; backup="$DIR/adopt-backup-$stamp"
+    mkdir -p "$backup"
+    for file in "$DIR/.env" "$DIR/docker-compose.yml" "$DIR/docker-compose.yaml" "$FSTAB"; do
+        if [ -f "$file" ]; then cp -p "$file" "$backup/$(basename "$file")"; fi
+    done
+    chmod 700 "$backup"
+    say "Adopting this worker: its .env, compose file and fstab were copied to $backup. The fstab lines and mounts are left as they are."
+    if [ -f "$DIR/docker-compose.yml" ] && ! cmp -s "$TMP/compose.final" "$DIR/docker-compose.yml"; then
+        say "The compose file will change (diff below, - is the old one):"
+        diff -u "$DIR/docker-compose.yml" "$TMP/compose.final" | sed 's/^/        /' | head -n 60 || true
+    fi
+}
+
 write_docker_files() {
     sed -E "s|^(WORK_DIR=).*|\\1$WORK_DIR|" "$TMP/env" >"$TMP/env.final"
     grep -q "^WORK_DIR=$WORK_DIR\$" "$TMP/env.final" || die "SyncHub's .env has no WORK_DIR line; is SyncHub the same release as this script?"
     sed -E "s|^(    build: )\./agent\$|\\1\"$REPO_DIR/agent\"|" "$TMP/compose" >"$TMP/compose.final"
     grep -q "build: \"$REPO_DIR/agent\"" "$TMP/compose.final" || die "SyncHub's docker-compose.yml has no 'build: ./agent' line; is SyncHub the same release as this script?"
+    add_gpu_to_compose
     run mkdir -p "$DIR" "$WORK_DIR"
+    if [ "$ADOPT" = 1 ] && [ "$DRY_RUN" != 1 ]; then adopt_backup; fi
     install_file "$TMP/env.final" "$DIR/.env" 600
     install_file "$TMP/compose.final" "$DIR/docker-compose.yml" 644
     # Mounts that were made after Docker started (boot order, a remount) only show inside the container if the host's mounts are shared.
     if [ "$DRY_RUN" != 1 ] && have findmnt && [ "$DO_MOUNTS" = 1 ] && [ "$(findmnt -no PROPAGATION / 2>/dev/null)" = private ]; then
         mount --make-rshared / || warn "Could not make the root mount shared; Docker may refuse the share folders ('not a shared or slave mount')."
     fi
+}
+
+# Which GPU this PC has, if any: "dri" (Intel or AMD, /dev/dri/renderD*), "nvidia" (nvidia-smi answers) or "". The agent still test-encodes a frame with every
+# encoder before it offers one, so a wrong guess here costs nothing; it only decides what the container is allowed to see.
+detect_gpu() {
+    if [ "$DO_GPU" != 1 ]; then return 0; fi
+    if have nvidia-smi && nvidia-smi -L >/dev/null 2>&1; then echo nvidia; return 0; fi
+    if compgen -G "$DRI_DIR/renderD*" >/dev/null; then echo dri; fi
+}
+
+# NVIDIA GPUs reach a container through the NVIDIA Container Toolkit: install it and register it with Docker when it is not there yet.
+ensure_nvidia_runtime() {
+    if [ "$DRY_RUN" = 1 ]; then say "[dry run] would make sure the NVIDIA Container Toolkit is installed"; return 0; fi
+    if docker info 2>/dev/null | grep -qi 'runtimes:.*nvidia'; then return 0; fi
+    say "Installing the NVIDIA Container Toolkit so the container can use the NVIDIA GPU"
+    if ! { apt_install nvidia-container-toolkit && nvidia-ctk runtime configure --runtime=docker && systemctl restart docker; }; then
+        warn "Could not set up the NVIDIA Container Toolkit (it is not in this PC's package sources: see https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html). The worker will encode on the CPU."
+        return 1
+    fi
+}
+
+# Adds the GPU to the generated compose file (in $TMP/compose.final), so there is one file and one command, never a second -f file.
+add_gpu_to_compose() {
+    local kind
+    kind="$(detect_gpu)"
+    if [ -z "$kind" ]; then say "No GPU found (or --no-gpu): the worker will encode on the CPU."; return 0; fi
+    GPU_FOUND="$kind"
+    case "$kind" in
+        dri)    say "Found a GPU at $DRI_DIR (Intel or AMD): giving the container access to it"
+                sed -i -E 's|^(    init: true)$|\1\n    devices:\n      - /dev/dri:/dev/dri|' "$TMP/compose.final" ;;
+        nvidia) say "Found an NVIDIA GPU: giving the container access to it"
+                if ensure_nvidia_runtime; then sed -i -E 's|^(    init: true)$|\1\n    gpus: all|' "$TMP/compose.final"; fi ;;
+    esac
+    grep -qE '^    (devices|gpus):' "$TMP/compose.final" || [ "$kind" = nvidia ] || die "SyncHub's docker-compose.yml has no 'init: true' line to add the GPU after; is SyncHub the same release as this script?"
 }
 
 ensure_agent_user() {
@@ -508,6 +585,24 @@ start_native() {
     if [ "$DRY_RUN" = 1 ]; then say "[dry run] systemctl restart synchub-agent"; return 0; fi
     systemctl restart synchub-agent
     say "The synchub-agent service is running"
+}
+
+# The mount watchdog and the update timer: separate scripts, installed here so a new worker needs one command and no second visit.
+install_extras() {
+    if [ "$MODE" != docker ]; then return 0; fi
+    if ! have systemctl; then say "No systemd here: skipping the mount watchdog and the update timer."; return 0; fi
+    if [ "$DO_WATCHDOG" = 1 ] && [ "$SHARES" -gt 0 ]; then
+        say "Installing the mount watchdog (remounts the shares after a network outage)"
+        # shellcheck disable=SC2086
+        if [ "$DRY_RUN" = 1 ]; then say "[dry run] $REPO_DIR/agent/mount-watchdog.sh --install"
+        else SYNCHUB_MOUNT_PATHS="$(mount_points | tr '\n' ' ')" bash "$REPO_DIR/agent/mount-watchdog.sh" --install ${SYNCHUB_EXTRAS_FLAGS:-} || warn "Could not install the mount watchdog; run  sudo $REPO_DIR/agent/mount-watchdog.sh --install  yourself."; fi
+    fi
+    if [ "$DO_AUTO_UPDATE" = 1 ]; then
+        say "Installing the update timer (the Workers page's Update button and automatic updates)"
+        # shellcheck disable=SC2086
+        if [ "$DRY_RUN" = 1 ]; then say "[dry run] $REPO_DIR/agent/auto-update.sh --install --dir $DIR"
+        else SYNCHUB_REPO="$REPO_DIR" bash "$REPO_DIR/agent/auto-update.sh" --install --dir "$DIR" ${SYNCHUB_EXTRAS_FLAGS:-} || warn "Could not install the update timer; run  sudo $REPO_DIR/agent/auto-update.sh --install --dir $DIR  yourself."; fi
+    fi
 }
 
 agent_command() { # agent_command ARGS...: the agent's own command line tools (--init-roots, --check) in the way the worker runs
@@ -552,7 +647,9 @@ summary() {
         echo "  Logs:       journalctl -u synchub-agent -f      (or SyncHub's Workers page, Logs button)"
         echo "  Restart:    sudo systemctl restart synchub-agent"
     fi
-    echo "  Update:     run this script again (it pulls the latest code from GitHub)"
+    echo "  Update:     the Update button on SyncHub's Workers page (or automatically); no SSH needed. By hand: run this script again."
+    if [ -n "$GPU_FOUND" ]; then echo "  GPU:        the check above lists the encoders that really work (a test frame is encoded with each). On SyncHub's Workers page, Run benchmark compares CPU and GPU speed and quality; \"GPU encodes at once\" (Edit worker) keeps integrated graphics from being overloaded."; fi
+    echo "  Settings:   Workers page, More, Edit name, tags, settings (encoder, GPU limit, update window...). No .env editing."
     printf '%s================================================================%s\n' "$BOLD" "$OFF"
 }
 
@@ -590,6 +687,9 @@ main() {
 
     step "Checking the worker"
     verify
+
+    step "Installing the mount watchdog and the update timer"
+    install_extras
 
     summary
     [ "$WARNINGS" -eq 0 ] || exit 3

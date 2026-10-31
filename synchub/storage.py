@@ -83,7 +83,7 @@ def validate(data):
     if protocol == "local":
         options = ""
     if _SECRET_OPTION.search(options):
-        raise StorageError("Do not put a user name or password in the options. They go in the worker's .env file, so SyncHub never stores them.")
+        raise StorageError("Do not put a user name or password in the options. Use the share login box on this page (it is stored encrypted and sent only to your workers).")
     if not _OPTIONS.match(options):
         raise StorageError("Mount options are letters, numbers and = , . _ : - only.")
     paths = {}
@@ -265,7 +265,7 @@ def env_file(worker_name, url, token, roots, host_mounts=False):
              f"SYNCHUB_URL={url}", f"SYNCHUB_TOKEN={token}", f"SYNCHUB_NAME={worker_name}", f"SYNCHUB_WORK={WORK_MOUNT}",
              "# A big local disk for job folders and the original files kept for the retention period:", "WORK_DIR=./work"]
     if not host_mounts and any(r["protocol"] == "smb" for r in roots):
-        lines += ["", "# The Unraid user that may read and write the shares. These stay on this PC; SyncHub never stores them.",
+        lines += ["", "# The Unraid user that may read and write the shares (only for this Docker-mounted setup; setup-worker.sh gets the login stored on SyncHub's Storage page instead).",
                   "# In the password write $ as $$ and a comma as two commas. Keep this file private:  chmod 600 .env", "SMB_USER=", "SMB_PASSWORD="]
     return "\n".join(lines) + "\n"
 
@@ -309,3 +309,47 @@ def setup_files(worker_name, url, token, roots, host_mounts=False, relay=False):
     """Everything to set up one worker, as {file name: text}. `token` is the real token only right after it was made."""
     return {".env": env_file(worker_name, url, token, roots, host_mounts), "docker-compose.yml": compose_file(worker_name, roots, host_mounts, relay),
             "synchub-agent.ini": agent_ini(worker_name, url, token), "fstab": fstab_lines(roots)}
+
+
+# ---------------------------------------------------------------- the file-server login (SMB), kept encrypted so a new worker needs no typing
+LOGIN_KEY = "storage_smb_login"
+
+
+def set_smb_login(conn, user, password):
+    """Stores the Unraid user and password the workers mount SMB shares with. Encrypted; the password is never shown again."""
+    from synchub import secrets_store, settings
+    user, password = str(user or "").strip(), str(password or "")
+    if not user or not password:
+        raise StorageError("Enter both the user name and the password.")
+    if "\n" in user + password or "\r" in user + password or len(user) > 100 or len(password) > 200:
+        raise StorageError("The user name and password cannot contain a line break or be that long.")
+    settings.set_value(LOGIN_KEY, secrets_store.encrypt(json.dumps({"user": user, "password": password})), conn=conn)
+
+
+def clear_smb_login(conn):
+    conn.execute("DELETE FROM app_setting WHERE key = ?", (LOGIN_KEY,))
+
+
+def smb_login(conn):
+    """(user, password) or None when none is stored, or the key that encrypted it is gone."""
+    from synchub import secrets_store, settings
+    token = settings.get(LOGIN_KEY, "", conn=conn)
+    plain = secrets_store.decrypt(token) if token else None
+    try:
+        data = json.loads(plain) if plain else None
+    except ValueError:
+        data = None
+    return (data["user"], data["password"]) if isinstance(data, dict) and data.get("user") and data.get("password") else None
+
+
+def smb_login_status(conn):
+    """What the Storage page may show: whether a login is stored and for which user. Never the password."""
+    from synchub import settings
+    login = smb_login(conn)
+    return {"set": bool(login), "user": login[0] if login else None, "lost": bool(settings.get(LOGIN_KEY, "", conn=conn)) and not login}
+
+
+def smb_cred_file(conn):
+    """The credentials file text for /etc/synchub-smb.cred, or None."""
+    login = smb_login(conn)
+    return f"username={login[0]}\npassword={login[1]}\n" if login else None

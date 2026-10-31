@@ -77,9 +77,10 @@ def register(app):
             except workers.ProtocolError as exc:
                 return _error(str(exc), 426, protocol=workers.PROTOCOL)
             roots, roots_hash = storage.for_agent(conn), storage.roots_hash(conn)
+            settings = workers.agent_settings(workers.get(conn, g.worker["id"]))
         logger.info(f"[workers] {g.worker['name']} registered")
         return jsonify(ok=True, worker_id=g.worker["id"], name=g.worker["name"], protocol=workers.PROTOCOL,
-                       poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS, roots=roots, roots_hash=roots_hash)
+                       poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS, roots=roots, roots_hash=roots_hash, settings=settings)
 
     @route("/roots", "roots")
     def roots():
@@ -91,6 +92,13 @@ def register(app):
     def setup_file(filename):
         """One of this worker's setup files as plain text, for agent/setup-worker.sh: the same files as the Workers page's Setup dialog, but with the
         shares mounted by the PC itself (/etc/fstab) instead of by Docker. The caller proved it holds the token, so the token is in the text."""
+        if filename == "smb.cred":
+            with db.connection() as conn:
+                text = storage.smb_cred_file(conn)
+            if text is None:
+                return _error("No share login is stored in SyncHub (Storage page, Share login).", 404)
+            logger.info(f"[workers] {g.worker['name']} fetched the share login")
+            return Response(text, mimetype="text/plain")
         if filename not in storage.SETUP_ORDER:
             return _error(f"There is no setup file called '{filename}'.", 404)
         with db.connection() as conn:
@@ -99,10 +107,10 @@ def register(app):
 
     @route("/update/check", "update_check")
     def update_check():
-        """For agent/auto-update.sh: is the worker running anything a restart would cut off?"""
+        """For agent/auto-update.sh, every minute: is the worker idle, its update settings, and a request (update or restart) from the Workers page."""
         with db.connection() as conn:
-            running = workers.idle(conn, g.worker["id"])
-        return jsonify(ok=True, idle=running == 0, running=running)
+            answer = workers.host_check(conn, g.worker["id"])
+        return jsonify(ok=True, **answer)
 
     @route("/update/report", "update_report")
     def update_report():
@@ -142,7 +150,7 @@ def register(app):
                 logger.info(f"[jobs] job {job['id']} ({job['kind']}: {job['title']}) went to {worker['name']}, attempt {job['attempt']}")
             response = jsonify(ok=True, jobs=claimed, resume=resume, release=release, cancel=jobs.cancels_for(conn, worker["id"]), cleanup=jobs.cleanups_for(conn, worker["id"]),
                            log_requests=jobs.log_requests_for(conn, worker["id"]), worker_log=bool(worker["log_requested"]), benchmark=bool(worker["benchmark_requested"]), roots_hash=storage.roots_hash(conn), paused=bool(worker["paused"]), draining=bool(worker["draining"]),
-                           poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS, **({"relay": relay} if relay else {}))
+                           poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS, settings=workers.agent_settings(worker), **({"relay": relay} if relay else {}))
         downloads.rescan_due()
         with db.connection() as conn:
             stale = pipeline_events.close_stale(conn)

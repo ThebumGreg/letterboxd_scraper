@@ -1,5 +1,7 @@
 # SyncHub — Notifications design
 
+> **Status: built (phases 1 to 4).** The events are listed in `synchub/notifications/events.py`; this is the design behind them.
+
 Status: **Phase 1 and most of Phase 2 built** (per-person rules, quiet hours, grouping, request-available, job, worker, share and TV alerts; not yet: request status steps, request failed, new-episode and check-in notices; migrations `011` and `014`). **Phase 1 was built** on the `feature/notifications` branch (the foundation and Pushover; nothing is sent about requests or episodes yet). Phases 2-5 below are planned. Pushover facts in section 2 were read from <https://pushover.net/api> on 2026-10-25.
 
 Goal: tell each person about the things they asked SyncHub for (a title they wanted is available, a request failed, a new episode of a show they follow) and tell administrators when something needs attention, through whatever delivery method each person prefers. Pushover is first; email, SMS and an iMessage gateway must be addable later as one new file each, without touching the rest.

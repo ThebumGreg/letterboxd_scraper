@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # auto-update.sh: keeps a worker on the newest SyncHub code, safely, and tells you what happened.
 #
-#   sudo ./agent/auto-update.sh --install [--dir /opt/synchub-worker] [--window 02:00-06:00]   run once; a systemd timer then checks every hour
+#   sudo ./agent/auto-update.sh --install [--dir /opt/synchub-worker] [--window 02:00-06:00]   run once; a systemd timer then runs every minute
 #   sudo ./agent/auto-update.sh --status         what the timer is doing (and the last log lines)
 #   sudo ./agent/auto-update.sh --uninstall      remove the timer, the script and the settings file
 #   sudo ./agent/auto-update.sh                  one check, by hand
 #   sudo ./agent/auto-update.sh --now            one check that updates even if the worker is busy
 #
+# Every minute the timer asks SyncHub (/update/check) for this worker's settings (automatic updates on or off, the maintenance window) and for a request
+# from the Workers page: "Restart worker" restarts the container at once; "Update" updates as soon as the worker is idle. Without a request the check
+# below runs once an hour (not at all when automatic updates are off for this worker in SyncHub).
 # One check does this, and only this:
 #   1. git fetch in the checkout the worker builds from. Nothing new on origin: stop.
 #   2. New code, but the same commit already failed here: stop (it is tried again when there is newer code).
@@ -25,6 +28,7 @@
 set -uo pipefail
 
 CONF="${SYNCHUB_UPDATE_CONF:-/etc/synchub-auto-update.conf}"
+# shellcheck disable=SC1090
 [ -f "$CONF" ] && . "$CONF"
 SELF="$(readlink -f "$0")"
 REPO="${SYNCHUB_REPO:-$(git -C "$(dirname "$SELF")" rev-parse --show-toplevel 2>/dev/null || true)}"
@@ -71,12 +75,12 @@ TimeoutStartSec=2h
 EOF
     write "$UNIT_DIR/synchub-auto-update.timer" <<EOF
 [Unit]
-Description=Check for new SyncHub worker code every hour
+Description=Ask SyncHub every minute for update requests and settings; look for new worker code once an hour
 
 [Timer]
-OnBootSec=10min
-OnUnitActiveSec=1h
-RandomizedDelaySec=2min
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
 
 [Install]
 WantedBy=timers.target
@@ -180,27 +184,57 @@ TOKEN="$(env_value SYNCHUB_TOKEN)"
 
 [ -f "$STATE/pending.json" ] && send_report "$(cat "$STATE/pending.json")"
 
+# Every minute: ask SyncHub for the settings chosen on the Workers page and for a request from its Update / Restart buttons.
+answer=""; [ "$FORCE" = 1 ] || answer="$(api /update/check 2>/dev/null || true)"
+jget() { printf '%s' "$answer" | python3 -c 'import json,sys
+try: v = json.load(sys.stdin).get(sys.argv[1])
+except Exception: v = None
+print("" if v is None else "true" if v is True else "false" if v is False else v)' "$1" 2>/dev/null || true; }
+REQUEST="$(jget request)"
+if [ -n "$answer" ] && printf '%s' "$answer" | grep -q '"window"'; then WINDOW="$(jget window)"; fi        # the window chosen in SyncHub wins over the conf file
+AUTO="$(jget auto_update)"
+
+if [ "$REQUEST" = restart ]; then
+    log "SyncHub asked for a restart of the worker"
+    if ( cd "$DIR" && docker compose restart ) >"$STATE/restart.out" 2>&1; then log "Restarted the worker"; else log "ERROR restarting the worker failed: $(tail -n 2 "$STATE/restart.out")"; fi
+    exit 0
+fi
+
+# Without a request the check for new code runs once an hour, and not at all when automatic updates are switched off for this worker.
+CHECKED="$STATE/last-check"
+if [ "$REQUEST" != update ] && [ "$FORCE" != 1 ]; then
+    [ "$AUTO" = false ] && exit 0
+    if [ -f "$CHECKED" ] && [ -z "$(find "$CHECKED" -mmin +59 2>/dev/null)" ]; then exit 0; fi
+fi
+if [ "$REQUEST" = update ]; then log "SyncHub asked for an update now"; rm -f "$STATE/failed"; fi
+
 git_run fetch --quiet origin 2>"$STATE/git.err" || { log "WARNING git fetch failed: $(tail -n1 "$STATE/git.err")"; exit 0; }
 LOCAL="$(git_run rev-parse HEAD)"
 REMOTE="$(git_run rev-parse '@{u}' 2>/dev/null)" || { log "ERROR the checkout's branch has no upstream"; exit 1; }
-[ "$LOCAL" = "$REMOTE" ] && exit 0
-if ! git_run merge-base --is-ancestor "$LOCAL" "$REMOTE"; then log "WARNING $REPO has commits that are not on origin: not updating"; exit 0; fi
-if [ -f "$STATE/failed" ] && [ "$(cat "$STATE/failed")" = "$REMOTE" ]; then exit 0; fi       # already failed here; wait for newer code
+if [ "$LOCAL" = "$REMOTE" ]; then
+    touch "$CHECKED"; rm -f "$STATE/waiting"
+    [ "$REQUEST" = update ] && { log "Already on the newest code ($(agent_version HEAD))"; send_report "{\"status\":\"current\",\"version\":\"$(agent_version HEAD)\",\"commit\":\"$(git_run rev-parse --short HEAD)\"}"; }
+    exit 0
+fi
+if ! git_run merge-base --is-ancestor "$LOCAL" "$REMOTE"; then touch "$CHECKED"; log "WARNING $REPO has commits that are not on origin: not updating"; exit 0; fi
+if [ -f "$STATE/failed" ] && [ "$(cat "$STATE/failed")" = "$REMOTE" ]; then touch "$CHECKED"; exit 0; fi       # already failed here; wait for newer code
 
 short="$(git_run rev-parse --short "$REMOTE")"
 if [ "$FORCE" = 1 ]; then
     log "New code $short: updating now (--now)"
+elif [ "$REQUEST" = update ]; then
+    log "New code $short: updating (asked for on the Workers page; SyncHub only passes this on when the worker is idle)"
+elif printf '%s' "$answer" | grep -Eq '"idle": ?true'; then
+    log "New code $short and the worker is idle: updating"
+elif in_window; then
+    log "New code $short; the worker is busy or SyncHub did not answer, but it is inside the maintenance window ($WINDOW): updating"
 else
-    answer="$(api /update/check 2>/dev/null || true)"
-    if printf '%s' "$answer" | grep -Eq '"idle": ?true'; then
-        log "New code $short and the worker is idle: updating"
-    elif in_window; then
-        log "New code $short; the worker is busy or SyncHub did not answer, but it is inside the maintenance window ($WINDOW): updating"
-    else
-        log "New code $short is waiting: the worker is busy or SyncHub did not answer${WINDOW:+; it updates inside the window $WINDOW}"
-        exit 0
-    fi
+    # Not touching the stamp: look again next minute, so the update starts as soon as the worker is idle or the window opens.
+    [ "$(cat "$STATE/waiting" 2>/dev/null)" = "$short" ] || log "New code $short is waiting: the worker is busy or SyncHub did not answer${WINDOW:+; it updates inside the window $WINDOW}"
+    echo "$short" > "$STATE/waiting"
+    exit 0
 fi
+touch "$CHECKED"; rm -f "$STATE/waiting"
 
 previous="$(agent_version HEAD)"
 if ! git_run merge --ff-only --quiet "$REMOTE" 2>"$STATE/git.err"; then
