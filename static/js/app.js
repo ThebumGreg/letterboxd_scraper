@@ -178,7 +178,7 @@
                 const service = btn.dataset.webhookSetup;
                 const out = document.querySelector(`[data-webhook-result="${service}"]`);
                 const fields = {};
-                btn.dataset.webhookFields.split(",").forEach((n) => { const i = document.getElementById(n); if (i) fields[n] = i.value; });
+                btn.dataset.webhookFields.split(",").forEach((n) => { const i = document.getElementById(n); if (i) fields[n] = i.type === "checkbox" ? (i.checked ? "1" : "0") : i.value; });
                 const show = (text, cls) => { out.className = "small d-block " + cls; out.textContent = text; };
                 btn.disabled = true;
                 show("Working...", "text-body-secondary");

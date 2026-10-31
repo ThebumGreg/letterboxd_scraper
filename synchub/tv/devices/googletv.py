@@ -95,7 +95,7 @@ class GoogleTVDriver(Driver):
         self.keyfile = str(certdir / "client-key.pem")
         self.api_port = int(cfg.get("port", 6466))
         self.pair_port = int(cfg.get("pair_port", 6467))
-        caps = {"keys", "apps", "text", "launch", "power_on", "power_off", "pairing"}
+        caps = {"keys", "apps", "text", "launch", "power_on", "power_off", "pairing", "stream_view"}
         self.probe_ports = {self.api_port: "Remote protocol", self.pair_port: "Remote pairing", 8009: "Cast", 8008: "Cast HTTP"}
         self.adb = None
         if cfg.get("adb"):
@@ -278,6 +278,25 @@ class GoogleTVDriver(Driver):
         raise DeviceError(f"Could not open {app_id}: " + "; ".join(failures) +
                           ("" if self.adb else '. Set "adb": true on this device to launch apps over ADB, which works on TVs '
                                                "that reject app links."))
+
+    def view_stream(self, url, package):
+        """Shows a camera stream full screen: through ADB in a video player app when ADB is on, else by sending the Remote protocol the address."""
+        if self.adb:
+            return self.adb.view_stream(url, package)
+        ok, why = self._launch_link(url, None)
+        if not ok:
+            raise DeviceError(f"The TV did not take the stream address ({why}). Set \"adb\": true on this device so SyncHub can open it in {package}.")
+        return "stream address sent over the Remote protocol"
+
+    def close_stream(self, package):
+        """Leaves the camera: closes the player over ADB, else presses Back."""
+        if self.adb:
+            try:
+                return self.adb.close_stream(package)
+            except DeviceError as e:
+                self.log("close stream", package, None, False, None, f"ADB failed ({e}), pressing Back instead")
+        self.send_key(self.keymap["back"])
+        return "pressed Back"
 
     def _launch_link(self, link, package):
         """Send one launch link and watch for the outcome. -> (ok, reason)."""

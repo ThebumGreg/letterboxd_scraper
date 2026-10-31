@@ -114,6 +114,12 @@ class Driver:
                 return choice
         return "e"
 
+    def view_stream(self, url, package):
+        raise DeviceError(f"{self.name} cannot show a camera stream yet")
+
+    def close_stream(self, package):
+        raise DeviceError(f"{self.name} cannot show a camera stream yet")
+
     def session_rule(self):
         return self.session_override or self.jellyfin.get("session") or self.default_session_rule
 

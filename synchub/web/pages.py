@@ -5,7 +5,7 @@ import os
 from flask import abort, flash, g, jsonify, redirect, render_template, request, send_file, send_from_directory, url_for
 
 from config import BASE_DIR
-from synchub import access, backup, catalog, db, ddns, discover, posters, profiles, ratings, search, settings, states, status, tasks, watch, watchlist, webhooks
+from synchub import access, backup, catalog, db, ddns, discover, posters, profiles, ratings, search, settings, states, status, tasks, watch, watchlist, webhooks, workers
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.tmdb import TmdbClient
 from synchub.notifications import dispatch
@@ -248,9 +248,10 @@ def register(app):
     def settings_page():
         with db.connection() as conn:
             profile_list = profiles.list_all(conn)
+            worker_list = [{"id": w["id"], "name": w["name"]} for w in workers.list_all(conn) if not w["revoked"]]
         values = {**settings.DEFAULTS, **settings.get_all()}
         in_docker = os.getenv("SYNCHUB_IN_DOCKER") == "1"
-        return render_template("settings.html", settings=values, profiles=profile_list, webhook_status=webhooks.status_for_all(), suggested_synchub_url=request.host_url.rstrip("/"),
+        return render_template("settings.html", settings=values, profiles=profile_list, relay_workers=worker_list, webhook_status=webhooks.status_for_all(), suggested_synchub_url=request.host_url.rstrip("/"),
                                local_addresses=backup.addresses_on_this_machine(values) if in_docker else [], last_backup=backup.latest(), notify=dispatch.state())
 
     @app.route("/payloads")

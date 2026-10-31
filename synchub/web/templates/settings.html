@@ -60,6 +60,51 @@
                 <span class="small ms-2" data-test-result="tmdb" role="status"></span>
             </div>
 
+            <!-- UniFi Protect cameras on the TV remote -->
+            <div class="panel p-3 p-md-4 mb-4" id="protectSettings">
+                <h5 class="text-success mb-1">UniFi Protect cameras</h5>
+                <p class="small text-body-secondary">Adds a <strong>Cameras</strong> button to the TV remote. It pauses what the TV is playing in Jellyfin, shows the camera full screen, and carries on where you were when you close it. A small relay (go2rtc) on one of your workers turns Protect's streams into ones the TV can play. See <code>docs/CAMERAS.md</code>.</p>
+                {{ switch('protect_enabled', 'Show UniFi Protect cameras on the TV remote', settings.protect_enabled, dims='#protectFields', dims_when='unchecked') }}
+                <div id="protectFields">
+                    <div class="mb-3">
+                        <label for="protect_host" class="form-label">Protect console address</label>
+                        <input type="text" class="form-control" id="protect_host" name="protect_host" value="{{ settings.protect_host }}" placeholder="192.168.1.1" autocomplete="off">
+                        <div class="form-text">The console's own address, without https://. Protect needs to be recent enough to have <em>Settings, Control Plane, Integrations</em>.</div>
+                    </div>
+                    <div class="mb-3">
+                        {{ secret_field('protect_api_key', 'Protect API key', settings.protect_api_key, help='Made on the Integrations page of the console. It is kept here and never shown again.') }}
+                    </div>
+                    {{ switch('protect_verify_tls', "Check the console's certificate", settings.protect_verify_tls) }}
+                    <div class="form-text mb-3">Leave this off unless the console has a certificate your browser trusts: a console normally signs its own.</div>
+                    <div class="mb-3">
+                        <label for="protect_quality" class="form-label">Picture quality on the TV</label>
+                        <select class="form-select" id="protect_quality" name="protect_quality">
+                            {% for q, label in (('high', 'High (full resolution)'), ('medium', 'Medium'), ('low', 'Low')) %}<option value="{{ q }}" {{ 'selected' if settings.protect_quality == q }}>{{ label }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="protect_relay_worker" class="form-label">Worker that runs the camera relay</label>
+                        <select class="form-select" id="protect_relay_worker" name="protect_relay_worker">
+                            <option value="">None chosen</option>
+                            {% for w in relay_workers %}<option value="{{ w.id }}" {{ 'selected' if settings.protect_relay_worker == w.id|string }}>{{ w.name }}</option>{% endfor %}
+                        </select>
+                        <div class="form-text">Its setup files (Workers page, Setup) then include go2rtc. A worker that was set up earlier needs the go2rtc block added once; <code>docs/CAMERAS.md</code> shows it.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="protect_relay_host" class="form-label">Relay address, as the TV reaches it (optional)</label>
+                        <input type="text" class="form-control" id="protect_relay_host" name="protect_relay_host" value="{{ settings.protect_relay_host }}" placeholder="{{ settings.protect_relay_addr or '192.168.1.30' }}" autocomplete="off">
+                        <div class="form-text">Leave blank to use the address the relay worker last contacted SyncHub from{% if settings.protect_relay_addr %} (now {{ settings.protect_relay_addr }}){% endif %}.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="protect_viewer_app" class="form-label">Player app on the TV</label>
+                        <input type="text" class="form-control" id="protect_viewer_app" name="protect_viewer_app" value="{{ settings.protect_viewer_app }}" autocomplete="off">
+                        <div class="form-text">An Android package name. VLC for Android (<code>org.videolan.vlc</code>) opens the camera streams; install it on the TV first.</div>
+                    </div>
+                    <button type="button" class="btn btn-outline-info btn-sm" data-test-service="protect" data-test-fields="protect_host,protect_api_key,protect_verify_tls">Test connection</button>
+                    <span class="small ms-2" data-test-result="protect" role="status"></span>
+                </div>
+            </div>
+
             <!-- Notifications -->
             <div class="panel p-3 p-md-4 mb-4" id="notifySettings">
                 <h5 class="text-success mb-3">Notifications</h5>

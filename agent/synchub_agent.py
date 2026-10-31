@@ -35,6 +35,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -2674,6 +2675,7 @@ class Agent:
         self.monitor = RootMonitor(self.roots, log)
         self.stopping = threading.Event()
         self._benchmarking = threading.Event()
+        self._relay_digest, self._relay_at, self._relay_names = None, 0.0, set()
         self.active = {}                               # job id -> JobRunner
         self.progress = {}                             # job id -> (stage, fraction), for the status summary
         self.lock = threading.Lock()
@@ -2797,6 +2799,8 @@ class Agent:
             self.upload_worker_log()
         if answer.get("benchmark") and not active and not self._benchmarking.is_set() and not self.stopping.is_set():
             self.start_benchmark()
+        if answer.get("relay") is not None:
+            self.sync_relay(answer["relay"])
         if not self.stopping.is_set():
             for job in (answer.get("resume") or []) + (answer.get("jobs") or []):
                 self.start(job)
@@ -2808,6 +2812,37 @@ class Agent:
             self.monitor.wake.set()
             self.log.info("The list of shares changed in SyncHub", roots=self.roots.names())
         return answer
+
+    RELAY_RESEND = 300           # seconds; go2rtc forgets streams added through its web address when it restarts, so they are given again now and then
+
+    def sync_relay(self, relay):
+        """The camera relay (go2rtc, in the same compose file as this worker): SyncHub says which streams it should serve, this puts them there.
+        The stream addresses carry Protect's stream keys, so only the names are ever logged. Nothing happens unless GO2RTC_URL is set."""
+        base = os.environ.get("GO2RTC_URL", "").rstrip("/")
+        streams = {str(n): str(src) for n, src in ((relay or {}).get("streams") or {}).items()} if isinstance(relay, dict) else {}
+        if not base:
+            return
+        digest = hashlib.sha1(json.dumps(streams, sort_keys=True).encode("utf-8")).hexdigest()
+        if digest == self._relay_digest and time.monotonic() - self._relay_at < self.RELAY_RESEND:
+            return
+
+        def call(method, query):
+            request = urllib.request.Request(f"{base}/api/streams?{urllib.parse.urlencode(query)}", method=method)
+            with urllib.request.urlopen(request, timeout=5) as response:
+                response.read()
+        try:
+            for name, src in streams.items():
+                call("PUT", {"name": name, "src": src})
+            for name in self._relay_names - set(streams):
+                call("DELETE", {"src": name})
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            if self._relay_digest is not None or self._relay_at == 0.0:
+                self.log.warning(f"Could not give the camera relay at {base} its cameras: {exc}")
+            self._relay_digest, self._relay_at = None, time.monotonic()
+            return
+        if digest != self._relay_digest:
+            self.log.info(f"The camera relay now serves {len(streams)} camera(s): {', '.join(sorted(streams)) or 'none'}")
+        self._relay_digest, self._relay_at, self._relay_names = digest, time.monotonic(), set(streams)
 
     # ---- jobs
     def start(self, job):

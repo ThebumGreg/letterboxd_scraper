@@ -42,6 +42,7 @@ class Runtime:
         self.prefs = _empty_prefs()
         self.devices, self.config_error = {}, None
         self.last_status, self.icons, self.apps_cache = {}, {}, {}
+        self.camera = {}            # TV id -> what it was doing before a camera was put on it (see synchub.tv.camera)
         self._jf = (None, None)
         self.load_prefs()
         self.reload_devices()

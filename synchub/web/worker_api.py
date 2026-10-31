@@ -8,7 +8,7 @@ from functools import wraps
 
 from flask import Response, g, jsonify, request
 
-from synchub import downloads, db, jobs, pipeline_events, previews, states, storage, tasks, versions, workers
+from synchub import downloads, db, jobs, pipeline_events, previews, protect, states, storage, tasks, versions, workers
 from synchub.library import cleanup, migrate, scan
 
 logger = logging.getLogger(__name__)
@@ -94,12 +94,14 @@ def register(app):
         if filename not in storage.SETUP_ORDER:
             return _error(f"There is no setup file called '{filename}'.", 404)
         with db.connection() as conn:
-            files = storage.setup_files(g.worker["name"], request.host_url.rstrip("/"), _bearer(), storage.list_all(conn), host_mounts=request.args.get("mounts") == "host")
+            files = storage.setup_files(g.worker["name"], request.host_url.rstrip("/"), _bearer(), storage.list_all(conn), host_mounts=request.args.get("mounts") == "host", relay=protect.is_relay_name(conn, g.worker["name"]))
         return Response(files[filename], mimetype="text/plain")
 
     @route("/poll", "poll")
     def poll():
         data = _body()
+        protect.note_worker_address(g.worker["id"], request.remote_addr)
+        relay = protect.for_worker(g.worker["id"])            # asks UniFi Protect (at most every few minutes), so it happens before the database is held
         with db.connection() as conn:
             workers.touch(conn, g.worker["id"], data.get("status"))
             if "originals" in data:
@@ -122,7 +124,7 @@ def register(app):
                 logger.info(f"[jobs] job {job['id']} ({job['kind']}: {job['title']}) went to {worker['name']}, attempt {job['attempt']}")
             response = jsonify(ok=True, jobs=claimed, resume=resume, release=release, cancel=jobs.cancels_for(conn, worker["id"]), cleanup=jobs.cleanups_for(conn, worker["id"]),
                            log_requests=jobs.log_requests_for(conn, worker["id"]), worker_log=bool(worker["log_requested"]), benchmark=bool(worker["benchmark_requested"]), roots_hash=storage.roots_hash(conn), paused=bool(worker["paused"]), draining=bool(worker["draining"]),
-                           poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS)
+                           poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS, **({"relay": relay} if relay else {}))
         downloads.rescan_due()
         with db.connection() as conn:
             stale = pipeline_events.close_stale(conn)
