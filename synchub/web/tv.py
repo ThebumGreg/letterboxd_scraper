@@ -637,6 +637,16 @@ def register(app):
         except (ApiError, ConfigError) as e:
             raise DeviceError(str(e))
 
+    @app.get("/api/protect/cameras")
+    def api_protect_cameras():
+        """Every camera the console lists, with whether it is served (Settings picks which ones the relay and the TV pop-up offer)."""
+        try:
+            found = protect.ProtectClient().cameras()
+        except (ApiError, ConfigError) as e:
+            return jsonify(ok=False, message=str(e))
+        chosen = protect.chosen_cameras()
+        return jsonify(ok=True, cameras=[{"id": c["id"], "name": c["name"], "state": c["state"], "chosen": not chosen or c["id"] in chosen} for c in found])
+
     @app.get("/api/protect/relay")
     def api_protect_relay():
         """The Camera relay card in Settings: the checklist from the chosen worker to cameras being served."""

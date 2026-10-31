@@ -213,7 +213,7 @@
                 const service = btn.dataset.testService;
                 const out = document.querySelector(`[data-test-result="${service}"]`);
                 const fields = {};
-                btn.dataset.testFields.split(",").forEach((n) => { const i = document.getElementById(n); if (i) fields[n] = i.value; });
+                btn.dataset.testFields.split(",").forEach((n) => { const i = document.getElementById(n); if (i) fields[n] = i.type === "checkbox" ? (i.checked ? "1" : "0") : i.value; });
                 const show = (text, cls) => { out.className = "small ms-2 " + cls; out.textContent = text; };
 
                 btn.disabled = true;

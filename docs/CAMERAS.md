@@ -34,11 +34,15 @@ Keep ports 1984 and 8554 on your home network only. go2rtc has no password.
 
 ## Using it
 
+Choose the cameras under *Cameras to serve* (Settings > Protect, Load cameras from the console, tick, Save). With none ticked every connected camera is served. go2rtc serves each camera as its own stream; it does not draw a picture-in-picture or a grid.
+
 - Press **Cameras**, pick a camera. With one camera it opens straight away.
 - Pick another camera in the box to switch. The first title is still remembered.
 - **Close camera and carry on** closes the player and unpauses the title. If it was already paused it stays paused. If Jellyfin's app was closed meanwhile, SyncHub opens it again and plays the title from the saved place.
 
 ## If something does not work
+
+- *go2rtc was not started: the worker's compose setup does not load docker-compose.override.yml*: the worker's folder picks its own compose files (`COMPOSE_FILE` in `.env`). Reinstall the worker with `setup-worker.sh`, whose compose file already includes go2rtc.
 
 - **Test connection says 404 or "no Integration API".** The console is too old, or the address is not the console's own.
 - **The list of cameras is empty.** Only connected cameras are shown.

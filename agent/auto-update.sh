@@ -246,6 +246,15 @@ relay_sync() {
     rm -f "$STATE/relay-waiting"
     local text; text="$(jget relay_override)"; [ -n "$text" ] || return 0
     printf '%s\n' "$text" > "$RELAY_FILE.tmp" && mv -f "$RELAY_FILE.tmp" "$RELAY_FILE"
+    # Compose loads docker-compose.override.yml only when nothing else chooses the files (COMPOSE_FILE or -f). Check before starting anything.
+    if ! ( cd "$DIR" && docker compose config --services 2>/dev/null ) | grep -qx go2rtc; then
+        rm -f "$RELAY_FILE"
+        local why="the worker's compose setup does not load docker-compose.override.yml"
+        grep -qs '^COMPOSE_FILE=' "$DIR/.env" && why="$why (COMPOSE_FILE is set in $DIR/.env: $(grep -s '^COMPOSE_FILE=' "$DIR/.env" | head -n1 | cut -c1-120))"
+        log "WARNING the camera relay cannot be set up: $why"
+        relay_report failed "go2rtc was not started: $why. Reinstall the worker with setup-worker.sh (docs/WORKERS.md), or add the go2rtc service to its compose file."
+        return 0
+    fi
     log "Setting up the camera relay (go2rtc) for this worker"
     if ( cd "$DIR" && docker compose up -d ) >"$STATE/relay.out" 2>&1; then
         for _ in 1 2 3 4 5 6 7 8 9 10; do go2rtc_running && break; sleep 3; done
@@ -256,6 +265,14 @@ relay_sync() {
     fi
 }
 [ "$FORCE" = 1 ] || [ -z "$answer" ] || relay_sync
+
+# The installed copy of this script is what the timer runs: when the checkout holds a newer one, replace it (a rename, so a run in progress is not disturbed).
+refresh_self() {
+    [ "$SELF" = "$(readlink -f "$BIN" 2>/dev/null)" ] && [ -f "$REPO/agent/auto-update.sh" ] || return 0
+    cmp -s "$REPO/agent/auto-update.sh" "$BIN" && return 0
+    install -m 0755 "$REPO/agent/auto-update.sh" "$BIN.new" 2>/dev/null && mv -f "$BIN.new" "$BIN" && log "Refreshed $BIN from the checkout"
+}
+refresh_self
 
 if [ "$REQUEST" = restart ]; then
     log "SyncHub asked for a restart of the worker"

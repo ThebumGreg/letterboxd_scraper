@@ -1117,7 +1117,27 @@ def gpu_details():
                 if gpus and "nvidia" in vendor.lower() and any(g["source"] == "nvidia-smi" for g in gpus):
                     continue                                          # nvidia-smi already told us, with more detail
                 gpus.append({"name": f"{vendor} {device}"[:80], "driver": None, "memory_mb": None, "source": "lspci"})
+    if not gpus:
+        gpus = drm_gpus()
     return gpus[:8]
+
+
+DRM_VENDORS = {"0x8086": "Intel", "0x1002": "AMD", "0x10de": "NVIDIA"}
+
+
+def drm_gpus(root="/sys/class/drm"):
+    """Cards seen through /sys/class/drm, for a container that has no lspci: vendor and kernel driver of each render node that was passed in."""
+    found = []
+    try:
+        names = sorted(n for n in os.listdir(root) if re.fullmatch(r"renderD\d+", n))
+    except OSError:
+        return found
+    for node in names:
+        base = os.path.join(root, node, "device")
+        vendor = read_file(os.path.join(base, "vendor"), 40).strip().lower()
+        driver = os.path.basename(os.path.realpath(os.path.join(base, "driver"))) if os.path.islink(os.path.join(base, "driver")) else None
+        found.append({"name": f"{DRM_VENDORS.get(vendor, 'GPU')} graphics ({node})"[:80], "driver": driver, "memory_mb": None, "source": "drm"})
+    return found
 
 
 def container_kind():

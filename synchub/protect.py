@@ -106,11 +106,18 @@ def relay_source(rtsps_url):
     return f"rtspx://{parts.netloc}{parts.path}"
 
 
-def relay_streams(client, quality="medium"):
-    """{stream name: go2rtc source} for every connected camera, with stream names that are plain words and never repeat."""
+def chosen_cameras():
+    """The camera ids picked in Settings (a set); empty means every camera is served."""
+    return {c for c in (settings.get("protect_cameras") or "").split(",") if c.strip()}
+
+
+def relay_streams(client, quality="medium", only=None):
+    """{stream name: go2rtc source} for every connected camera (or just those ids in `only`), with stream names that are plain words and never repeat."""
     streams, names = {}, {}
     for cam in client.cameras():
         if cam["state"] and cam["state"] != "CONNECTED":
+            continue
+        if only and cam["id"] not in only:
             continue
         name = slug(cam["name"])
         names[name] = names.get(name, 0) + 1
@@ -133,7 +140,7 @@ def streams(force=False):
     """-> {name: {"title", "src"}}, from a copy that is at most CACHE_SECONDS old. Raises ApiError when the console cannot be asked and nothing is cached."""
     if not enabled():
         raise ConfigError("UniFi Protect is not switched on in Settings.")
-    key = (settings.get("protect_host"), settings.get("protect_api_key"), settings.get("protect_quality"), settings.get("protect_verify_tls"))
+    key = (settings.get("protect_host"), settings.get("protect_api_key"), settings.get("protect_quality"), settings.get("protect_verify_tls"), settings.get("protect_cameras"))
     with _lock:
         fresh = _cache["key"] == key and time.time() - _cache["at"] < (CACHE_SECONDS if _cache["streams"] is not None else FAILURE_SECONDS)
         if fresh and not force:
@@ -141,7 +148,7 @@ def streams(force=False):
                 raise ApiError(_cache["error"])
             return _cache["streams"]
     try:
-        found = relay_streams(ProtectClient(), settings.get("protect_quality") or "medium")
+        found = relay_streams(ProtectClient(), settings.get("protect_quality") or "medium", chosen_cameras())
         error = ""
     except (ApiError, ConfigError) as exc:
         found, error = None, str(exc)

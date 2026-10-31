@@ -553,6 +553,7 @@ class Docker:
         shim = box.state.parent / "bin" / "docker"
         shim.write_text('#!/bin/sh\necho "docker $*" >> "$SHIM_LOG"\ncase "$*" in\n'
                         '  *"up -d"*) [ -z "${SHIM_UP_FAILS:-}" ] || { echo "port is already allocated" >&2; exit 1; }; touch "$SHIM_UP";;\n'
+                        '  *"config --services"*) echo worker; [ -n "${SHIM_IGNORES_OVERRIDE:-}" ] || [ ! -f docker-compose.override.yml ] || echo go2rtc;;\n'
                         '  *"ps --status running"*) echo worker; [ ! -f "$SHIM_UP" ] || echo go2rtc;;\nesac\n')
 
 
@@ -616,3 +617,41 @@ def test_the_override_is_taken_away_when_the_worker_is_no_longer_the_relay(box):
     box.run(SHIM_ANSWER=relay_answer(), SHIM_UP=str(docker.up))
     code, out, calls = box.run(SHIM_ANSWER=answer(relay_mode="remove"), SHIM_UP=str(docker.up))
     assert not (worker_dir(box) / "docker-compose.override.yml").exists() and "docker compose up -d --remove-orphans" in calls and '"status":"removed"' in calls
+
+
+def test_a_compose_setup_that_ignores_the_override_is_caught_before_anything_starts(box):
+    docker = Docker(box)
+    (worker_dir(box) / "docker-compose.yml").write_text("services:\n  worker:\n    image: x\n")
+    (worker_dir(box) / ".env").write_text("COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml\n")
+    code, out, calls = box.run(SHIM_ANSWER=relay_answer(), SHIM_UP=str(docker.up), SHIM_IGNORES_OVERRIDE="1")
+    assert '"status":"failed"' in calls and "COMPOSE_FILE" in calls and "docker compose up" not in calls
+    assert not (worker_dir(box) / "docker-compose.override.yml").exists()
+
+
+def test_a_chosen_few_cameras_are_the_only_ones_served(v2, fake):
+    settings.set_value("protect_cameras", "c4")
+    assert list(protect.relay_streams(protect.ProtectClient(), "low", protect.chosen_cameras())) == ["backyard"]
+    assert list(protect.relay_streams(protect.ProtectClient(), "low", set())) == ["backyard", "front-door", "front-door-2"]
+
+
+def test_the_settings_camera_list_marks_the_chosen_ones(browser, fake):
+    listing = browser.get("/api/protect/cameras").get_json()
+    assert listing["ok"] and all(c["chosen"] for c in listing["cameras"])
+    settings.set_value("protect_cameras", "c4")
+    listing = browser.get("/api/protect/cameras").get_json()
+    assert [c["id"] for c in listing["cameras"] if c["chosen"]] == ["c4"]
+
+
+def test_a_container_without_lspci_still_shows_the_render_device(tmp_path):
+    node = tmp_path / "renderD128" / "device"
+    node.mkdir(parents=True)
+    (node / "vendor").write_text("0x8086\n")
+    (tmp_path / "drivers" / "i915").mkdir(parents=True)
+    (node / "driver").symlink_to(tmp_path / "drivers" / "i915")
+    found = agent.drm_gpus(str(tmp_path))
+    assert found[0]["name"].startswith("Intel graphics") and found[0]["driver"] == "i915"
+
+
+def test_the_installed_helper_is_replaced_by_the_newer_copy_in_the_checkout():
+    text = (__import__("pathlib").Path(__file__).resolve().parents[2] / "agent" / "auto-update.sh").read_text()
+    assert "refresh_self" in text and 'mv -f "$BIN.new" "$BIN"' in text
