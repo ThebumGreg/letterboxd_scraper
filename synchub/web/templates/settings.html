@@ -102,6 +102,15 @@
                     </div>
                     <button type="button" class="btn btn-outline-info btn-sm" data-test-service="protect" data-test-fields="protect_host,protect_api_key,protect_verify_tls">Test connection</button>
                     <span class="small ms-2" data-test-result="protect" role="status"></span>
+                    <hr>
+                    <h6 class="mb-1">Camera relay (go2rtc)</h6>
+                    <p class="small text-body-secondary mb-2">Everything the relay needs is set up from here: SyncHub gives the chosen worker's update helper a small Docker file, and the worker puts the cameras into go2rtc by itself. Save the settings above first.</p>
+                    <ul class="list-unstyled small mb-2" id="relaySteps" aria-live="polite"><li class="text-body-secondary">Loading...</li></ul>
+                    <div class="small mb-2" id="relayLink"></div>
+                    <button type="button" class="btn btn-outline-primary btn-sm" data-relay="install" title="Set go2rtc up on the worker's PC now (waits until the worker has no running job)">Install / repair on the worker</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-relay="resend" title="Ask Protect for the cameras again and give them to go2rtc">Send cameras now</button>
+                    <button type="button" class="btn btn-outline-info btn-sm" data-relay="test" title="SyncHub asks the relay for its streams, as the TV will">Test relay</button>
+                    <span class="small ms-2" id="relayResult" role="status"></span>
                 </div>
             </div>
 
@@ -397,6 +406,32 @@
 {% endblock %}
 
 {% block scripts %}
+<script>
+    // Camera relay card: the checklist from the chosen worker to cameras being served, refreshed while the page is open.
+    (function () {
+        const list = document.getElementById('relaySteps');
+        if (!list) return;
+        const csrf = () => ({ 'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || '' });
+        const text = (value) => { const d = document.createElement('span'); d.textContent = value; return d.innerHTML; };
+        async function refreshRelay() {
+            try {
+                const r = await (await fetch('/api/protect/relay', { headers: { Accept: 'application/json' } })).json();
+                list.innerHTML = (r.steps || []).map((x) => `<li class="${x.failed ? 'text-danger' : x.ok ? 'text-success' : 'text-body-secondary'}"><i class="bi ${x.failed ? 'bi-x-circle-fill' : x.ok ? 'bi-check-circle-fill' : 'bi-circle'}" aria-hidden="true"></i> ${text(x.label)}</li>`).join('');
+                document.getElementById('relayLink').innerHTML = r.page ? `go2rtc's own page: <a href="${text(r.page)}" target="_blank" rel="noopener">${text(r.page)}</a>` : '';
+            } catch (e) { list.innerHTML = '<li class="text-danger">Could not read the relay status.</li>'; }
+        }
+        document.querySelectorAll('[data-relay]').forEach((btn) => btn.addEventListener('click', async () => {
+            const out = document.getElementById('relayResult');
+            btn.disabled = true; out.className = 'small ms-2 text-body-secondary'; out.textContent = 'Working...';
+            try {
+                const r = await (await fetch('/api/protect/relay/' + btn.dataset.relay, { method: 'POST', headers: { Accept: 'application/json', ...csrf() } })).json();
+                out.className = 'small ms-2 ' + (r.ok ? 'text-success' : 'text-danger'); out.textContent = r.message || '';
+            } catch (e) { out.className = 'small ms-2 text-danger'; out.textContent = 'Failed: ' + e.message; }
+            btn.disabled = false; refreshRelay();
+        }));
+        refreshRelay(); setInterval(refreshRelay, 10000);
+    })();
+</script>
 <script>
     // Dynamic Servarr Dropdowns
     async function fetchServarr(service, quiet = false) {

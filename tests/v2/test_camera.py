@@ -1,4 +1,6 @@
 """UniFi Protect cameras on a TV: the Protect client, the relay the worker serves them from, and putting a camera on a TV and coming back."""
+import json
+
 import pytest
 
 from settings_validation import validate_setting
@@ -83,6 +85,23 @@ def test_a_refusal_says_what_went_wrong(v2, fake, status, words):
     fake.status = status
     with pytest.raises(ApiError, match=words):
         protect.ProtectClient().cameras()
+
+
+def test_a_tls_failure_is_a_certificate_problem_only_when_the_check_is_on(v2, monkeypatch):
+    import requests
+
+    def fail(text):
+        def call(*a, **k):
+            raise requests.exceptions.SSLError(text)
+        return call
+    monkeypatch.setattr(protect.http, "request", fail("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"))
+    with pytest.raises(ApiError, match="certificate is not trusted"):
+        protect.ProtectClient("192.168.1.1", "k", verify=True).info()
+    with pytest.raises(ApiError, match="secure \\(HTTPS\\) connection to 192.168.1.1"):          # with the check off it cannot be the certificate
+        protect.ProtectClient("192.168.1.1", "k", verify=False).info()
+    monkeypatch.setattr(protect.http, "request", fail("HTTPSConnectionPool: (Caused by SSLError(SSLError(1, '[SSL: WRONG_VERSION_NUMBER] wrong version number')))"))
+    with pytest.raises(ApiError, match="WRONG_VERSION_NUMBER"):
+        protect.ProtectClient("192.168.1.1:80", "k", verify=True).info()
 
 
 def test_no_address_or_key_is_a_configuration_error(v2):
@@ -171,14 +190,21 @@ def test_the_relay_workers_compose_file_has_go2rtc(v2, conn, fake):
 
 # ================================================================ the agent gives go2rtc its cameras
 class Relay:
-    """A stand-in for go2rtc's web address, kept in place of urllib's urlopen."""
+    """A stand-in for go2rtc's web address, kept in place of urllib's urlopen. It remembers the streams it was given, as go2rtc does."""
     def __init__(self, fail=False):
-        self.calls, self.fail = [], fail
+        self.calls, self.fail, self.served, self._answer = [], fail, {}, b""
 
     def __call__(self, request, timeout=None):
         if self.fail:
             raise OSError("connection refused")
-        self.calls.append((request.get_method(), request.full_url))
+        method, url = (request.get_method(), request.full_url) if hasattr(request, "get_method") else ("GET", request)
+        self.calls.append((method, url))
+        query = dict(part.split("=", 1) for part in url.partition("?")[2].split("&") if part)
+        if method == "PUT":
+            self.served[query["name"]] = query["src"]
+        elif method == "DELETE":
+            self.served.pop(query["src"], None)
+        self._answer = json.dumps({n: {"producers": []} for n in self.served}).encode()
         return self
 
     def __enter__(self):
@@ -187,22 +213,26 @@ class Relay:
     def __exit__(self, *a):
         return False
 
-    def read(self):
-        return b""
+    def read(self, *a):
+        return self._answer
 
 
-class Stub:
-    RELAY_RESEND = agent.Agent.RELAY_RESEND
-    _relay_digest, _relay_at, _relay_names = None, 0.0, set()
+class Log:
+    def __init__(self):
+        self.messages = []
 
-    class log:
-        messages = []
-        warning = info = classmethod(lambda cls, text, **f: cls.messages.append(text))
+    def warning(self, text, **fields):
+        self.messages.append(text)
+
+    info = warning
 
 
 def stub():
-    s = Stub()
-    s.log = type("L", (), {"messages": [], "warning": lambda self, t, **f: self.messages.append(t), "info": lambda self, t, **f: self.messages.append(t)})()
+    s = type("Stub", (), {})()
+    s.RELAY_RESEND, s.RELAY_PROBE = agent.Agent.RELAY_RESEND, agent.Agent.RELAY_PROBE
+    s._relay_digest, s._relay_at, s._relay_names, s.relay_state, s._relay_probed = None, 0.0, set(), None, 0.0
+    s._relay_look = lambda base, wanted: agent.Agent._relay_look(s, base, wanted)
+    s.log = Log()
     return s
 
 
@@ -211,14 +241,33 @@ def test_the_agent_puts_each_stream_in_go2rtc_once_and_takes_away_ones_that_went
     monkeypatch.setattr(agent.urllib.request, "urlopen", relay)
     monkeypatch.setenv("GO2RTC_URL", "http://go2rtc:1984")
     s = stub()
-    agent.Agent.sync_relay(s, {"streams": {"front": "rtspx://c/1", "back": "rtspx://c/2"}})
-    assert sorted(c[0] for c in relay.calls) == ["PUT", "PUT"]
-    assert "name=front&src=rtspx%3A%2F%2Fc%2F1" in relay.calls[0][1] or "name=front&src=rtspx%3A%2F%2Fc%2F1" in relay.calls[1][1]
-    agent.Agent.sync_relay(s, {"streams": {"front": "rtspx://c/1", "back": "rtspx://c/2"}})
-    assert len(relay.calls) == 2                                              # unchanged: not sent again
-    agent.Agent.sync_relay(s, {"streams": {"front": "rtspx://c/1"}})
-    assert relay.calls[-1][0] == "DELETE" and "src=back" in relay.calls[-1][1]
-    assert not any("rtspx" in m for m in s.log.messages)                      # the stream addresses hold Protect's keys: never logged
+    agent.Agent.sync_relay(s, {"streams": {"front": "rtspx://c/1", "back": "rtspx://c/2"}, "nonce": "1"})
+    puts = [c for c in relay.calls if c[0] == "PUT"]
+    assert len(puts) == 2 and any("name=front&src=rtspx%3A%2F%2Fc%2F1" in c[1] for c in puts)
+    assert s.relay_state == {"up": True, "streams": ["back", "front"], "error": ""}              # what go2rtc really serves, by name only
+    agent.Agent.sync_relay(s, {"streams": {"front": "rtspx://c/1", "back": "rtspx://c/2"}, "nonce": "1"})
+    assert len([c for c in relay.calls if c[0] == "PUT"]) == 2                                      # unchanged: not sent again
+    agent.Agent.sync_relay(s, {"streams": {"front": "rtspx://c/1", "back": "rtspx://c/2"}, "nonce": "2"})
+    assert len([c for c in relay.calls if c[0] == "PUT"]) == 4                                      # Send cameras now: sent again though nothing changed
+    agent.Agent.sync_relay(s, {"streams": {"front": "rtspx://c/1"}, "nonce": "2"})
+    assert [c for c in relay.calls if c[0] == "DELETE"][-1][1].endswith("src=back") and s.relay_state["streams"] == ["front"]
+    assert not any("rtspx" in m for m in s.log.messages) and "rtspx" not in json.dumps(s.relay_state)  # the addresses hold Protect's keys: never logged or reported
+
+
+def test_the_agent_reports_a_stream_go2rtc_does_not_serve_and_one_it_cannot_reach(monkeypatch):
+    relay = Relay()
+    monkeypatch.setattr(agent.urllib.request, "urlopen", relay)
+    monkeypatch.setenv("GO2RTC_URL", "http://go2rtc:1984")
+    s = stub()
+    agent.Agent.sync_relay(s, {"streams": {"front": "x"}})
+    relay.served.clear()                                                                            # go2rtc restarted and forgot
+    s._relay_probed = -1000
+    agent.Agent.sync_relay(s, {"streams": {"front": "x"}})
+    assert s.relay_state["up"] and s.relay_state["error"] == "missing: front"
+    relay.fail = True
+    s._relay_probed = -1000
+    agent.Agent.sync_relay(s, {"streams": {"front": "x"}})
+    assert s.relay_state["up"] is False and "did not answer" in s.relay_state["error"]
 
 
 def test_the_agent_does_nothing_without_a_relay_address_and_tries_again_when_go2rtc_is_down(monkeypatch):
@@ -227,14 +276,14 @@ def test_the_agent_does_nothing_without_a_relay_address_and_tries_again_when_go2
     monkeypatch.delenv("GO2RTC_URL", raising=False)
     s = stub()
     agent.Agent.sync_relay(s, {"streams": {"front": "x"}})
-    assert s._relay_digest is None and not s.log.messages
+    assert s._relay_digest is None and not s.log.messages and s.relay_state is None
     monkeypatch.setenv("GO2RTC_URL", "http://go2rtc:1984")
     agent.Agent.sync_relay(s, {"streams": {"front": "x"}})
     agent.Agent.sync_relay(s, {"streams": {"front": "x"}})
     assert len(s.log.messages) == 1 and s._relay_digest is None               # said once, and the next poll tries again
     relay.fail = False
     agent.Agent.sync_relay(s, {"streams": {"front": "x"}})
-    assert s._relay_digest and relay.calls
+    assert s._relay_digest and any(c[0] == "PUT" for c in relay.calls) and s.relay_state["up"]
 
 
 # ================================================================ a camera on a TV
@@ -393,3 +442,177 @@ def test_the_settings_test_button_reports_the_console(browser, fake):
     assert answer["ok"] and "6.1.0" in answer["message"] and "3 of 4" in answer["message"]
     fake.status = 401
     assert "rejected the API key" in browser.post("/api/test-connection/protect", json={"fields": {}}).get_json()["message"]
+
+
+# ================================================================ the relay managed from SyncHub (update helper on the worker PC)
+from .test_auto_update import answer, box, authed     # noqa: E402,F401  (the helper's test rig and the answers SyncHub gives it)
+
+
+@pytest.fixture
+def hub(v2, fake):
+    app = create_app(csrf=False)
+    app.config["TESTING"] = True
+    client = app.test_client()
+    client.set_cookie("synchub_profile", "0")
+    return client
+
+
+def test_the_updater_is_told_to_install_on_the_chosen_worker_and_to_remove_it_from_one_that_is_no_longer_chosen(hub, v2):
+    one, headers = authed(v2, "one")
+    two, other = authed(v2, "two")
+    check = lambda h: hub.post("/api/worker/v1/update/check", json={}, headers=h).get_json()
+    assert "relay_mode" not in check(headers)
+    settings.set_value("protect_relay_worker", str(one))
+    told = check(headers)
+    assert told["relay_mode"] == "install" and told["relay_override"].startswith(protect.RELAY_MARK) and "alexxit/go2rtc" in told["relay_override"] and "GO2RTC_URL" in told["relay_override"]
+    assert len(told["relay_hash"]) == 12 and "relay_mode" not in check(other)
+    hub.post("/api/worker/v1/relay/report", json={"status": "installed"}, headers=headers)
+    settings.set_value("protect_relay_worker", str(two))
+    assert check(headers)["relay_mode"] == "remove" and check(other)["relay_mode"] == "install"
+    hub.post("/api/worker/v1/relay/report", json={"status": "removed"}, headers=headers)
+    assert "relay_mode" not in check(headers)
+    assert hub.post("/api/worker/v1/relay/report", json={"status": "odd"}, headers=headers).status_code == 400
+
+
+def test_the_install_button_asks_the_pc_when_the_worker_is_idle_and_the_card_shows_each_step(hub, v2):
+    worker, headers = authed(v2, "relay-pc")
+    card = hub.get("/api/protect/relay").get_json()
+    assert card["worker"] is None and "Choose the worker" in card["steps"][0]["label"]
+    assert hub.post("/api/protect/relay/install").get_json()["ok"] is False
+    settings.set_value("protect_relay_worker", str(worker))
+    assert hub.post("/api/protect/relay/install").get_json()["ok"]
+    assert hub.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()["request"] == "relay"
+    hub.post("/api/worker/v1/relay/report", json={"status": "installed"}, headers=headers)
+    hub.environ_base["REMOTE_ADDR"] = "192.168.1.30"                                                # the PC the worker polls from
+    hub.post("/api/worker/v1/poll", json={"status": {"relay": {"up": True, "streams": ["front-door", "backyard"], "error": ""}}}, headers=headers)
+    steps = {s["label"].split(":")[0].split(" (")[0]: s["ok"] for s in hub.get("/api/protect/relay").get_json()["steps"]}
+    assert steps["Relay worker"] and steps["Its update helper is checking in"] and steps["go2rtc is installed"] and steps["go2rtc answers on the worker"]
+    assert steps["Cameras served"] and steps["SyncHub knows the relay's address"]                  # learned from where the poll came from
+
+
+def test_the_card_says_what_failed(hub, v2):
+    worker, headers = authed(v2, "relay-pc")
+    settings.set_value("protect_relay_worker", str(worker))
+    hub.post("/api/worker/v1/relay/report", json={"status": "failed", "error": "docker compose up failed: port is already allocated"}, headers=headers)
+    hub.post("/api/worker/v1/poll", json={"status": {"relay": {"up": False, "streams": [], "error": "go2rtc did not answer"}}}, headers=headers)
+    labels = [s for s in hub.get("/api/protect/relay").get_json()["steps"]]
+    assert any(s.get("failed") and "port is already allocated" in s["label"] for s in labels)
+    assert any("go2rtc did not answer" in s["label"] and not s["ok"] for s in labels)
+
+
+def test_send_cameras_now_changes_the_number_the_agent_watches(hub, v2, fake):
+    worker, headers = authed(v2, "relay-pc")
+    settings.set_value("protect_relay_worker", str(worker))
+    poll = lambda: hub.post("/api/worker/v1/poll", json={}, headers=headers).get_json()["relay"]
+    first = poll()
+    assert hub.post("/api/protect/relay/resend").get_json()["ok"]
+    assert poll()["nonce"] != first["nonce"]
+
+
+def test_the_test_button_asks_the_relay_from_synchub(hub, v2, monkeypatch):
+    settings.set_value("protect_relay_worker", "1")
+    settings.set_value("protect_relay_host", "192.168.1.30")
+    seen = []
+
+    def ask(service, event, method, url, **kw):
+        seen.append(url)
+        return Answer({"front-door": {}, "backyard": {}})
+    ask_ok = Answer({})
+    ask_ok.raise_for_status = lambda: None
+    monkeypatch.setattr(protect.http, "request", lambda *a, **k: (seen.append(a[3]), type("R", (), {"raise_for_status": lambda s: None, "json": lambda s: {"front-door": {}, "backyard": {}}})())[1])
+    said = hub.post("/api/protect/relay/test").get_json()
+    assert said["ok"] and "backyard, front-door" in said["message"] and seen == ["http://192.168.1.30:1984/api/streams"]
+
+    def down(*a, **k):
+        raise protect.requests.ConnectionError("no route")
+    monkeypatch.setattr(protect.http, "request", down)
+    said = hub.post("/api/protect/relay/test").get_json()
+    assert not said["ok"] and "Could not reach the relay at http://192.168.1.30:1984" in said["message"]
+
+
+def test_the_workers_page_marks_the_relay_worker(hub, v2):
+    worker, headers = authed(v2, "relay-pc")
+    settings.set_value("protect_relay_worker", str(worker))
+    assert "Camera relay: not reporting yet" in hub.get("/workers").get_data(as_text=True)
+    hub.post("/api/worker/v1/poll", json={"status": {"relay": {"up": True, "streams": ["a", "b"], "error": ""}}}, headers=headers)
+    assert "Camera relay: 2 camera(s)" in hub.get("/workers").get_data(as_text=True)
+    hub.post("/api/worker/v1/poll", json={"status": {"relay": {"up": False, "streams": [], "error": "x"}}}, headers=headers)
+    assert "Camera relay: down" in hub.get("/workers").get_data(as_text=True)
+
+
+def test_the_settings_page_has_the_relay_card(hub, v2):
+    page = hub.get("/settings").get_data(as_text=True)
+    assert 'id="relaySteps"' in page and 'data-relay="install"' in page and 'data-relay="resend"' in page and 'data-relay="test"' in page
+
+
+# ---------------------------------------------------------------- agent/auto-update.sh applies it
+class Docker:
+    """A docker that remembers whether `compose up -d` ran, and then lists go2rtc as running."""
+    def __init__(self, box):
+        self.up = box.state.parent / "docker-up"
+        shim = box.state.parent / "bin" / "docker"
+        shim.write_text('#!/bin/sh\necho "docker $*" >> "$SHIM_LOG"\ncase "$*" in\n'
+                        '  *"up -d"*) [ -z "${SHIM_UP_FAILS:-}" ] || { echo "port is already allocated" >&2; exit 1; }; touch "$SHIM_UP";;\n'
+                        '  *"ps --status running"*) echo worker; [ ! -f "$SHIM_UP" ] || echo go2rtc;;\nesac\n')
+
+
+def relay_answer(**fields):
+    text = protect.relay_override()
+    return answer(relay_mode="install", relay_override=text, relay_hash="abc123", **fields)
+
+
+def worker_dir(box):
+    return box.clone.parent / "worker"
+
+
+def test_the_updater_writes_the_override_starts_go2rtc_and_reports(box):
+    docker = Docker(box)
+    (worker_dir(box) / "docker-compose.yml").write_text("services:\n  worker:\n    image: x\n")
+    code, out, calls = box.run(SHIM_ANSWER=relay_answer(), SHIM_UP=str(docker.up))
+    override = (worker_dir(box) / "docker-compose.override.yml").read_text()
+    assert override.startswith(protect.RELAY_MARK) and "synchub-go2rtc" in override
+    assert "docker compose up -d" in calls and '"status":"installed"' in calls and "go2rtc is running" in out
+    n = calls.count("docker compose up -d")
+    code, out, calls = box.run(SHIM_ANSWER=relay_answer(), SHIM_UP=str(docker.up))              # nothing changed: nothing is done again
+    assert calls.count("docker compose up -d") == n
+
+
+def test_a_busy_worker_waits_for_the_relay_unless_the_page_asked(box):
+    docker = Docker(box)
+    (worker_dir(box) / "docker-compose.yml").write_text("services:\n  worker:\n    image: x\n")
+    code, out, calls = box.run(SHIM_ANSWER=relay_answer(idle=False), SHIM_UP=str(docker.up))
+    assert not (worker_dir(box) / "docker-compose.override.yml").exists() and "waiting" in out
+    code, out, calls = box.run(SHIM_ANSWER=relay_answer(idle=False, request="relay"), SHIM_UP=str(docker.up))
+    assert (worker_dir(box) / "docker-compose.override.yml").exists()
+
+
+def test_a_file_that_is_not_synchubs_is_never_overwritten(box):
+    docker = Docker(box)
+    (worker_dir(box) / "docker-compose.yml").write_text("services:\n  worker:\n    image: x\n")
+    (worker_dir(box) / "docker-compose.override.yml").write_text("services:\n  mine: {}\n")
+    code, out, calls = box.run(SHIM_ANSWER=relay_answer(), SHIM_UP=str(docker.up))
+    assert (worker_dir(box) / "docker-compose.override.yml").read_text() == "services:\n  mine: {}\n"
+    assert '"status":"failed"' in calls and "not made by SyncHub" in calls and "docker compose up" not in calls
+
+
+def test_a_compose_file_that_already_runs_go2rtc_gets_no_override(box):
+    docker = Docker(box)
+    (worker_dir(box) / "docker-compose.yml").write_text("services:\n  worker:\n    image: x\n  go2rtc:\n    image: alexxit/go2rtc\n")
+    docker.up.write_text("")
+    code, out, calls = box.run(SHIM_ANSWER=relay_answer(), SHIM_UP=str(docker.up))
+    assert not (worker_dir(box) / "docker-compose.override.yml").exists() and '"status":"native"' in calls
+
+
+def test_a_failed_start_is_reported_with_the_reason(box):
+    docker = Docker(box)
+    (worker_dir(box) / "docker-compose.yml").write_text("services:\n  worker:\n    image: x\n")
+    code, out, calls = box.run(SHIM_ANSWER=relay_answer(), SHIM_UP=str(docker.up), SHIM_UP_FAILS="1")
+    assert '"status":"failed"' in calls and "port is already allocated" in calls
+
+
+def test_the_override_is_taken_away_when_the_worker_is_no_longer_the_relay(box):
+    docker = Docker(box)
+    (worker_dir(box) / "docker-compose.yml").write_text("services:\n  worker:\n    image: x\n")
+    box.run(SHIM_ANSWER=relay_answer(), SHIM_UP=str(docker.up))
+    code, out, calls = box.run(SHIM_ANSWER=answer(relay_mode="remove"), SHIM_UP=str(docker.up))
+    assert not (worker_dir(box) / "docker-compose.override.yml").exists() and "docker compose up -d --remove-orphans" in calls and '"status":"removed"' in calls

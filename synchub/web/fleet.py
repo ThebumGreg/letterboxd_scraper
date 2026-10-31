@@ -136,6 +136,18 @@ def describe_update(report):
     return {"ok": ok, "text": f"{what} ({webhooks.ago(report['at']) if report.get('at') else 'earlier'})", "error": None if ok else report.get("error"), "log": report.get("log")}
 
 
+def describe_relay(w):
+    """A short badge for the worker that runs the camera relay: None on every other worker."""
+    if w["id"] != protect.relay_worker_id() or not protect.enabled():
+        return None
+    seen = (w["status"] or {}).get("relay")
+    if not seen:
+        return {"text": "Camera relay: not reporting yet", "color": "secondary"}
+    if not seen.get("up"):
+        return {"text": "Camera relay: down", "color": "danger", "title": seen.get("error") or ""}
+    return {"text": f"Camera relay: {len(seen.get('streams') or [])} camera(s)", "color": "success" if not seen.get("error") else "warning", "title": seen.get("error") or ""}
+
+
 def describe_worker(w, root_names=(), update=None, host_seen=False):
     """The worker plus what the page shows: a state, encoders, space, its shares and when it was last heard from."""
     if w["revoked"]:
@@ -157,6 +169,7 @@ def describe_worker(w, root_names=(), update=None, host_seen=False):
              seen=webhooks.ago(w["last_seen"]) if w["last_seen"] else "never", roots=describe_roots(w, root_names), host=describe_host(w), auto_update=describe_update(update),
              remote={"seen": host_seen, "request": w.get("host_request"), "settings": {k: workers.setting(w, k) for k in workers.SETTINGS}})
     w["benchmark"] = describe_benchmark(w)
+    w["relay"] = describe_relay(w)
     return w
 
 

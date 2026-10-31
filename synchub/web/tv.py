@@ -11,7 +11,7 @@ from pathlib import Path
 from flask import Response, g, jsonify, redirect, render_template, request, url_for
 
 from config import BASE_DIR
-from synchub import db, protect, ratings, settings, watch
+from synchub import db, protect, ratings, settings, watch, workers
 from synchub.clients import ApiError, ConfigError
 from synchub.tv import camera, discovery, orchestrator, runtime
 from synchub.tv.devices import DeviceError
@@ -636,6 +636,37 @@ def register(app):
             return protect.streams()
         except (ApiError, ConfigError) as e:
             raise DeviceError(str(e))
+
+    @app.get("/api/protect/relay")
+    def api_protect_relay():
+        """The Camera relay card in Settings: the checklist from the chosen worker to cameras being served."""
+        with db.connection() as conn:
+            return jsonify(ok=True, **protect.relay_status(conn))
+
+    @app.post("/api/protect/relay/<action>")
+    def api_protect_relay_action(action):
+        """install: the worker's PC (its update helper) sets go2rtc up again now; resend: ask Protect afresh and give go2rtc the cameras again; test: ask the relay from SyncHub."""
+        if action == "test":
+            try:
+                names = protect.test_relay()
+            except (ApiError, ConfigError) as e:
+                return jsonify(ok=False, message=str(e))
+            return jsonify(ok=bool(names), message=(f"The relay answers and serves {len(names)} camera(s): {', '.join(names)}." if names
+                                                    else "The relay answers but serves no cameras yet. Use Send cameras now."))
+        if action in ("install", "resend"):
+            wid = protect.relay_worker_id()
+            if not wid:
+                return jsonify(ok=False, message="Choose the relay worker above and save first.")
+            protect.send_again()
+            if action == "resend":
+                return jsonify(ok=True, message="Asked Protect for the cameras again. The worker gives them to go2rtc within a few seconds.")
+            try:
+                with db.connection() as conn:
+                    workers.request_host(conn, wid, "relay")
+            except workers.WorkerError as e:
+                return jsonify(ok=False, message=str(e))
+            return jsonify(ok=True, message="Asked the worker's PC to set go2rtc up. It happens within a minute, once the worker has no running job.")
+        return jsonify(ok=False, message="Unknown action."), 404
 
     @app.get("/api/tv/cameras")
     def api_tv_cameras():

@@ -8,6 +8,8 @@ Protect hands out RTSPS addresses (rtsps://console:7441/<alias>?enableSrtp). go2
 and HLS, which VLC and most TV players accept. The relay runs on a worker (see camera_relay below) and SyncHub only ever hands a TV the relay's address,
 never the console's.
 """
+import hashlib
+import json
 import re
 import threading
 import time
@@ -15,7 +17,7 @@ from urllib.parse import urlsplit
 
 import requests
 
-from synchub import http, settings
+from synchub import db, http, settings
 from synchub.clients import ApiError, ConfigError
 
 BASE = "/proxy/protect/integration/v1"
@@ -55,8 +57,14 @@ class ProtectClient:
         headers = {"X-API-KEY": self.key, "Accept": "application/json"}
         try:
             res = http.request("protect", event, method, f"https://{self.host}{BASE}{path}", headers=headers, verify=self.verify, timeout=self.timeout, **kw)
-        except requests.exceptions.SSLError:
-            raise ApiError("The console's certificate is not trusted. Switch off Check the console's certificate in the Protect settings.")
+        except requests.exceptions.SSLError as exc:
+            reason = str(exc)
+            if self.verify and "CERTIFICATE_VERIFY_FAILED" in reason:
+                raise ApiError("The console's certificate is not trusted. Switch off Check the console's certificate in the Protect settings.")
+            # Not a certificate problem (the check is off, or the failure is in the handshake itself): usually a port that does not speak HTTPS.
+            found = re.search(r"\[SSL[^\]]*\][^()']*", reason)
+            detail = found.group(0).strip() if found else "the handshake failed"
+            raise ApiError(f"Could not make a secure (HTTPS) connection to {self.host}: {detail}. Use the console's own address with no port, or its HTTPS port (443).")
         except requests.RequestException as exc:
             raise ApiError(f"Could not reach UniFi Protect at {self.host}: {exc.__class__.__name__}")
         if res.status_code in (401, 403):
@@ -163,6 +171,96 @@ def is_relay_name(conn, name):
     return bool(row) and row["id"] == relay_worker_id() and settings.get("protect_enabled") == "1"
 
 
+NONCE_KEY = "protect_relay_nonce"
+INSTALL_KEY = "relay_install:{}"
+RELAY_MARK = "# Managed by SyncHub (camera relay)."
+RELAY_PORTS = (1984, 8554)
+
+
+def send_again():
+    """Make the relay worker give go2rtc its cameras again (the agent notices the new number), after asking Protect afresh."""
+    forget()
+    settings.set_value(NONCE_KEY, str(time.time()))
+
+
+def relay_override():
+    """docker-compose.override.yml for the relay worker: Docker Compose loads it next to the worker's own docker-compose.yml, which stays as it is."""
+    return "\n".join([RELAY_MARK + " Edits are overwritten; change the relay in Settings.",
+                      "services:", "  worker:", "    environment:", "      GO2RTC_URL: http://go2rtc:1984",
+                      "  go2rtc:", "    image: alexxit/go2rtc", "    container_name: synchub-go2rtc", "    restart: unless-stopped",
+                      "    ports:", *(f'      - "{port}:{port}"' for port in RELAY_PORTS)]) + "\n"
+
+
+def install_report(conn, worker_id):
+    """What the worker PC's updater last said about installing the relay: {"status", "error", "at"} or None."""
+    return json.loads(settings.get(INSTALL_KEY.format(worker_id), "", conn=conn) or "null")
+
+
+def report_install(conn, worker_id, info):
+    """The updater on the PC reports: installed (go2rtc is running), native (the worker's own compose file already has it), removed or failed."""
+    info = info if isinstance(info, dict) else {}
+    if info.get("status") not in ("installed", "native", "removed", "failed", "waiting"):
+        raise ValueError("The relay report needs a status of installed, native, removed, failed or waiting.")
+    report = {"status": info["status"], "error": str(info.get("error") or "")[:1500], "at": db.now()}
+    settings.set_value(INSTALL_KEY.format(worker_id), json.dumps(report), conn=conn)
+    return report
+
+
+def host_instruction(conn, worker_id):
+    """What the PC's updater should do about the relay, as fields for its /update/check answer: relay_mode install (with the file's text and a hash
+    of it) on the chosen worker, remove on a worker that had it installed but is no longer chosen, else nothing."""
+    chosen = worker_id == relay_worker_id() and settings.get("protect_enabled", conn=conn) == "1"
+    if chosen:
+        text = relay_override()
+        return {"relay_mode": "install", "relay_override": text, "relay_hash": hashlib.sha1(text.encode()).hexdigest()[:12]}
+    done = install_report(conn, worker_id)
+    if done and done["status"] in ("installed", "failed", "waiting"):
+        return {"relay_mode": "remove"}
+    return {}
+
+
+def relay_status(conn):
+    """Everything the Camera relay card shows: the chosen worker, a checklist from the choice to cameras being served, and where the relay answers."""
+    from synchub import workers
+    wid = relay_worker_id()
+    w = workers.get(conn, wid) if wid else None
+    host = relay_host()
+    out = {"enabled": settings.get("protect_enabled", conn=conn) == "1", "worker": {"id": w["id"], "name": w["name"], "online": w["online"]} if w else None,
+           "address": host, "page": f"http://{host.split(':')[0]}:1984" if host else "", "steps": []}
+    if not w:
+        out["steps"] = [{"label": "Choose the worker that runs the relay (above) and save", "ok": False}]
+        return out
+    seen = workers.host_seen(conn, wid)
+    install = install_report(conn, wid)
+    agent = (w["status"] or {}).get("relay") or {}
+    served = len(agent.get("streams") or [])
+    out["install"], out["agent"] = install, agent
+    out["steps"] = [
+        {"label": f"Relay worker: {w['name']}", "ok": True},
+        {"label": f"{w['name']} is online", "ok": bool(w["online"])},
+        {"label": "Its update helper is checking in" + ("" if seen else " (install it once: agent/auto-update.sh --install)"), "ok": seen},
+        {"label": "go2rtc is installed" + (f": {install['error']}" if install and install["status"] == "failed" else ""),
+         "ok": bool(install and install["status"] in ("installed", "native")), "failed": bool(install and install["status"] == "failed")},
+        {"label": "go2rtc answers on the worker" + (f": {agent['error']}" if agent.get("error") else ""), "ok": bool(agent.get("up"))},
+        {"label": f"Cameras served: {served}", "ok": bool(agent.get("up")) and served > 0},
+        {"label": "SyncHub knows the relay's address" + ("" if host else " (it is learned from the worker's next poll, or type it above)"), "ok": bool(host)},
+    ]
+    return out
+
+
+def test_relay():
+    """From SyncHub itself: ask the relay for its streams, as the TVs will reach it. -> list of stream names. Raises ApiError with a plain reason."""
+    host = relay_host().split(":")[0]
+    if not host:
+        raise ConfigError("SyncHub does not know where the relay is yet.")
+    try:
+        res = http.request("protect", "relay test", "GET", f"http://{host}:1984/api/streams", timeout=5)
+        res.raise_for_status()
+        return sorted(res.json() or {})
+    except (requests.RequestException, ValueError) as exc:
+        raise ApiError(f"Could not reach the relay at http://{host}:1984 from SyncHub: {exc.__class__.__name__}. Is go2rtc running, and is port 1984 open on that PC?")
+
+
 def relay_host():
     """The address a TV reaches the relay at: the one typed in Settings, else the address the relay worker last polled SyncHub from."""
     return settings.get("protect_relay_host") or settings.get("protect_relay_addr")
@@ -178,7 +276,7 @@ def for_worker(worker_id):
     if worker_id != relay_worker_id() or not enabled():
         return None
     try:
-        return {"streams": {name: item["src"] for name, item in streams().items()}}
+        return {"streams": {name: item["src"] for name, item in streams().items()}, "nonce": settings.get(NONCE_KEY)}
     except (ApiError, ConfigError):
         return None
 
