@@ -42,12 +42,28 @@
     </div>
 </div>
 
+<div class="panel p-3 p-md-4 mb-4" id="smbLoginPanel">
+    <h5>Share login (SMB)</h5>
+    <p class="small text-body-secondary mb-2">The Unraid user that may read and write the shares. Stored encrypted with a key file in SyncHub's data folder (<code>synchub.key</code>: keep it with your backups). The password is never shown again.</p>
+    <div class="small mb-2" id="smbLoginState">
+        {% if smb_login.set %}<span class="badge bg-success">Stored</span> for user <strong>{{ smb_login.user }}</strong>
+        {% elif smb_login.lost %}<span class="badge bg-warning text-dark">Cannot be read</span> The key file changed or is missing: enter the login again.
+        {% else %}<span class="badge bg-secondary">Not stored</span> A worker will ask for it when it is set up.{% endif %}
+    </div>
+    <form class="row g-2 align-items-end" id="smbLoginForm" autocomplete="off">
+        <div class="col-12 col-md-4"><label class="form-label small mb-0" for="smbUser">User</label><input class="form-control form-control-sm" id="smbUser" required maxlength="100" autocomplete="off"></div>
+        <div class="col-12 col-md-4"><label class="form-label small mb-0" for="smbPassword">Password</label><input type="password" class="form-control form-control-sm" id="smbPassword" required maxlength="200" autocomplete="new-password"></div>
+        <div class="col-12 col-md-4 d-flex gap-2"><button class="btn btn-sm btn-success" type="submit">Save login</button>{% if smb_login.set or smb_login.lost %}<button class="btn btn-sm btn-outline-danger" type="button" id="smbLoginClear">Remove</button>{% endif %}</div>
+    </form>
+    <div class="small text-danger mt-1" id="smbLoginError" role="alert"></div>
+</div>
+
 <div class="panel p-3 p-md-4 mb-5">
     <h5>How a worker gets these shares</h5>
     <ol class="small mb-2">
         <li>Add each share here. <strong>SMB</strong> is the one to start with: Unraid already shares over it. NFS is the alternative; some people see &ldquo;stale file handle&rdquo; errors on Unraid&rsquo;s NFS shares when the mover relocates files, which is why SMB comes first.</li>
         <li>On the <a href="{{ url_for('workers_page') }}">Workers</a> page choose <em>More &rarr; Setup files</em> for a worker. SyncHub writes its <code>docker-compose.yml</code> (Docker mounts the shares itself, so a share that cannot be mounted stops the worker instead of filling a local folder), an <code>.env</code> file, and <code>/etc/fstab</code> lines if you would rather not use Docker.</li>
-        <li>A user name and password for the shares go only in the <code>.env</code> file on the worker PC. SyncHub never stores them.</li>
+        <li>The Unraid user name and password for SMB shares are entered once in the <em>Share login</em> box below. SyncHub keeps them encrypted and gives them only to a worker that proves its token when <code>setup-worker.sh</code> runs, so a new worker asks nothing.</li>
         <li>Create the marker once on each share: <code>docker compose run --rm worker --init-roots</code>. It writes a small <code>{{ marker }}</code> file holding the share&rsquo;s name. A worker refuses to use a folder without its marker, so an unmounted (empty) folder or the wrong share is never written to.</li>
     </ol>
     <div class="small text-body-secondary">SyncHub cannot mount anything on a worker PC itself. The &ldquo;Workers say&rdquo; column shows what each worker reports about each share: mounted, the right one, writable, and how much space is free.</div>

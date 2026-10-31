@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**A new worker needs one command and no typing (still the same PR as the buttons).**
+- **Share login stored in SyncHub.** *Storage > Share login (SMB)*: the Unraid user and password are entered once, kept encrypted (key file `synchub.key` in the data folder: keep it with your backups) and given only to a worker that proves its token when it is set up. `setup-worker.sh` uses it and asks nothing. Needs the `cryptography` package (in the image).
+- **GPU found, GPU used.** `setup-worker.sh` finds an Intel/AMD GPU (`/dev/dri`) or an NVIDIA GPU (`nvidia-smi`, installing the NVIDIA Container Toolkit) and puts it in the generated `docker-compose.yml`: no second compose file. `--no-gpu` leaves it out. The agent still test-encodes before it offers an encoder.
+- **VMAF ffmpeg by default.** The worker image now takes a static ffmpeg with libvmaf (amd64) unless `FFMPEG_URL=none`; if the download fails the image keeps the distribution's ffmpeg.
+- **Watchdog and update timer installed by the same command** (`--no-watchdog`, `--no-auto-update` to skip).
+- **`--adopt`** takes over a hand-made worker: backs up its `.env`, compose file and fstab, shows what changes, and leaves its fstab lines and mounts alone.
+
 **Worker settings and buttons in SyncHub (migration 027).** Workers page: an **Update** button (updates when the worker is idle, with the usual rollback), **More > Restart worker**, and worker **settings** (encoder, GPU encodes at once, copy speed limit, scan threads, log detail, update window, automatic updates on/off) that reach the worker within a minute instead of living in its `.env`. Needs the new `auto-update.sh` on the PC (`sudo ./agent/auto-update.sh --install` again; its timer now runs every minute and checks for new code hourly). A job over the GPU limit uses the CPU encoder instead of waiting, so integrated graphics are not overloaded.
 
 - **Workers can update themselves.** `sudo ./agent/auto-update.sh --install` on a worker PC adds an hourly timer that pulls new code and rebuilds, but only when the worker is idle or inside a maintenance window you set. A failed update leaves (or puts back) the old version and is not retried until newer code arrives. SyncHub shows the result on the Workers page and sends the new *A worker updated itself* and *A worker's automatic update failed* notifications. `update-worker.sh` now says whether the old worker kept running when a build failed. Needs the SyncHub update first (two new worker API calls); no migration.

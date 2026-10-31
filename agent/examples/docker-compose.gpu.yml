@@ -1,3 +1,6 @@
+# NO LONGER NEEDED for a worker set up with agent/setup-worker.sh: the script finds an Intel/AMD/NVIDIA GPU and adds it to the generated docker-compose.yml itself
+# (use --no-gpu to leave it out), and the image now includes the VMAF ffmpeg by default. Kept for workers that were set up by hand.
+#
 # Lets the worker use an Intel GPU for encoding (VAAPI, or QSV on a chip that supports it). Use it next to the generated docker-compose.yml:
 #
 #     docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build

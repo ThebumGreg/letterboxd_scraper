@@ -35,7 +35,7 @@ def _data(key, conn):
         from synchub.web import originals
         return originals.overview(conn)
     from synchub.web import shares
-    return {"roots": shares.describe(conn), "protocols": storage.PROTOCOLS, "defaults": storage.DEFAULT_OPTIONS, "marker": storage.MARKER}
+    return {"roots": shares.describe(conn), "protocols": storage.PROTOCOLS, "defaults": storage.DEFAULT_OPTIONS, "marker": storage.MARKER, "smb_login": storage.smb_login_status(conn)}
 
 
 def render_media(active):

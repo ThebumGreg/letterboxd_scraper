@@ -37,7 +37,7 @@ def origin(tmp_path):
     """A git repository standing in for GitHub, holding the agent files."""
     repo = tmp_path / "origin"
     (repo / "agent").mkdir(parents=True)
-    for name in ("synchub_agent.py", "media_analysis.py", "synchub-agent.service", "Dockerfile"):
+    for name in ("synchub_agent.py", "media_analysis.py", "synchub-agent.service", "Dockerfile", "mount-watchdog.sh", "auto-update.sh", "update-worker.sh"):
         shutil.copy(AGENT / name, repo / "agent" / name)
     env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"}
     for command in (["init", "-q", "-b", "main"], ["add", "."], ["commit", "-q", "-m", "first"]):
@@ -89,7 +89,7 @@ class Setup:
         env = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "SHIM_LOG": str(self.log), "SHIM_STATE": str(self.state), "SHIM_FAIL_MOUNT": self.fail_mount,
                "SYNCHUB_FSTAB": str(self.fstab), "SYNCHUB_CRED_FILE": str(self.cred), "SYNCHUB_INI_FILE": str(self.root / "synchub-agent.ini"),
                "SYNCHUB_AGENT_DIR": str(self.root / "agent-install"), "SYNCHUB_SYSTEMD_DIR": str(self.root / "systemd"),
-               "SYNCHUB_SETUP_ALLOW_NONROOT": "1", "SYNCHUB_SETUP_ALLOW_LOCALHOST": "1", "HOME": str(self.root), **(extra_env or {})}
+               "SYNCHUB_EXTRAS_FLAGS": "--dry-run", "SYNCHUB_DRI_DIR": str(self.root / "no-dri"), "SYNCHUB_SETUP_ALLOW_NONROOT": "1", "SYNCHUB_SETUP_ALLOW_LOCALHOST": "1", "HOME": str(self.root), **(extra_env or {})}
         for name in ("SYNCHUB_URL", "SYNCHUB_TOKEN", "SMB_USER", "SMB_PASSWORD", "GITHUB_TOKEN"):
             env.pop(name, None)
         command = ["bash", str(SCRIPT), "-y"]
@@ -335,3 +335,87 @@ def test_host_mounts_change_the_compose_file_and_env_but_not_the_default(pc, v2)
     assert "driver: local" in plain["docker-compose.yml"] and "SMB_PASSWORD" in plain[".env"]
     assert "driver_opts" not in host["docker-compose.yml"] and "propagation: rslave" in host["docker-compose.yml"] and "volumes:\n" not in host["docker-compose.yml"].split("services:")[1].split("    volumes:")[0]
     assert "SMB_PASSWORD" not in host[".env"]
+
+
+# ---------------------------------------------------------------- GPU, extras, adopt
+def test_no_gpu_means_no_device_lines_and_a_found_one_goes_into_the_one_compose_file(pc):
+    assert pc.run().returncode == 0, pc.out
+    assert "devices:" not in (pc.dir / "docker-compose.yml").read_text() and "No GPU found" in pc.out
+    dri = pc.root / "dri"
+    dri.mkdir()
+    (dri / "renderD128").write_text("")
+    assert pc.run(extra_env={"SYNCHUB_DRI_DIR": str(dri)}).returncode == 0, pc.out
+    compose = (pc.dir / "docker-compose.yml").read_text()
+    assert "    init: true\n    devices:\n      - /dev/dri:/dev/dri\n" in compose and "Found a GPU" in pc.out
+    assert pc.run("--no-gpu", extra_env={"SYNCHUB_DRI_DIR": str(dri)}).returncode == 0
+    assert "devices:" not in (pc.dir / "docker-compose.yml").read_text()
+
+
+def test_an_nvidia_gpu_adds_gpus_all_after_the_toolkit_is_ready(pc):
+    smi = pc.bin / "nvidia-smi"
+    smi.write_text("#!/bin/sh\necho 'GPU 0: NVIDIA GeForce GTX 1660'\n")
+    smi.chmod(0o755)
+    (pc.bin / "docker").write_text('#!/bin/sh\necho "docker $*" >> "$SHIM_LOG"\n[ "$1" = info ] && echo " Runtimes: io.containerd.runc.v2 nvidia runc"\nexit 0\n')
+    assert pc.run().returncode == 0, pc.out
+    assert "    init: true\n    gpus: all\n" in (pc.dir / "docker-compose.yml").read_text()
+
+
+def test_the_watchdog_and_the_update_timer_are_installed_unless_declined(pc):
+    assert pc.run().returncode == 0, pc.out
+    assert "(remounts the shares" in pc.out and "Installing the update timer (" in pc.out
+    assert "OnUnitActiveSec=1min" in pc.out and f'SYNCHUB_WORKER_DIR="{pc.dir}"' in pc.out and pc.mount_point("media") in pc.out
+    assert pc.run("--no-watchdog", "--no-auto-update").returncode == 0
+    assert "(remounts the shares" not in pc.out and "Installing the update timer (" not in pc.out
+
+
+def test_adopt_backs_up_a_hand_made_worker_and_keeps_its_mounts(pc):
+    pc.dir.mkdir(parents=True)
+    (pc.dir / ".env").write_text("SYNCHUB_URL=old\nSYNCHUB_TOKEN=old\n")
+    (pc.dir / "docker-compose.yml").write_text("services:\n  worker:\n    image: hand-made\n")
+    before = pc.fstab.read_text()
+    done = pc.run("--adopt")
+    assert done.returncode == 0, pc.out
+    backup = next(pc.dir.glob("adopt-backup-*"))
+    assert "hand-made" in (backup / "docker-compose.yml").read_text() and "SYNCHUB_TOKEN=old" in (backup / ".env").read_text() and (backup / "fstab").read_text() == before
+    assert pc.fstab.read_text() == before and "hand-made" not in (pc.dir / "docker-compose.yml").read_text()
+    assert "-    image: hand-made" in pc.out and not any(c.startswith("mount ") for c in pc.calls())
+
+
+# ---------------------------------------------------------------- the share login stored in SyncHub
+def test_a_stored_share_login_is_used_without_asking_and_never_shown(pc, v2, client):
+    with v2.connection() as conn:
+        storage.set_smb_login(conn, "unraid", 'pa$$,"word')
+        assert storage.smb_login_status(conn) == {"set": True, "user": "unraid", "lost": False}
+        raw = conn.execute("SELECT value FROM app_setting WHERE key = ?", (storage.LOGIN_KEY,)).fetchone()["value"]
+    assert "pa$$" not in raw and "unraid" not in raw                                    # encrypted in the database
+    page = client.get("/storage").get_data(as_text=True)
+    assert "unraid" in page and "pa$$" not in page and "Stored" in page
+    done = pc.run("--smb-user", "", "--smb-password", "")                                # as a new PC runs it: no login typed anywhere
+    assert done.returncode == 0, pc.out
+    assert pc.cred.read_text() == 'username=unraid\npassword=pa$$,"word\n' and stat.S_IMODE(pc.cred.stat().st_mode) == 0o600
+    assert "from the share login stored in SyncHub" in pc.out
+
+
+def test_without_a_stored_login_the_script_still_asks_and_the_login_goes_only_to_a_worker_with_a_token(pc, v2, server):
+    import urllib.error
+    import urllib.request
+    assert pc.run("--smb-user", "", "--smb-password", "").returncode != 0               # nothing stored, nothing typed, no terminal: stops and says why
+    assert "needs the Unraid user and password" in pc.out
+    with v2.connection() as conn:
+        storage.set_smb_login(conn, "u", "p")
+    anonymous = urllib.request.Request(f"{server}/api/worker/v1/setup/smb.cred", method="POST")
+    with pytest.raises(urllib.error.HTTPError) as refused:
+        urllib.request.urlopen(anonymous)
+    assert refused.value.code == 401
+
+
+def test_the_login_can_be_saved_and_removed_on_the_storage_page_and_a_lost_key_is_said(client, v2, tmp_path):
+    assert client.post("/api/storage/smb_login", json={"user": "u", "password": ""}).get_json()["ok"] is False
+    assert client.post("/api/storage/smb_login", json={"user": "u", "password": "secret"}).get_json()["ok"] is True
+    (tmp_path / "keys" / "synchub.key").unlink()                                          # the key file is lost: a new one is made, the old secret cannot be read
+    with v2.connection() as conn:
+        assert storage.smb_login(conn) is None and storage.smb_login_status(conn)["lost"] is True
+    assert "Cannot be read" in client.get("/storage").get_data(as_text=True)
+    client.post("/api/storage/smb_login/clear", json={})
+    with v2.connection() as conn:
+        assert storage.smb_login_status(conn) == {"set": False, "user": None, "lost": False}

@@ -28,6 +28,7 @@
 set -uo pipefail
 
 CONF="${SYNCHUB_UPDATE_CONF:-/etc/synchub-auto-update.conf}"
+# shellcheck disable=SC1090
 [ -f "$CONF" ] && . "$CONF"
 SELF="$(readlink -f "$0")"
 REPO="${SYNCHUB_REPO:-$(git -C "$(dirname "$SELF")" rev-parse --show-toplevel 2>/dev/null || true)}"

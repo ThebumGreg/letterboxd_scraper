@@ -92,6 +92,13 @@ def register(app):
     def setup_file(filename):
         """One of this worker's setup files as plain text, for agent/setup-worker.sh: the same files as the Workers page's Setup dialog, but with the
         shares mounted by the PC itself (/etc/fstab) instead of by Docker. The caller proved it holds the token, so the token is in the text."""
+        if filename == "smb.cred":
+            with db.connection() as conn:
+                text = storage.smb_cred_file(conn)
+            if text is None:
+                return _error("No share login is stored in SyncHub (Storage page, Share login).", 404)
+            logger.info(f"[workers] {g.worker['name']} fetched the share login")
+            return Response(text, mimetype="text/plain")
         if filename not in storage.SETUP_ORDER:
             return _error(f"There is no setup file called '{filename}'.", 404)
         with db.connection() as conn:

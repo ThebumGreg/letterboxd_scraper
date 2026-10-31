@@ -36,6 +36,22 @@ def register(app):
             return _fail(str(exc))
         return jsonify(ok=True, message="Share added.")
 
+    @app.route("/api/storage/smb_login", methods=["POST"])
+    def api_storage_smb_login():
+        data = request.get_json(silent=True) or {}
+        try:
+            with db.connection() as conn:
+                storage.set_smb_login(conn, data.get("user"), data.get("password"))
+        except storage.StorageError as exc:
+            return _fail(str(exc))
+        return jsonify(ok=True, message="Share login saved.")
+
+    @app.route("/api/storage/smb_login/clear", methods=["POST"])
+    def api_storage_smb_login_clear():
+        with db.connection() as conn:
+            storage.clear_smb_login(conn)
+        return jsonify(ok=True, message="Share login removed.")
+
     @app.route("/api/storage/<int:root_id>/update", methods=["POST"])
     def api_storage_update(root_id):
         try:

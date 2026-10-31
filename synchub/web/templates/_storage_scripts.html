@@ -10,6 +10,18 @@
             return await res.json();
         } catch (e) { return { ok: false, message: 'Could not reach the server.' }; }
     };
+    $('smbLoginForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const data = await post('/api/storage/smb_login', { user: $('smbUser').value, password: $('smbPassword').value });
+        if (!data.ok) { $('smbLoginError').textContent = data.message || 'Failed.'; return; }
+        $('smbPassword').value = '';
+        location.reload();
+    });
+    if ($('smbLoginClear')) $('smbLoginClear').addEventListener('click', async () => {
+        if (!confirm('Remove the stored share login? New workers will ask for it again.')) return;
+        await post('/api/storage/smb_login/clear');
+        location.reload();
+    });
     let editing = null, optionsTouched = false;
 
     const hints = {

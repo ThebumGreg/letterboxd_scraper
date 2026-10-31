@@ -10,3 +10,4 @@ urllib3>=2.2.1
 androidtvremote2>=0.3.2
 pychromecast>=14.0.0
 zeroconf>=0.130.0
+cryptography>=42.0
