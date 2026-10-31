@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Auto-update repairs root-owned git files.** If a past `sudo git` left files in the checkout's `.git` that its owner cannot write, the update timer now hands them back once and retries the fetch instead of failing every minute.
+- **Update problems show in SyncHub.** A failed fetch (or a checkout with no upstream) is reported once as an "auto-update problem" with its message and raises the update-failed notice; the worker row has an "Update log" with the last lines of the update log, so `journalctl` is not needed. The next good fetch clears it.
+
 **A new worker needs one command and no typing (still the same PR as the buttons).**
 - **Share login stored in SyncHub.** *Storage > Share login (SMB)*: the Unraid user and password are entered once, kept encrypted (key file `synchub.key` in the data folder: keep it with your backups) and given only to a worker that proves its token when it is set up. `setup-worker.sh` uses it and asks nothing. Needs the `cryptography` package (in the image).
 - **GPU found, GPU used.** `setup-worker.sh` finds an Intel/AMD GPU (`/dev/dri`) or an NVIDIA GPU (`nvidia-smi`, installing the NVIDIA Container Toolkit) and puts it in the generated `docker-compose.yml`: no second compose file. `--no-gpu` leaves it out. The agent still test-encodes before it offers an encoder.

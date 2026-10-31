@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from synchub import jobs, workers
+from synchub.web import fleet
 from synchub.notifications import events
 
 from .test_notification_rules import admin, notes
@@ -328,3 +329,29 @@ def test_the_workers_page_buttons_and_settings(client, v2):
     assert client.post(f"/api/workers/{wid}/update", json={"settings": {"encoder": "tpu"}}).get_json()["ok"] is False
     client.post("/api/worker/v1/update/report", headers=headers, json={"status": "current", "version": "1.4.0", "commit": "abc"})
     assert "already up to date" in client.get("/workers").get_data(as_text=True)
+
+
+def test_a_failing_fetch_is_reported_once_and_cleared_when_it_works(box):
+    good = subprocess.run(["git", "-C", str(box.clone), "remote", "get-url", "origin"], capture_output=True, text=True).stdout.strip()
+    subprocess.run(["git", "-C", str(box.clone), "remote", "set-url", "origin", "/nonexistent/repo"], check=True)
+    for _ in range(3):
+        box.run()
+    calls = box.run()[2]
+    reports = [c for c in calls.splitlines() if "update/report" in c]
+    assert len(reports) == 1 and '"status":"problem"' in reports[0] and "fetch failed" in reports[0]       # told once, not every minute
+    subprocess.run(["git", "-C", str(box.clone), "remote", "set-url", "origin", good], check=True)
+    calls = box.run()[2]
+    assert '"status":"current"' in calls and not (box.state / "problem").exists()
+
+
+def test_a_problem_report_is_shown_with_its_log_and_told_once(client, v2, push):
+    wid, _ = authed(v2, "worker-1")
+    with v2.connection() as conn:
+        admin(conn)
+        w = {"id": wid}
+        first = workers.report_update(conn, w["id"], {"status": "problem", "error": "git fetch failed: Permission denied", "log": "line 1\nline 2"})
+        workers.report_update(conn, w["id"], {"status": "problem", "error": "git fetch failed: Permission denied"})
+        assert first["log"] == "line 1\nline 2"
+        shown = fleet.describe_update(workers.last_update(conn, w["id"]))
+        assert shown["ok"] is False and "problem" in shown["text"] and "Permission denied" in shown["error"]
+        assert len(notes(conn, "worker_update_failed")) == 1
