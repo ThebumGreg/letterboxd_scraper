@@ -1,7 +1,8 @@
 """Pages for the worker fleet: the Workers page, its live fragment and the actions behind its buttons."""
 from flask import jsonify, render_template, request
 
-from synchub import db, jobs, storage, webhooks, workers
+from synchub import __version__
+from synchub import db, jobs, storage, versions, webhooks, workers
 from synchub.library import cleanup, migrate
 
 # What each worker button does: setting, new value.
@@ -150,7 +151,17 @@ def describe_worker(w, root_names=(), update=None):
     w.update(state=state, state_color=color, encoders=", ".join(str(e) for e in _items(w["capabilities"].get("encoders"))),
              free=_gb(status.get("work_free_bytes")), originals=(f"{held} held, {_gb(status.get('originals_bytes')) or '?'}" if held else None),
              seen=webhooks.ago(w["last_seen"]) if w["last_seen"] else "never", roots=describe_roots(w, root_names), host=describe_host(w), auto_update=describe_update(update))
+    w["benchmark"] = describe_benchmark(w)
     return w
+
+
+def describe_benchmark(w):
+    """The 'Last benchmark' block of a worker row: what the newest report says, and whether a run is waiting."""
+    last = (w.get("benchmark_last") or None)
+    out = {"pending": bool(w.get("benchmark_requested")), "can_run": "benchmark" in (w["capabilities"].get("features") or []), "last": None}
+    if last:
+        out["last"] = {"ok": bool(last["ok"]), "when": webhooks.ago(last["created_at"]), "summary": last["summary"], "report": last["report"]}
+    return out
 
 
 def describe_job(j):
@@ -182,11 +193,13 @@ def snapshot(conn):
     summary = " \u00b7 ".join(f"{counts[s]} {s.replace('_', ' ')}" for s in ("running", "needs_review", "queued", "done", "failed") if counts.get(s))
     root_names = [r["name"] for r in storage.list_all(conn)]
     raw = workers.list_all(conn)
+    for w in raw:
+        w["benchmark_last"] = workers.last_benchmark(conn, w["id"])
     able = [w for w in raw if w["enabled"] and not w["revoked"] and w["online"]]
     listed = [describe_job(j) for j in jobs.recent(conn, 50)]
     for j in listed:
         j["waiting_for"] = _waiting_for(j, able)
-    return {"workers": [describe_worker(w, root_names, workers.last_update(conn, w["id"])) for w in raw], "jobs": listed, "counts": counts, "summary": summary, "root_names": root_names}
+    return {"workers": [describe_worker(w, root_names, workers.last_update(conn, w["id"])) for w in raw], "jobs": listed, "counts": counts, "summary": summary, "root_names": root_names, "app_version": __version__}
 
 
 def _setup(conn, name, token=None):
@@ -218,6 +231,17 @@ def register(app):
         with db.connection() as conn:
             data = snapshot(conn)
         return render_template("_fleet.html", **data)
+
+    @app.route("/jobs")
+    def jobs_page():
+        from synchub.web import media
+        return media.render_media("jobs")
+
+    @app.route("/jobs/fragment")
+    def jobs_fragment():
+        with db.connection() as conn:
+            data = snapshot(conn)
+        return render_template("_jobs_live.html", **data)
 
     @app.route("/api/workers")
     def api_workers():
@@ -261,6 +285,9 @@ def register(app):
                     online = workers.get(conn, worker_id)["online"]
                     return jsonify(ok=True, online=online, message="Asked the worker for its log." if online
                                    else "Asked. The worker is offline, so the log arrives when it is back.")
+                if action == "benchmark":
+                    workers.request_benchmark(conn, worker_id)
+                    return jsonify(ok=True, message="Asked the worker to run a benchmark. It starts when the worker has no job running, and the result appears here when it is done (a few minutes).")
                 if action == "rotate":
                     token = workers.rotate_token(conn, worker_id)
                     name = workers.get(conn, worker_id)["name"]
@@ -335,6 +362,7 @@ def register(app):
                 if action == "cancel":
                     result = jobs.cancel(conn, job_id, by)
                     migrate.sync(conn, job_id)
+                    versions.sync(conn, job_id)
                     cleanup.sync(conn, job_id)
                     return jsonify(ok=True, message="Cancelling: the worker stops at its next report." if result == "cancelling" else "Cancelled.")
                 if action == "log":
@@ -348,11 +376,13 @@ def register(app):
                     else:
                         jobs.retry(conn, job_id, by)
                     migrate.sync(conn, job_id)
+                    versions.sync(conn, job_id)
                     cleanup.sync(conn, job_id)
                     return jsonify(ok=True, message="Queued again.")
                 if action in ("approve", "skip", "reject"):
                     jobs.decide(conn, job_id, action, by, data.get("note"))
                     migrate.sync(conn, job_id)
+                    versions.sync(conn, job_id)
                     cleanup.sync(conn, job_id)
                     return jsonify(ok=True, message={"approve": "Approved: it carries on.", "skip": "Skipped: the file is left as it is.", "reject": "Rejected."}[action])
         except jobs.JobError as exc:

@@ -7,12 +7,12 @@ def tabs(page):
     return re.findall(r'id="media-tab-(\w+)"', page)
 
 
-def test_library_workers_and_storage_are_tabs_of_one_page(client):
-    for path, active in (("/library", "library"), ("/workers", "workers"), ("/originals", "originals"), ("/storage", "storage")):
+def test_library_versions_workers_and_storage_are_tabs_of_one_page(client):
+    for path, active in (("/library", "library"), ("/versions", "versions"), ("/workers", "workers"), ("/jobs", "jobs"), ("/originals", "originals"), ("/storage", "storage"), ("/library/options", "options")):
         page = client.get(path).get_data(as_text=True)
-        assert tabs(page) == ["library", "workers", "originals", "storage"]
+        assert tabs(page) == ["library", "versions", "originals", "workers", "jobs", "storage", "options"]
         assert re.search(r'class="nav-link active" id="media-tab-%s"' % active, page)
-        for key in ("library", "workers", "originals", "storage"):
+        for key in ("library", "versions", "originals", "workers", "jobs", "storage", "options"):
             assert 'id="media-pane-%s"' % key in page
         assert 'id="fleet"' in page and 'id="libraryLive"' in page and 'id="shareModal"' in page
 

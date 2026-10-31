@@ -11,6 +11,23 @@
 {% else %}
 <div class="panel p-3 p-md-4 mb-3">
     <p class="mb-2">You are about to approve <strong>{{ candidates }}</strong> file{{ 's' if candidates != 1 }} ({{ size }}) in &ldquo;{{ title }}&rdquo; exactly as suggested ({{ floor }} confidence only).{% if f.q or f.root %} Filter: {% if f.q %}<code>{{ f.q }}</code>{% endif %} {% if f.root %}share <code>{{ f.root }}</code>{% endif %}{% endif %}</p>
+    <form method="get" class="row g-2 align-items-end mb-3">
+        <input type="hidden" name="q" value="{{ f.q }}"><input type="hidden" name="root" value="{{ f.root }}"><input type="hidden" name="conf" value="{{ f.conf }}">
+        <div class="col-md-6"><label for="bulkProfile" class="form-label small mb-1">Convert all of them with</label>
+            <select class="form-select form-select-sm" id="bulkProfile" name="profile" onchange="this.form.submit()"><option value="">Each file's own profile (the scan's choice, else the default)</option>
+                {% for p in profiles %}<option value="{{ p.id }}"{% if p.id == chosen_profile %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></div>
+    </form>
+    <div class="border rounded p-2 mb-3 small" id="bulkSummary">
+        <div class="fw-bold mb-1">What will happen</div>
+        <ul class="mb-0">
+            {% if summary.compress %}<li>{{ summary.compress }} compressed, about {{ summary.saved_gb }} GB saved</li>{% endif %}
+            {% if summary.review %}<li>{{ summary.review }} to look at before compressing</li>{% endif %}
+            {% if summary.dv %}<li>{{ summary.dv }} Dolby Vision 7 converted to 8.1</li>{% endif %}
+            {% if summary.audio %}<li>{{ summary.audio }} get a compatible audio track</li>{% endif %}
+            {% if summary.copy %}<li>{{ summary.copy }} get a smaller extra copy</li>{% endif %}
+            <li>{{ summary.unchanged }} copied without a rule applying</li>
+        </ul>
+    </div>
     <p class="small text-body-secondary mb-3">Approving records a decision and nothing else: no file is copied or changed. Each approval can be undone on the list.</p>
     <div class="d-flex gap-2">
         <button type="button" class="btn btn-success" id="confirmBulk">Approve {{ candidates }} file{{ 's' if candidates != 1 }}</button>
@@ -32,7 +49,7 @@
 <script>
 document.getElementById('confirmBulk')?.addEventListener('click', async (e) => {
     e.target.disabled = true;
-    const data = await libraryPost({{ url_for('api_library_bulk', group=group)|tojson }}, { conf: {{ ('high' if floor == 'high' else 'medium')|tojson }}, q: {{ f.q|tojson }}, root: {{ f.root|tojson }} });
+    const data = await libraryPost({{ url_for('api_library_bulk', group=group)|tojson }}, { profile_id: {{ (chosen_profile or '')|tojson }}, conf: {{ ('high' if floor == 'high' else 'medium')|tojson }}, q: {{ f.q|tojson }}, root: {{ f.root|tojson }} });
     if (!data.ok) { librarySay(data.message || 'Failed.', false); e.target.disabled = false; return; }
     sessionStorage.setItem('libraryFlash', data.message);
     location.href = {{ url_for('library_queue', group=group, q=f.q, root=f.root)|tojson }};

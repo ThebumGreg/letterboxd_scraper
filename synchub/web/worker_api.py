@@ -8,7 +8,7 @@ from functools import wraps
 
 from flask import Response, g, jsonify, request
 
-from synchub import downloads, db, jobs, pipeline_events, previews, states, storage, tasks, workers
+from synchub import downloads, db, jobs, pipeline_events, previews, states, storage, tasks, versions, workers
 from synchub.library import cleanup, migrate, scan
 
 logger = logging.getLogger(__name__)
@@ -133,13 +133,13 @@ def register(app):
             cleanup.sweep(conn)                                                  # sources whose waiting time is over get their deletion job before this claim
             claimed = jobs.claim(conn, worker, data.get("free_slots") or 0, free_bytes if isinstance(free_bytes, (int, float)) else None)
             downloads.process(conn)
-            finished = migrate.sync_active(conn) + downloads.sync_active(conn)
+            finished = migrate.sync_active(conn) + downloads.sync_active(conn) + versions.sync_active(conn)
             previews.sync_active(conn)
             cleanup.sync_active(conn)
             for job in claimed:
                 logger.info(f"[jobs] job {job['id']} ({job['kind']}: {job['title']}) went to {worker['name']}, attempt {job['attempt']}")
             response = jsonify(ok=True, jobs=claimed, resume=resume, release=release, cancel=jobs.cancels_for(conn, worker["id"]), cleanup=jobs.cleanups_for(conn, worker["id"]),
-                           log_requests=jobs.log_requests_for(conn, worker["id"]), worker_log=bool(worker["log_requested"]), roots_hash=storage.roots_hash(conn), paused=bool(worker["paused"]), draining=bool(worker["draining"]),
+                           log_requests=jobs.log_requests_for(conn, worker["id"]), worker_log=bool(worker["log_requested"]), benchmark=bool(worker["benchmark_requested"]), roots_hash=storage.roots_hash(conn), paused=bool(worker["paused"]), draining=bool(worker["draining"]),
                            poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS)
         downloads.rescan_due()
         with db.connection() as conn:
@@ -167,15 +167,16 @@ def register(app):
         data = _body()
         with db.connection() as conn:
             jobs.complete(conn, job_id, g.worker["id"], data.get("result"), command=_text(data.get("command"), 8000))
-            arrived = migrate.sync(conn, job_id) or downloads.sync(conn, job_id)
+            arrived = migrate.sync(conn, job_id) or downloads.sync(conn, job_id) or versions.sync(conn, job_id)
             previews.sync(conn, job_id)
             cleanup.sync(conn, job_id)
+            updates = migrate.jellyfin_updates(conn, job_id) if arrived else None
         logger.info(f"[jobs] job {job_id} completed by {g.worker['name']}")
         _dashboard([job_id])
         downloads.rescan_due()
         cleanup.arr_due()
         if arrived:
-            migrate.tell_jellyfin()
+            migrate.tell_jellyfin(updates=updates)
         return jsonify(ok=True)
 
     @route("/jobs/<int:job_id>/fail", "fail")
@@ -188,6 +189,7 @@ def register(app):
                                 command=_text(data.get("command"), 8000), keep_state=data.get("keep_state") is not False)
             migrate.sync(conn, job_id)
             downloads.sync(conn, job_id)
+            versions.sync(conn, job_id)
             previews.sync(conn, job_id)
             cleanup.sync(conn, job_id)
         _dashboard([job_id])
@@ -202,6 +204,7 @@ def register(app):
                               data.get("detail"), keep_state=data.get("keep_state") is not False)
             migrate.sync(conn, job_id)
             downloads.sync(conn, job_id)
+            versions.sync(conn, job_id)
             previews.sync(conn, job_id)
             cleanup.sync(conn, job_id)
         _dashboard([job_id])
@@ -234,6 +237,15 @@ def register(app):
         with db.connection() as conn:
             workers.store_log(conn, g.worker["id"], data.get("text"), truncated=data.get("truncated") is True)
         logger.info(f"[workers] {g.worker['name']} uploaded its log")
+        return jsonify(ok=True)
+
+    @route("/benchmark", "benchmark")
+    def worker_benchmark():
+        """The report of a benchmark the Workers page asked for (the poll answer says benchmark: true)."""
+        data = _body()
+        with db.connection() as conn:
+            workers.store_benchmark(conn, g.worker["id"], data.get("report"))
+        logger.info(f"[workers] {g.worker['name']} uploaded a benchmark")
         return jsonify(ok=True)
 
     # ---- scans and duplicate searches

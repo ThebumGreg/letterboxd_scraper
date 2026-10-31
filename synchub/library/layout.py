@@ -7,6 +7,7 @@
 setting; only relative paths are made here.
 """
 import os
+import re
 
 from synchub.library import vocab as v
 
@@ -19,10 +20,30 @@ def _problems(label, text):
     return [f"{label} '{text}': {p}" for p in v.filename_problems(text)]
 
 
+_TV_DASH = re.compile(r"^(?P<show>.*?) - (?P<code>S\d{2,}E\d{2,}(?:-E\d{2,})?)(?P<rest>.*)$")
+
+
+def jellyfin_tv_name(name):
+    """`Show - S01E01.mkv` -> `Show S01E01.mkv`, the form Jellyfin's documentation recommends. Names that do not look like that are returned unchanged."""
+    m = _TV_DASH.match(name)
+    return f"{m['show']} {m['code']}{m['rest']}" if m else name
+
+
+def file_name(record, cfg):
+    """The file name a record gets in the library: the person's approved name, else (when the profile cleans names) the recommended one in the configured style,
+    else the file's own name."""
+    if record.get("approved_name"):
+        return record["approved_name"]
+    if not cfg.clean_names:
+        return record.get("file_name") or v.final_name(record)
+    name = v.final_name(record)
+    return jellyfin_tv_name(name) if name and cfg.naming_style == "jellyfin" and record.get("media_type") == "TV Episode" else name
+
+
 def relative_parts(record, cfg=None):
     """The path components below the destination share. Raises LayoutError."""
     cfg = cfg or v.LibraryConfig()
-    name = v.final_name(record)
+    name = file_name(record, cfg)
     if not name:
         raise LayoutError("record has no filename")
     problems = _problems("filename", name)
@@ -30,6 +51,7 @@ def relative_parts(record, cfg=None):
         show, season = record["show_title"], record["season_number"]
         if not show or season is None:
             raise LayoutError("TV episode without show title / season")
+        show = dict(cfg.show_folders).get(show, show)
         problems += _problems("show folder", show)
         parts = [cfg.tv_folder, show, f"Season {int(season):02d}", name]
     else:

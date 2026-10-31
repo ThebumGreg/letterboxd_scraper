@@ -19,12 +19,12 @@ PIN_COOKIE = "synchub_pin"              # signed proof that this profile's PIN w
 # What a person sees is what their permissions allow, and a heading with nothing under it is left out.
 NAV = (
     ("index", "Dashboard"),
-    ("Discover", (("discover_page", "New & trending"), ("search_page", "Find & request"), ("watchlist_page", "My watchlist"))),
     ("tv_remote_page", "Remote"),
-    ("Media", (("library_page", "Library"), ("resolution_center", "Resolution Center"))),     # Workers and Storage are tabs of the Library page
+    ("Discover", (("discover_page", "New & trending"), ("search_page", "Find & request"), ("watchlist_page", "My watchlist"))),
+    ("Media", (("library_page", "Library"), ("resolution_center", "Resolution Center"))),     # Workers, Jobs, Storage and Options are tabs of the Library page
     ("System", (
         (None, "Run"), ("tools", "Tools & Operations"),
-        (None, "Monitor"), ("status_page", "System status"), ("activity_page", "What it's doing now"), ("logs_page", "Logs"), ("jellyfin_events_page", "Jellyfin events"), ("payloads_page", "Payloads"),
+        (None, "Monitor"), ("status_page", "System status"), ("sessions_page", "Sessions"), ("activity_page", "What it's doing now"), ("logs_page", "Logs"), ("jellyfin_events_page", "Jellyfin events"), ("payloads_page", "Payloads"),
         (None, "Admin"), ("ddns_page", "Dynamic DNS"), ("people_page", "People"),
         (None, "TV"), ("tv_settings_page", "Remote Apps"), ("tv_setup_devices_page", "TVs"), ("tv_setup_advanced_page", "Remote Tools"),
     )),
@@ -210,8 +210,8 @@ def create_app(start_scheduler=False, csrf=True):
                 "profile_link": link("my_profile", "My profile"),
                 "max_rating": getattr(g, "max_rating", None), "app_version": __version__}
 
-    from synchub.web import admin, api, fleet, library, notifications, pages, security, shares, tv, watchlist, worker_api, originals
-    for module in (pages, api, admin, fleet, library, notifications, shares, security, tv, watchlist, worker_api, originals):
+    from synchub.web import admin, api, fleet, library, notifications, pages, security, shares, tv, watchlist, worker_api, originals, sessions as sessions_web, versions as versions_web
+    for module in (pages, api, admin, fleet, library, notifications, shares, security, tv, watchlist, worker_api, originals, sessions_web, versions_web):
         module.register(app)
     if csrf:
         csrf.exempt(app.view_functions["api_webhook"])

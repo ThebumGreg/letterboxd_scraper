@@ -274,3 +274,54 @@ def last_update(conn, worker_id):
     text = settings.get(UPDATE_KEY.format(worker_id), "", conn=conn)
     report = _load(text, {})
     return report or None
+
+# ---------------------------------------------------------------- the benchmark ("Run benchmark")
+BENCHMARK_KEEP = 10
+
+
+def request_benchmark(conn, worker_id):
+    """Asks a worker to benchmark its encoders. It starts with its next poll when it has no job running."""
+    w = get(conn, worker_id)
+    if w is None:
+        raise WorkerError("That worker no longer exists.")
+    if w["revoked"]:
+        raise WorkerError("That worker's token is revoked, so it cannot answer. Make a new token first.")
+    if "benchmark" not in _items_of(w["capabilities"].get("features")):
+        raise WorkerError("This worker's agent is too old to run a benchmark. Update it first (docs/UPGRADE.md).")
+    conn.execute("UPDATE worker SET benchmark_requested = 1 WHERE id = ?", (worker_id,))
+
+
+def _items_of(value):
+    return value if isinstance(value, list) else []
+
+
+def _summary(report):
+    done = [r for r in report.get("results") or [] if r.get("ok")]
+    if not done:
+        return "No encoder worked."
+    parts = [f"{r['label'].split(' (')[0]} {r['speed']}x" + (f", VMAF {r['vmaf']}" if r.get("vmaf") is not None else "") for r in done if r.get("speed")]
+    return "; ".join(parts) or "Finished."
+
+
+def store_benchmark(conn, worker_id, report, now=None):
+    """Keeps the report a worker uploaded and closes the request. Only the fields the page shows are kept, trimmed."""
+    if not isinstance(report, dict):
+        raise WorkerError("The benchmark report is not readable.")
+    clean = {k: report.get(k) for k in ("agent", "when", "seconds", "cpu", "cores", "gpus", "source", "ok", "took_seconds")}
+    clean["health"] = [{"name": str(h.get("name"))[:40], "ok": bool(h.get("ok")), "detail": str(h.get("detail") or "")[:300]} for h in (report.get("health") or [])[:10] if isinstance(h, dict)]
+    clean["results"] = [{k: r.get(k) for k in ("encoder", "label", "ok", "reason", "seconds", "speed", "fps", "size_mb", "vmaf", "vmaf_floor", "passed")}
+                        for r in (report.get("results") or [])[:8] if isinstance(r, dict)]
+    clean["ok"] = bool(clean["ok"])
+    conn.execute("INSERT INTO worker_benchmark (worker_id, created_at, ok, summary, report) VALUES (?, ?, ?, ?, ?)",
+                 (worker_id, now or db.now(), 1 if clean["ok"] else 0, _summary(clean), json.dumps(clean)))
+    conn.execute("DELETE FROM worker_benchmark WHERE worker_id = ? AND id NOT IN (SELECT id FROM worker_benchmark WHERE worker_id = ? ORDER BY id DESC LIMIT ?)", (worker_id, worker_id, BENCHMARK_KEEP))
+    conn.execute("UPDATE worker SET benchmark_requested = 0 WHERE id = ?", (worker_id,))
+
+
+def last_benchmark(conn, worker_id):
+    r = conn.execute("SELECT * FROM worker_benchmark WHERE worker_id = ? ORDER BY id DESC LIMIT 1", (worker_id,)).fetchone()
+    if r is None:
+        return None
+    out = dict(r)
+    out["report"] = json.loads(out["report"])
+    return out

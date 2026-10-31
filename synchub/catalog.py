@@ -160,12 +160,26 @@ def dashboard_stats(rows):
     return {
         "total": len(rows), "movies": len(movies), "shows": len(shows),
         "in_library": sum(r["state"] == "in_library" for r in rows),
+        "movies_in_library": sum(r["kind"] == "movie" and r["state"] == "in_library" for r in rows),
+        "shows_in_library": sum(r["kind"] == "show" and r["state"] == "in_library" for r in rows),
         "in_flight": sum(r["state"] in ("downloading", "downloaded", "transferring", "working", "encoding", "transferring_library") for r in rows),
         "queued": sum(r["state"] == "queued" for r in rows),
         "missing": sum(r["state"] == "missing" for r in rows),
         "partial": sum(r["state"] == "partial" for r in rows),
         "users": len({u for r in rows for u in r["wanted_by"]}),
     }
+
+
+def jellyfin_movie_reconcile(conn):
+    """Why the dashboard's movie count can differ from Jellyfin's: Jellyfin's movie items, how many titles they make up here
+    (versions/editions of one film share a TMDB ID and count once) and how many are not matched to any title yet."""
+    items = [r["item_id"] for r in conn.execute("SELECT item_id FROM src_jellyfin_item WHERE type = 'movie' AND removed_at IS NULL")]
+    linked = {r["source_key"]: r["entity_id"] for r in conn.execute(
+        """SELECT l.source_key, l.entity_id FROM link l JOIN media m ON m.id = l.entity_id AND m.kind = 'movie'
+           WHERE l.source = 'jellyfin' AND l.entity_type = 'media'""")}
+    matched = [i for i in items if i in linked]
+    return {"jellyfin_items": len(items), "titles": len({linked[i] for i in matched}),
+            "duplicates": len(matched) - len({linked[i] for i in matched}), "unmatched": len(items) - len(matched)}
 
 
 def requesters_of(conn, media_id):

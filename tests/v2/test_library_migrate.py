@@ -174,3 +174,24 @@ def test_the_library_page_shows_the_queue_and_the_button_for_unqueued_files(clie
     r = client.post("/api/library/queue-approved", json={})
     assert r.get_json()["ok"] and r.get_json()["queued"] == 1
     assert "2 in queue" in client.get("/library/fragment").get_data(as_text=True)
+
+
+def test_jellyfin_is_told_the_exact_paths_and_falls_back_to_a_scan(v2, conn, monkeypatch):
+    from synchub import storage
+    from synchub.clients import jellyfin
+    storage.create(conn, {"name": "media", "protocol": "local", "share": "/mnt/media", "mount_point": "/mnt/media", "jellyfin_path": "/data/media"})
+    job_id = jobs.create(conn, "library", title="Rename", ref=("library_file", 1), source=("media", "Old/Heat.mkv"), dest=("media", "Heat (1995)/Heat (1995).mkv"), plan={"op": "rename"}, now="2026-10-30T10:00:00+00:00")
+    conn.commit()
+    updates = migrate.jellyfin_updates(conn, job_id)
+    assert updates == [{"Path": "/data/media/Heat (1995)/Heat (1995).mkv", "UpdateType": "Created"}, {"Path": "/data/media/Old/Heat.mkv", "UpdateType": "Deleted"}]
+    copy_id = jobs.create(conn, "library", title="Copy", ref=("library_file", 2), source=("other", "a.mkv"), dest=("media", "B (2000)/B (2000).mkv"), plan={"op": "copy"}, now="2026-10-30T10:00:00+00:00")
+    conn.commit()
+    assert migrate.jellyfin_updates(conn, copy_id) == [{"Path": "/data/media/B (2000)/B (2000).mkv", "UpdateType": "Created"}]
+    calls = []
+    monkeypatch.setattr(jellyfin.JellyfinClient, "__init__", lambda self, *a, **k: None)
+    monkeypatch.setattr(jellyfin.JellyfinClient, "media_updated", lambda self, u: calls.append(("paths", len(u))))
+    monkeypatch.setattr(jellyfin.JellyfinClient, "refresh_library", lambda self: calls.append(("scan", 0)))
+    assert migrate.tell_jellyfin(updates=updates) is True and calls == [("paths", 2)]
+    monkeypatch.setattr(jellyfin.JellyfinClient, "media_updated", lambda self, u: (_ for _ in ()).throw(RuntimeError("404")))
+    assert migrate.tell_jellyfin(updates=updates) is True and calls[-1] == ("scan", 0)          # an older Jellyfin without the endpoint: the whole-library scan
+    assert migrate.tell_jellyfin() is True and calls[-1] == ("scan", 0)

@@ -10,7 +10,8 @@ Groups (the queues in the UI):
   suggested   we have a plan (rename, remove foreign tracks, skip a duplicate): approve it
   check       a flag worth a look (e.g. no English audio): suggestion is "copy unchanged"
   convert     older formats: a lossless remux into MKV, or a re-encode (slower, lossy)
-  needs_you   cannot be approved yet (unreadable, incomplete analysis, integrity problem...)
+  needs_you   cannot be approved yet (unreadable, incomplete analysis, integrity problem...), or an approved job that failed or stopped
+  queued      approved and waiting for, or being worked on by, a worker
   done        already approved / rejected / migrated
 
 This module only DECIDES and APPLIES decisions through store.set_approval(); it never
@@ -23,7 +24,8 @@ import json
 import os
 from typing import List, Optional
 
-from synchub.library import findings, layout as media_layout, migrate, store
+from synchub import settings
+from synchub.library import findings, layout as media_layout, migrate, rule_steps, store
 from synchub.library import vocab as db
 from synchub.library.vocab import LibraryConfig
 
@@ -32,21 +34,25 @@ _RANK = {HIGH: 3, MEDIUM: 2, LOW: 1}
 
 G_READY, G_SUGGESTED, G_CHECK = "ready", "suggested", "check"
 G_CONVERT, G_NEEDS, G_DONE = "convert", "needs_you", "done"
-GROUP_ORDER = (G_READY, G_SUGGESTED, G_CHECK, G_CONVERT, G_NEEDS, G_DONE)
+G_REJECTED = "rejected"                # a person said no: not migrated, kept here so Done only means finished
+G_QUEUED = "queued"                    # approved and waiting for, or being worked on by, a worker: not done until the job finishes
+GROUP_ORDER = (G_READY, G_SUGGESTED, G_CHECK, G_CONVERT, G_NEEDS, G_QUEUED, G_DONE, G_REJECTED)
 
 # Rough speed of a re-encode relative to the video's length (1.5 = 1.5x faster than real time); only used for estimates shown to people.
 TRANSCODE_SPEED = 1.5
 GROUP_TITLES = {
     G_READY: "Ready to approve", G_SUGGESTED: "Suggested changes", G_CHECK: "Worth a look",
-    G_CONVERT: "Format conversion", G_NEEDS: "Needs you", G_DONE: "Done",
+    G_CONVERT: "Format conversion", G_NEEDS: "Needs you", G_QUEUED: "Approved and queued", G_DONE: "Done", G_REJECTED: "Rejected",
 }
 GROUP_HINTS = {
     G_READY: "Nothing unusual found. Approve and they are copied as they are.",
     G_SUGGESTED: "We have a plan for each file (a name, tracks to remove, a duplicate to skip). Check and approve.",
     G_CHECK: "A flag, such as no English audio. We suggest copying unchanged; look and approve.",
     G_CONVERT: "Older formats Jellyfin may have to transcode. We convert the copy to MKV/H.264: a lossless remux where possible, a re-encode (slower) where needed.",
-    G_NEEDS: "These cannot be approved yet: unreadable files, incomplete scans, integrity problems.",
-    G_DONE: "Approved, rejected or already migrated.",
+    G_NEEDS: "These cannot be approved yet (unreadable files, incomplete scans, integrity problems), or an approved job failed or stopped and needs a person.",
+    G_QUEUED: "Approved. A worker is, or soon will be, doing the move or conversion.",
+    G_DONE: "Finished: migrated, already in place, or another version of a film.",
+    G_REJECTED: "You said no to these. They are not migrated. Open one to undo the rejection.",
 }
 
 LANGUAGES = {
@@ -152,8 +158,8 @@ def estimate_text(rec, mode):
     return f"Rough time: reads the whole file once ({size:.1f} GB), a few minutes on a fast connection."
 
 
-def recommend(rec, cfg=None) -> Recommendation:
-    """The suggestion for one record (a dict from the library_file table)."""
+def recommend(rec, cfg=None, rule_steps=None) -> Recommendation:
+    """The suggestion for one record (a dict from the library_file table). `rule_steps` is a function giving what the profile's rules add (see rule_steps.py); it is only called when the plan is built."""
     cfg = cfg or LibraryConfig()
     cats = categories(rec)
     path, path_error = _relative_path(rec, cfg)
@@ -166,13 +172,18 @@ def recommend(rec, cfg=None) -> Recommendation:
         label = {"completed": "Migrated", "in_progress": "Being migrated now", "failed": "Migration failed",
                  "manual_review": "Migration needs a person"}[rec["migration_status"]]
         notes = [rec["migration_last_error"]] if rec.get("migration_last_error") else []
-        return Recommendation(G_DONE, "done", "none", label, [], notes, HIGH, False, **base)
+        group = {"completed": G_DONE, "in_progress": G_QUEUED}.get(rec["migration_status"], G_NEEDS)       # a failed or stopped job needs a person, it is not done
+        return Recommendation(group, "done", "none", label, [], notes, HIGH, False, **base)
     if rec["approval_status"] == db.APPROVAL_APPROVED:
         steps = (["Will be renamed inside its share. Nothing is copied and nothing in the file changes."] if rec.get("approved_mode") == "rename_only"
                  else ["Will be copied" + (" with the approved track changes" if rec.get("approved_track_changes_json") else " unchanged") + ", using the conversion profile"])
-        return Recommendation(G_DONE, "done", "none", "Approved for migration", steps, [], HIGH, False, **base)
+        return Recommendation(G_QUEUED, "done", "none", "Approved for migration", steps, [], HIGH, False, **base)
     if rec["approval_status"] == db.APPROVAL_REJECTED:
-        return Recommendation(G_DONE, "done", "none", "Rejected: will not be migrated", [], [], HIGH, False, **base)
+        return Recommendation(G_REJECTED, "done", "none", "Rejected: will not be migrated", [], [], HIGH, False, **base)
+    from synchub import versions                       # imported here: versions uses the Library, not the other way round
+    if rec["root_name"] == cfg.destination_root and versions.is_version_file(rec["file_name"]):
+        return Recommendation(G_DONE, "version", "none", "Another version of a film: left as it is",
+                              ["A file named like “Film (Year) - 1080p” is shown by Jellyfin as another version of the film next to it, so it must keep its name and place."], [], HIGH, False, **base)
 
     # ---- cannot be approved ------------------------------------------------------------------------
     if rec.get("unreadable_reason"):
@@ -259,7 +270,7 @@ def recommend(rec, cfg=None) -> Recommendation:
             levels.append(HIGH)
     if "naming" in cats or needs_name:
         kind = "naming" if kind == "plain" else kind
-        steps.insert(0, f"Use the name: {rec['recommended_name']}")
+        steps.insert(0, f"Use the name: {media_layout.file_name(rec, cfg)}")
         levels.append(LOW if needs_name else _confidence_from_naming(rec))
     if cats & {"audio", "subtitle"}:
         kind = "check" if kind == "plain" else kind
@@ -274,24 +285,30 @@ def recommend(rec, cfg=None) -> Recommendation:
         kind = "keep_duplicate" if kind in ("plain", "check", "naming") else kind
         steps.append("Keep this copy and skip the other identical copies")
         levels.append(MEDIUM)
+    extra = rule_steps(plans) if rule_steps else None
+    if extra:
+        steps += extra.steps
+        notes += extra.notes
+        levels.append(MEDIUM)
+        kind = "rules" if kind in ("plain", "tracks", "naming", "check", "keep_duplicate") else kind
     if not steps:
         steps = ["Copy as is"]
 
     group = (G_READY if kind == "plain" else G_CHECK if kind == "check" else
-             G_CONVERT if kind == "convert" else G_SUGGESTED)
+             G_CONVERT if kind in ("convert", "rules") else G_SUGGESTED)
     convert_plan = next((p for p in plans if p["op"] == "convert"), None)
     convert_headline = ("Re-encode to H.264 in MKV" if convert_plan and convert_plan["video"]["action"] == "transcode"
                         else "Convert audio to AAC" if convert_plan and convert_plan["audio_convert"]
                         else "Remux to MKV (lossless)")
     headline = {"plain": "Looks good: ready to copy", "convert": convert_headline, "tracks": "Keep English tracks only",
-                "naming": f"Rename to “{rec['recommended_name']}”", "check": "Copy unchanged (worth a look)",
-                "keep_duplicate": "Keep this copy"}[kind]
+                "naming": f"Rename to “{media_layout.file_name(rec, cfg)}”", "check": "Copy unchanged (worth a look)",
+                "keep_duplicate": "Keep this copy", "rules": extra.headline if extra else ""}[kind]
     if needs_name:
         notes.insert(0, f"No valid destination yet: {path_error}. Enter a valid name to continue.")
     confidence = _lowest(HIGH, *levels) if levels else HIGH
     if (rec["root_name"] == cfg.destination_root and path and kind in ("plain", "naming") and not plans and action == db.ACTION_COPY_RENAME and not needs_name):
         # already on the destination share, just not at the right path: moving it inside the share beats copying it next to itself
-        return Recommendation(G_SUGGESTED, "rename", "approve", f"Rename in place to “{db.final_name(rec)}”",
+        return Recommendation(G_SUGGESTED, "rename", "approve", f"Rename in place to “{media_layout.file_name(rec, cfg)}”",
                               [f"Move it inside {rec['root_name']} to {path}. Nothing is copied and nothing in the file changes."], notes, confidence, True,
                               action=action, mode="rename_only", **base)
     can_approve = action in db.MIGRATABLE_ACTIONS and not (needs_name)
@@ -312,16 +329,43 @@ def all_records(conn):
     return [dict(r) for r in conn.execute("SELECT * FROM library_file")]
 
 
+def show_folders(conn):
+    """((title, folder name), ...) for the shows SyncHub knows by one unambiguous title: `Show (Year)`, plus ` [tmdbid-N]` when that setting is on. Empty with the Jellyfin style off."""
+    if settings.get("naming_style", conn=conn) == "current":
+        return ()
+    tags = settings.get("naming_tmdb_ids", conn=conn) == "1"
+    seen, out = {}, {}
+    for r in conn.execute("SELECT title, year, tmdb_id FROM media WHERE kind = 'show' AND year IS NOT NULL"):
+        seen[r["title"]] = seen.get(r["title"], 0) + 1
+        out[r["title"]] = f"{r['title']} ({r['year']})" + (f" [tmdbid-{r['tmdb_id']}]" if tags and r["tmdb_id"] else "")
+    return tuple((t, f) for t, f in out.items() if seen[t] == 1 and t != f)
+
+
+def cfg_for(conn, rec, cfg, cache):
+    """The library config with the naming rule of the profile that applies to `rec`, and the show folder names for a file that is not in the library yet (a folder
+    already in the library is never renamed because a year became known). `cache` ({profile id: config}) spares a lookup per file."""
+    from synchub.library import profiles
+    profile = profiles.effective(conn, rec)
+    if profile["id"] not in cache:
+        cache[profile["id"]] = dataclasses.replace(cfg, clean_names=bool(profiles.rules(conn, profile)["clean_names"]))
+    found = cache[profile["id"]]
+    if rec.get("root_name") == cfg.destination_root or rec.get("media_type") != "TV Episode":
+        return found
+    if "_shows" not in cache:
+        cache["_shows"] = show_folders(conn)
+    return dataclasses.replace(found, show_folders=cache["_shows"]) if cache["_shows"] else found
+
+
 def classify(conn, cfg=None, match=None, root=None):
     """[(record, Recommendation)] for every record (optionally filtered), in display order."""
     cfg = cfg or LibraryConfig()
-    rows = []
+    rows, cache, rules_cache = [], {}, {}
     for rec in sorted(all_records(conn), key=_sort_key):
         if match and match.lower() not in (rec["source_path"] + " " + rec["file_name"]).lower():
             continue
         if root and rec.get("root_name") != root:
             continue
-        rows.append((rec, recommend(rec, cfg)))
+        rows.append((rec, recommend(rec, cfg_for(conn, rec, cfg, cache), lambda plans, rec=rec: rule_steps.for_record(conn, rec, plans, rules_cache))))
     return rows
 
 
@@ -361,6 +405,7 @@ def apply_recommendation(conn, record_id, by, name=None, keep_streams=None, note
     rec = store.get_record(conn, record_id)
     if rec is None:
         raise ValueError(f"no record {record_id}")
+    cfg = cfg_for(conn, dict(rec, approved_profile_id=profile_id or rec.get("approved_profile_id")), cfg, {})        # the naming rule of the profile it is approved with
     r = recommend(rec, cfg)
     if r.needs_name:
         if not name:
@@ -444,7 +489,7 @@ def bulk_candidates(conn, group, min_confidence=MEDIUM, match=None, root=None, c
             if r.group == group and r.can_approve and not r.needs_name and _RANK[r.confidence] >= floor]
 
 
-def bulk_approve(conn, group, by, min_confidence=MEDIUM, match=None, root=None, cfg=None):
+def bulk_approve(conn, group, by, min_confidence=MEDIUM, match=None, root=None, cfg=None, profile_id=None):
     """Apply the recommendation to every candidate. Returns (done, [(id, why)]).
     Duplicate groups are skipped: they need a person to choose which copy to keep."""
     done, skipped = 0, []
@@ -453,7 +498,7 @@ def bulk_approve(conn, group, by, min_confidence=MEDIUM, match=None, root=None, 
             skipped.append((rec["id"], "duplicates are decided one at a time"))
             continue
         try:
-            apply_recommendation(conn, rec["id"], by, note=f"bulk approved on the Library page ({group})", cfg=cfg)
+            apply_recommendation(conn, rec["id"], by, note=f"bulk approved on the Library page ({group})", cfg=cfg, profile_id=profile_id)
             done += 1
         except (ValueError, db.StateError) as exc:
             skipped.append((rec["id"], str(exc)))

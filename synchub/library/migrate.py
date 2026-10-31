@@ -5,12 +5,13 @@ Approving a file queues one `library` job (source share + path, destination shar
 been copied into the destination share and verified. Nothing here touches a media file; the worker does that.
 """
 import copy
+import dataclasses
 import json
 import logging
 import os
 
 from synchub import db, jobs, settings
-from synchub.library import layout, profiles, size_policy, store
+from synchub.library import audio, layout, profiles, size_policy, store
 from synchub.library import vocab as v
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,8 @@ def approved_removals(rec, profile=None):
 
 
 def _changes_nothing(change):
-    return change.get("op") != "convert" and not change.get("remove_audio") and not change.get("remove_subtitle") and change.get("default_audio") is None
+    return (change.get("op") != "convert" and not change.get("remove_audio") and not change.get("remove_subtitle") and change.get("default_audio") is None
+            and not change.get("audio_add") and not change.get("audio_convert"))
 
 
 def _is_video(codec, wanted):
@@ -63,7 +65,7 @@ def _is_video(codec, wanted):
     return codec.startswith("hevc") or codec.startswith("h265") if wanted == "hevc" else codec.startswith("h264") or codec.startswith("avc")
 
 
-def plan_for(rec, cfg, profile=None, mode=None, size=None):
+def plan_for(rec, cfg, profile=None, mode=None, size=None, rules=None):
     """(destination root, destination relative path, plan) for an approved record. Raises layout.LayoutError.
 
     `mode` 'rename_only' renames the file inside its own share and touches nothing else. Otherwise the profile decides: a move-only profile copies
@@ -88,6 +90,9 @@ def plan_for(rec, cfg, profile=None, mode=None, size=None):
         change.setdefault("audio_convert", {})
         if not dest_rel.lower().endswith(".mkv"):
             change["target_extension"] = ".mkv"
+    audio_note = None
+    if rules:                                                         # the profile's audio rule (add a compatible track, or convert the main one)
+        change, audio_note = audio.apply(rec, change, rules.get("audio_mode"))
     if change is not None and _changes_nothing(change):
         change = None
     decision = size_policy.decide(rec, [change] if change else [], size) if size is not None else None
@@ -104,6 +109,10 @@ def plan_for(rec, cfg, profile=None, mode=None, size=None):
         dest_rel = os.path.splitext(dest_rel)[0] + extension
     if profile and (profile["video_codec"] != "keep" or profile["audio_kbps"] != 192):
         plan.update(profile=profiles.for_plan(profile), needs=[profiles.FEATURE])
+    if change.get("audio_add") or any(isinstance(c, dict) and c.get("kbps") for c in (change.get("audio_convert") or {}).values()):
+        plan["needs"] = sorted(set(plan.get("needs") or []) | {"audio_add"})
+    if audio_note:
+        plan["audio_note"] = audio_note
     if compress:
         plan, dest_rel = size_policy.apply(plan, decision, dest_rel)
     return cfg.destination_root, dest_rel, plan
@@ -115,8 +124,8 @@ def active_job(conn, record_id):
 
 
 def profile_for(conn, rec):
-    """The profile an approved record is converted with: the one chosen for the file, else the default."""
-    return (profiles.get(conn, rec["approved_profile_id"]) if rec.get("approved_profile_id") else None) or profiles.default(conn)
+    """The profile an approved record is converted with: the one chosen for the file, else the one chosen at its scan, else the default."""
+    return profiles.effective(conn, rec)
 
 
 TITLES = {"copy": "Copy", "convert": "Convert", "rename": "Rename"}
@@ -138,7 +147,9 @@ def queue(conn, record_id, cfg, by="someone", force=False):
     if downloads.busy(conn, rec):                                # the download pipeline is replacing this very file in place
         return None
     try:
-        dest_root, dest_rel, plan = plan_for(rec, cfg, profile_for(conn, rec), size=size_policy.load(conn))
+        profile = profile_for(conn, rec)
+        rules = profiles.rules(conn, profile)
+        dest_root, dest_rel, plan = plan_for(rec, dataclasses.replace(cfg, clean_names=bool(rules["clean_names"])), profile, size=size_policy.load(conn, profile), rules=rules)
     except layout.LayoutError as exc:
         raise ValueError(f"cannot plan the destination: {exc}")
     need = 0 if plan["op"] == "rename" else (rec["size_bytes"] or 0) * (2 if plan["op"] == "convert" else 1) + WORK_MARGIN_BYTES
@@ -294,14 +305,54 @@ def attention(conn, limit=20):
         "AND missing_since IS NULL AND ((migration_status = 'pending' AND migration_cancelled_at IS NOT NULL) OR migration_status = 'failed') ORDER BY id LIMIT ?", (limit,))]
 
 
-def tell_jellyfin(count=1):
-    """Asks Jellyfin to look for the files that just arrived in the destination share. Best effort: the files are in place either way, and
-    Jellyfin finds them on its own scheduled scan. Never raises. Call it with no database transaction open."""
+def _op(plan):
+    try:
+        return (json.loads(plan) if isinstance(plan, str) else plan or {}).get("op")
+    except ValueError:
+        return None
+
+
+def jellyfin_updates(conn, job_id):
+    """[{"Path", "UpdateType"}] for the files a finished job created or moved, as Jellyfin sees the paths; None when a share has no Jellyfin path set (the caller then asks for a whole refresh)."""
+    r = conn.execute("SELECT kind, source_root, source_rel, dest_root, dest_rel, plan FROM job WHERE id = ?", (job_id,)).fetchone()
+    if r is None or not r["dest_root"] or not r["dest_rel"]:
+        return None
+
+    from synchub import storage
+
+    def seen(root_name, rel):
+        root = storage.by_name(conn, root_name)
+        base = (root or {}).get("jellyfin_path")
+        return f"{base.rstrip('/')}/{rel}" if base and rel else None
+
+    created = seen(r["dest_root"], r["dest_rel"])
+    if created is None:
+        return None
+    updates = [{"Path": created, "UpdateType": "Created"}]
+    if r["source_root"] == r["dest_root"] and r["source_rel"] and r["source_rel"] != r["dest_rel"] and _op(r["plan"]) == "rename":
+        gone = seen(r["source_root"], r["source_rel"])
+        if gone:
+            updates.append({"Path": gone, "UpdateType": "Deleted"})
+    return updates
+
+
+def tell_jellyfin(count=1, updates=None):
+    """Asks Jellyfin to look at the files that just arrived in the destination share: just those paths when `updates` is given (see jellyfin_updates), else
+    (or if that fails) a scan of the whole library. Best effort: the files are in place either way, and Jellyfin finds them on its own scheduled scan.
+    Never raises. Call it with no database transaction open."""
     if settings.get("disable_jellyfin_connection") == "1":
         return False
     try:
         from synchub.clients.jellyfin import JellyfinClient
-        JellyfinClient().refresh_library()
+        client = JellyfinClient()
+        if updates:
+            try:
+                client.media_updated(updates)
+                logger.info(f"[library] told Jellyfin about {len(updates)} changed path(s)")
+                return True
+            except Exception as exc:
+                logger.warning(f"[library] Jellyfin would not take the path update ({exc}); asking for a library scan instead")
+        client.refresh_library()
     except Exception as exc:
         logger.warning(f"[library] could not ask Jellyfin to scan the {count} new file(s): {exc}")
         return False

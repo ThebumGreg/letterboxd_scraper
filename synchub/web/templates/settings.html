@@ -194,6 +194,24 @@
             </div>
         </div>
         <div class="col-lg-6">
+            <!-- Jellyfin as the DVR -->
+            <div class="panel p-3 p-md-4 mb-4" id="jellyfinDvr">
+                <h5 class="text-success mb-1">Jellyfin DVR</h5>
+                <p class="small text-body-secondary">Jellyfin records live TV. SyncHub reads its schedule (it never schedules, changes or cancels anything) and marks library items in the recording folders as recordings.</p>
+                {{ switch('dvr_enabled', 'Read the recording schedule from Jellyfin', settings.dvr_enabled) }}
+                <div class="mb-3">
+                    <label for="dvr_poll_seconds" class="form-label">Schedule check (seconds)</label>
+                    <input type="number" class="form-control" id="dvr_poll_seconds" name="dvr_poll_seconds" value="{{ settings.get('dvr_poll_seconds') or 300 }}" min="0" step="1" required>
+                    <div class="form-text">0 turns it off; anything from 1 to 59 is treated as 60.</div>
+                </div>
+                {{ switch('dvr_counts_as_library', 'A recording counts as In Library', settings.dvr_counts_as_library) }}
+                <div class="form-text mb-3">Turn this off to show recordings as <em>Recorded (DVR)</em> instead. A show or film that only exists as a recording can then still be requested and added to Radarr or Sonarr automatically.</div>
+                <div class="mb-3">
+                    <label for="dvr_path_prefixes" class="form-label">Recording folders, as Jellyfin sees them</label>
+                    <input type="text" class="form-control" id="dvr_path_prefixes" name="dvr_path_prefixes" value="{{ settings.get('dvr_path_prefixes') or '/DVR' }}">
+                    <div class="form-text">Comma separated, for example <code>/DVR</code>. Letter case matters. Items inside these folders are recordings after the next Jellyfin sync.</div>
+                </div>
+            </div>
             <!-- Live updates: webhooks and download-progress polling -->
             <div class="panel p-3 p-md-4 mb-4" id="liveUpdates">
                 <h5 class="text-success mb-1">Live updates</h5>

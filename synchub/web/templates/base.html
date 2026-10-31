@@ -21,6 +21,8 @@
             <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">
                 <span class="text-success">Sync</span>Hub
             </a>
+            {% set remote = menu|selectattr('endpoint', 'defined')|selectattr('endpoint', 'equalto', 'tv_remote_page')|first %}
+            {% if remote %}<a class="btn btn-outline-success btn-sm ms-auto me-2 d-lg-none" href="{{ remote.href }}" aria-label="Remote"><i class="bi bi-tv" aria-hidden="true"></i> Remote</a>{% endif %}
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
                     aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
@@ -31,7 +33,7 @@
                         {% if item.children %}
                             {% set ns = namespace(active=false) %}
                             {% for child in item.children %}{% if child.href and path.startswith(child.href) %}{% set ns.active = true %}{% endif %}{% endfor %}
-                            {% if item.label == 'Media' and (path.startswith('/workers') or path.startswith('/storage')) %}{% set ns.active = true %}{% endif %}
+                            {% if item.label == 'Media' and (path.startswith('/workers') or path.startswith('/storage') or path.startswith('/jobs')) %}{% set ns.active = true %}{% endif %}
                             <li class="nav-item dropdown">
                                 <a class="nav-link dropdown-toggle{% if ns.active %} active{% endif %}" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">{{ item.label }}</a>
                                 <ul class="dropdown-menu">

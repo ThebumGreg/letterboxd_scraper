@@ -1,0 +1,14 @@
+<script>
+(() => {
+    const live = document.getElementById('jobsLive');
+    const busy = () => document.querySelector('.modal.show, .dropdown-menu.show');
+    async function refresh() {
+        if (busy() || !document.getElementById('media-pane-jobs')?.classList.contains('active')) return;
+        try {
+            const res = await fetch('/jobs/fragment');
+            if (res.ok && !busy()) live.innerHTML = await res.text();
+        } catch (e) { /* the next tick tries again */ }
+    }
+    setInterval(refresh, 5000);
+})();
+</script>

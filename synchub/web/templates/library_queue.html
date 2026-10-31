@@ -12,7 +12,7 @@
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
     <div><h2 class="mb-1">{{ title }}</h2><p class="text-body-secondary mb-0">{{ hint }}</p></div>
     <div class="d-flex flex-wrap gap-2">
-        {% if total and group != 'done' %}<a class="btn btn-success" href="{{ url_for('library_review', group=group, **filter_args) }}">Review one by one</a>{% endif %}
+        {% if total and group not in ('done', 'queued') %}<a class="btn btn-success" href="{{ url_for('library_review', group=group, **filter_args) }}">Review one by one</a>{% endif %}
         <a class="btn btn-outline-secondary" href="{{ url_for('library_export', group=group, q=f.q, root=f.root) }}"><i class="bi bi-download" aria-hidden="true"></i> Export this list</a>
     </div>
 </div>
@@ -58,7 +58,7 @@
                     <td><span class="badge bg-{{ {'high': 'success', 'medium': 'warning', 'low': 'danger'}[r.confidence] }}{% if r.confidence == 'medium' %} text-dark{% endif %}">{{ r.confidence }}</span></td>
                     <td class="text-end small text-nowrap">{{ row.size or '-' }}</td>
                     <td class="pe-4 text-end text-nowrap">
-                        {% if r.group == 'done' and rec.approval_status != 'pending' and rec.migration_status == 'pending' %}
+                        {% if r.group == 'queued' and rec.approval_status != 'pending' and rec.migration_status == 'pending' %}
                             <button type="button" class="btn btn-sm btn-outline-secondary" data-decide="undo" data-id="{{ rec.id }}">Undo</button>
                         {% elif r.can_approve and not r.needs_name %}
                             <button type="button" class="btn btn-sm btn-success" data-decide="approve" data-id="{{ rec.id }}">{{ 'Skip this copy' if r.kind == 'skip_duplicate' else 'Approve' }}</button>

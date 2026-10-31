@@ -100,7 +100,7 @@ def test_the_library_settings_are_validated_saved_and_change_what_is_in_place(cl
     assert (settings.get("library_destination_root", conn=conn), settings.get("library_movie_folder", conn=conn), settings.get("library_exclude_folders", conn=conn)) == ("tfiles", "Films", "Extras\nSample")
     assert f'data-record="{placed}"' not in client.get("/library/queue/done").get_data(as_text=True)        # media is no longer where things belong
     page = client.get("/library").get_data(as_text=True)
-    assert 'value="Films"' in page and "Last 45 s" in page and "Films/&lt;name&gt;/&lt;name&gt;" in page
+    assert 'value="Films"' in page and "Last 45 s" in page and "Films/Film Name (Year)/Film Name (Year).ext" in page
 
 
 def test_no_library_page_reuses_an_id_the_site_wide_script_attaches_to(client, conn):
@@ -153,7 +153,7 @@ def test_decided_files_offer_undo_and_blocked_ones_only_open(client, conn):
     store.set_approval(conn, done, v.APPROVAL_APPROVED, "ann")
     conn.commit()
     blocked = add(conn, rel="b.mkv", name="B.mkv", size=0, mtime=0.0, status=v.ANALYSIS_FAILED, unreadable="stat failed", action="manual_review")
-    page = client.get("/library/queue/done").get_data(as_text=True)
+    page = client.get("/library/queue/queued").get_data(as_text=True)         # approved, not finished: Approved and queued, not Done
     assert 'data-decide="undo"' in row_for(page, done)
     placed = add(conn, root="media", rel="Movies/Heat (1995)/Heat (1995).mkv", name="Heat (1995).mkv")
     assert "data-decide" not in row_for(client.get("/library/queue/done").get_data(as_text=True), placed)             # nobody decided it, so there is nothing to undo

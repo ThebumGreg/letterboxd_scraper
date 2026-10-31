@@ -231,7 +231,7 @@ docker start synchub
 
 The database that was there is kept beside it as `synchub.db.before-restore-<time>`. A copy from a *newer* SyncHub than the one running is refused.
 
-**Look at things.** `docker logs synchub` (start-up), the **Logs** page and `/data/logs/app.log` (everything, rotated), **Tools & Operations** and **System → Monitor → What it's doing now** (`/activity`) when a task looks stuck. For a worker: the **Logs** button on the Workers page fetches the worker's own log into SyncHub (filter, search, download), **Worker Status** shows its CPU, memory, graphics card and which encoders work, and a job's **Fetch full log** button gets that job's log; on the PC itself, `docker compose logs -f`.
+**Look at things.** `docker logs synchub` (start-up), the **Logs** page and `/data/logs/app.log` (everything, rotated), **Tools & Operations** and **System → Monitor → What it's doing now** (`/activity`) when a task looks stuck. For a worker: the **Logs** button on the Workers page fetches the worker's own log into SyncHub (filter, search, download), the **Machines** section shows its CPU, memory, graphics card and which encoders work, and a job's **Fetch full log** button gets that job's log; on the PC itself, `docker compose logs -f`.
 
 **Move to another server later:** the same three commands: `backup create`, `backup check`, copy, start.
 
@@ -249,7 +249,7 @@ The database that was there is kept beside it as `synchub.db.before-restore-<tim
 | `setup-worker.sh` says "SyncHub does not accept this token" or "Cannot reach SyncHub" | The token was replaced (Workers page, More, *New token*), or the address is wrong or blocked: `curl http://UNRAID_IP:5001/healthz` from the worker PC should answer. Nothing on the PC was changed. |
 | `setup-worker.sh` ends with "needs your attention" (exit 3) | A line marked `WARNING` says what: a share that would not mount (the reason from `mount` is printed), an `/etc/fstab` line of yours for the same folder, a checkout with local changes. Fix it and run the script again. |
 | **Logs** says the worker has not answered | The worker is offline, or its agent is older than 0.4.0 (it cannot send its log): run the setup script again on it. |
-| Worker Status says "has not reported its hardware" | The same: an agent older than 0.4.0. |
+| The Workers tab says "has not reported its hardware" | The same: an agent older than 0.4.0. |
 | Worker will not mount a share | `cifs-utils` missing on the PC; wrong IP, share name, user or password in `.env`; for SMB try `vers=3.1.1` or `vers=2.1` in the share's options (Storage page), then regenerate the files. |
 | Worker online but a share says "no marker file" | Mounted but not set up: `docker compose run --rm worker --init-roots`. Or **not mounted** and you are looking at an empty folder: fix the mount first. |
 | Share says "wrong share" | The mounts are mixed up (`Media` mounted where `TFiles` belongs). |

@@ -12,7 +12,7 @@ import shutil
 from datetime import datetime, timedelta, timezone
 
 from synchub import db, jobs, settings
-from synchub.library import size_policy, store
+from synchub.library import profiles, size_policy, store
 from synchub.library import vocab as v
 
 logger = logging.getLogger(__name__)
@@ -245,7 +245,7 @@ def create(conn, subject_type, subject_id, by, mode="random", seconds=None, now=
     if live and live["status"] in ("queued", "making"):
         raise PreviewError("A preview of this file is already being made.")
     plans = plans_of(rec, approved=rec.get("approval_status") == v.APPROVAL_APPROVED)
-    size = size_policy.decide(rec, plans, size_policy.load(conn))
+    size = size_policy.decide(rec, plans, size_policy.load(conn, profiles.effective(conn, rec)))
     if size.profile is None:
         raise PreviewError("The size rules would leave this file alone, so there is nothing to preview. " + (size.summary or ""))
     plan, _ = size_policy.apply({"change": dict(plans[0]) if plans else {}}, size, None)

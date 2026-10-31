@@ -31,7 +31,11 @@ def _linked(conn, source, media_id, table, key_col, active_only=True):
 
 
 def _ever_in_jellyfin(conn, media_id):
-    return conn.execute("SELECT 1 FROM link WHERE source = 'jellyfin' AND entity_type = 'media' AND entity_id = ?", (media_id,)).fetchone() is not None
+    """True when Jellyfin has the title. With dvr_counts_as_library off, a title that only exists as a recording does not count."""
+    if settings.get("dvr_counts_as_library", conn=conn) == "1":
+        return conn.execute("SELECT 1 FROM link WHERE source = 'jellyfin' AND entity_type = 'media' AND entity_id = ?", (media_id,)).fetchone() is not None
+    return conn.execute("""SELECT 1 FROM link l JOIN src_jellyfin_item j ON j.item_id = l.source_key
+                           WHERE l.source = 'jellyfin' AND l.entity_type = 'media' AND l.entity_id = ? AND j.is_dvr = 0""", (media_id,)).fetchone() is not None
 
 
 # ---------------------------------------------------------------- where new titles go

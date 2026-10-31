@@ -34,6 +34,31 @@ class JellyfinClient:
         res = http.request("jellyfin", "RefreshLibrary", "POST", f"{self.url}/Library/Refresh", headers=self.headers, timeout=15)
         check(res, "Jellyfin", "library refresh")
 
+    def media_updated(self, updates):
+        """Tells Jellyfin that specific files appeared, changed or went away, so it looks at just those paths. `updates` is [{"Path": path as Jellyfin sees it, "UpdateType": "Created" | "Modified" | "Deleted"}]."""
+        res = http.request("jellyfin", "MediaUpdated", "POST", f"{self.url}/Library/Media/Updated", headers=self.headers, json={"Updates": updates}, timeout=15)
+        check(res, "Jellyfin", "media update")
+
+    def virtual_folders(self):
+        """Jellyfin's libraries: [{Name, CollectionType, Locations, ItemId, ...}]."""
+        res = http.request("jellyfin", "GetLibraries", "GET", f"{self.url}/Library/VirtualFolders", headers=self.headers)
+        return check(res, "Jellyfin", "library list").json()
+
+    def sessions(self, active_within=960):
+        """The devices connected to Jellyfin lately, with what each is playing (NowPlayingItem, PlayState, TranscodingInfo)."""
+        res = http.request("jellyfin", "GetSessions", "GET", f"{self.url}/Sessions", params={"activeWithinSeconds": active_within}, headers=self.headers, timeout=8)
+        return check(res, "Jellyfin", "session list").json()
+
+    def timers(self):
+        """The recordings Jellyfin has scheduled, is making or has made from its Live TV guide (each has a Status such as New, InProgress, Completed, Error)."""
+        res = http.request("jellyfin", "GetTimers", "GET", f"{self.url}/LiveTv/Timers", headers=self.headers, timeout=30)
+        return check(res, "Jellyfin", "recording timers").json().get("Items") or []
+
+    def series_timers(self):
+        """The series recording rules Jellyfin has."""
+        res = http.request("jellyfin", "GetSeriesTimers", "GET", f"{self.url}/LiveTv/SeriesTimers", headers=self.headers, timeout=30)
+        return check(res, "Jellyfin", "series recording rules").json().get("Items") or []
+
     def plugins(self):
         return check(http.request("jellyfin", "GetPlugins", "GET", f"{self.url}/Plugins", headers=self.headers), "Jellyfin", "plugin list").json()
 
@@ -61,7 +86,7 @@ class JellyfinClient:
         start = 0
         user_id = self.admin_user_id()
         while True:
-            params = {"IncludeItemTypes": ",".join(types), "Recursive": "true", "Fields": "ProviderIds,ParentId,DateCreated",
+            params = {"IncludeItemTypes": ",".join(types), "Recursive": "true", "Fields": "ProviderIds,ParentId,DateCreated,Path,LocationType,RunTimeTicks",
                       "StartIndex": start, "Limit": page_size}
             if user_id:
                 params["UserId"] = user_id

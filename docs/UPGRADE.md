@@ -124,17 +124,31 @@ sudo ./agent/update-worker.sh --dir /opt/synchub-worker --no-pull
 git checkout main                                   # when you want to follow main again
 ```
 
+### Dolby Vision conversion (new worker image)
+
+After this update the worker image also contains `mkvmerge` and `dovi_tool` (a prebuilt release, checked against a fixed checksum while the image is built). If `dovi_tool` cannot be downloaded the image is still built, but that worker does not offer the Dolby Vision job. Check after `docker compose up -d --build`:
+
+```
+cd /opt/synchub-worker
+sudo docker compose run --rm --entrypoint dovi_tool worker --version
+sudo docker compose run --rm --entrypoint mkvmerge worker --version
+```
+
+Both should print a version. The conversion needs about three times the film's size free in the work folder (the copy, the converted stream and the joined file). Start with one film from *Media > Versions* and play it on the Google TV or Roku before approving more.
+
 ### Turning on GPU encoding on a worker (Intel UHD 630 on worker-1)
 
-The 1.3.0 image already contains ffmpeg with libvmaf and the Intel media driver; the container only needs the GPU passed in. On worker-1:
+The 1.3.0 image contains ffmpeg and, when its base can install it, the Intel media driver; the container only needs the GPU passed in. VMAF scores need an ffmpeg with libvmaf, which the distribution's does not have: set `FFMPEG_URL` in `.env` (below) and rebuild, or leave it out and scores are skipped. On worker-1:
 
 ```
 ls /dev/dri                                    # should list card0 and renderD128; if not, the PC has no usable GPU device
 cp ~/letterboxd_scraper/agent/examples/docker-compose.gpu.yml /opt/synchub-worker/
 cd /opt/synchub-worker
 echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml' | sudo tee -a .env     # every docker compose command here, and update-worker.sh, now includes the GPU file
+# optional, for VMAF scores (a static ffmpeg build with libvmaf, VAAPI, QSV and NVENC):
+echo 'FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz' | sudo tee -a .env
 sudo docker compose up -d --build
-sudo docker compose run --rm worker --check    # "encoders that work" should now list hevc_vaapi (and maybe hevc_qsv); "VMAF: yes"
+sudo docker compose run --rm worker --check    # "encoders that work" should now list hevc_vaapi (and maybe hevc_qsv); "VMAF: yes" (only with FFMPEG_URL)
 sudo docker compose run --rm --entrypoint vainfo worker     # lists the profiles the GPU can encode (look for HEVC Main and Main10 with EncSlice)
 ```
 
@@ -154,3 +168,7 @@ Workers already report their agent version to SyncHub. A possible design: SyncHu
 ## Updating a worker automatically
 
 Instead of running `update-worker.sh` by hand, install the hourly check once on the worker PC: `sudo ./agent/auto-update.sh --install --dir /opt/synchub-worker [--window 02:00-06:00]`. It updates only when the worker is idle (or inside the window), keeps or restores the old version if anything fails, does not retry a failed commit, and tells SyncHub either way. Update SyncHub first: the worker reports to two API calls that older SyncHub versions do not have. Details in `agent/README.md`, "Updating automatically".
+
+## Worker features added by the profile-rules release
+
+A job only goes to a worker that lists the features it needs, so an old worker simply gets fewer jobs until it is rebuilt: `audio_add` (a compatible audio track), `two_outputs` (a Dolby Vision conversion plus the smaller copy in one job) and `benchmark` (the *Run benchmark* button). After rebuilding, `python3 synchub_agent.py --benchmark` on the worker prints the same table the Workers page shows. Port 80 is optional: see `docker-compose.port80.yml`.

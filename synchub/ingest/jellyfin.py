@@ -1,5 +1,5 @@
 """Jellyfin -> src_jellyfin_item. Episodes keep the ID of the series they belong to, so they never depend on provider IDs."""
-from synchub import db
+from synchub import db, dvr
 from synchub.ingest.common import mark_unseen, touch
 from synchub.text import clean_id
 
@@ -18,12 +18,14 @@ def sync(conn, client, scope="all", now=None, progress=None):
     now = now or db.now()
     progress = progress or (lambda message, force=False: None)
     jf_types = SCOPES[scope]
-    items = [i for i in client.iter_items(jf_types) if i.get("Type") in TYPE_MAP]   # fetch fully before touching the database
+    # fetch fully before touching the database; a "Virtual" item is a placeholder Jellyfin makes for an episode it has no file for
+    items = [i for i in client.iter_items(jf_types) if i.get("Type") in TYPE_MAP and i.get("LocationType") != "Virtual"]
     progress(f"Read {len(items)} item(s) from Jellyfin; saving them...", force=True)
 
     season_series = {i["Id"]: (i.get("SeriesId") or i.get("ParentId")) for i in items if i.get("Type") == "Season"}
     series_ids = {i["Id"] for i in items if i.get("Type") == "Series"}
 
+    folders = dvr.prefixes(conn)
     seen = []
     for item in items:
         kind = TYPE_MAP[item["Type"]]
@@ -44,7 +46,8 @@ def sync(conn, client, scope="all", now=None, progress=None):
             "premiere_date": (item.get("PremiereDate") or "")[:10] or None,
             "tmdb_id": _provider(item, "tmdb"), "tvdb_id": _provider(item, "tvdb"), "imdb_id": _provider(item, "imdb"),
             "date_created": (item.get("DateCreated") or "")[:19].replace("T", " ") or None,
-        }, now, keep=("date_created",))                # a sync that does not give the date never erases one we have
+            "path": item.get("Path"), "runtime_seconds": round(item["RunTimeTicks"] / 10_000_000) if item.get("RunTimeTicks") else None, "is_dvr": 1 if dvr.is_dvr_path(item.get("Path"), folders) else 0,
+        }, now, keep=("date_created", "runtime_seconds"))                # a sync that does not give the date never erases one we have
         seen.append(item["Id"])
 
     types = ", ".join(f"'{TYPE_MAP[t]}'" for t in jf_types)

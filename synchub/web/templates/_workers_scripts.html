@@ -1,44 +1,30 @@
 <script>
 (() => {
     const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
-    const fleet = document.getElementById('fleet'), message = document.getElementById('fleetMessage');
-    const modal = (id) => bootstrap.Modal.getOrCreateInstance(document.getElementById(id));
+    const fleet = document.getElementById('fleet');
+    // These dialogs sit inside the Workers tab; opened from the Jobs tab they would stay hidden behind their own backdrop and freeze the page. On <body> they show from any tab.
+    const modal = (id) => {
+        const el = document.getElementById(id);
+        if (el.parentElement !== document.body) document.body.appendChild(el);
+        return bootstrap.Modal.getOrCreateInstance(el);
+    };
     const post = async (url, body) => {
         try {
             const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(body || {}) });
             return await res.json();
         } catch (e) { return { ok: false, message: 'Could not reach the server.' }; }
     };
-    const say = (text, ok) => { message.className = 'alert ' + (ok ? 'alert-success' : 'alert-danger'); message.textContent = text; };
+    const say = (text, ok) => document.querySelectorAll('.fleet-message').forEach((box) => { box.className = 'alert fleet-message ' + (ok ? 'alert-success' : 'alert-danger'); box.textContent = text; });
     const busy = () => document.querySelector('.modal.show, .dropdown-menu.show');
 
     async function refresh() {
         if (busy() || !document.getElementById('media-pane-workers')?.classList.contains('active')) return;
         try {
             const res = await fetch('/workers/fragment');
-            if (res.ok && !busy()) { fleet.innerHTML = await res.text(); showPane(); }
+            if (res.ok && !busy()) { fleet.innerHTML = await res.text(); }
         } catch (e) { /* the next tick tries again */ }
     }
     setInterval(refresh, 5000);
-
-    // Workers, Jobs and Worker Status are tabs of one live fragment, so the open tab is remembered here (and in the address) across the refreshes.
-    let pane = ['jobs', 'status'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'workers';
-    function showPane() {
-        fleet.querySelectorAll('[data-fleet-pane]').forEach((el) => { el.hidden = el.dataset.fleetPane !== pane; });
-        fleet.querySelectorAll('#fleetTabs [data-pane]').forEach((tab) => {
-            const on = tab.dataset.pane === pane;
-            tab.classList.toggle('active', on);
-            tab.setAttribute('aria-selected', on ? 'true' : 'false');
-        });
-    }
-    fleet.addEventListener('click', (e) => {
-        const tab = e.target.closest('#fleetTabs [data-pane]');
-        if (!tab) return;
-        pane = tab.dataset.pane;
-        history.replaceState(null, '', '#' + pane);
-        showPane();
-    });
-    showPane();
 
     // Setup files. Right after a token is made they hold it; nothing keeps them once the dialog closes.
     const NOTES = {

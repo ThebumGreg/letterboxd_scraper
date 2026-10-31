@@ -1,7 +1,7 @@
-"""The Media page: Library, Workers and Storage as tabs of one page.
+"""The Media page: Library, Workers, Jobs, Storage and the other tabs of one page.
 
-/library, /workers and /storage all show it (each opens its own tab), so links and bookmarks keep working. Each tab is rendered on its own,
-so the three keep their own template variables, and a person only gets the tabs their permissions allow."""
+Each tab's own address (/library, /workers, /jobs, /storage, ...) shows it (each opens its own tab), so links and bookmarks keep working. Each tab is rendered on its own,
+so the tabs keep their own template variables, and a person only gets the tabs their permissions allow."""
 from flask import g, render_template
 
 from synchub import access, db, storage
@@ -9,9 +9,12 @@ from synchub import access, db, storage
 # (key, label, endpoint that opens it, what it holds)
 TABS = (
     ("library", "Library", "library_page", "Every video file on your shares and what to do with it"),
-    ("workers", "Workers", "workers_page", "The PCs that do the heavy work, and their jobs"),
+    ("versions", "Versions", "library_versions_page", "Smaller extra copies of big films and Dolby Vision 7 conversions, for you to approve"),
     ("originals", "Originals", "workers_originals_page", "Original files kept after a file was replaced: restore, keep longer or delete"),
+    ("workers", "Workers", "workers_page", "The PCs that do the heavy work, and the hardware behind each"),
+    ("jobs", "Jobs", "jobs_page", "What the workers have been asked to do and how it is going"),
     ("storage", "Storage", "storage_page", "The shares the workers mount"),
+    ("options", "Options", "library_options_page", "Where files go, when films are compressed, previews and conversion profiles"),
 )
 
 
@@ -19,7 +22,13 @@ def _data(key, conn):
     if key == "library":
         from synchub.web import library
         return library.overview(conn)
-    if key == "workers":
+    if key == "versions":
+        from synchub.web import versions
+        return versions.overview(conn)
+    if key == "options":
+        from synchub.web import library
+        return library.overview(conn)
+    if key in ("workers", "jobs"):
         from synchub.web import fleet
         return fleet.snapshot(conn)
     if key == "originals":

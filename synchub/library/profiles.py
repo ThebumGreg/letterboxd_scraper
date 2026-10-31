@@ -7,6 +7,7 @@ applies to a job is copied into the job's plan when it is queued, so a queued jo
 import re
 
 from synchub import db, settings
+from synchub.library import rules as profile_rules
 
 VIDEO_CODECS = ("keep", "hevc", "h264")
 SUBTITLE_POLICIES = ("remove_non_english", "keep_all")
@@ -19,7 +20,7 @@ DEFAULT_PROFILE_ID = 1
 FEATURE = "profiles"                       # what a worker's agent must list to run a plan that carries a profile
 
 _NAME = re.compile(r"^[\w .,'()+&-]{1,60}$")
-_COLUMNS = "id, name, description, video_codec, crf, preset, ten_bit, audio_kbps, subtitles, move_only, builtin, created_by"
+_COLUMNS = "id, name, description, video_codec, crf, preset, ten_bit, audio_kbps, subtitles, move_only, builtin, created_by, rules_json"
 
 
 class ProfileError(ValueError):
@@ -28,7 +29,7 @@ class ProfileError(ValueError):
 
 def _row(r):
     p = dict(r)
-    p.update(ten_bit=bool(p["ten_bit"]), move_only=bool(p["move_only"]), builtin=bool(p["builtin"]))
+    p.update(ten_bit=bool(p["ten_bit"]), move_only=bool(p["move_only"]), builtin=bool(p["builtin"]), rules=profile_rules.loads(p.pop("rules_json", None)))
     p["summary"] = describe(p)
     return p
 
@@ -80,8 +81,12 @@ def validate(data):
         raise ProfileError("The audio bitrate must be a whole number.")
     if not AUDIO_KBPS_RANGE[0] <= out["audio_kbps"] <= AUDIO_KBPS_RANGE[1]:
         raise ProfileError(f"The audio bitrate must be between {AUDIO_KBPS_RANGE[0]} and {AUDIO_KBPS_RANGE[1]} kbps.")
+    try:
+        out["rules_json"] = profile_rules.dumps(data.get("rules") or {})
+    except profile_rules.RulesError as exc:
+        raise ProfileError(str(exc))
     if out["move_only"]:
-        out.update(video_codec="keep", subtitles="keep_all")
+        out.update(video_codec="keep", subtitles="keep_all", rules_json=profile_rules.dumps({"size_policy": 0, "tv_size_policy": 0, "extra_copy": 0, "clean_names": 0, "audio_mode": "keep", "dv_profile_7_8": "leave"}))
     if codec != "keep" and not out["move_only"]:
         low, high = CRF_RANGE[codec]
         try:
@@ -105,15 +110,15 @@ def save(conn, data, by=None, profile_id=None):
     if clash:
         raise ProfileError(f"There is already a profile called '{clean['name']}'.")
     if profile_id is None:
-        return conn.execute("INSERT INTO conversion_profile (name, description, video_codec, crf, preset, ten_bit, audio_kbps, subtitles, move_only, created_by, created_at, updated_at) "
-                            "VALUES (:name, :description, :video_codec, :crf, :preset, :ten_bit, :audio_kbps, :subtitles, :move_only, :by, :now, :now)", {**clean, "by": by, "now": now}).lastrowid
+        return conn.execute("INSERT INTO conversion_profile (name, description, video_codec, crf, preset, ten_bit, audio_kbps, subtitles, move_only, rules_json, created_by, created_at, updated_at) "
+                            "VALUES (:name, :description, :video_codec, :crf, :preset, :ten_bit, :audio_kbps, :subtitles, :move_only, :rules_json, :by, :now, :now)", {**clean, "by": by, "now": now}).lastrowid
     existing = get(conn, profile_id)
     if existing is None:
         raise ProfileError("That profile no longer exists.")
     if existing["builtin"]:
         raise ProfileError("The built-in profiles cannot be changed. Make a copy under a new name instead.")
     conn.execute("UPDATE conversion_profile SET name = :name, description = :description, video_codec = :video_codec, crf = :crf, preset = :preset, ten_bit = :ten_bit, "
-                 "audio_kbps = :audio_kbps, subtitles = :subtitles, move_only = :move_only, updated_at = :now WHERE id = :id", {**clean, "now": now, "id": profile_id})
+                 "audio_kbps = :audio_kbps, subtitles = :subtitles, move_only = :move_only, rules_json = :rules_json, updated_at = :now WHERE id = :id", {**clean, "now": now, "id": profile_id})
     return profile_id
 
 
@@ -130,6 +135,19 @@ def delete(conn, profile_id):
         raise ProfileError(f"{waiting} approved file(s) still use this profile. Change them first.")
     conn.execute("UPDATE library_file SET approved_profile_id = NULL WHERE approved_profile_id = ?", (profile_id,))
     conn.execute("DELETE FROM conversion_profile WHERE id = ?", (profile_id,))
+
+
+def effective(conn, rec=None, profile_id=None):
+    """The profile that applies to a Library record: the one chosen at approval, else the one chosen at the scan, else the default. Passing `profile_id` picks that one first."""
+    for candidate in (profile_id, (rec or {}).get("approved_profile_id"), (rec or {}).get("scan_profile_id")):
+        if candidate and (found := get(conn, candidate)):
+            return found
+    return default(conn)
+
+
+def rules(conn, profile=None):
+    """The effective value of every rule for a profile (see synchub.library.rules)."""
+    return profile_rules.resolve(conn, profile)
 
 
 def for_plan(profile):

@@ -18,6 +18,7 @@ function renderRemote() {
     <div class="r-info">
       <div id="now" class="np"></div>
       ${has('power_on') ? `<div class="rgrid r2"><button data-act="power" data-state="on" class="pwr">⏻ Power on</button><button data-act="power" data-state="off" class="pwr">☾ Sleep</button></div>` : ''}
+      ${has('launch') ? `<button data-act="openjf" class="jfopen">▶ Open Jellyfin</button>` : ''}
       <div id="quick" class="quick"></div>
     </div>
     <div class="r-pad">

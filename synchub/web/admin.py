@@ -28,6 +28,7 @@ TRIGGERS = {
     "reconcile": (tasks.reconcile, "Reconcile started."),
     "posters": (tasks.refresh_posters, "Poster refresh started."),
     "backup": (tasks.backup_database, "Database backup started."),
+    "dvr": (tasks.sync_dvr, "Reading Jellyfin's recording schedule."),
     "all": (tasks.run_all, "Full run started."),
 }
 _TOKEN_RE = re.compile(r"(?i)\b(api_?key|token|apikey|password)=([^&\s]+)")
@@ -82,6 +83,19 @@ def register(app):
         flash("Some values were not saved: " + " ".join(errors), "danger") if errors else flash("Settings updated successfully.", "success")
         tab = request.form.get("tab")
         return redirect(url_for("settings_page", tab=tab) if tab in ("connections", "automation", "logging") else url_for("settings_page"))
+
+    @app.route("/api/tools/library-paths")
+    def api_tools_library_paths():
+        """Jellyfin libraries that share or nest folders. Only reads."""
+        from synchub import library_paths
+        from synchub.clients import ApiError, ConfigError
+        from synchub.clients.jellyfin import JellyfinClient
+        try:
+            folders = JellyfinClient().virtual_folders()
+        except (ApiError, ConfigError) as exc:
+            return jsonify(ok=False, message=str(exc)), 502
+        return jsonify(ok=True, libraries=[{"name": f.get("Name"), "type": f.get("CollectionType"), "paths": f.get("Locations") or []} for f in folders],
+                       overlaps=library_paths.find_overlaps(folders))
 
     @app.route("/tools/export-csv")
     def export_csv():

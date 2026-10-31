@@ -98,7 +98,7 @@ def test_decided_files_are_done(conn):
     conn.execute("UPDATE library_file SET migration_status = 'failed', migration_last_error = 'dest exists' WHERE id = ?", (failed,))
     conn.commit()
     assert [(rule(conn, i).group, rule(conn, i).headline) for i in (approved, rejected, migrated, failed)] == [
-        ("done", "Approved for migration"), ("done", "Rejected: will not be migrated"), ("done", "Migrated"), ("done", "Migration failed")]
+        ("queued", "Approved for migration"), ("rejected", "Rejected: will not be migrated"), ("done", "Migrated"), ("needs_you", "Migration failed")]
     assert rule(conn, failed).notes == ["dest exists"] and not any(rule(conn, i).can_approve for i in (approved, rejected, migrated))
 
 
@@ -181,7 +181,7 @@ def test_a_person_can_approve_after_playing_a_file_but_must_say_what_they_tested
 def test_reject_and_undo(conn):
     record_id = add(conn)
     rc.reject(conn, record_id, "ann")
-    assert rec_of(conn, record_id)["approval_status"] == "rejected" and rule(conn, record_id).group == "done"
+    assert rec_of(conn, record_id)["approval_status"] == "rejected" and rule(conn, record_id).group == "rejected"
     rc.undo(conn, record_id, "ann")
     assert rec_of(conn, record_id)["approval_status"] == "pending" and rule(conn, record_id).group == "ready"
 

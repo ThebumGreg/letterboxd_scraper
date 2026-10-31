@@ -7,13 +7,14 @@ from datetime import date
 
 from flask import Response, g, jsonify, request
 
-from synchub import automation, catalog, db, downloads, jellyfin_events, matching, ratings, search, settings, states, tasks, watch, webhooks
+from synchub import automation, catalog, db, downloads, jellyfin_events, matching, ratings, search, settings, sources as sources_mod, states, tasks, watch, webhooks
 from synchub.automation import RequestError
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.arr import RadarrClient, SonarrClient
 from synchub.clients.jellyfin import JellyfinClient
 from synchub.clients.tmdb import TmdbClient
 from synchub.web import current_limit, title_allowed
+from synchub.notifications import progress
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,11 @@ def register(app):
                     downloads.record_event(conn, service, event, payload)
             except Exception as exc:
                 logger.warning(f"Could not note the {service} {event} import for the download pipeline: {exc}")
+            try:
+                with db.connection() as conn:
+                    progress.from_webhook(conn, event, payload)
+            except Exception as exc:
+                logger.warning(f"Could not raise a request notice for the {service} {event} event: {exc}")
             if event in ("Grab", "Download"):
                 movie, series = payload.get("movie") or {}, payload.get("series") or {}
                 announcer.announce(sse(json.dumps({"service": service, "event": event, "tmdb_id": movie.get("tmdbId"), "tvdb_id": series.get("tvdbId"),
@@ -285,13 +291,14 @@ def register(app):
             eps = states.season_episodes(conn, media_id, season_number, today)
             viewer = watch.user_of(getattr(g, "profile", None))
             watched = watch.item_states(conn, viewer, [e["jellyfin_item_id"] for e in eps])        # what the person using this page has watched, by Jellyfin item
+            sources = sources_mod.for_episodes(conn, [e["id"] for e in eps])
         for e in eps:
             w = watched.get(watch.norm(e["jellyfin_item_id"]))
             e["watch"] = {k: w[k] for k in ("state", "state_label", "percent", "position_label", "runtime_label", "last_played_label", "play_count", "resume_label")} if w else None
             info = defs.get(e["state"], defs["missing"])
             e.update(state_label=info["label"], state_color=info["color"], state_icon=info.get("icon"),
                      progress_pct=round(e["progress"] * 100) if e["progress"] is not None else None,
-                     can_request=e["state"] == "missing",
+                     can_request=e["state"] in ("missing", "recorded"), sources=sources.get(e["id"], []),
                      jellyfin_link=catalog.jellyfin_item_link(e["jellyfin_item_id"]))
         return jsonify(ok=True, season=season_number, label="Specials (Season 0)" if season_number == 0 else f"Season {season_number}", episodes=eps)
 

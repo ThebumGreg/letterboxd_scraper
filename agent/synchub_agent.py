@@ -47,7 +47,7 @@ __version__ = "1.4.0"      # kept equal to SyncHub's version (synchub/__init__.p
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
 OPS = ["copy", "rename", "delete_source", "originals"]     # the operations (plan.op) every agent can do; scan, hash and convert are added when the analysis module and ffmpeg are there
-FEATURES = ["profiles"]            # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run)
+FEATURES = ["profiles", "scale", "audio_add", "benchmark", "two_outputs"]   # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run). "dovi" is added when dovi_tool and mkvmerge work
 MANIFEST_VERSION = 1
 HASH_BUFFER = 8 * 1024 * 1024
 SPACE_MARGIN = 1024 ** 3           # room left over on a disk after a copy
@@ -178,6 +178,8 @@ class Config:
         self.hostname = pick("worker", "hostname", "SYNCHUB_HOSTNAME") or socket.gethostname()
         self.ffmpeg = pick("worker", "ffmpeg", "SYNCHUB_FFMPEG", "ffmpeg")
         self.ffprobe = pick("worker", "ffprobe", "SYNCHUB_FFPROBE", "ffprobe")
+        self.dovi_tool = pick("worker", "dovi_tool", "SYNCHUB_DOVI_TOOL", "dovi_tool")
+        self.mkvmerge = pick("worker", "mkvmerge", "SYNCHUB_MKVMERGE", "mkvmerge")
         self.log_level = (pick("worker", "log_level", "SYNCHUB_LOG_LEVEL", "INFO") or "INFO").upper()
         self.verify = (pick("worker", "verify", "SYNCHUB_VERIFY", "hash") or "hash").lower()
         self.video_encoder = (pick("worker", "video_encoder", "SYNCHUB_VIDEO_ENCODER", "auto") or "auto").lower()      # which GPU encoder to use when a plan allows GPU encoding
@@ -656,6 +658,9 @@ def clean_size_cap(profile):
         out["max_bytes"] = int(profile["max_bytes"])
     if profile.get("deinterlace"):
         out["deinterlace"] = True
+    height = _positive_int(profile.get("max_height"), 4320)
+    if height and height >= 240:
+        out["max_height"] = height                       # the picture is scaled down to at most this height (never up)
     hdr = profile.get("hdr")
     if isinstance(hdr, dict) and hdr.get("kind") in ("hdr10", "hlg"):
         clean = {"kind": hdr["kind"]}
@@ -683,13 +688,20 @@ def hevc_extra_args(profile):
     return ":".join(params), extra
 
 
+def scale_filter(profile):
+    """The ffmpeg filter that scales the picture down to the profile's `max_height` (never up, width follows the aspect ratio), or None."""
+    height = (profile or {}).get("max_height")
+    return f"scale=-2:'min({int(height)},ih)':flags=lanczos" if height else None
+
+
 def video_arguments(video, profile):
     """The ffmpeg arguments for a video the plan says to re-encode. The profile chooses codec and quality; without one it is H.264 at CRF 20, as before."""
     codec = (profile or {}).get("video_codec") if (profile or {}).get("video_codec") not in (None, "keep") else (video.get("codec") or "h264")
     if codec == "hevc":
         pix = "yuv420p10le" if (profile or {}).get("ten_bit") or (profile or {}).get("hdr") else "yuv420p"
         params, extra = hevc_extra_args(profile or {})
-        yadif = ["-vf", "yadif"] if (profile or {}).get("deinterlace") else []
+        filters = (["yadif"] if (profile or {}).get("deinterlace") else []) + ([scale_filter(profile)] if scale_filter(profile) else [])
+        yadif = ["-vf", ",".join(filters)] if filters else []
         return yadif + ["-c:v", "libx265", "-crf", str((profile or {}).get("crf") or 23), "-preset", (profile or {}).get("preset") or "medium", "-pix_fmt", pix, "-tag:v", "hvc1", "-x265-params", params] + extra
     return ["-c:v", "libx264", "-crf", str((profile or {}).get("crf") or 20), "-preset", (profile or {}).get("preset") or "medium", "-pix_fmt", "yuv420p"]
 
@@ -717,7 +729,7 @@ def gpu_video_arguments(kind, profile, device):
     crf, ten = int(profile.get("crf") or 23), bool(profile.get("ten_bit"))
     preset, maxrate = profile.get("preset") or "medium", profile.get("maxrate_kbps")
     bufsize = profile.get("bufsize_kbps") or (maxrate or 0) * 2
-    deinterlace = ["yadif"] if profile.get("deinterlace") else []
+    deinterlace = (["yadif"] if profile.get("deinterlace") else []) + ([scale_filter(profile)] if scale_filter(profile) else [])      # run on the CPU, before the picture goes to the card
     target = int(maxrate / MAXRATE_HEADROOM) if maxrate else None
     if kind == "nvenc":
         args = ["-c:v", "hevc_nvenc", "-preset", NVENC_PRESETS[preset], "-tune", "hq", "-rc", "vbr", "-cq", str(crf), "-b:v", f"{target}k" if target else "0"]
@@ -740,20 +752,54 @@ def video_plan(video, profile, encoder="cpu", device="/dev/dri/renderD128"):
     return [], video_arguments(video, profile)
 
 
+AUDIO_ADD_CODECS = {"eac3": (64, 768), "ac3": (64, 640), "aac": (64, 640)}       # what an added compatible track may be, with its bitrate range in kbps
+
+
+def clean_audio_add(change):
+    """The compatible audio track a plan wants added (see synchub.library.audio): the source track to base it on, its codec, channels and bitrate. None when the plan has none.
+    Checked here because it ends up in the ffmpeg command."""
+    add = change.get("audio_add")
+    if add is None:
+        return None
+    if not isinstance(add, dict) or add.get("codec") not in AUDIO_ADD_CODECS:
+        raise JobFailure("bad_job", "The plan asks for a compatible audio track this agent does not know.", retryable=False)
+    try:
+        source, channels, kbps = int(add["from"]), int(add.get("channels") or 2), int(add.get("kbps") or 192)
+    except (KeyError, TypeError, ValueError):
+        raise JobFailure("bad_job", "The compatible audio track in this job has numbers that are not readable.", retryable=False)
+    low, high = AUDIO_ADD_CODECS[add["codec"]]
+    if source < 0 or not 1 <= channels <= 8 or not low <= kbps <= high:
+        raise JobFailure("bad_job", "The compatible audio track in this job is outside what this agent accepts.", retryable=False)
+    title = re.sub(r"[^A-Za-z0-9 .()+-]", "", str(add.get("title") or ""))[:60]
+    return {"from": source, "codec": add["codec"], "channels": channels, "kbps": kbps, "title": title}
+
+
 def _track_arguments(change, profile, n):
-    """The -map options for the audio and subtitle tracks the plan keeps and the codec options for them, with the source as ffmpeg input number `n`."""
+    """The -map options for the audio and subtitle tracks the plan keeps and the codec options for them, with the source as ffmpeg input number `n`.
+    A plan with `audio_add` gets one more audio track, first and the default, made from one of the source's tracks."""
     keep_audio, keep_subtitle = change.get("keep_audio"), change.get("keep_subtitle")
-    maps = []
+    add = clean_audio_add(change) if isinstance(keep_audio, list) else None
+    maps = ["-map", f"{n}:{add['from']}"] if add else []
     for indexes, everything in ((keep_audio, f"{n}:a?"), (keep_subtitle, f"{n}:s?")):
         maps += [part for i in indexes for part in ("-map", f"{n}:{int(i)}")] if isinstance(indexes, list) else ["-map", everything]
     codecs = ["-c:a", "copy", "-c:s", "copy"]
+    shift = 1 if add else 0
+    if add:
+        codecs += ["-c:a:0", add["codec"], "-b:a:0", f"{add['kbps']}k", "-ac:a:0", str(add["channels"])] + (["-metadata:s:a:0", f"title={add['title']}"] if add["title"] else [])
     converting = change.get("audio_convert") or {}
     bitrate = (profile or {}).get("audio_kbps") or 192
     for position, index in enumerate(keep_audio if isinstance(keep_audio, list) else []):
         if str(index) in converting:
-            codecs += [f"-c:a:{position}", converting[str(index)].get("codec") or "aac", f"-b:a:{position}", f"{bitrate}k"]
+            entry = converting[str(index)]
+            kbps = _positive_int(entry.get("kbps"), 768) or bitrate
+            codecs += [f"-c:a:{position + shift}", entry.get("codec") or "aac", f"-b:a:{position + shift}", f"{kbps}k"]
+            channels = _positive_int(entry.get("channels"), 8)
+            if channels:
+                codecs += [f"-ac:a:{position + shift}", str(channels)]
     default = change.get("default_audio")
-    if default is not None and isinstance(keep_audio, list) and default in keep_audio:
+    if add:
+        codecs += ["-disposition:a", "0", "-disposition:a:0", "default"]
+    elif default is not None and isinstance(keep_audio, list) and default in keep_audio:
         codecs += ["-disposition:a", "0", f"-disposition:a:{keep_audio.index(default)}", "default"]
     return maps, codecs
 
@@ -785,6 +831,21 @@ def build_chunk_command(ffmpeg, src, out, change, profile, encoder, device, star
     pre, video_args = video_plan(change.get("video") or {}, profile, encoder, device)
     window = ["-ss", f"{start:.3f}"] + (["-t", f"{length:.3f}"] if length else [])
     return [ffmpeg, "-nostdin", "-hide_banner", "-y", "-v", "error", "-progress", "pipe:1", "-nostats"] + pre + window + ["-i", src, "-map", "0:V?", "-an", "-sn", "-dn"] + video_args + ["-f", "matroska", out]
+
+
+def dovi_extract_command(ffmpeg, src):
+    """ffmpeg writing the first video stream of `src` as a raw HEVC stream on stdout, the form dovi_tool reads."""
+    return [ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-i", src, "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb", "-f", "hevc", "pipe:1"]
+
+
+def dovi_convert_command(dovi_tool, out):
+    """dovi_tool reading that stream on stdin, converting the Dolby Vision data to profile 8.1 (mode 2) and dropping the enhancement layer."""
+    return [dovi_tool, "-m", "2", "convert", "--discard", "-i", "-", "-o", out]
+
+
+def mkvmerge_command(mkvmerge, video, fps, src, out):
+    """mkvmerge joining the converted picture with everything else in `src` (audio, subtitles, chapters, attachments, tags), none of which is touched."""
+    return [mkvmerge, "-o", out, "--default-duration", f"0:{fps}p", video, "--no-video", src]
 
 
 MAXRATE_HEADROOM = 1.05              # the same cap as synchub.library.size_policy: maxrate is 5 % over the target video bitrate
@@ -924,6 +985,11 @@ def detect_capabilities(cfg):
         if media_analysis and caps["ffmpeg"]:
             caps["ops"].extend(["scan", "convert", "preview"])          # a scan needs ffprobe to read files and ffmpeg to check them; a conversion also runs ffmpeg, then checks the result
             caps["features"].append("preview")
+    if caps["ffmpeg"] and caps["ffprobe"] and media_analysis:
+        dovi_code, _ = run_quiet([cfg.dovi_tool, "--version"])
+        mkv_code, _ = run_quiet([cfg.mkvmerge, "--version"])
+        if dovi_code == 0 and mkv_code == 0:
+            caps["features"].append("dovi")                              # Dolby Vision profile 7 to 8.1 (see remux_dolby_vision)
     return caps
 
 
@@ -1790,19 +1856,26 @@ class JobRunner(threading.Thread):
         done = self.stage_info("encode")
         if not (done.get("done") and os.path.isfile(converted) and os.path.getsize(converted) == done.get("bytes")):
             done.clear()
-            done.update(self.encode(local, converted, change, self.job["plan"].get("duration"), plan.get("profile")))
+            if (change.get("video") or {}).get("dv") == "p8_1":
+                done.update(self.remux_dolby_vision(local, converted, plan.get("duration")))
+            else:
+                done.update(self.encode(local, converted, change, self.job["plan"].get("duration"), plan.get("profile")))
             self.save()
         quality = self.quality_check(local, converted, change, plan.get("profile"))
+        extra = self.make_extra(local, plan)                           # a second output of the same job: made before the main file is swapped in, so a failure here costs nothing
         out_size = os.path.getsize(converted)
         if not done.get("sha256"):
             done["sha256"] = hash_file(converted, check=self.guard)
             self.save()
         keep = (lambda: self.keep_original(src, local, size, mtime, plan)) if replace else None
         out_seconds = self.copy_out(converted, dst, out_size, done["sha256"], stat.st_mtime_ns, overwrite=src if replace else None, before_swap=keep)
+        extra_result = self.deliver_extra(plan, extra, stat.st_mtime_ns) if extra is not None else None
         elapsed = time.monotonic() - t0
         result = {"op": "convert", "bytes": out_size, "source_bytes": size, "sha256": done["sha256"], "verified": "sha256" if self.cfg.verify == "hash" else "size",
                   "seconds": round(elapsed, 1), "encode_seconds": done.get("seconds"), "command": done.get("command"), "output": done.get("probe"),
                   "encoder": done.get("encoder"), "gpu_fallback": done.get("fallback"), "chunked": done.get("chunked"), "vmaf": quality}
+        if extra_result is not None:
+            result["extra"] = extra_result
         if replace:
             original = self.m.get("original") or {}
             result.update(replaced=True, kept_original=bool(original.get("path")), original_expires=original.get("expires_at"), path_changed=dst != src)
@@ -1813,6 +1886,79 @@ class JobRunner(threading.Thread):
             return result
         self.log.info(f"Converted {name} ({human_bytes(size)} to {human_bytes(out_size)}) and brought it into the destination in {human_duration(elapsed)}")
         return result
+
+    # ---- the second output of a job (a smaller copy made in the same job as a Dolby Vision conversion)
+    def make_extra(self, local, plan):
+        """Encodes the plan's `extra` output from the local copy of the source (its track numbers are the ones the plan was made with). Returns None when the plan has
+        none, else {'path', 'sha256', ...} or {'error': why}. A failure here is not the job's failure: the main file is still converted and the report says the copy was not made."""
+        extra = plan.get("extra")
+        if not isinstance(extra, dict):
+            return None
+        rel = str(extra.get("rel") or "")
+        if not rel or rel.startswith("/") or ".." in rel.split("/") or not rel.lower().endswith(".mkv"):
+            return {"error": "the plan names a destination for the smaller copy that cannot be used"}
+        if self.m.get("extra_error"):
+            return {"error": self.m["extra_error"]}
+        path = os.path.join(self.folder, "extra", os.path.basename(rel))
+        done = self.stage_info("extra_encode")
+        if not (done.get("done") and os.path.isfile(path) and os.path.getsize(path) == done.get("bytes")):
+            done.clear()
+            self.log.info(f"Making the {extra.get('label') or 'smaller'} copy from the same local copy of the film")
+            try:
+                done.update(self.encode(local, path, extra.get("change") or {}, plan.get("duration"), extra.get("profile")))
+            except JobFailure as exc:
+                self.m["extra_error"] = exc.message[:300]
+                self.save()
+                self.log.warning(f"The smaller copy could not be made ({exc.message[:300]}); the main file carries on")
+                return {"error": self.m["extra_error"]}
+            self.save()
+        if not done.get("sha256"):
+            done["sha256"] = hash_file(path, check=self.guard)
+            self.save()
+        return {"path": path, "sha256": done["sha256"], "bytes": done["bytes"], "encode_seconds": done.get("seconds"), "encoder": done.get("encoder")}
+
+    def deliver_extra(self, plan, made, source_mtime_ns):
+        """Copies the smaller copy next to the main file (never over a different file) and verifies it. Returns what the report says about it."""
+        if made.get("error"):
+            return {"error": made["error"]}
+        rel = plan["extra"]["rel"]
+        try:
+            dst = safe_path(self.agent.roots.path(self.job["dest"]["root"]), rel)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        info = self.stage_info("extra_copy_out")
+        size, digest = made["bytes"], made["sha256"]
+        if os.path.lexists(dst):
+            if info.get("done") or (os.path.isfile(dst) and os.path.getsize(dst) == size and (self.cfg.verify == "size" or hash_file(dst, check=self.guard) == digest)):
+                return {"bytes": size, "sha256": digest, "rel": rel, "encode_seconds": made.get("encode_seconds"), "encoder": made.get("encoder")}
+            return {"error": f"{rel} already exists and is different. SyncHub never overwrites a file."}
+        partial = dst + ".synchub-partial"
+        try:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            self.report_progress("copy_out", 0.95, "Copying out the smaller copy", force=True)
+            with open(made["path"], "rb") as fin, open(partial, "wb") as fout:
+                while True:
+                    block = fin.read(self.cfg.copy_chunk_mb * 1048576)
+                    if not block:
+                        break
+                    fout.write(block)
+                    self.reporter.check()
+                fout.flush()
+                os.fsync(fout.fileno())
+            if os.path.getsize(partial) != size or (self.cfg.verify == "hash" and hash_file(partial, check=self.guard) != digest):
+                raise JobFailure("verification_failed", "The copy on the share does not match what was made.")
+            os.replace(partial, dst)
+            try:
+                os.utime(dst, ns=(time.time_ns(), source_mtime_ns))
+            except OSError:
+                pass
+        except (OSError, JobFailure) as exc:
+            self._remove(partial)
+            return {"error": f"could not copy it to the share: {getattr(exc, 'message', None) or exc}"[:300]}
+        info.update(done=True, bytes=size, finished=iso())
+        self.save()
+        self.log.info(f"Copied out the smaller copy to {rel}")
+        return {"bytes": size, "sha256": digest, "rel": rel, "encode_seconds": made.get("encode_seconds"), "encoder": made.get("encoder")}
 
     def do_preview(self):
         """Makes the two clips of a preview (docs/DESIGN_ENCODING.md section 12) and uploads them: a window of the film encoded with the planned settings, and the same
@@ -2196,9 +2342,14 @@ class JobRunner(threading.Thread):
             got_codec = next((str(st.get("codec_name")) for st in streams if st.get("codec_type") == "video"), None)
             if got_codec and got_codec not in ({"hevc"} if wanted == "hevc" else {"h264"}):
                 problems.append(f"the video is {got_codec} but the profile asks for {wanted}")
+        limit = (profile or {}).get("max_height")
+        got_height = next((int(st.get("height") or 0) for st in streams if st.get("codec_type") == "video"), 0)
+        if limit and got_height > limit:
+            problems.append(f"the picture is {got_height} pixels high but the plan asked for at most {limit}")
         for kind, key in (("audio", "keep_audio"), ("subtitle", "keep_subtitle")):
-            if isinstance(change.get(key), list) and counts[kind] != len(change[key]):
-                problems.append(f"it has {counts[kind]} {kind} track(s) but {len(change[key])} were planned")
+            planned = len(change[key]) + (1 if kind == "audio" and change.get("audio_add") else 0) if isinstance(change.get(key), list) else None
+            if planned is not None and counts[kind] != planned:
+                problems.append(f"it has {counts[kind]} {kind} track(s) but {planned} were planned")
         got = media_duration(data)
         if expected_duration and got is not None and abs(got - expected_duration) > max(1.0, expected_duration * 0.005):
             problems.append(f"it is {got:.0f} s long but the source is {expected_duration:.0f} s")
@@ -2209,6 +2360,110 @@ class JobRunner(threading.Thread):
         if problems:
             raise JobFailure("verification_failed", "The converted file failed its checks: " + "; ".join(problems))
         return {"duration": got, **counts}
+
+    def remux_dolby_vision(self, local, converted, expected_duration):
+        """Dolby Vision profile 7 to 8.1 without re-encoding the picture: the video is streamed through dovi_tool (which drops the enhancement layer and rewrites the Dolby
+        data) into a raw stream, then mkvmerge joins it with the source's other tracks. The result must read back as profile 8 with the same tracks and length."""
+        settings = self.media_settings({})
+        data = media_analysis.run_ffprobe(settings, local)
+        video = next((st for st in data.get("streams") or [] if isinstance(st, dict) and st.get("codec_type") == "video"), None)
+        facts = media_analysis.video_facts(video, data.get("format"))
+        self.require_profile_7(facts)
+        fps = str((video or {}).get("r_frame_rate") or "")
+        if not re.match(r"^\d{1,6}(/\d{1,6})?$", fps) or fps in ("0/0", "0"):
+            raise JobFailure("encode_failed", "The frame rate of the video is not known, so it cannot be joined back together.", retryable=False)
+        size = os.path.getsize(local)
+        free = shutil.disk_usage(self.folder).free
+        if free < size * 2 + SPACE_MARGIN:
+            raise JobFailure("transient", f"Not enough free space on the work disk: about {human_bytes(size * 2)} is needed for the converted video and the joined file, and {human_bytes(free)} is free.")
+        folder = os.path.join(self.folder, "dv")
+        shutil.rmtree(folder, ignore_errors=True)
+        os.makedirs(folder, exist_ok=True)
+        stream, partial, errors = os.path.join(folder, "video.hevc"), converted + ".partial", os.path.join(folder, "tools.err")
+        os.makedirs(os.path.dirname(converted), exist_ok=True)
+        for leftover in (partial, converted):
+            self._remove(leftover)
+        started = time.monotonic()
+        extract, convert = dovi_extract_command(self.cfg.ffmpeg, local), dovi_convert_command(self.cfg.dovi_tool, stream)
+        self.log.info("Converting Dolby Vision profile 7 to 8.1", command=shlex.join(extract) + " | " + shlex.join(convert))
+        self.report_progress("encode", 0.25, "Converting the Dolby Vision data", force=True)
+        with open(errors, "w", encoding="utf-8", errors="replace") as err:
+            reader = subprocess.Popen(extract, stdout=subprocess.PIPE, stderr=err, start_new_session=True)
+            try:
+                writer = subprocess.Popen(convert, stdin=reader.stdout, stdout=err, stderr=err, start_new_session=True)
+            except OSError as exc:
+                self._stop_ffmpeg(reader)
+                raise JobFailure("encode_failed", f"dovi_tool could not be started: {exc}", retryable=False)
+            reader.stdout.close()
+            try:
+                while writer.poll() is None:
+                    self.reporter.check()
+                    written = os.path.getsize(stream) if os.path.exists(stream) else 0
+                    self.report_progress("encode", 0.25 + 0.50 * min(0.99, written / max(1, size * 0.95)), f"Converting the Dolby Vision data: {human_bytes(written)}")
+                    time.sleep(1.0)
+                reader.wait()
+            except BaseException:
+                self._stop_ffmpeg(writer)
+                self._stop_ffmpeg(reader)
+                shutil.rmtree(folder, ignore_errors=True)
+                raise
+        if reader.returncode != 0 or writer.returncode != 0:
+            tail = read_file(errors).strip()[-800:]
+            shutil.rmtree(folder, ignore_errors=True)
+            raise JobFailure("encode_failed", f"The Dolby Vision conversion stopped (ffmpeg exit {reader.returncode}, dovi_tool exit {writer.returncode}): {tail or 'no message'}", retryable=False)
+        self.report_progress("encode", 0.78, "Joining the video with the audio and subtitles", force=True)
+        join = mkvmerge_command(self.cfg.mkvmerge, stream, fps, local, partial)
+        self.log.info("Joining with mkvmerge", command=shlex.join(join))
+        with open(errors, "w", encoding="utf-8", errors="replace") as err:
+            try:
+                done = subprocess.run(join, stdout=err, stderr=subprocess.STDOUT, timeout=6 * 3600)
+            except (OSError, subprocess.SubprocessError) as exc:
+                shutil.rmtree(folder, ignore_errors=True)
+                raise JobFailure("encode_failed", f"mkvmerge could not run: {exc}", retryable=False)
+        shutil.rmtree(folder, ignore_errors=True) if done.returncode in (0, 1) else None     # mkvmerge exits 1 for warnings only
+        if done.returncode not in (0, 1):
+            self._remove(partial)
+            raise JobFailure("encode_failed", f"mkvmerge stopped with exit code {done.returncode}.", retryable=False)
+        try:
+            probe = self.check_dv_remux(settings, partial, data, expected_duration)
+        except JobFailure:
+            self._remove(partial)
+            raise
+        os.replace(partial, converted)
+        return {"done": True, "bytes": os.path.getsize(converted), "seconds": round(time.monotonic() - started, 1), "command": " | ".join((shlex.join(extract), shlex.join(convert))) + " ; " + shlex.join(join),
+                "probe": probe, "finished": iso(), "encoder": "dovi_tool", "fallback": None, "chunked": False}
+
+    @staticmethod
+    def require_profile_7(facts):
+        if facts["hdr"] != "dv" or str(facts.get("dv_profile")) != "7":
+            raise JobFailure("encode_failed", f"This file is not Dolby Vision profile 7 (it is {facts['hdr']}{' profile ' + str(facts.get('dv_profile')) if facts['hdr'] == 'dv' else ''}), so there is nothing to convert.", retryable=False)
+
+    def check_dv_remux(self, settings, path, source, expected_duration):
+        """The joined file must read back as Dolby Vision profile 8 (compatibility id 1, a plain HDR10 base layer), have the source's audio and subtitle tracks and its length, and decode cleanly."""
+        data = media_analysis.run_ffprobe(settings, path)
+        streams = [s for s in data.get("streams") or [] if isinstance(s, dict)]
+        wanted = [s for s in source.get("streams") or [] if isinstance(s, dict)]
+        counts = lambda items, kind: sum(1 for s in items if s.get("codec_type") == kind)          # noqa: E731
+        video = next((s for s in streams if s.get("codec_type") == "video"), None)
+        facts = media_analysis.video_facts(video, data.get("format")) if video else {"hdr": None}
+        problems = []
+        if facts.get("hdr") != "dv" or str(facts.get("dv_profile")) != "8":
+            problems.append(f"the video does not read back as Dolby Vision profile 8 (it reads as {facts.get('hdr')}{' profile ' + str(facts.get('dv_profile')) if facts.get('hdr') == 'dv' else ''})")
+        elif str(facts.get("dv_compat")) not in ("1", "None"):
+            problems.append(f"the Dolby Vision data is not compatible with HDR10 (compatibility id {facts.get('dv_compat')})")
+        for kind in ("audio", "subtitle"):
+            if counts(streams, kind) != counts(wanted, kind):
+                problems.append(f"it has {counts(streams, kind)} {kind} track(s) but the source has {counts(wanted, kind)}")
+        got = media_duration(data)
+        if expected_duration and got is not None and abs(got - expected_duration) > max(1.0, expected_duration * 0.005):
+            problems.append(f"it is {got:.0f} s long but the source is {expected_duration:.0f} s")
+        if not problems:
+            status, detail = media_analysis.decode_check(settings, path)
+            if status == media_analysis.INT_DECODE_ERROR:
+                problems.append(f"it does not decode cleanly: {detail[:300]}")
+        if problems:
+            raise JobFailure("verification_failed", "The converted file failed its checks: " + "; ".join(problems))
+        return {"duration": got, "dv_profile": facts.get("dv_profile"), "dv_compat": facts.get("dv_compat"), "audio": counts(streams, "audio"), "subtitle": counts(streams, "subtitle")}
 
     # progress: copy in 0 - 45 %, copy out 45 - 90 %, reading the copy back to verify it 90 - 100 %
     BANDS = {"copy_in": (0.0, 0.45), "copy_out": (0.45, 0.90), "verify": (0.90, 1.0)}
@@ -2418,6 +2673,7 @@ class Agent:
         self.roots = Roots(cfg.root_overrides)
         self.monitor = RootMonitor(self.roots, log)
         self.stopping = threading.Event()
+        self._benchmarking = threading.Event()
         self.active = {}                               # job id -> JobRunner
         self.progress = {}                             # job id -> (stage, fraction), for the status summary
         self.lock = threading.Lock()
@@ -2539,6 +2795,8 @@ class Agent:
             self.upload_log(job_id)
         if answer.get("worker_log"):
             self.upload_worker_log()
+        if answer.get("benchmark") and not active and not self._benchmarking.is_set() and not self.stopping.is_set():
+            self.start_benchmark()
         if not self.stopping.is_set():
             for job in (answer.get("resume") or []) + (answer.get("jobs") or []):
                 self.start(job)
@@ -2606,6 +2864,25 @@ class Agent:
             self.log.warning(f"SyncHub did not accept the log of job {job_id}: {exc}")
         except Unreachable as exc:
             self.log.warning(f"Could not upload the log of job {job_id}: {exc}")
+
+    def start_benchmark(self):
+        """The Workers page's Run benchmark button: run it in the background when no job is running, then send the report."""
+        self._benchmarking.set()
+
+        def work():
+            try:
+                self.log.info("Running the benchmark as SyncHub asked")
+                caps = detect_capabilities(self.cfg)
+                report = benchmark_report(self.cfg, caps, say=lambda text: self.log.info(text))
+                self.api.post("/benchmark", {"report": report})
+                self.log.info("Benchmark sent", ok=report["ok"])
+            except (ApiError, Unreachable) as exc:
+                self.log.warning(f"Could not send the benchmark: {exc}")
+            except Exception as exc:                       # noqa: B902  (a benchmark must never take the worker down)
+                self.log.warning(f"The benchmark failed: {exc}")
+            finally:
+                self._benchmarking.clear()
+        threading.Thread(target=work, name="benchmark", daemon=True).start()
 
     def upload_worker_log(self):
         """The Workers page's Get logs button: send the tail of this agent's own log (worker.jsonl and its rotated files)."""
@@ -2727,6 +3004,113 @@ class Agent:
 
 
 # ============================================================================ command line
+BENCHMARK_SECONDS = 30
+BENCHMARK_PROFILE = {"video_codec": "hevc", "crf": 22, "preset": "medium", "ten_bit": True, "audio_kbps": 192, "gpu": True, "name": "benchmark"}
+
+
+def benchmark_label(kind, caps):
+    if kind == "cpu":
+        model = ((caps.get("host") or {}).get("cpu") or {}).get("model")
+        return f"CPU (libx265){' ' + model if model else ''}"[:80]
+    return f"GPU ({kind.upper()}, {GPU_ENCODERS[kind]})"
+
+
+def benchmark_report(cfg, caps, source=None, seconds=BENCHMARK_SECONDS, say=lambda text: None):
+    """Times each working encoder on a short clip and scores the result with VMAF. Health first (ffmpeg, work folder, a two-second try of every encoder),
+    then speed and quality. `source` is a real file to take the clip from; without one a synthetic 1080p clip with film-like noise is made.
+    Returns a report dict that SyncHub stores and shows (see synchub.workers.store_benchmark). Never raises: a step that fails is reported as failed."""
+    started = time.time()
+    health, results = [], []
+    host = caps.get("host") or {}
+    report = {"agent": __version__, "when": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "seconds": int(seconds),
+              "cpu": ((host.get("cpu") or {}).get("model")), "cores": caps.get("cores"), "gpus": [g.get("name") for g in host.get("gpus") or [] if g.get("name")][:4],
+              "source": "your file" if source else f"synthetic 1080p, 24 fps, {int(seconds)} s", "health": health, "results": results, "ok": False}
+    health.append({"name": "ffmpeg", "ok": bool(caps.get("ffmpeg")), "detail": caps.get("ffmpeg") or "not found"})
+    health.append({"name": "VMAF", "ok": bool(caps.get("vmaf")), "detail": "available" if caps.get("vmaf") else "libvmaf is not in this ffmpeg, so quality is not scored"})
+    if not caps.get("ffmpeg"):
+        return report
+    work = tempfile.mkdtemp(prefix="benchmark-", dir=cfg.work_dir)
+    try:
+        health.append({"name": "work folder", "ok": True, "detail": f"{human_bytes(shutil.disk_usage(cfg.work_dir).free)} free"})
+        clip = os.path.join(work, "source.mkv")
+        if source:
+            code, out = run_quiet([cfg.ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-y", "-ss", "60", "-t", str(int(seconds)), "-i", source, "-map", "0:v:0", "-an", "-sn", "-c:v", "copy", clip], timeout=300)
+        else:
+            code, out = run_quiet([cfg.ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc2=size=1920x1080:rate=24,noise=alls=8:allf=t",
+                                   "-t", str(int(seconds)), "-c:v", "libx264", "-crf", "16", "-preset", "veryfast", "-pix_fmt", "yuv420p", clip], timeout=300)
+        if code != 0 or not os.path.exists(clip) or os.path.getsize(clip) == 0:
+            health.append({"name": "test clip", "ok": False, "detail": (out or "ffmpeg could not make or cut the clip").strip()[-300:]})
+            return report
+        health.append({"name": "test clip", "ok": True, "detail": human_bytes(os.path.getsize(clip))})
+        fps = 24.0
+        if source and caps.get("ffprobe"):
+            code, out = run_quiet([cfg.ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate", "-of", "csv=p=0", clip], timeout=30)
+            try:
+                num, _, den = out.strip().partition("/")
+                fps = float(num) / float(den or 1) or fps
+            except (ValueError, ZeroDivisionError):
+                pass
+        kinds = ["cpu"] + [k for k in GPU_ORDER if GPU_ENCODERS[k] in (caps.get("encoders") or [])]
+        profile = clean_profile(BENCHMARK_PROFILE)
+        for kind in kinds:
+            row = {"encoder": kind, "label": benchmark_label(kind, caps), "ok": False}
+            results.append(row)
+            say(f"Trying {row['label']}...")
+            pre, video_args = video_plan({}, profile, kind, cfg.vaapi_device)
+            out_path = os.path.join(work, f"out-{kind}.mkv")
+            base = [cfg.ffmpeg, "-nostdin", "-hide_banner", "-y", "-v", "error"]
+            code, out = run_quiet(base + pre + ["-t", "2", "-i", clip, "-map", "0:v:0", "-an"] + video_args + ["-f", "null", "-"], timeout=120)
+            if code != 0:
+                row["reason"] = (out or "the encoder did not start").strip().splitlines()[-1][:200] if (out or "").strip() else "the encoder did not start"
+                continue
+            began = time.monotonic()
+            code, out = run_quiet(base + pre + ["-i", clip, "-map", "0:v:0", "-an"] + video_args + ["-f", "matroska", out_path], timeout=1800)
+            took = time.monotonic() - began
+            if code != 0 or not os.path.exists(out_path):
+                row["reason"] = (out or "the encode failed").strip().splitlines()[-1][:200] if (out or "").strip() else "the encode failed"
+                continue
+            speed = seconds / took if took > 0 else None
+            row.update(ok=True, seconds=round(took, 1), speed=round(speed, 2) if speed else None, fps=round(speed * fps, 1) if speed else None, size_mb=round(os.path.getsize(out_path) / 1024 ** 2, 1))
+            if caps.get("vmaf"):
+                say(f"Scoring {row['label']} with VMAF...")
+                code, text = run_quiet(vmaf_command(cfg.ffmpeg, out_path, clip, 0, float(seconds), caps.get("cores") or 2), timeout=1800)
+                score = parse_vmaf(text) if code == 0 else None
+                row.update(vmaf=round(score, 1) if score is not None else None, vmaf_floor=vmaf_floor(1080))
+            row["passed"] = row.get("vmaf") is None or row["vmaf"] >= row["vmaf_floor"]
+    except OSError as exc:
+        health.append({"name": "benchmark", "ok": False, "detail": str(exc)[:200]})
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    report["ok"] = all(h["ok"] for h in health if h["name"] != "VMAF") and any(r["ok"] for r in results)
+    report["took_seconds"] = round(time.time() - started)
+    return report
+
+
+def format_benchmark(report):
+    """The report as a table for the terminal."""
+    lines = [f"SyncHub worker benchmark ({report.get('agent')}), {report.get('source')}", f"CPU: {report.get('cpu') or 'unknown'}   cores: {report.get('cores')}   GPU: {', '.join(report.get('gpus') or []) or 'none seen'}", ""]
+    lines += [f"  [{'ok' if h['ok'] else '!!'}] {h['name']}: {h['detail']}" for h in report.get("health") or []]
+    lines += ["", f"{'Encoder':<44}{'Speed':>9}{'fps':>8}{'VMAF':>8}  Result"]
+    for r in report.get("results") or []:
+        if not r.get("ok"):
+            lines.append(f"{r['label']:<44}{'':>9}{'':>8}{'':>8}  failed: {r.get('reason') or 'unknown'}")
+            continue
+        vmaf = f"{r['vmaf']:.1f}" if r.get("vmaf") is not None else "n/a"
+        lines.append(f"{r['label']:<44}{(str(r['speed']) + 'x') if r.get('speed') else '':>9}{r.get('fps') or '':>8}{vmaf:>8}  {'passed' if r.get('passed') else 'below the quality floor ' + str(r.get('vmaf_floor'))}")
+    lines.append("")
+    lines.append("The benchmark passed." if report.get("ok") else "The benchmark found problems.")
+    return "\n".join(lines)
+
+
+def command_benchmark(cfg, source=None):
+    """--benchmark: runs the benchmark here and prints it. SyncHub is not needed; use the Workers page to run it and keep the result."""
+    caps = detect_capabilities(cfg)
+    report = benchmark_report(cfg, caps, source=source, say=print)
+    print()
+    print(format_benchmark(report))
+    return 0 if report["ok"] else 1
+
+
 def command_check(cfg):
     """Prints what works and what does not. Exit code 0 when everything needed is in order."""
     problems = 0
@@ -2841,6 +3225,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="SyncHub worker agent")
     parser.add_argument("--config", help="settings file (default: ./synchub-agent.ini or /etc/synchub-agent.ini; environment variables override it)")
     parser.add_argument("--check", action="store_true", help="check the settings, SyncHub, ffmpeg and every share, then exit")
+    parser.add_argument("--benchmark", action="store_true", help="time each encoder (CPU, GPU) on a short clip, score it with VMAF, print the table, then exit")
+    parser.add_argument("--benchmark-file", help="with --benchmark: cut the clip from this film instead of making a synthetic one")
     parser.add_argument("--init-roots", action="store_true", help=f"write the {MARKER} marker file into each share, then exit")
     parser.add_argument("--force", action="store_true", help="with --init-roots: replace a marker that names a different share")
     parser.add_argument("--healthcheck", action="store_true", help="exit 0 if a running agent's loop is alive (for Docker)")
@@ -2857,9 +3243,11 @@ def main(argv=None):
     except ConfigError as exc:
         print(f"Settings problem: {exc}", file=sys.stderr)
         return 2
-    log = build_logger(cfg, console=not (args.check or args.init_roots))
+    log = build_logger(cfg, console=not (args.check or args.init_roots or args.benchmark))
     if args.check:
         return command_check(cfg)
+    if args.benchmark:
+        return command_benchmark(cfg, args.benchmark_file)
     if args.init_roots:
         return command_init_roots(cfg, args.force)
     agent = Agent(cfg, log)

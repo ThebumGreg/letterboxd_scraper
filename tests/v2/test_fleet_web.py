@@ -28,7 +28,7 @@ def test_workers_page_lists_workers_and_jobs_and_is_in_the_nav(client, v2):
     assert 'href="/workers"' in page and 'id="fleet"' in page and "Add worker" in page
     row = row_for(page, worker_id)
     assert "encoder-1" in row and ">gpu<" in row and "0 / 2" in row and "Offline" in row and "never" in row
-    assert "#1 Heat" in page and "queued" in page and "<small class=\"text-muted\">1 queued</small>" in page
+    assert "#1 Heat" in page and "queued" in page and "1 queued" in page
     assert "No workers yet" not in page and "No jobs yet" not in page
     assert client.get("/workers/fragment").get_data(as_text=True).count('id="workerTable"') == 1
 
@@ -46,7 +46,7 @@ def test_a_worker_shows_its_state_and_its_own_report(client, v2):
                                            "capabilities": {"encoders": ["libx265", "libx264"]}})
         workers.touch(conn, worker_id, status)
     row = row_for(client.get("/workers").get_data(as_text=True), worker_id)
-    assert "Online" in row and "enc1" in row and "Ubuntu 24.04" in row and "agent 1.2" in row and "libx265, libx264" in row
+    assert "Online" in row and "enc1" in row and "Ubuntu 24.04" in row and "1.2" in row and "libx265, libx264" in row
     assert "120.0 GB free" in row and "3 held, 40.0 GB" in row and "just now" in row
     for flag, label in (("paused", "Paused"), ("draining", "Draining"), ("enabled", "Disabled")):
         with v2.connection() as conn:
@@ -313,7 +313,7 @@ def reporting_worker(v2, name="encoder-1", host=HOST, **status):
 def test_the_status_tab_is_one_of_the_tabs_and_shows_the_hardware(client, v2):
     worker_id = reporting_worker(v2)
     page = client.get("/workers").get_data(as_text=True)
-    assert 'data-pane="status"' in page and "Worker Status" in page and 'data-fleet-pane="status"' in page
+    assert 'data-pane="status"' not in page and "<h4 class=\"mb-3\">Machines" in page      # the hardware sits under the workers list, not in a tab of its own
     pane = status_pane(page, worker_id)
     for text in ("Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz", "6 cores, 12 threads", "4.30 GHz", "x86_64", "12%", "0.50 0.40 0.30", ">avx2<", "32.0 GB", "(20.0 GB free)", "500.0 GB free",
                  "1 d 1 h", "2 h 0 min", "NVIDIA GeForce GTX 1660", "6.0 GB", "driver 550.54", "renderD128", "6.8.0-45-generic", "docker container", "3.12.3", "copy, scan",
