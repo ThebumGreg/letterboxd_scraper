@@ -55,8 +55,14 @@ class ProtectClient:
         headers = {"X-API-KEY": self.key, "Accept": "application/json"}
         try:
             res = http.request("protect", event, method, f"https://{self.host}{BASE}{path}", headers=headers, verify=self.verify, timeout=self.timeout, **kw)
-        except requests.exceptions.SSLError:
-            raise ApiError("The console's certificate is not trusted. Switch off Check the console's certificate in the Protect settings.")
+        except requests.exceptions.SSLError as exc:
+            reason = str(exc)
+            if self.verify and "CERTIFICATE_VERIFY_FAILED" in reason:
+                raise ApiError("The console's certificate is not trusted. Switch off Check the console's certificate in the Protect settings.")
+            # Not a certificate problem (the check is off, or the failure is in the handshake itself): usually a port that does not speak HTTPS.
+            found = re.search(r"\[SSL[^\]]*\][^()']*", reason)
+            detail = found.group(0).strip() if found else "the handshake failed"
+            raise ApiError(f"Could not make a secure (HTTPS) connection to {self.host}: {detail}. Use the console's own address with no port, or its HTTPS port (443).")
         except requests.RequestException as exc:
             raise ApiError(f"Could not reach UniFi Protect at {self.host}: {exc.__class__.__name__}")
         if res.status_code in (401, 403):

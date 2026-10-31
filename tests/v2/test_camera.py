@@ -85,6 +85,23 @@ def test_a_refusal_says_what_went_wrong(v2, fake, status, words):
         protect.ProtectClient().cameras()
 
 
+def test_a_tls_failure_is_a_certificate_problem_only_when_the_check_is_on(v2, monkeypatch):
+    import requests
+
+    def fail(text):
+        def call(*a, **k):
+            raise requests.exceptions.SSLError(text)
+        return call
+    monkeypatch.setattr(protect.http, "request", fail("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"))
+    with pytest.raises(ApiError, match="certificate is not trusted"):
+        protect.ProtectClient("192.168.1.1", "k", verify=True).info()
+    with pytest.raises(ApiError, match="secure \\(HTTPS\\) connection to 192.168.1.1"):          # with the check off it cannot be the certificate
+        protect.ProtectClient("192.168.1.1", "k", verify=False).info()
+    monkeypatch.setattr(protect.http, "request", fail("HTTPSConnectionPool: (Caused by SSLError(SSLError(1, '[SSL: WRONG_VERSION_NUMBER] wrong version number')))"))
+    with pytest.raises(ApiError, match="WRONG_VERSION_NUMBER"):
+        protect.ProtectClient("192.168.1.1:80", "k", verify=True).info()
+
+
 def test_no_address_or_key_is_a_configuration_error(v2):
     with pytest.raises(ConfigError):
         protect.ProtectClient("", "")
