@@ -158,3 +158,37 @@ def test_the_check_endpoint_reads_jellyfin_and_reports(app, monkeypatch):
 def test_the_check_endpoint_says_when_jellyfin_is_not_set_up(app):
     res = app.test_client().get("/api/tools/library-paths")
     assert res.status_code == 502 and "not configured" in res.get_json()["message"]
+
+
+class FakeLiveClient:
+    def __init__(self, sessions, channel):
+        self._sessions, self._channel = sessions, channel
+
+    def sessions(self):
+        return self._sessions
+
+    def channel(self, channel_id):
+        assert channel_id == "ch1"
+        return self._channel
+
+
+def test_live_session_details_keep_the_useful_fields_and_drop_keys_and_addresses():
+    live = {"UserName": "greg", "Client": "Jellyfin Web", "DeviceName": "Firefox", "RemoteEndPoint": "10.0.0.5", "AccessToken": "SECRET", "DeviceId": "dev1",
+            "PlayState": {"PositionTicks": 5, "IsPaused": False, "PlayMethod": "Transcode", "MediaSourceId": "x"},
+            "NowPlayingItem": {"Id": "ch1", "Name": "TNT", "Type": "TvChannel", "IsLive": True, "Path": "http://tuner/secret?token=1"}}
+    idle = {"UserName": "ann", "NowPlayingItem": {"Id": "m1", "Name": "A film", "Type": "Movie"}}
+    channel = {"Id": "ch1", "Name": "TNT", "Number": "10", "CurrentProgram": {"Id": "p1", "Name": "Cold Case", "EpisodeTitle": "Ep", "StartDate": "2026-11-01T15:00:00Z", "Overview": "x"}}
+    out = dvr.live_session_details(FakeLiveClient([idle, live], channel))
+    assert len(out) == 1 and out[0]["user"] == "greg"
+    assert out[0]["on_air_now"] == {"Id": "p1", "Name": "Cold Case", "EpisodeTitle": "Ep", "StartDate": "2026-11-01T15:00:00Z"}
+    text = str(out)
+    assert "SECRET" not in text and "10.0.0.5" not in text and "secret?token" not in text and "dev1" not in text
+    assert "Path" in out[0]["now_playing_all_fields"]                      # field names are listed, values are not
+
+
+def test_live_session_details_survive_a_failed_channel_lookup():
+    class Broken(FakeLiveClient):
+        def channel(self, channel_id):
+            raise RuntimeError("no channel")
+    s = {"NowPlayingItem": {"Id": "ch1", "Type": "TvChannel"}}
+    assert dvr.live_session_details(Broken([s], {}))[0]["on_air_now_error"] == "no channel"

@@ -49,6 +49,11 @@ class JellyfinClient:
         res = http.request("jellyfin", "GetSessions", "GET", f"{self.url}/Sessions", params={"activeWithinSeconds": active_within}, headers=self.headers, timeout=8)
         return check(res, "Jellyfin", "session list").json()
 
+    def channel(self, channel_id):
+        """One Live TV channel; its CurrentProgram is what is on air now."""
+        res = http.request("jellyfin", "GetChannel", "GET", f"{self.url}/LiveTv/Channels/{channel_id}", headers=self.headers, timeout=15)
+        return check(res, "Jellyfin", "channel").json()
+
     def timers(self):
         """The recordings Jellyfin has scheduled, is making or has made from its Live TV guide (each has a Status such as New, InProgress, Completed, Error)."""
         res = http.request("jellyfin", "GetTimers", "GET", f"{self.url}/LiveTv/Timers", headers=self.headers, timeout=30)

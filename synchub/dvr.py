@@ -129,3 +129,38 @@ def completeness(conn, row):
         return "unknown", None
     percent = round(100 * runtime / fits[0])
     return ("short" if runtime < SHORT_BELOW * fits[0] else "full"), percent
+
+
+# ---------------------------------------------------------------- what Jellyfin says about a live channel being watched
+_ITEM_FIELDS = ("Id", "Name", "Type", "MediaType", "IsLive", "ChannelId", "ChannelName", "ChannelNumber", "SeriesName", "EpisodeTitle", "SeasonName",
+                "IndexNumber", "ParentIndexNumber", "StartDate", "EndDate", "RunTimeTicks", "ProgramId", "TimerId", "SeriesTimerId")
+_PROGRAM_FIELDS = ("Id", "Name", "Type", "EpisodeTitle", "SeriesName", "IndexNumber", "ParentIndexNumber", "StartDate", "EndDate", "RunTimeTicks",
+                   "IsSeries", "IsMovie", "IsLive", "IsNews", "IsSports", "TimerId", "SeriesTimerId", "ChannelId", "ChannelName")
+
+
+def _pick(item, fields):
+    return {k: item[k] for k in fields if item.get(k) is not None}
+
+
+def live_session_details(client):
+    """The sessions that are playing live TV, cut down to the fields that matter for recording (no keys, tokens, addresses or device IDs), plus what
+    Jellyfin says is on air on that channel now. Used to find out which fields Jellyfin really fills in; it only reads."""
+    out = []
+    for s in client.sessions():
+        item = s.get("NowPlayingItem") or {}
+        if not item or not (item.get("Type") in ("TvChannel", "LiveTvChannel", "Program", "LiveTvProgram") or item.get("ChannelId") or item.get("IsLive")):
+            continue
+        entry = {"user": s.get("UserName"), "client": s.get("Client"), "device": s.get("DeviceName"),
+                 "play_state": _pick(s.get("PlayState") or {}, ("PositionTicks", "IsPaused", "PlayMethod")),
+                 "now_playing": _pick(item, _ITEM_FIELDS), "now_playing_all_fields": sorted(item)}
+        channel_id = item.get("ChannelId") or (item.get("Id") if item.get("Type") in ("TvChannel", "LiveTvChannel") else None)
+        entry["channel_id"] = channel_id
+        if channel_id:
+            try:
+                ch = client.channel(channel_id)
+                entry["on_air_now"] = _pick(ch.get("CurrentProgram") or {}, _PROGRAM_FIELDS) or None
+                entry["channel"] = _pick(ch, ("Id", "Name", "Number", "Type", "ServiceName"))
+            except Exception as exc:                     # the session details are still worth showing
+                entry["on_air_now_error"] = str(exc)
+        out.append(entry)
+    return out

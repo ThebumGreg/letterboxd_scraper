@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Tools > Live TV session details.** While a live channel plays in Jellyfin, a button shows what Jellyfin reports for it (the channel, the program on air now, the play state and which fields are filled in), with keys, tokens and addresses left out. It only reads, and it exists so the fields a Record button needs can be checked without calling Jellyfin by hand.
 **UI review, part 2: Jobs, Workers and Library on a phone and with real data.**
 - **Jobs.** A finished job says "Finished" instead of its last progress line ("Analysing 646 of 684" on a Completed scan); the summary counts cancelled jobs too; on a phone each job is a block with its time and worker under the title instead of a table you swipe.
 - **Workers.** On a phone each worker is one block (version, free space and last seen under the name, buttons wrapped); on a wide screen the Machine column keeps the host and OS and puts the update status and encoders under *Details*.
