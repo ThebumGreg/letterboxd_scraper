@@ -334,12 +334,14 @@ HOST_SEEN_KEY = "worker_host_seen:{}"
 HOST_SEEN_SECONDS = 300           # the PC's timer asks every minute; this long without it and the buttons say it is not installed
 
 
-def request_host(conn, worker_id, what):
+def request_host(conn, worker_id, what, by=None):
     """Asks the worker's PC (agent/auto-update.sh) to update or restart the worker. An update waits until the worker is idle."""
     if what not in HOST_REQUESTS:
         raise WorkerError("Unknown request.")
     if conn.execute("UPDATE worker SET host_request = ? WHERE id = ? AND revoked_at IS NULL", (what, worker_id)).rowcount != 1:
         raise WorkerError("That worker no longer exists or its token is revoked.")
+    if what == "update":
+        task_open(conn, worker_id, "update", "Waiting for the PC's update helper to check in (it asks every minute)", by=by)
 
 
 def host_check(conn, worker_id, now=None):
@@ -350,9 +352,13 @@ def host_check(conn, worker_id, now=None):
     running = idle(conn, worker_id)
     request = w["host_request"] if w else None
     if request in ("update", "relay") and running:
+        if request == "update":
+            task_note(conn, worker_id, "update", f"Waiting for the worker to finish {running} job(s) before updating", now=now)
         request = None                                              # it stays requested until the worker is idle
     if request:
         conn.execute("UPDATE worker SET host_request = NULL WHERE id = ? AND host_request = ?", (worker_id, request))
+        if request == "update":
+            task_note(conn, worker_id, "update", "The PC is checking for new code", running=True, now=now)
     from synchub import protect
     want_log = settings.get(UPDATER_WANT_KEY.format(worker_id), "", conn=conn) == "1"
     if want_log:
@@ -378,11 +384,23 @@ def report_update(conn, worker_id, info, now=None):
     Returns the stored report. Raises ValueError for a status that is neither."""
     info = info if isinstance(info, dict) else {}
     status = info.get("status")
+    if status == "started":                                           # the helper is about to update (an hourly check, or a request that found new code)
+        task_note(conn, worker_id, "update", f"Updating to {str(info.get('commit') or 'the newest code')[:80]}", running=True, create="auto", now=now)
+        return {"status": "started", "commit": str(info.get("commit") or "")[:80]}
     if status not in ("ok", "failed", "current", "problem"):
         raise ValueError("The update report needs a status of 'ok', 'failed', 'current' or 'problem'.")
     report = {k: str(info.get(k) or "")[:{"error": 2000, "log": 6000}.get(k, 80)] for k in UPDATE_FIELDS if k != "at"}
     report["status"], report["at"] = status, now or db.now()
     settings.set_value(UPDATE_KEY.format(worker_id), json.dumps(report), conn=conn)
+    if status in ("ok", "failed", "current"):
+        if status == "ok":
+            text = f"Updated {report['previous']} to {report['version'] or report['commit']}" if report["previous"] else f"Updated to {report['version'] or report['commit']}"
+        elif status == "current":
+            text = "Already on the newest code"
+        else:
+            text = f"Update to {report['commit'] or 'the newest code'} failed" + (f"; put back on {report['restored']}" if report["restored"] else "")
+        task_finish(conn, worker_id, "update", "failed" if status == "failed" else "done", text, error=report["error"] if status == "failed" else None, log=report["log"],
+                    create=status != "current", now=report["at"])
     if status == "current":                                          # asked to update and there was nothing new: shown on the page, nothing to tell anyone
         return report
     w = get(conn, worker_id)
@@ -403,7 +421,7 @@ def last_update(conn, worker_id):
 BENCHMARK_KEEP = 10
 
 
-def request_benchmark(conn, worker_id):
+def request_benchmark(conn, worker_id, by=None):
     """Asks a worker to benchmark its encoders. It starts with its next poll when it has no job running."""
     w = get(conn, worker_id)
     if w is None:
@@ -413,6 +431,7 @@ def request_benchmark(conn, worker_id):
     if "benchmark" not in _items_of(w["capabilities"].get("features")):
         raise WorkerError("This worker's agent is too old to run a benchmark. Update it first (docs/UPGRADE.md).")
     conn.execute("UPDATE worker SET benchmark_requested = 1 WHERE id = ?", (worker_id,))
+    task_open(conn, worker_id, "benchmark", "Waiting for the worker to have no job running", by=by)
 
 
 def _items_of(value):
@@ -440,6 +459,15 @@ def store_benchmark(conn, worker_id, report, now=None):
                  (worker_id, now or db.now(), 1 if clean["ok"] else 0, _summary(clean), json.dumps(clean)))
     conn.execute("DELETE FROM worker_benchmark WHERE worker_id = ? AND id NOT IN (SELECT id FROM worker_benchmark WHERE worker_id = ? ORDER BY id DESC LIMIT ?)", (worker_id, worker_id, BENCHMARK_KEEP))
     conn.execute("UPDATE worker SET benchmark_requested = 0 WHERE id = ?", (worker_id,))
+    lines = [f"{r.get('label') or r.get('encoder')}: " + (f"{r.get('speed')}x" + (f", VMAF {r['vmaf']}" if r.get("vmaf") is not None else "") if r.get("ok") else f"failed ({r.get('reason') or 'no reason given'})")
+             for r in clean["results"]] + [f"{h['name']}: {'ok' if h['ok'] else 'PROBLEM'} {h['detail']}".strip() for h in clean["health"]]
+    task_finish(conn, worker_id, "benchmark", "done" if clean["ok"] else "failed", _summary(clean), error=None if clean["ok"] else "The benchmark found problems.", log="\n".join(lines), create=True, now=now)
+
+
+def benchmark_polled(conn, worker):
+    """The worker is being told to run its benchmark; when it has nothing running that is the moment it starts."""
+    if worker["benchmark_requested"] and idle(conn, worker["id"]) == 0:
+        task_note(conn, worker["id"], "benchmark", "Running on the worker (a few minutes)", running=True)
 
 
 def last_benchmark(conn, worker_id):
@@ -449,3 +477,98 @@ def last_benchmark(conn, worker_id):
     out = dict(r)
     out["report"] = json.loads(out["report"])
     return out
+
+
+# ---------------------------------------------------------------- updates and benchmarks as tasks (shown on the Jobs page)
+TASK_EXPIRES_MINUTES = {"update": 30, "benchmark": 45}       # an open task nobody reported on for this long is closed as failed
+TASK_KEEP = 200
+TASK_LOG_CHARS = 6000
+
+
+def _open_task(conn, worker_id, kind):
+    return conn.execute("SELECT * FROM worker_task WHERE worker_id = ? AND kind = ? AND status IN ('queued', 'running') ORDER BY id DESC LIMIT 1", (worker_id, kind)).fetchone()
+
+
+def task_open(conn, worker_id, kind, message, by=None, now=None):
+    """A manual request (a button): one open task per worker and kind. Asking again keeps the existing one."""
+    now = now or db.now()
+    existing = _open_task(conn, worker_id, kind)
+    if existing:
+        return existing["id"]
+    return conn.execute("INSERT INTO worker_task (worker_id, kind, status, source, requested_by, message, created_at, updated_at) VALUES (?, ?, 'queued', 'manual', ?, ?, ?, ?)",
+                        (worker_id, kind, by, message, now, now)).lastrowid
+
+
+def task_note(conn, worker_id, kind, message, running=False, create=None, now=None):
+    """Updates the open task's line (and marks it running). With `create`, makes one when there is none (the PC started an update on its own)."""
+    now = now or db.now()
+    t = _open_task(conn, worker_id, kind)
+    if t is None:
+        if not create:
+            return None
+        return conn.execute("INSERT INTO worker_task (worker_id, kind, status, source, message, created_at, started_at, updated_at) VALUES (?, ?, 'running', ?, ?, ?, ?, ?)",
+                            (worker_id, kind, create, message, now, now, now)).lastrowid
+    status = "running" if running or t["status"] == "running" else "queued"
+    conn.execute("UPDATE worker_task SET message = ?, status = ?, started_at = COALESCE(started_at, ?), updated_at = ? WHERE id = ?",
+                 (message, status, now if status == "running" else None, now, t["id"]))
+    return t["id"]
+
+
+def task_finish(conn, worker_id, kind, status, message, error=None, log=None, create=False, now=None):
+    """Closes the open task as done or failed. With `create`, an outcome nobody asked for (an automatic update) is recorded as a finished task."""
+    now = now or db.now()
+    log = str(log)[-TASK_LOG_CHARS:] if log else None
+    t = _open_task(conn, worker_id, kind)
+    if t is None:
+        if not create:
+            return None
+        task_id = conn.execute("INSERT INTO worker_task (worker_id, kind, status, source, message, error, log, created_at, started_at, finished_at, updated_at) VALUES (?, ?, ?, 'auto', ?, ?, ?, ?, ?, ?, ?)",
+                               (worker_id, kind, status, message, error, log, now, now, now, now)).lastrowid
+    else:
+        task_id = t["id"]
+        conn.execute("UPDATE worker_task SET status = ?, message = ?, error = ?, log = ?, started_at = COALESCE(started_at, ?), finished_at = ?, updated_at = ? WHERE id = ?",
+                     (status, message, error, log, now, now, now, task_id))
+    conn.execute("DELETE FROM worker_task WHERE id NOT IN (SELECT id FROM worker_task ORDER BY id DESC LIMIT ?)", (TASK_KEEP,))
+    return task_id
+
+
+def expire_tasks(conn, now=None):
+    """Closes tasks nobody reported on (no update helper installed, a worker that never answered) so the Jobs page does not show them forever."""
+    now = now or db.now()
+    for kind, minutes in TASK_EXPIRES_MINUTES.items():
+        cutoff = (datetime.strptime(now, "%Y-%m-%d %H:%M:%S") - timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+        why = ("The PC's update helper never reported back. Is it installed (agent/auto-update.sh --install)? Its log: journalctl -t synchub-auto-update." if kind == "update"
+               else "The worker never sent a benchmark report. It may be offline or busy with jobs.")
+        for t in conn.execute("SELECT id, worker_id FROM worker_task WHERE kind = ? AND status IN ('queued', 'running') AND updated_at < ?", (kind, cutoff)).fetchall():
+            conn.execute("UPDATE worker_task SET status = 'failed', message = 'Timed out', error = ?, finished_at = ?, updated_at = ? WHERE id = ?", (why, now, now, t["id"]))
+            if kind == "update":
+                conn.execute("UPDATE worker SET host_request = NULL WHERE id = ? AND host_request = 'update'", (t["worker_id"],))
+            else:
+                conn.execute("UPDATE worker SET benchmark_requested = 0 WHERE id = ?", (t["worker_id"],))
+
+
+def cancel_task(conn, task_id):
+    """Cancels a task that has not started: the request is taken back. A running one cannot be stopped from here."""
+    t = conn.execute("SELECT * FROM worker_task WHERE id = ?", (task_id,)).fetchone()
+    if t is None:
+        raise WorkerError("That task no longer exists.")
+    if t["status"] != "queued":
+        raise WorkerError("That task has already started; it cannot be stopped from here." if t["status"] == "running" else "That task is already finished.")
+    now = db.now()
+    conn.execute("UPDATE worker_task SET status = 'cancelled', message = 'Cancelled', finished_at = ?, updated_at = ? WHERE id = ?", (now, now, task_id))
+    if t["kind"] == "update":
+        conn.execute("UPDATE worker SET host_request = NULL WHERE id = ? AND host_request = 'update'", (t["worker_id"],))
+    else:
+        conn.execute("UPDATE worker SET benchmark_requested = 0 WHERE id = ?", (t["worker_id"],))
+
+
+def recent_tasks(conn, limit=30, now=None):
+    expire_tasks(conn, now)
+    return [dict(r) for r in conn.execute(
+        """SELECT t.id, t.worker_id, t.kind, t.status, t.source, t.requested_by, t.message, t.error, t.created_at, t.started_at, t.finished_at, t.updated_at, w.name AS worker_name
+           FROM worker_task t LEFT JOIN worker w ON w.id = t.worker_id ORDER BY t.id DESC LIMIT ?""", (int(limit),))]
+
+
+def get_task(conn, task_id):
+    r = conn.execute("SELECT t.*, w.name AS worker_name FROM worker_task t LEFT JOIN worker w ON w.id = t.worker_id WHERE t.id = ?", (task_id,)).fetchone()
+    return dict(r) if r else None

@@ -193,6 +193,18 @@ def describe_job(j):
     return j
 
 
+TASK_LABELS = {"queued": ("Queued", "secondary"), "running": ("Running", "primary"), "done": ("Completed", "success"), "failed": ("Failed", "danger"), "cancelled": ("Cancelled", "secondary")}
+
+
+def describe_task(t):
+    """A worker update or benchmark as the Jobs page shows it."""
+    t["label"], t["color"] = TASK_LABELS.get(t["status"], (t["status"], "secondary"))
+    t["title"] = ("Update worker" if t["kind"] == "update" else "Benchmark worker") + (f" {t['worker_name']}" if t.get("worker_name") else "")
+    t["updated"] = webhooks.ago(t["updated_at"]) if t["updated_at"] else ""
+    t["how"] = "automatic" if t["source"] == "auto" else (f"asked by {t['requested_by']}" if t.get("requested_by") else "asked on the Workers page")
+    return t
+
+
 def _waiting_for(job, able):
     """Why a queued job is not being picked up: a share no online worker has ready."""
     if job["status"] != "queued" or not able:
@@ -217,7 +229,8 @@ def snapshot(conn):
     listed = [describe_job(j) for j in jobs.recent(conn, 50)]
     for j in listed:
         j["waiting_for"] = _waiting_for(j, able)
-    return {"workers": [describe_worker(w, root_names, workers.last_update(conn, w["id"]), workers.host_seen(conn, w["id"])) for w in raw], "jobs": listed, "counts": counts, "summary": summary, "root_names": root_names, "app_version": __version__}
+    tasks = [describe_task(t) for t in workers.recent_tasks(conn, 30)]
+    return {"workers": [describe_worker(w, root_names, workers.last_update(conn, w["id"]), workers.host_seen(conn, w["id"])) for w in raw], "jobs": listed, "tasks": tasks, "counts": counts, "summary": summary, "root_names": root_names, "app_version": __version__}
 
 
 def _setup(conn, name, token=None):
@@ -305,7 +318,7 @@ def register(app):
                                    else "Asked. The worker is offline, so the log arrives when it is back.")
                 if action in ("host_update", "host_restart"):
                     what = action.split("_", 1)[1]
-                    workers.request_host(conn, worker_id, what)
+                    workers.request_host(conn, worker_id, what, by=_who(conn))
                     seen = workers.host_seen(conn, worker_id)
                     busy = workers.idle(conn, worker_id)
                     note = "" if seen else " The update timer on that PC has not checked in recently, so this waits until it does (install it once with agent/auto-update.sh --install)."
@@ -314,7 +327,7 @@ def register(app):
                     return jsonify(ok=True, message=("Asked the PC to update the worker. It is running " + str(busy) + " job(s), so the update starts when it is idle." if busy
                                                      else "Asked the PC to update the worker. It starts within a minute.") + note)
                 if action == "benchmark":
-                    workers.request_benchmark(conn, worker_id)
+                    workers.request_benchmark(conn, worker_id, by=_who(conn))
                     return jsonify(ok=True, message="Asked the worker to run a benchmark. It starts when the worker has no job running, and the result appears here when it is done (a few minutes).")
                 if action == "rotate":
                     token = workers.rotate_token(conn, worker_id)
@@ -377,6 +390,21 @@ def register(app):
         if log:
             log["received"] = webhooks.ago(log["received_at"])
         return jsonify(ok=True, log=log, pending=pending, holder=holder["name"] if holder else None, holder_online=bool(holder and holder["online"]))
+
+    @app.route("/api/worker-tasks/<int:task_id>")
+    def api_worker_task(task_id):
+        with db.connection() as conn:
+            task = workers.get_task(conn, task_id)
+        return jsonify(ok=True, task=describe_task(task)) if task else _fail("That task no longer exists.", 404)
+
+    @app.route("/api/worker-tasks/<int:task_id>/cancel", methods=["POST"])
+    def api_worker_task_cancel(task_id):
+        try:
+            with db.connection() as conn:
+                workers.cancel_task(conn, task_id)
+        except workers.WorkerError as exc:
+            return _fail(str(exc))
+        return jsonify(ok=True, message="Cancelled: the request was taken back.")
 
     @app.route("/api/jobs/<int:job_id>")
     def api_job(job_id):

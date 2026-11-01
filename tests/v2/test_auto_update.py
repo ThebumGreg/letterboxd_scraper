@@ -124,12 +124,17 @@ def test_nothing_new_does_nothing(box):
     assert code == 0 and "update " not in calls and "update/report" not in calls
 
 
+def reports_of(calls):
+    """The reports the helper sent, without the 'started' notice that only makes the Jobs page show the update as running."""
+    return [c for c in calls.splitlines() if "update/report" in c and '"status":"started"' not in c]
+
+
 def test_an_idle_worker_is_updated_and_the_result_reported(box):
     publish(box, "1.1.0")
     code, out, calls = box.run()
     assert code == 0 and "Updated 1.0.0 -> 1.1.0" in out
     assert "update --dir" in calls and "--no-pull 1.1.0" in calls and head_version(box) == "1.1.0"
-    report = [c for c in calls.splitlines() if "update/report" in c][0]
+    report = reports_of(calls)[0]
     assert '"status":"ok"' in report and '"version":"1.1.0"' in report and '"previous":"1.0.0"' in report and "Bearer sw_secret" in report
 
 
@@ -165,7 +170,7 @@ def test_when_synchub_does_not_answer_it_waits_and_keeps_the_report(box):
     code, out, calls = box.run(SHIM_HUB_DOWN="1", SYNCHUB_UPDATE_WINDOW="00:00-23:59")           # window: updates anyway, cannot report
     assert head_version(box) == "1.1.0" and (box.state / "pending.json").exists()
     code, out, calls = box.run()                                                                   # SyncHub is back: the kept report goes out
-    assert not (box.state / "pending.json").exists() and calls.count("update/report") == 2 and '"status":"ok"' in [c for c in calls.splitlines() if "update/report" in c][-1]
+    assert not (box.state / "pending.json").exists() and len(reports_of(calls)) == 2 and '"status":"ok"' in reports_of(calls)[-1]
 
 
 def test_a_failed_update_puts_the_old_code_back_and_is_not_tried_again(box):
@@ -175,11 +180,11 @@ def test_a_failed_update_puts_the_old_code_back_and_is_not_tried_again(box):
     assert code == 1 and "FAILED" in out and head_version(box) == "1.0.0"
     updates = [c for c in calls.splitlines() if c.startswith("update ")]
     assert [u.rsplit(" ", 1)[1] for u in updates] == ["2.0.0", "1.0.0"]              # the new code was tried, then the old code was deployed again
-    report = [c for c in calls.splitlines() if "update/report" in c][0]
+    report = reports_of(calls)[0]
     assert '"status":"failed"' in report and "no space left" in report and '"restored"' in report
     for _ in range(3):
         again = box.run()
-        assert again[0] == 0 and again[2].count("update ") == 2 and again[2].count("update/report") == 1        # nothing more, nothing more reported
+        assert again[0] == 0 and again[2].count("update ") == 2 and len(reports_of(again[2])) == 1        # nothing more, nothing more reported
     box.fail.unlink()
     (box.state / "last-check").unlink()                                              # an hour later
     publish(box, "2.1.0")
@@ -337,7 +342,7 @@ def test_a_failing_fetch_is_reported_once_and_cleared_when_it_works(box):
     for _ in range(3):
         box.run()
     calls = box.run()[2]
-    reports = [c for c in calls.splitlines() if "update/report" in c]
+    reports = reports_of(calls)
     assert len(reports) == 1 and '"status":"problem"' in reports[0] and "fetch failed" in reports[0]       # told once, not every minute
     subprocess.run(["git", "-C", str(box.clone), "remote", "set-url", "origin", good], check=True)
     calls = box.run()[2]
@@ -378,3 +383,80 @@ def test_the_quick_setup_says_where_to_clone_and_a_temporary_folder_is_refused()
     quick = storage.quick_setup("http://hub:5001", "sw_x")
     assert "git clone" in quick and "~/letterboxd_scraper" in quick and "cd ~/letterboxd_scraper" in quick
     assert "a temporary folder" in (AUTO.parent / "setup-worker.sh").read_text()
+
+
+# ---------------------------------------------------------------- updates and benchmarks on the Jobs page
+def _tasks(v2):
+    with v2.connection() as conn:
+        return [(t["kind"], t["status"], t["source"], t["message"]) for t in reversed(workers.recent_tasks(conn))]
+
+
+def test_an_update_from_the_button_is_followed_from_queued_to_done(client, v2):
+    wid, headers = authed(v2, "t1")
+    with v2.connection() as conn:
+        workers.request_host(conn, wid, "update", by="Greg")
+        workers.request_host(conn, wid, "update", by="Greg")                       # pressing twice keeps one task
+    assert [t[:3] for t in _tasks(v2)] == [("update", "queued", "manual")]
+    client.post("/api/worker/v1/update/check", json={}, headers=headers)
+    assert _tasks(v2)[0][1] == "running"
+    client.post("/api/worker/v1/update/report", json={"status": "started", "commit": "abc1234"}, headers=headers)
+    client.post("/api/worker/v1/update/report", json={"status": "ok", "version": "1.3.0", "previous": "1.2.0", "commit": "abc1234", "log": "Updated 1.2.0 -> 1.3.0"}, headers=headers)
+    assert _tasks(v2) == [("update", "done", "manual", "Updated 1.2.0 to 1.3.0")]
+    fragment = client.get("/jobs/fragment").get_data(as_text=True)
+    assert "Update worker t1" in fragment and "Updated 1.2.0 to 1.3.0" in fragment and "Completed" in fragment
+    page = client.get("/api/worker-tasks/1").get_json()["task"]
+    assert page["log"] == "Updated 1.2.0 -> 1.3.0" and page["requested_by"] == "Greg"
+
+
+def test_a_busy_worker_shows_why_the_update_waits_and_an_automatic_update_makes_its_own_task(client, v2):
+    wid, headers = authed(v2, "t2")
+    with v2.connection() as conn:
+        jobs.create(conn, "library", title="A job")
+        jobs.claim(conn, workers.get(conn, wid), 1)
+        workers.request_host(conn, wid, "update")
+    client.post("/api/worker/v1/update/check", json={}, headers=headers)
+    assert "finish 1 job" in _tasks(v2)[0][3] and _tasks(v2)[0][1] == "queued"
+    # the hourly check (nobody pressed a button): started, then failed
+    client.post("/api/worker/v1/update/report", json={"status": "started", "commit": "d"}, headers=headers)
+    client.post("/api/worker/v1/update/report", json={"status": "failed", "commit": "d", "error": "build broke", "restored": "c (1.2.0)"}, headers=headers)
+    assert [t[:2] for t in _tasks(v2)] == [("update", "failed")]
+    with v2.connection() as conn:
+        # a check that finds nothing new and an unexplained problem leave no task behind
+        before = len(workers.recent_tasks(conn))
+        workers.report_update(conn, wid, {"status": "current", "commit": "x"})
+        workers.report_update(conn, wid, {"status": "problem", "error": "git fetch failed"})
+        assert len(workers.recent_tasks(conn)) == before
+        workers.report_update(conn, wid, {"status": "ok", "version": "1.4.0", "commit": "e"})              # an automatic update nobody started is still recorded
+        assert workers.recent_tasks(conn)[0]["source"] == "auto"
+
+
+def test_a_requested_update_or_benchmark_nobody_answers_times_out_and_a_queued_one_can_be_cancelled(v2):
+    with v2.connection() as conn:
+        wid, _ = workers.create(conn, "t3")
+        conn.execute("UPDATE worker SET capabilities = ? WHERE id = ?", ('{"features": ["benchmark"]}', wid))
+        workers.request_host(conn, wid, "update")
+        workers.request_benchmark(conn, wid)
+        first = workers.recent_tasks(conn)[1]["id"]
+        workers.cancel_task(conn, first)
+        assert workers.get(conn, wid)["host_request"] is None
+        with pytest.raises(workers.WorkerError):
+            workers.cancel_task(conn, first)
+        later = "2099-01-01 00:00:00"
+        tasks = workers.recent_tasks(conn, now=later)
+        assert [t["status"] for t in tasks] == ["failed", "cancelled"] and "never sent a benchmark report" in tasks[0]["error"]
+        assert workers.get(conn, wid)["benchmark_requested"] == 0
+
+
+def test_a_benchmark_becomes_running_when_the_worker_is_told_and_done_with_its_results(client, v2):
+    import json as _json
+    from .test_phase_profiles import REPORT
+    wid, headers = authed(v2, "t4")
+    with v2.connection() as conn:
+        conn.execute("UPDATE worker SET capabilities = ? WHERE id = ?", (_json.dumps({"features": ["benchmark"]}), wid))
+        workers.request_benchmark(conn, wid, by="Greg")
+    assert client.post("/api/worker/v1/poll", json={}, headers=headers).get_json()["benchmark"] is True
+    assert _tasks(v2)[0][:2] == ("benchmark", "running")
+    client.post("/api/worker/v1/benchmark", json={"report": REPORT}, headers=headers)
+    assert _tasks(v2)[0][1] == "done"
+    with v2.connection() as conn:
+        assert "CPU (libx265): 1.2x, VMAF 96.1" in workers.get_task(conn, workers.recent_tasks(conn)[0]["id"])["log"]
