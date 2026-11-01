@@ -45,6 +45,20 @@ def _has_jellyfin():
     return bool(settings.get("jellyfin_url") and settings.get("jellyfin_api_key")) and settings.get("disable_jellyfin_connection") != "1"
 
 
+_closed_at = {}               # device id -> when its camera player was last closed
+REOPEN_WAIT = 4                # seconds the relay and the player get to let go of the last stream before a new one is asked for
+PLAYER_LOOK = 4                # seconds after opening that the player must still be in front
+
+
+def _in_front(dev, package):
+    """True when the player is the app on screen (or the TV cannot say)."""
+    try:
+        app = (dev.status(quiet=True) or {}).get("app")
+    except DeviceError:
+        return True
+    return not app or app == package
+
+
 def show(r, dev, camera, url, package):
     """Open a camera full screen on this TV (or switch to another one when a camera is already showing). -> {"ok", "steps", "state"}."""
     if "stream_view" not in dev.capabilities:
@@ -68,9 +82,22 @@ def show(r, dev, camera, url, package):
         if not orchestrator.ensure_on(dev, step):
             return {"ok": False, "steps": steps, "state": None}
         before = remember(r, dev, step)
+    wait = REOPEN_WAIT - (time.time() - _closed_at.get(dev.id, 0))
+    if wait > 0:
+        time.sleep(wait)
     how = dev.view_stream(url, package)
     step(f'{camera["title"]}: {how}')
     r.camera[dev.id] = {**before, "camera": camera, "since": time.time()}
+    time.sleep(PLAYER_LOOK)
+    if not _in_front(dev, package):
+        step("The player closed by itself right after opening, so the stream probably did not start. Trying once more", False)
+        time.sleep(1)
+        dev.view_stream(url, package)
+        time.sleep(PLAYER_LOOK)
+        if not _in_front(dev, package):
+            step("The player closed again. Try another \"Stream the TV opens\" type in the Protect settings. Carrying on with what you were watching", False)
+            carried = close(r, dev, package)
+            return {"ok": False, "steps": steps + carried["steps"], "state": carried["state"]}
     return {"ok": True, "steps": steps, "state": status(r, dev.id)}
 
 
@@ -83,6 +110,7 @@ def close(r, dev, package):
         r.logbook.add("system", dev.id, "camera", response=message, ok=ok)
 
     state = r.camera.pop(dev.id, None)
+    _closed_at[dev.id] = time.time()
     try:
         step(f"Closed the camera: {dev.close_stream(package)}")
     except DeviceError as e:

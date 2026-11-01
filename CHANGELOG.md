@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Camera on the TV opens over HTTP by default.** The TV's player (VLC) kept closing straight after opening an RTSP address. The remote now opens go2rtc's HTTP video stream; *Stream the TV opens* in the Protect settings offers HTTP video, HLS or RTSP. After opening, SyncHub checks the player is still in front: if it closed by itself it opens it once more, and if it closes again it carries on with what you were watching and says what to try. A camera is also not reopened within 4 seconds of closing the last one.
 - **Tools > Live TV session details.** While a live channel plays in Jellyfin, a button shows what Jellyfin reports for it (the channel, the program on air now, the play state and which fields are filled in), with keys, tokens and addresses left out. It only reads, and it exists so the fields a Record button needs can be checked without calling Jellyfin by hand.
 
 **TV players, step 1: connect and manage them (PR 1 of the TV control plan).** A *player* is a small PC behind a TV. SyncHub is the master and the players are slaves, like workers: they only call out, with a token each. Playing media comes in the next step.

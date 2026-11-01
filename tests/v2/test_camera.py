@@ -159,7 +159,8 @@ def test_the_relay_address_is_learned_from_the_workers_poll_unless_typed(v2, con
     conn.commit()
     settings.set_value("protect_relay_worker", str(worker))
     protect.note_worker_address(worker, "192.168.1.30")
-    assert protect.play_url("backyard") == "rtsp://192.168.1.30:8554/backyard"
+    assert protect.play_url("backyard") == "http://192.168.1.30:1984/api/stream.mp4?src=backyard"
+    assert protect.play_url("backyard", "rtsp") == "rtsp://192.168.1.30:8554/backyard"
     settings.set_value("protect_relay_host", "10.0.0.9:80")
     assert protect.play_url("backyard", "hls") == "http://10.0.0.9:1984/api/stream.m3u8?src=backyard"
     protect.note_worker_address(worker + 1, "1.2.3.4")                         # another worker does not move the relay
@@ -315,16 +316,24 @@ class CameraTV(Driver):
     capabilities = frozenset({"stream_view"})
     default_session_rule = {"client": "Android TV"}
     events = []
+    app = "jf"
+    quits = 0                  # how many opens the pretend player closes by itself right away
 
     def status(self, quiet=False):
-        return {"online": True, "power": "on", "app": "jf"}
+        return {"online": True, "power": "on", "app": self.app}
 
     def view_stream(self, url, package):
         self.events.append(("view", url, package))
+        if type(self).quits > 0:
+            type(self).quits -= 1
+            self.app = "jf"
+        else:
+            self.app = package
         return "opened"
 
     def close_stream(self, package):
         self.events.append(("close", package))
+        self.app = "jf"
         return "closed"
 
 
@@ -335,6 +344,8 @@ def rig(tmp_path, monkeypatch):
     rt.prefs["devices"] = [{"id": "den", "name": "Den", "type": "cameratv", "host": "10.0.0.5"}]
     rt.reload_devices()
     CameraTV.events = []
+    CameraTV.quits = 0
+    monkeypatch.setattr(camera, "_closed_at", {})
     monkeypatch.setattr(camera.time, "sleep", lambda s: None)
     monkeypatch.setattr("synchub.tv.orchestrator.time.sleep", lambda s: None)
     monkeypatch.setattr(camera, "_has_jellyfin", lambda: True)
@@ -424,7 +435,7 @@ def test_the_camera_list_and_a_camera_on_the_tv(browser, rig, monkeypatch):
     assert listing["enabled"] and [c["name"] for c in listing["cameras"]] == ["backyard", "front-door", "front-door-2"]
     shown = browser.post("/api/tv/devices/den/camera", json={"camera": "front-door"}).get_json()
     assert shown["ok"] and shown["state"]["title"] == "Front Door"
-    assert CameraTV.events[0] == ("view", "rtsp://192.168.1.30:8554/front-door", "org.videolan.vlc")
+    assert CameraTV.events[0] == ("view", "http://192.168.1.30:1984/api/stream.mp4?src=front-door", "org.videolan.vlc")
     assert browser.get("/api/tv/devices/den/camera").get_json()["state"]["camera"] == "front-door"
     closed = browser.post("/api/tv/devices/den/camera/close").get_json()
     assert closed["ok"] and closed["state"] is None and jf.commands == ["Pause", "Unpause"]
@@ -655,3 +666,24 @@ def test_a_container_without_lspci_still_shows_the_render_device(tmp_path):
 def test_the_installed_helper_is_replaced_by_the_newer_copy_in_the_checkout():
     text = (__import__("pathlib").Path(__file__).resolve().parents[2] / "agent" / "auto-update.sh").read_text()
     assert "refresh_self" in text and 'mv -f "$BIN.new" "$BIN"' in text
+
+
+def test_a_player_that_closes_by_itself_is_opened_once_more(rig, monkeypatch):
+    use(rig, monkeypatch, playing="m1")
+    CameraTV.quits = 1
+    shown = camera.show(rig, rig.devices["den"], FRONT, "http://relay/front", "org.videolan.vlc")
+    assert shown["ok"] and [e[0] for e in CameraTV.events] == ["view", "view"]
+    assert any("closed by itself" in line for line in shown["steps"])
+
+
+def test_a_player_that_keeps_closing_gives_the_show_back_and_says_what_to_try(rig, monkeypatch):
+    jf = use(rig, monkeypatch, playing="m1")
+    CameraTV.quits = 5
+    shown = camera.show(rig, rig.devices["den"], FRONT, "http://relay/front", "org.videolan.vlc")
+    assert not shown["ok"] and shown["state"] is None and jf.commands == ["Pause", "Unpause"]
+    assert any("Stream the TV opens" in line for line in shown["steps"])
+
+
+def test_the_stream_type_is_a_setting_with_three_choices():
+    assert validate_setting("protect_stream_type", "hls")[0] and not validate_setting("protect_stream_type", "udp")[0]
+    assert settings.DEFAULTS["protect_stream_type"] == "mp4"

@@ -96,6 +96,13 @@
                         <div class="form-text">Leave blank to use the address the relay worker last contacted SyncHub from{% if settings.protect_relay_addr %} (now {{ settings.protect_relay_addr }}){% endif %}.</div>
                     </div>
                     <div class="mb-3">
+                        <label for="protect_stream_type" class="form-label">Stream the TV opens</label>
+                        <select class="form-select" id="protect_stream_type" name="protect_stream_type">
+                            {% for q, label in (('mp4', 'HTTP video (recommended)'), ('hls', 'HTTP live stream (HLS, a few seconds behind)'), ('rtsp', 'RTSP (the relay\'s own protocol)')) %}<option value="{{ q }}" {{ 'selected' if settings.protect_stream_type == q }}>{{ label }}</option>{% endfor %}
+                        </select>
+                        <div class="form-text">If the player closes by itself right after opening, try another type.</div>
+                    </div>
+                    <div class="mb-3">
                         <label for="protect_viewer_app" class="form-label">Player app on the TV</label>
                         <input type="text" class="form-control" id="protect_viewer_app" name="protect_viewer_app" value="{{ settings.protect_viewer_app }}" autocomplete="off">
                         <div class="form-text">An Android package name. VLC for Android (<code>org.videolan.vlc</code>) opens the camera streams; install it on the TV first.</div>
