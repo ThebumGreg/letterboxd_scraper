@@ -13,7 +13,7 @@
                 <tr>
                     <td class="ps-4 fw-bold">{{ r.user }}</td>
                     <td class="small">{{ r.device }}{% if r.client %}<div class="text-body-secondary">{{ r.client }}</div>{% endif %}</td>
-                    <td>{{ r.title }}</td>
+                    <td>{{ r.title }}{% if r.program %}<div class="small text-body-secondary">On air: {{ r.program }}{% if r.program_ends %} until <span data-utc="{{ r.program_ends }}">{{ r.program_ends }} UTC</span>{% endif %}</div>{% endif %}{% if r.recording %}<div class="small"><span class="badge bg-danger"><i class="bi bi-record-circle" aria-hidden="true"></i> {{ r.recording|capitalize }}</span></div>{% endif %}</td>
                     <td class="small">
                         <span class="badge bg-{{ 'secondary' if r.state == 'Paused' else 'success' }}">{{ r.state }}</span>
                         {{ r.position }}{% if r.length %} / {{ r.length }}{% endif %}
@@ -52,7 +52,7 @@
             <h5 class="mb-3">Next {{ dvr.hours }} hours <span class="badge bg-secondary">{{ dvr.coming|length }}</span></h5>
             {% for t in dvr.coming %}
             <div class="mb-2"><span class="fw-bold">{{ t.name or 'A recording' }}</span>{% if t.status != 'New' %} <span class="badge bg-warning text-dark" title="Jellyfin reports a clash with another recording">{{ 'clash' }}</span>{% endif %}
-                <div class="small text-body-secondary">{% if t.channel_name %}{{ t.channel_name }} &middot; {% endif %}<span data-utc="{{ t.start_at }}">{{ t.start_at }} UTC</span></div></div>
+                <div class="small text-body-secondary">{% if t.channel_name %}{{ t.channel_name }} &middot; {% endif %}<span data-utc="{{ t.start_at }}">{{ t.start_at }} UTC</span> <button type="button" class="btn btn-link btn-sm p-0 ms-2 align-baseline" data-cancel-timer="{{ t.timer_id }}" data-name="{{ t.name or 'this recording' }}">Cancel</button></div></div>
             {% else %}<div class="text-body-secondary">Nothing is scheduled in the next {{ dvr.hours }} hours.</div>{% endfor %}
         </div>
     </div>
