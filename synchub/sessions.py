@@ -33,13 +33,13 @@ def describe(raw):
     play = raw.get("PlayState") if isinstance(raw.get("PlayState"), dict) else {}
     row = {"user": raw.get("UserName") or "Not signed in", "device": raw.get("DeviceName") or "Unknown device", "client": raw.get("Client") or "",
            "last_activity": raw.get("LastActivityDate"), "playing": bool(item), "title": None, "state": "Idle", "progress": None, "position": None, "length": None,
-           "method": None, "method_color": "secondary", "why": None, "kind": None}
+           "method": None, "method_color": "secondary", "why": None, "kind": None, "item_id": None}
     if not item:
         return row
     runtime = (item.get("RunTimeTicks") or 0) / TICKS
     position = (play.get("PositionTicks") or 0) / TICKS
     method, color = METHODS.get(play.get("PlayMethod"), (None, "secondary"))
-    row.update(title=_title(item), kind=item.get("Type"), state="Paused" if play.get("IsPaused") else "Playing", position=_clock(position), length=_clock(runtime) if runtime else None,
+    row.update(title=_title(item), kind=item.get("Type"), item_id=item.get("Id"), state="Paused" if play.get("IsPaused") else "Playing", position=_clock(position), length=_clock(runtime) if runtime else None,
                progress=round(100 * position / runtime) if runtime else None, method=method, method_color=color)
     info = raw.get("TranscodingInfo") if isinstance(raw.get("TranscodingInfo"), dict) else {}
     if play.get("PlayMethod") == "Transcode":

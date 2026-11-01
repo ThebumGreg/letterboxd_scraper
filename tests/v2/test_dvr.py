@@ -1,5 +1,6 @@
 """Jellyfin as the DVR: where items live, which are recordings, Jellyfin's schedule, the numbers about both, and the library folder overlap check."""
 import pytest
+from tests.v2.test_tv import den, tv  # noqa: F401  (the TV the Record route is posted for)
 
 from synchub import dvr, library_paths, settings, status
 from synchub.ingest import jellyfin as jf
@@ -192,3 +193,151 @@ def test_live_session_details_survive_a_failed_channel_lookup():
             raise RuntimeError("no channel")
     s = {"NowPlayingItem": {"Id": "ch1", "Type": "TvChannel"}}
     assert dvr.live_session_details(Broken([s], {}))[0]["on_air_now_error"] == "no channel"
+
+
+# ---------------------------------------------------------------- the Record button
+from datetime import datetime as _dt
+
+NOW = _dt(2026, 11, 1, 17, 5, 0)
+
+
+class FakeRecorder:
+    def __init__(self, program, timers=None, rules=None):
+        self.program, self._timers, self._rules, self.posted = program, timers or [], rules or [], []
+
+    def channel(self, channel_id):
+        return {"Id": channel_id, "Name": "TNT", "CurrentProgram": self.program}
+
+    def timers(self):
+        return list(self._timers)
+
+    def series_timers(self):
+        return list(self._rules)
+
+    def timer_defaults(self, program_id):
+        return {"ProgramId": program_id, "PrePaddingSeconds": 60}
+
+    def create_timer(self, body):
+        self.posted.append(("timer", body))
+        self._timers.append({"Id": "t9", "ProgramId": body["ProgramId"], "Status": "New"})
+
+    def create_series_timer(self, body):
+        self.posted.append(("series", body))
+
+
+FILM = {"Id": "p1", "Name": "Father of the Bride (1991)", "StartDate": "2026-11-01T17:00:00.0000000Z", "EndDate": "2026-11-01T19:15:00.0000000Z", "IsMovie": True}
+SHOW = {"Id": "p2", "Name": "Cold Case", "IsSeries": True, "StartDate": "2026-11-01T17:00:00.0000000Z", "EndDate": "2026-11-01T18:00:00.0000000Z"}
+
+
+def test_record_this_airing_schedules_it_and_says_when_only_the_rest_will_be_recorded():
+    client = FakeRecorder(FILM)
+    out = dvr.record(client, "ch1", now=NOW)
+    assert out["result"] == "scheduled" and client.posted == [("timer", {"ProgramId": "p1", "PrePaddingSeconds": 60})]
+    assert "only the rest" in out["message"] and out["late_minutes"] == 5
+
+
+def test_record_does_not_schedule_the_same_program_twice():
+    client = FakeRecorder(FILM, timers=[{"Id": "t1", "ProgramId": "p1", "Status": "New"}])
+    out = dvr.record(client, "ch1", now=NOW)
+    assert out["result"] == "already" and client.posted == []
+    assert dvr.record(FakeRecorder({**FILM, "TimerId": "t1"}), "ch1", now=NOW)["result"] == "already"
+
+
+def test_a_clash_is_reported_and_a_missing_timer_is_not_called_scheduled():
+    class Clash(FakeRecorder):
+        def create_timer(self, body):
+            self._timers.append({"Id": "t9", "ProgramId": body["ProgramId"], "Status": "ConflictedNotOk"})
+    assert dvr.record(Clash(FILM), "ch1", now=NOW)["result"] == "conflict"
+
+    class Lost(FakeRecorder):
+        def create_timer(self, body):
+            pass
+    assert dvr.record(Lost(FILM), "ch1", now=NOW)["result"] == "unconfirmed"
+
+
+def test_record_series_makes_a_new_episodes_only_rule_and_refuses_a_film():
+    client = FakeRecorder(SHOW)
+    out = dvr.record(client, "ch1", series=True, now=NOW)
+    assert out["result"] == "scheduled" and client.posted[0][0] == "series" and client.posted[0][1]["RecordNewOnly"] is True
+    with pytest.raises(dvr.DvrError, match="no series to record"):
+        dvr.record(FakeRecorder(FILM), "ch1", series=True, now=NOW)
+    assert dvr.record(FakeRecorder(SHOW, rules=[{"Id": "r1", "Name": "cold case"}]), "ch1", series=True, now=NOW)["result"] == "already"
+
+
+def test_record_says_so_when_the_guide_has_nothing_on_air():
+    with pytest.raises(dvr.DvrError, match="nothing listed"):
+        dvr.record(FakeRecorder({}), "ch1", now=NOW)
+
+
+def test_the_record_route_answers_with_the_result_and_the_reason_when_it_fails(client, den, monkeypatch):
+    from synchub.clients.jellyfin import JellyfinClient
+    from synchub import settings as st
+    st.set_value("jellyfin_url", "http://jf:8096")
+    st.set_value("jellyfin_api_key", "k")
+    fake = FakeRecorder(FILM)
+    monkeypatch.setattr(dvr, "datetime", type("D", (), {"utcnow": staticmethod(lambda: NOW), "strptime": staticmethod(_dt.strptime)}))
+    monkeypatch.setattr(JellyfinClient, "channel", lambda self, cid: fake.channel(cid))
+    for name in ("timers", "series_timers", "timer_defaults", "create_timer", "create_series_timer"):
+        monkeypatch.setattr(JellyfinClient, name, lambda self, *a, _n=name, **k: getattr(fake, _n)(*a, **k))
+    body = client.post(f"/api/tv/devices/{den}/record", json={"channelId": "ch1"}).get_json()
+    assert body["ok"] and body["result"] == "scheduled" and "Father of the Bride" in body["body"]
+    body = client.post(f"/api/tv/devices/{den}/record", json={"channelId": "ch1", "series": True}).get_json()
+    assert not body["ok"] and "no series to record" in body["body"]
+    assert not client.post(f"/api/tv/devices/{den}/record", json={}).get_json()["ok"]
+
+
+def test_cancelling_removes_the_timer_from_jellyfin_and_from_the_schedule_now(client, conn, monkeypatch):
+    from synchub.clients.jellyfin import JellyfinClient
+    from synchub import settings as st
+    st.set_value("jellyfin_url", "http://jf:8096")
+    st.set_value("jellyfin_api_key", "k")
+    dvr.sync_timers(conn, [timer("t1", "New")], [], now="2026-11-01 00:00:00")
+    conn.commit()
+    cancelled = []
+    monkeypatch.setattr(JellyfinClient, "cancel_timer", lambda self, tid: cancelled.append(tid))
+    assert client.post("/api/tv/dvr/timers/t1/cancel", json={"kind": "timer"}).get_json()["ok"]
+    assert cancelled == ["t1"]
+    assert conn.execute("SELECT removed_at FROM dvr_timer WHERE timer_id = 't1'").fetchone()[0] is not None
+
+
+# ---------------------------------------------------------------- recordings that went wrong
+def _timer_row(conn, tid, name, start, end, removed, status="InProgress"):
+    conn.execute("INSERT INTO dvr_timer (timer_id, kind, name, status, start_at, end_at, first_seen, last_seen, removed_at) VALUES (?, 'timer', ?, ?, ?, ?, ?, ?, ?)",
+                 (tid, name, status, start, end, start, removed or end, removed))
+
+
+def _recording_row(conn, item_id, name, created, runtime, seen):
+    conn.execute("INSERT INTO src_jellyfin_item (item_id, type, name, series_name, date_created, runtime_seconds, is_dvr, first_seen, last_seen) VALUES (?, 'episode', 'E', ?, ?, ?, 1, ?, ?)",
+                 (item_id, name, created, runtime, seen, seen))
+
+
+def test_a_finished_recording_that_never_appeared_is_reported_once(conn):
+    _timer_row(conn, "t1", "Cold Case", "2026-11-01 07:00:00", "2026-11-01 08:00:00", "2026-11-01 08:01:00")
+    _recording_row(conn, "other", "Other Show", "2026-11-01 05:00:00", 3600, "2026-11-01 09:00:00")        # a Jellyfin sync ran after the end
+    found = dvr.recording_problems(conn, now="2026-11-01 09:30:00")
+    assert [(p["kind"], p["name"]) for p in found] == [("missing", "Cold Case")]
+    assert dvr.recording_problems(conn, now="2026-11-01 09:31:00") == []
+
+
+def test_a_short_recording_is_reported_and_a_full_one_is_not(conn):
+    _timer_row(conn, "t1", "Cold Case", "2026-11-01 07:00:00", "2026-11-01 08:00:00", "2026-11-01 08:01:00")
+    _timer_row(conn, "t2", "Dateline", "2026-11-01 07:00:00", "2026-11-01 08:00:00", "2026-11-01 08:01:00")
+    _recording_row(conn, "a", "Cold Case", "2026-11-01 06:59:00", 1500, "2026-11-01 09:00:00")           # 25 of 60 minutes
+    _recording_row(conn, "b", "Dateline", "2026-11-01 06:59:00", 3700, "2026-11-01 09:00:00")
+    found = dvr.recording_problems(conn, now="2026-11-01 09:30:00")
+    assert [(p["kind"], p["name"]) for p in found] == [("short", "Cold Case")]
+
+
+def test_nothing_is_reported_before_a_library_sync_has_seen_the_end_or_for_a_cancelled_timer(conn):
+    _timer_row(conn, "t1", "Cold Case", "2026-11-01 07:00:00", "2026-11-01 08:00:00", "2026-11-01 08:01:00")
+    _recording_row(conn, "other", "Other Show", "2026-11-01 05:00:00", 3600, "2026-11-01 07:30:00")       # the last sync was before it ended
+    assert dvr.recording_problems(conn, now="2026-11-01 08:30:00") == []
+    _timer_row(conn, "t2", "News", "2026-11-01 07:00:00", "2026-11-01 08:00:00", "2026-11-01 06:00:00")   # removed before it started: cancelled
+    assert dvr.recording_problems(conn, now="2026-11-01 09:30:00") == []
+    assert conn.execute("SELECT alerted FROM dvr_timer WHERE timer_id = 't2'").fetchone()[0] == "cancelled"
+
+
+def test_a_clash_jellyfin_reports_is_raised_once(conn):
+    _timer_row(conn, "t1", "Cold Case", "2026-11-02 07:00:00", "2026-11-02 08:00:00", None, status="ConflictedNotOk")
+    assert [p["kind"] for p in dvr.recording_problems(conn, now="2026-11-01 09:30:00")] == ["conflict"]
+    assert dvr.recording_problems(conn, now="2026-11-01 09:35:00") == []

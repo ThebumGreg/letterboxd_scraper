@@ -108,3 +108,29 @@ def test_the_sessions_page_still_shows_the_dvr_when_jellyfin_is_unreachable(clie
     monkeypatch.setattr(JellyfinClient, "sessions", boom)
     page = text(client.get("/system/sessions"))
     assert "Could not read Jellyfin" in page and "connection refused" in page and "Nobody is watching" not in page
+
+
+def test_the_sessions_page_shows_what_is_on_air_and_whether_it_is_set_to_record(client, v2, monkeypatch):
+    settings.set_value("jellyfin_url", "http://jf:8096")
+    settings.set_value("jellyfin_api_key", "k")
+    live_tv = {"UserName": "Greg", "DeviceName": "Firefox", "Client": "Jellyfin Web", "NowPlayingItem": {"Id": "ch1", "Type": "TvChannel", "Name": "TNT"},
+               "PlayState": {"PositionTicks": 0, "IsPaused": False, "PlayMethod": "DirectStream"}}
+    monkeypatch.setattr(JellyfinClient, "sessions", lambda self, active_within=960: [live_tv])
+    monkeypatch.setattr(JellyfinClient, "channel", lambda self, cid: {"CurrentProgram": {"Id": "p1", "Name": "Father of the Bride (1991)", "EndDate": "2026-11-01T19:15:00.0000000Z"}})
+    page = text(client.get("/system/sessions"))
+    assert "On air: Father of the Bride (1991)" in page and "Set to record" not in page
+    with v2.connection() as conn:
+        conn.execute("INSERT INTO dvr_timer (timer_id, kind, name, status, program_id, start_at, end_at, first_seen, last_seen) VALUES ('t1', 'timer', 'Film', 'New', 'p1', '2026-11-01 17:00:00', '2026-11-01 19:15:00', 'x', 'x')")
+    assert "Set to record" in text(client.get("/system/sessions"))
+
+
+def test_the_sessions_page_still_shows_the_session_when_the_guide_cannot_be_read(client, v2, monkeypatch):
+    settings.set_value("jellyfin_url", "http://jf:8096")
+    settings.set_value("jellyfin_api_key", "k")
+    live_tv = {"UserName": "Greg", "DeviceName": "Firefox", "Client": "Jellyfin Web", "NowPlayingItem": {"Id": "ch1", "Type": "TvChannel", "Name": "TNT"}, "PlayState": {}}
+    monkeypatch.setattr(JellyfinClient, "sessions", lambda self, active_within=960: [live_tv])
+    def boom(self, cid):
+        raise RuntimeError("guide down")
+    monkeypatch.setattr(JellyfinClient, "channel", boom)
+    page = text(client.get("/system/sessions"))
+    assert "TNT" in page and "Could not read Jellyfin" not in page and "On air" not in page
