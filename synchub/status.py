@@ -104,5 +104,5 @@ def snapshot(conn, now=None):
     items += _dvr_items(conn) + _worker_items(conn) + _queue_items(conn) + _disk_items()
     worst = max((i["state"] for i in items), key=lambda s: SEVERITY[s], default=OK)
     attention = sum(1 for i in items if SEVERITY[i["state"]] > 0)
-    summary = "All systems OK" if not attention else f"{attention} thing{'' if attention == 1 else 's'} need attention"
+    summary = "All systems OK" if not attention else f"{attention} thing{' needs' if attention == 1 else 's need'} attention"
     return {"items": items, "state": OK if SEVERITY[worst] == 0 else worst, "attention": attention, "summary": summary}

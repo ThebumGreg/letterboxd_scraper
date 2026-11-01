@@ -208,8 +208,7 @@ def companion_copy(rec, cfg):
 def dv_entry(rec, cfg):
     if not cfg.dv7 or not _readable(rec) or dv_profile(rec) != "7":
         return None
-    notes = ["The picture is not re-encoded, so it takes minutes and the size stays about the same.", "The Dolby Vision enhancement layer is dropped (HDR10 and Dolby Vision 8.1 keep working).",
-             "The original is kept on the worker for the retention period, so it can be restored from the Originals tab."]
+    notes = []
     copy = companion_copy(rec, cfg)
     if copy:
         notes.append(f"A {copy['height']}p copy named “{cfg.label}” is made in the same job, from the same copy of the film.")

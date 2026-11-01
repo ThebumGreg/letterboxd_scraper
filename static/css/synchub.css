@@ -196,3 +196,24 @@
     background: var(--bs-body-bg);
     border-top: 1px solid var(--bs-border-color);
 }
+/* Table headers: Bootstrap's table-light is a light-mode style; keep headers in the dark palette. */
+[data-bs-theme="dark"] .table-light {
+    --bs-table-color: var(--bs-body-color);
+    --bs-table-bg: #252c36;
+    --bs-table-border-color: #2c3440;
+    --bs-table-striped-bg: #252c36;
+    --bs-table-hover-bg: #252c36;
+    color: var(--bs-body-color);
+}
+
+/* Media tabs: one row that scrolls sideways on a phone, so the order never changes as you tap. */
+#mediaTabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+}
+#mediaTabs .nav-link { white-space: nowrap; }
+
+/* Save bar: a little shadow so cards do not look cut off under it. */
+.sticky-save { box-shadow: 0 -0.5rem 0.75rem -0.5rem rgba(0, 0, 0, 0.6); }

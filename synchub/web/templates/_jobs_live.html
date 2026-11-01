@@ -8,7 +8,7 @@
             </thead>
             <tbody>
                 {% for j in jobs %}
-                {% set color = {'queued': 'secondary', 'needs_you': 'warning', 'completed': 'success', 'failed': 'danger', 'cancelled': 'dark'}.get(j.lifecycle.code, 'primary') %}
+                {% set color = {'queued': 'secondary', 'needs_you': 'warning', 'completed': 'success', 'failed': 'danger', 'cancelled': 'secondary'}.get(j.lifecycle.code, 'primary') %}
                 <tr data-job="{{ j.id }}">
                     <td class="ps-4">
                         <a href="#" class="fw-bold text-decoration-none" data-job-details="{{ j.id }}">#{{ j.id }} {{ j.title or j.kind }}</a>

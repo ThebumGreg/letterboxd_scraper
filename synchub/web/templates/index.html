@@ -43,12 +43,12 @@
 <form class="row g-2 mb-2 p-3 align-items-end panel mx-0" id="controls" onsubmit="return false" aria-label="Find in my library">
     <div class="col-12 col-lg-4">
         <label for="searchInput" class="form-label small mb-1">Find in my library</label>
-        <input type="search" id="searchInput" class="form-control" placeholder="Title, year, who requested it or rating (press / to focus)" autocomplete="off">
+        <input type="search" id="searchInput" class="form-control" placeholder="Title, year, person or rating" title="Press / to focus" autocomplete="off">
     </div>
     <div class="col-6 col-sm-4 col-lg-2">
         <label for="mediaTypeFilter" class="form-label small mb-1">Type</label>
         <select id="mediaTypeFilter" class="form-select">
-            <option value="">Movies and TV</option>
+            <option value="">All types</option>
             <option value="movie">Movies only</option>
             <option value="show">TV shows only</option>
         </select>
@@ -116,8 +116,18 @@
 
 {% if not rows %}
     <div class="alert alert-info">
-        Nothing here yet. Add your API keys and profiles in <a href="{{ url_for('settings_page') }}" class="alert-link">Settings</a>, then run everything from
+        Nothing here yet.
+        {% if first_run %}
+        <ul class="list-unstyled mb-0 mt-2" id="firstRun">
+            {% for label, done, endpoint in first_run %}
+            <li><i class="bi {{ 'bi-check-circle-fill text-success' if done else 'bi-circle' }}" aria-hidden="true"></i> <span class="visually-hidden">{{ 'Done:' if done else 'To do:' }}</span>
+                <a href="{{ url_for(endpoint) }}" class="alert-link">{{ label }}</a></li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        Add your API keys and profiles in <a href="{{ url_for('settings_page') }}" class="alert-link">Settings</a>, then run everything from
         <a href="{{ url_for('tools') }}" class="alert-link">Tools &amp; Operations</a>.
+        {% endif %}
     </div>
 {% endif %}
 

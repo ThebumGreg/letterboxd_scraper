@@ -10,8 +10,8 @@
 {% macro stat_card(label, value, color, f_type=none, f_status=none, text=none, sub=none) %}
 {% set clickable = f_type is not none or f_status is not none %}
 {% set tc = text or ('text-' ~ color) %}
-<div class="col-6 col-md-3">
-    <div class="panel text-center border-{{ color }} stat-card{% if clickable %} stat-card-link{% endif %}"
+<div class="col-6 col-md">
+    <div class="panel h-100 text-center border-{{ color }} stat-card{% if clickable %} stat-card-link{% endif %}"
          {% if clickable %}role="button" tabindex="0" aria-label="Show: {{ label }}" data-set-type="{{ f_type or '' }}" data-set-status="{{ f_status or '' }}"{% endif %}>
         <div class="p-2 p-md-3">
             <h6 class="mb-1 {{ tc }}">{{ label }}</h6>

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**UI review, part 1: looks, wording and working with no internet.**
+- **Works with no internet.** Bootstrap and its icons are served from `static/vendor/` instead of a CDN, so the whole UI looks right on a LAN with no internet. A test fails if a page loads a script, style or font from another site.
+- **Table headers match the dark theme** (they were bright white), and the **Cancelled** badge is visible (it was dark on dark; the admin badge too).
+- **Dashboard.** The five stat cards share one row at equal height, "1 thing needs attention" reads correctly, the search hint and Type filter no longer clip, and a new install shows a setup checklist instead of one sentence.
+- **Menu.** Media lists all its tabs (Library, Versions, Originals, Workers, Jobs, Storage, Options) plus Resolution Center; the open page is highlighted correctly; the phone shows Remote only in the top bar; the TV group is named Remote.
+- **Tabs and pages.** The tab row scrolls sideways on a phone instead of wrapping and reordering; the heading that repeated the tab name is now hidden (screen readers still hear it); one footer row holds the version and the Jellyfin device link; the Settings save bar has a shadow so cards do not look cut off.
+- **Wording.** Library says new downloads are set on the Options tab; the Versions text no longer doubles "1080p" and says the Dolby Vision 7 facts once instead of on every row; the Remote tip says how many more tips follow.
+
 - **Worker Logs also show the update helper.** The Logs dialog has an "Update helper on the PC" section: when you open it the helper sends its last journal lines, its checkout and version, and when it last checked for new code. No SSH or `journalctl` needed.
 - **Setup steps say where to clone.** The command now clones to `~/letterboxd_scraper` and says to keep the folder; `setup-worker.sh` refuses a checkout in `/tmp` and similar.
 - **Clear results of a wrong scan.** *Clear results* next to Start scan takes the undecided and rejected files of the chosen share (and folder) off the list; queued, approved and converted files stay, no file on the share is touched.

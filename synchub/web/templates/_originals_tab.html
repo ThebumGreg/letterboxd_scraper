@@ -1,6 +1,6 @@
 <!-- synchub/web/templates/_originals_tab.html: the Originals tab of the Media page -->
 <div class="mb-3">
-    <h3 class="h4 mb-2">Originals</h3>
+    <h3 class="visually-hidden">Originals</h3>
     <p class="text-body-secondary mb-0">When a worker replaces a file with a converted one, it keeps the original on its own disk for a while. Restore puts the original back under its old name (the converted file is set aside for 7 days, not deleted); Keep longer pushes back the date it is removed; Delete now frees the space.
         {% if items %}<strong>{{ items|length }}</strong> held, {{ '%.1f'|format(bytes / 1073741824) }} GB in total.{% endif %}</p>
 </div>

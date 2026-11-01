@@ -30,6 +30,17 @@ def _progress(conn, kind, media_id):
     return {"linked": True, "name": profile["name"], "status": status}
 
 
+def _first_run_steps(conn, health):
+    """The setup steps a new install goes through, each with whether it is done and where to do it: [(label, done, endpoint)]."""
+    states = {i["label"]: i["state"] for i in health["items"]}
+    count = lambda table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+    return [("Add your TMDB and Jellyfin connections", states.get("TMDB", "off") != "off" and states.get("Jellyfin", "off") != "off", "settings_page"),
+            ("Add the people who use SyncHub", count("profile") > 0, "people_page"),
+            ("Run everything once to fill the library", count("media") > 0, "tools"),
+            ("Add your shares (optional, for the Media pages)", count("storage_root") > 0, "storage_page"),
+            ("Add a worker (optional, does the heavy file work)", count("worker") > 0, "workers_page")]
+
+
 def register(app):
     @app.route("/")
     def index():
@@ -42,6 +53,7 @@ def register(app):
             seen = watch.library_states(conn, user) if user else {}
             health = status.snapshot(conn) if access.allowed(getattr(g, "permissions", None), "logs") else None
             reconcile = catalog.jellyfin_movie_reconcile(conn) if access.allowed(getattr(g, "permissions", None), "logs") else None
+            first_run = _first_run_steps(conn, health) if not rows and health else []
         by_id = {r["id"]: r for r in rows}
         resume = []
         for item in keep_going:
@@ -55,7 +67,7 @@ def register(app):
         status_options = [(code, defs[code]["label"]) for code in STATUS_ORDER if code in defs]
         ratings_seen = sorted({r["certification"] for r in rows if r["certification"]}, key=lambda c: (ratings.rank(c) is None, ratings.rank(c) or 0, c))
         return render_template("index.html", rows=rows, stats=catalog.dashboard_stats(rows), all_users=users, status_options=status_options,
-                               resume=resume, can_filter_watch=bool(user), certifications=ratings_seen, health=health, reconcile=reconcile)
+                               resume=resume, can_filter_watch=bool(user), certifications=ratings_seen, health=health, reconcile=reconcile, first_run=first_run)
 
     @app.route("/discover")
     def discover_page():
