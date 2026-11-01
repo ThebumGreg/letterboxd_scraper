@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**UI review, part 2: Jobs, Workers and Library on a phone and with real data.**
+- **Jobs.** A finished job says "Finished" instead of its last progress line ("Analysing 646 of 684" on a Completed scan); the summary counts cancelled jobs too; on a phone each job is a block with its time and worker under the title instead of a table you swipe.
+- **Workers.** On a phone each worker is one block (version, free space and last seen under the name, buttons wrapped); on a wide screen the Machine column keeps the host and OS and puts the update status and encoders under *Details*.
+- **Library.** The approve buckets come first and the queues below; the stopped-files list shows 3 rows and the scan list 5, with a button for the rest that stays open when the page refreshes itself.
+- **Housekeeping.** `text-muted` (deprecated in Bootstrap 5.3) is `text-body-secondary` everywhere.
+
 **UI review, part 1: looks, wording and working with no internet.**
 - **Works with no internet.** Bootstrap and its icons are served from `static/vendor/` instead of a CDN, so the whole UI looks right on a LAN with no internet. A test fails if a page loads a script, style or font from another site.
 - **Table headers match the dark theme** (they were bright white), and the **Cancelled** badge is visible (it was dark on dark; the admin badge too).

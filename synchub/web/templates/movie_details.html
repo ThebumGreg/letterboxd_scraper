@@ -17,7 +17,7 @@
         <div class="col-md-10 p-3 p-md-4">
             <h2 class="fw-bold">
                 {{ movie.title }}
-                {% if movie.year %}<span class="text-muted fs-5 fw-normal">({{ movie.year }})</span>{% endif %}
+                {% if movie.year %}<span class="text-body-secondary fs-5 fw-normal">({{ movie.year }})</span>{% endif %}
             </h2>
 
             <div class="mb-3 mt-2 d-flex flex-wrap gap-2 align-items-center">
@@ -36,7 +36,7 @@
 
             {% if movie.date_added_label %}<p class="mb-1"><strong>Added to library:</strong> {{ movie.date_added_label }}</p>{% endif %}
             <p class="mb-1"><strong>Wanted by:</strong>
-                {% for u in movie.wanted_by %}<span class="badge bg-secondary">{{ u }}</span>{% else %}<span class="text-muted">nobody right now</span>{% endfor %}
+                {% for u in movie.wanted_by %}<span class="badge bg-secondary">{{ u }}</span>{% else %}<span class="text-body-secondary">nobody right now</span>{% endfor %}
             </p>
             {% if movie.watched_by %}
             <p class="mb-1"><strong>Watched by:</strong>
@@ -49,7 +49,7 @@
             <div class="mb-1" id="watchProgress">
                 {% if not progress.linked %}{{ watch_unlinked(progress) }}
                 {% elif mine %}
-                <div class="small text-muted mb-1">Your progress</div>
+                <div class="small text-body-secondary mb-1">Your progress</div>
                 <div class="d-flex flex-wrap align-items-center gap-2">
                     {{ watch_badge(mine) }}
                     {% if mine.state == 'in_progress' %}<span>{{ mine.position_label }}{% if mine.runtime_label %} of {{ mine.runtime_label }}{% endif %}{% if mine.percent %} ({{ mine.percent }}%){% endif %}</span>{% endif %}

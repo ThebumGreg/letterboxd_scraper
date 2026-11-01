@@ -85,10 +85,10 @@
                         <td class="ps-4"><small data-task-last="history_{{ loop.index }}">{{ row.created_at }}</small></td>
                         <td><code>{{ row.old_ip }}</code></td><td><code>{{ row.new_ip }}</code></td>
                         <td>{% if row.status == 'SUCCESS' %}<span class="badge bg-success">SUCCESS</span>{% else %}<span class="badge bg-danger">FAILED</span>{% endif %}</td>
-                        <td class="pe-4"><small class="text-muted">{{ row.message }}</small></td>
+                        <td class="pe-4"><small class="text-body-secondary">{{ row.message }}</small></td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="5" class="text-center text-muted p-4">No updates recorded yet.</td></tr>
+                    <tr><td colspan="5" class="text-center text-body-secondary p-4">No updates recorded yet.</td></tr>
                     {% endfor %}
                 </tbody>
             </table>

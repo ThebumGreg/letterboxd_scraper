@@ -208,7 +208,7 @@ def _waiting_for(job, able):
 
 def snapshot(conn):
     counts = jobs.counts(conn)
-    summary = " \u00b7 ".join(f"{counts[s]} {s.replace('_', ' ')}" for s in ("running", "needs_review", "queued", "done", "failed") if counts.get(s))
+    summary = " \u00b7 ".join(f"{counts[s]} {s.replace('_', ' ')}" for s in ("running", "needs_review", "queued", "done", "failed", "cancelled") if counts.get(s))
     root_names = [r["name"] for r in storage.list_all(conn)]
     raw = workers.list_all(conn)
     for w in raw:

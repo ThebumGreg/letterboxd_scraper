@@ -2,9 +2,9 @@
 <h4 class="mb-3">Registered workers <small class="text-body-secondary">({{ workers|length }})</small></h4>
 <div class="panel p-0 overflow-hidden mb-5">
     <div class="table-responsive">
-        <table class="table table-hover align-middle mb-0" id="workerTable">
+        <table class="table table-hover align-middle mb-0 stack-sm" id="workerTable">
             <thead class="table-light">
-                <tr><th class="ps-4">Worker</th><th>Status</th><th>Machine</th><th>Version</th><th>Jobs</th><th>Space</th><th>Shares</th><th>Seen</th><th class="pe-4 text-end">Actions</th></tr>
+                <tr><th class="ps-4">Worker</th><th>Status</th><th class="d-none d-md-table-cell">Machine</th><th class="d-none d-md-table-cell">Version</th><th>Jobs</th><th class="d-none d-md-table-cell">Space</th><th>Shares</th><th class="d-none d-md-table-cell">Seen</th><th class="pe-4 text-end">Actions</th></tr>
             </thead>
             <tbody>
                 {% for w in workers %}
@@ -13,26 +13,29 @@
                         <div class="fw-bold">{{ w.name }}</div>
                         {% for tag in w.tags %}<span class="badge bg-secondary me-1">{{ tag }}</span>{% endfor %}
                         <div class="small text-body-secondary">token ...{{ w.token_hint or 'none' }}</div>
+                        <div class="small text-body-secondary d-md-none">{% if w.version %}v{{ w.version }} &middot; {% endif %}{% if w.free %}{{ w.free }} free &middot; {% endif %}seen {{ w.seen }}</div>
                     </td>
                     <td><span class="badge bg-{{ w.state_color }}{% if w.state_color in ['info', 'warning'] %} text-dark{% endif %}">{{ w.state }}</span></td>
-                    <td class="small">
-                        {{ w.hostname or '-' }}{% if w.os %}<div class="text-body-secondary">{{ w.os }}</div>{% endif %}
+                    <td class="small d-none d-md-table-cell">
+                        {{ w.hostname or w.os or '-' }}{% if w.hostname and w.os %}<div class="text-body-secondary">{{ w.os }}</div>{% endif %}
+                        <details class="mt-1"><summary class="text-body-secondary">Details</summary>
                         {% if w.auto_update %}<div class="{{ 'text-body-secondary' if w.auto_update.ok else 'text-danger' }}"{% if w.auto_update.error %} title="{{ w.auto_update.error }}"{% endif %}>auto-update: {{ w.auto_update.text }}</div>{% if w.auto_update.error %}<div class="text-danger">{{ w.auto_update.error }}</div>{% endif %}{% if w.auto_update.log %}<details><summary class="text-body-secondary">Update log</summary><pre class="small mb-0" style="white-space:pre-wrap">{{ w.auto_update.log }}</pre></details>{% endif %}{% endif %}
                         {% if w.encoders %}<div class="text-body-secondary" title="Encoders this worker can use">{{ w.encoders }}</div>{% endif %}
+                        </details>
                     </td>
-                    <td class="small">{% if not w.version %}-{% else %}<span class="badge bg-{{ 'success' if w.version == app_version else 'warning text-dark' }}" title="{{ 'Matches this SyncHub' if w.version == app_version else 'SyncHub is ' ~ app_version ~ '. Rebuild this worker (docs/UPGRADE.md).' }}">{{ w.version }}</span>{% if w.version != app_version %}<div class="text-body-secondary">update available</div>{% endif %}{% endif %}</td>
-                    <td>{{ w.running }} / {{ w.slots }}</td>
-                    <td class="small">
+                    <td class="small d-none d-md-table-cell">{% if not w.version %}-{% else %}<span class="badge bg-{{ 'success' if w.version == app_version else 'warning text-dark' }}" title="{{ 'Matches this SyncHub' if w.version == app_version else 'SyncHub is ' ~ app_version ~ '. Rebuild this worker (docs/UPGRADE.md).' }}">{{ w.version }}</span>{% if w.version != app_version %}<div class="text-body-secondary">update available</div>{% endif %}{% endif %}</td>
+                    <td data-label="Running jobs">{{ w.running }} / {{ w.slots }}</td>
+                    <td class="small d-none d-md-table-cell">
                         {% if w.free %}{{ w.free }} free{% else %}-{% endif %}
                         {% if w.originals %}<div class="text-body-secondary" title="Original files kept for the retention period">originals: {{ w.originals }}</div>{% endif %}
                         {% if w.relay %}<div><span class="badge bg-{{ w.relay.color }}{% if w.relay.color == 'warning' %} text-dark{% endif %}" title="{{ w.relay.title or 'go2rtc, the camera relay UniFi Protect cameras are shown through' }}">{{ w.relay.text }}</span></div>{% endif %}
                     </td>
-                    <td class="small">
+                    <td class="small" data-label="Shares">
                         {% for r in w.roots %}<div class="{{ '' if w.online else 'opacity-50' }}"><span class="badge bg-{{ r.color }}{% if r.color == 'warning' %} text-dark{% endif %}" title="{{ r.message or '' }}">{{ r.label }}</span> {{ r.name }}</div>
                         {% else %}<span class="text-body-secondary" title="Add shares on the Storage page">-</span>{% endfor %}
                     </td>
-                    <td class="small">{{ w.seen }}</td>
-                    <td class="pe-4 text-end text-nowrap">
+                    <td class="small d-none d-md-table-cell">{{ w.seen }}</td>
+                    <td class="pe-4 text-end actions-cell">
                         {% if not w.revoked and w.enabled %}
                         <button type="button" class="btn btn-sm btn-outline-info" data-worker-logs="{{ w.id }}" data-name="{{ w.name }}" title="Fetch the worker's own log to troubleshoot it"><i class="bi bi-card-text" aria-hidden="true"></i> Logs</button>
                         <button type="button" class="btn btn-sm btn-outline-secondary" data-worker-action="{{ 'resume' if w.paused else 'pause' }}" data-id="{{ w.id }}">{{ 'Resume' if w.paused else 'Pause' }}</button>
@@ -58,14 +61,14 @@
                     </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="9" class="text-center text-muted py-4">No workers yet. Add one to get a token for its settings file.</td></tr>
+                <tr><td colspan="9" class="text-center text-body-secondary py-4">No workers yet. Add one to get a token for its settings file.</td></tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
 </div>
 
-<h4 class="mb-3">Machines <small class="text-muted">the hardware behind each worker and what it can encode</small></h4>
+<h4 class="mb-3">Machines <small class="text-body-secondary">the hardware behind each worker and what it can encode</small></h4>
 {% for w in workers %}
 {% set h = w.host %}
 <div class="panel mb-4{% if not w.online %} opacity-75{% endif %}" data-status-worker="{{ w.id }}">
@@ -169,5 +172,5 @@
     {% endif %}
 </div>
 {% else %}
-<div class="panel text-center text-muted py-4">No workers yet. Add one to see its hardware here.</div>
+<div class="panel text-center text-body-secondary py-4">No workers yet. Add one to see its hardware here.</div>
 {% endfor %}

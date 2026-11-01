@@ -29,7 +29,7 @@
 
             <h2 class="fw-bold mb-3">
                 {{ show.title }}
-                {% if show.year %}<span class="text-muted fs-5 fw-normal ms-1">({{ show.year }})</span>{% endif %}
+                {% if show.year %}<span class="text-body-secondary fs-5 fw-normal ms-1">({{ show.year }})</span>{% endif %}
             </h2>
 
             {% if show.overview %}<p class="text-body-secondary" style="max-width: 75ch;">{{ show.overview }}</p>{% endif %}
@@ -42,9 +42,9 @@
 
             {% if show.date_added_label %}<p class="mb-2"><strong>Newest episode added to library:</strong> {{ show.date_added_label }}</p>{% endif %}
             <div class="mb-3">
-                <div class="small text-muted mb-1">Wanted by</div>
+                <div class="small text-body-secondary mb-1">Wanted by</div>
                 <div class="d-flex flex-wrap gap-1">
-                    {% for u in show.wanted_by %}<span class="badge bg-secondary">{{ u }}</span>{% else %}<span class="text-muted">nobody right now</span>{% endfor %}
+                    {% for u in show.wanted_by %}<span class="badge bg-secondary">{{ u }}</span>{% else %}<span class="text-body-secondary">nobody right now</span>{% endfor %}
                 </div>
             </div>
 
@@ -52,7 +52,7 @@
             <div class="mb-3" style="max-width: 480px;">
                 <div class="d-flex justify-content-between small mb-1">
                     <span>{{ totals.in_library }} of {{ totals.aired }} aired episodes in the library</span>
-                    <span class="text-muted">{{ totals.percent }}%</span>
+                    <span class="text-body-secondary">{{ totals.percent }}%</span>
                 </div>
                 <div class="progress" style="height: 6px; background: #2c3440;" role="progressbar" aria-label="Episodes in the library"
                      aria-valuenow="{{ totals.percent }}" aria-valuemin="0" aria-valuemax="100">
@@ -78,7 +78,7 @@
                 {% elif mine %}
                 <div class="d-flex justify-content-between small mb-1">
                     <span>You have watched {{ mine.watched }} of {{ mine.total }} episode{{ '' if mine.total == 1 else 's' }} in the library</span>
-                    <span class="text-muted">{{ mine.percent }}%</span>
+                    <span class="text-body-secondary">{{ mine.percent }}%</span>
                 </div>
                 <div class="progress" style="height: 6px; background: #2c3440;" role="progressbar" aria-label="Episodes you have watched" aria-valuenow="{{ mine.percent }}" aria-valuemin="0" aria-valuemax="100">
                     <div class="progress-bar bg-info" style="width: {{ mine.percent }}%"></div>
@@ -117,7 +117,7 @@
 <!-- ===================== Episodes ===================== -->
 <div class="sd-section-title mb-3">
     <h4 class="fw-bold mb-0"><i class="bi bi-collection-play text-success"></i> Episodes</h4>
-    {% if summary.seasons %}<span class="text-muted small">{{ summary.seasons|length }} season group{{ '' if summary.seasons|length == 1 else 's' }}</span>{% endif %}
+    {% if summary.seasons %}<span class="text-body-secondary small">{{ summary.seasons|length }} season group{{ '' if summary.seasons|length == 1 else 's' }}</span>{% endif %}
 </div>
 
 {% if summary.seasons %}
@@ -152,7 +152,7 @@
         </h2>
         <div id="collapse{{ s.season_number }}" class="accordion-collapse collapse" {% if not s.is_special %}data-bs-parent="#seasonsAccordion"{% endif %}>
             <div class="accordion-body p-0" id="seasonContainer{{ s.season_number }}" data-loaded="false">
-                <div class="p-4 text-center text-muted"><div class="spinner-border spinner-border-sm text-secondary me-2" role="status"></div> Loading...</div>
+                <div class="p-4 text-center text-body-secondary"><div class="spinner-border spinner-border-sm text-secondary me-2" role="status"></div> Loading...</div>
             </div>
         </div>
     </div>
@@ -206,7 +206,7 @@
     });
 
     function render(container, data) {
-        if (!data.episodes.length) { container.innerHTML = '<div class="p-3 text-muted">No episodes.</div>'; return; }
+        if (!data.episodes.length) { container.innerHTML = '<div class="p-3 text-body-secondary">No episodes.</div>'; return; }
         const rows = data.episodes.map((ep) => {
             const dark = ['info', 'warning'].includes(ep.state_color) ? ' text-dark' : '';
             const pct = ep.state === 'downloading' && ep.progress_pct !== null ? ` ${ep.progress_pct}%` : '';
@@ -215,16 +215,16 @@
             const note = ep.numbering_status === 'mapped' ? `<div class="small text-warning">Sonarr numbers this S${esc(ep.tvdb_season_number)}E${esc(ep.tvdb_episode_number)}</div>` : '';
             const w = ep.watch;           // what the person using this page has watched of it (nothing for a guest or a profile without a Jellyfin user)
             const mine = !w || w.state === 'unwatched' ? '' : w.state === 'watched'
-                ? `<div class="small mt-1" data-watch-state="watched"><span class="badge bg-success">Watched</span>${w.last_played_label ? ` <span class="text-muted">${esc(w.last_played_label)}</span>` : ''}</div>`
-                : `<div class="small mt-1" data-watch-state="in_progress"><span class="badge bg-info text-dark">${esc(w.state_label)}</span> <span class="text-muted">${esc(w.position_label)}${w.runtime_label ? ' of ' + esc(w.runtime_label) : ''}${w.percent ? ' (' + esc(w.percent) + '%)' : ''}</span></div>`;
+                ? `<div class="small mt-1" data-watch-state="watched"><span class="badge bg-success">Watched</span>${w.last_played_label ? ` <span class="text-body-secondary">${esc(w.last_played_label)}</span>` : ''}</div>`
+                : `<div class="small mt-1" data-watch-state="in_progress"><span class="badge bg-info text-dark">${esc(w.state_label)}</span> <span class="text-body-secondary">${esc(w.position_label)}${w.runtime_label ? ' of ' + esc(w.runtime_label) : ''}${w.percent ? ' (' + esc(w.percent) + '%)' : ''}</span></div>`;
             const resume = w && w.state === 'in_progress' && w.resume_label ? ` data-resume="at ${esc(w.resume_label)}"` : '';
             const src = (ep.sources || []);
-            const srcRow = src.length ? `<tr class="sd-ep-src d-none"><td></td><td colspan="3" class="small text-muted pt-0 pb-2">${src.map(esc).join('<br>')}</td></tr>` : '';
+            const srcRow = src.length ? `<tr class="sd-ep-src d-none"><td></td><td colspan="3" class="small text-body-secondary pt-0 pb-2">${src.map(esc).join('<br>')}</td></tr>` : '';
             return `<tr class="${rowClass}${src.length ? ' sd-ep-clickable' : ''}"${src.length ? ' style="cursor: pointer;" title="Click to see where this episode came from"' : ''}>
-                <td class="text-center fw-bold text-muted">${esc(ep.episode_number)}</td>
+                <td class="text-center fw-bold text-body-secondary">${esc(ep.episode_number)}</td>
                 <td class="sd-ep-title-cell">
                     <div class="fw-semibold text-truncate" title="${esc(ep.title)}">${esc(ep.title || 'Episode ' + ep.episode_number)}</div>
-                    ${ep.air_date ? `<div class="small text-muted">${esc(ep.air_date)}</div>` : ''}${note}${mine}
+                    ${ep.air_date ? `<div class="small text-body-secondary">${esc(ep.air_date)}</div>` : ''}${note}${mine}
                     ${ep.overview ? `<div class="small text-secondary sd-ep-overview mt-1" title="${esc(ep.overview)}">${esc(ep.overview)}</div>` : ''}
                 </td>
                 <td>${badge}</td>

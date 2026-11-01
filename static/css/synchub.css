@@ -217,3 +217,19 @@
 
 /* Save bar: a little shadow so cards do not look cut off under it. */
 .sticky-save { box-shadow: 0 -0.5rem 0.75rem -0.5rem rgba(0, 0, 0, 0.6); }
+
+/* Action buttons wrap on a phone and stay on one line on a wide screen. */
+.actions-cell { white-space: normal; }
+.actions-cell .btn, .actions-cell .btn-group { margin-bottom: 0.25rem; }
+@media (min-width: 768px) { .actions-cell { white-space: nowrap; } }
+
+/* On a phone a wide table becomes one block per row, so nothing needs a sideways swipe. */
+@media (max-width: 767.98px) {
+    .stack-sm thead { display: none; }
+    .stack-sm tbody tr { display: block; padding: 0.75rem 1rem; border-bottom: 1px solid var(--bs-border-color); }
+    .stack-sm tbody td { display: block; padding: 0.15rem 0; border: 0; text-align: left !important; }
+    .stack-sm tbody td.ps-4 { padding-left: 0 !important; }
+    .stack-sm tbody td.pe-4 { padding-right: 0 !important; }
+    .stack-sm tbody td[data-label]::before { content: attr(data-label) ": "; color: var(--bs-secondary-color); }
+    .stack-sm tbody td[colspan] { text-align: center !important; }
+}
