@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Tools > Live TV session details.** While a live channel plays in Jellyfin, a button shows what Jellyfin reports for it (the channel, the program on air now, the play state and which fields are filled in), with keys, tokens and addresses left out. It only reads, and it exists so the fields a Record button needs can be checked without calling Jellyfin by hand.
+
 **TV players, step 1: connect and manage them (PR 1 of the TV control plan).** A *player* is a small PC behind a TV. SyncHub is the master and the players are slaves, like workers: they only call out, with a token each. Playing media comes in the next step.
 - **Media > Players tab.** Add a player (name and a TV label), see Online/Offline, version, mpv, graphics and the screens plugged in, and press **Ping**, **Update**, **Logs**, **Restart program**, new token or revoke. Commands reach a player within about a second (a held-open request) and are dropped after ten minutes if it is offline.
 - **`player/` folder.** `synchub_player.py` (standard library only, same version number as SyncHub), a systemd unit and `setup-player.sh` (one command: installs mpv and the graphics tools, checks the token, creates the `synchubplayer` user, clones the code, writes the config and starts the service). The Update button fast-forwards the checkout from GitHub and restarts the program itself; it never discards local changes.

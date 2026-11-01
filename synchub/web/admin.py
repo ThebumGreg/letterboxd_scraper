@@ -97,6 +97,18 @@ def register(app):
         return jsonify(ok=True, libraries=[{"name": f.get("Name"), "type": f.get("CollectionType"), "paths": f.get("Locations") or []} for f in folders],
                        overlaps=library_paths.find_overlaps(folders))
 
+    @app.route("/api/tools/live-session")
+    def api_tools_live_session():
+        """What Jellyfin reports for people watching live TV right now. Only reads; keys, tokens and addresses are left out."""
+        from synchub import dvr
+        from synchub.clients import ApiError, ConfigError
+        from synchub.clients.jellyfin import JellyfinClient
+        try:
+            sessions = dvr.live_session_details(JellyfinClient())
+        except (ApiError, ConfigError) as exc:
+            return jsonify(ok=False, message=str(exc)), 502
+        return jsonify(ok=True, sessions=sessions)
+
     @app.route("/tools/export-csv")
     def export_csv():
         with db.connection() as conn:
