@@ -288,9 +288,15 @@ def for_worker(worker_id):
         return None
 
 
-def play_url(name, kind="rtsp"):
-    """The address a TV opens for one camera of the relay."""
+STREAM_TYPES = ("mp4", "rtsp", "hls")
+
+
+def play_url(name, kind=None):
+    """The address a TV opens for one camera of the relay. mp4 and hls are plain HTTP (a player opens them reliably); rtsp is the relay's own protocol."""
+    kind = kind or settings.get("protect_stream_type") or "mp4"
     host = relay_host().split(":")[0]
     if not host:
         raise ConfigError("SyncHub does not know where the camera relay is. Pick the relay worker in Settings and let it poll once, or type its address.")
-    return f"rtsp://{host}:8554/{name}" if kind == "rtsp" else f"http://{host}:1984/api/stream.m3u8?src={name}"
+    if kind == "rtsp":
+        return f"rtsp://{host}:8554/{name}"
+    return f"http://{host}:1984/api/stream.{'m3u8' if kind == 'hls' else 'mp4'}?src={name}"

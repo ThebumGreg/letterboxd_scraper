@@ -42,6 +42,8 @@ Choose the cameras under *Cameras to serve* (Settings > Protect, Load cameras fr
 
 ## If something does not work
 
+- *The player closes right after opening*: SyncHub opens go2rtc's HTTP video stream by default and tries once more by itself. If it still closes, change *Stream the TV opens* (HTTP video, HLS, RTSP) in the Protect settings. Opening the same address in a browser (`http://<worker>:1984/api/stream.mp4?src=<camera>`) shows whether the relay itself works.
+
 - *go2rtc was not started: the worker's compose setup does not load docker-compose.override.yml*: the worker's folder picks its own compose files (`COMPOSE_FILE` in `.env`). Reinstall the worker with `setup-worker.sh`, whose compose file already includes go2rtc.
 
 - **Test connection says 404 or "no Integration API".** The console is too old, or the address is not the console's own.
