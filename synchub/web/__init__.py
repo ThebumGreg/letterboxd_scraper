@@ -21,9 +21,9 @@ NAV = (
     ("index", "Dashboard"),
     ("tv_remote_page", "Remote"),
     ("Discover", (("discover_page", "New & trending"), ("search_page", "Find & request"), ("watchlist_page", "My watchlist"))),
-    ("Media", (                                                                 # these seven are the tabs of one page (synchub/web/media.py)
+    ("Media", (                                                                 # these eight are the tabs of one page (synchub/web/media.py)
         ("library_page", "Library"), ("library_versions_page", "Versions"), ("workers_originals_page", "Originals"),
-        ("workers_page", "Workers"), ("jobs_page", "Jobs"), ("storage_page", "Storage"), ("library_options_page", "Options"),
+        ("workers_page", "Workers"), ("players_page", "Players"), ("jobs_page", "Jobs"), ("storage_page", "Storage"), ("library_options_page", "Options"),
         (None, "Matching"), ("resolution_center", "Resolution Center"),
     )),
     ("System", (
@@ -214,8 +214,8 @@ def create_app(start_scheduler=False, csrf=True):
                 "profile_link": link("my_profile", "My profile"),
                 "max_rating": getattr(g, "max_rating", None), "app_version": __version__}
 
-    from synchub.web import admin, api, fleet, library, notifications, pages, security, shares, tv, watchlist, worker_api, originals, sessions as sessions_web, versions as versions_web
-    for module in (pages, api, admin, fleet, library, notifications, shares, security, tv, watchlist, worker_api, originals, sessions_web, versions_web):
+    from synchub.web import admin, api, fleet, library, notifications, pages, player_api, players_web, security, shares, tv, watchlist, worker_api, originals, sessions as sessions_web, versions as versions_web
+    for module in (pages, api, admin, fleet, library, notifications, shares, security, tv, watchlist, worker_api, player_api, players_web, originals, sessions_web, versions_web):
         module.register(app)
     if csrf:
         csrf.exempt(app.view_functions["api_webhook"])

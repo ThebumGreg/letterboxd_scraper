@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**TV players, step 1: connect and manage them (PR 1 of the TV control plan).** A *player* is a small PC behind a TV. SyncHub is the master and the players are slaves, like workers: they only call out, with a token each. Playing media comes in the next step.
+- **Media > Players tab.** Add a player (name and a TV label), see Online/Offline, version, mpv, graphics and the screens plugged in, and press **Ping**, **Update**, **Logs**, **Restart program**, new token or revoke. Commands reach a player within about a second (a held-open request) and are dropped after ten minutes if it is offline.
+- **`player/` folder.** `synchub_player.py` (standard library only, same version number as SyncHub), a systemd unit and `setup-player.sh` (one command: installs mpv and the graphics tools, checks the token, creates the `synchubplayer` user, clones the code, writes the config and starts the service). The Update button fast-forwards the checkout from GitHub and restarts the program itself; it never discards local changes.
+- **API.** `/api/player/v1/` (`register`, `poll`, `commands/<id>/answer`, `log`) with its own `sp_` tokens; a worker token does not open it. New tables `player`, `player_command`, `player_log` (migration 028).
+- Documented in [docs/PLAYERS.md](docs/PLAYERS.md). Not yet run on a real player PC.
+
 **UI review, part 2: Jobs, Workers and Library on a phone and with real data.**
 - **Jobs.** A finished job says "Finished" instead of its last progress line ("Analysing 646 of 684" on a Completed scan); the summary counts cancelled jobs too; on a phone each job is a block with its time and worker under the title instead of a table you swipe.
 - **Workers.** On a phone each worker is one block (version, free space and last seen under the name, buttons wrapped); on a wide screen the Machine column keeps the host and OS and puts the update status and encoders under *Details*.

@@ -24,7 +24,7 @@ def test_the_options_tab_holds_the_settings_and_profiles_and_the_library_tab_doe
 
 def test_the_tab_order_puts_jobs_next_to_workers(client, v2):
     page = text(client.get("/library"))
-    assert re.findall(r'id="media-tab-(\w+)"', page) == ["library", "versions", "originals", "workers", "jobs", "storage", "options"]
+    assert re.findall(r'id="media-tab-(\w+)"', page) == ["library", "versions", "originals", "workers", "players", "jobs", "storage", "options"]
 
 
 def test_the_jobs_tab_and_the_workers_fragment_are_separate(client, v2):
