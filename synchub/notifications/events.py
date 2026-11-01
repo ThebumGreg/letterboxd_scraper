@@ -61,6 +61,11 @@ register(EventType(
     description="A worker found something it cannot decide, such as a file that already exists.",
 ))
 register(EventType(
+    "recording_problem", "A recording went wrong", ADMIN,
+    render=lambda p: Message("Recording problem" if p.get("kind") != "short" else "Short recording", f"{p.get('name') or 'A recording'}: {p.get('detail') or 'it may not have recorded properly.'}", priority=0, ttl_seconds=86400),
+    description="A scheduled recording clashed with another, never appeared in Jellyfin, or came out much shorter than scheduled.",
+))
+register(EventType(
     "worker_offline", "A worker went offline", ADMIN,
     render=lambda p: Message("Worker offline", f"{p.get('worker') or 'A worker'} has stopped checking in.", priority=1, ttl_seconds=86400),
     description="A worker stopped checking in. Urgent: it comes through quiet hours.",

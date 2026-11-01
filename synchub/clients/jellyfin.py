@@ -59,6 +59,27 @@ class JellyfinClient:
         res = http.request("jellyfin", "GetTimers", "GET", f"{self.url}/LiveTv/Timers", headers=self.headers, timeout=30)
         return check(res, "Jellyfin", "recording timers").json().get("Items") or []
 
+    def timer_defaults(self, program_id):
+        """The recording settings Jellyfin would use for a program (padding, keep rules); posting them back schedules it."""
+        res = http.request("jellyfin", "GetTimerDefaults", "GET", f"{self.url}/LiveTv/Timers/Defaults", params={"programId": program_id}, headers=self.headers, timeout=15)
+        return check(res, "Jellyfin", "recording defaults").json()
+
+    def create_timer(self, body):
+        res = http.request("jellyfin", "CreateTimer", "POST", f"{self.url}/LiveTv/Timers", json=body, headers=self.headers, timeout=20)
+        check(res, "Jellyfin", "schedule recording")
+
+    def create_series_timer(self, body):
+        res = http.request("jellyfin", "CreateSeriesTimer", "POST", f"{self.url}/LiveTv/SeriesTimers", json=body, headers=self.headers, timeout=20)
+        check(res, "Jellyfin", "schedule series recording")
+
+    def cancel_timer(self, timer_id):
+        res = http.request("jellyfin", "CancelTimer", "DELETE", f"{self.url}/LiveTv/Timers/{timer_id}", headers=self.headers, timeout=20)
+        check(res, "Jellyfin", "cancel recording")
+
+    def cancel_series_timer(self, timer_id):
+        res = http.request("jellyfin", "CancelSeriesTimer", "DELETE", f"{self.url}/LiveTv/SeriesTimers/{timer_id}", headers=self.headers, timeout=20)
+        check(res, "Jellyfin", "cancel series recording")
+
     def series_timers(self):
         """The series recording rules Jellyfin has."""
         res = http.request("jellyfin", "GetSeriesTimers", "GET", f"{self.url}/LiveTv/SeriesTimers", headers=self.headers, timeout=30)

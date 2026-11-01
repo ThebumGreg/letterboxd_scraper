@@ -426,6 +426,38 @@ def register(app):
         d = rt().device(dev_id)
         return reply(True, d.launch(d.jellyfin_app()) or "launched")
 
+    @app.post("/api/tv/devices/<dev_id>/record")
+    def api_tv_device_record(dev_id):
+        """Record what is on the live channel this TV is showing: this airing, or every new episode (series). Anyone who can use the remote may."""
+        from synchub import dvr
+        from synchub.clients import ApiError, ConfigError
+        from synchub.clients.jellyfin import JellyfinClient
+        rt().device(dev_id)                                   # an unknown TV is an error before anything is scheduled
+        body = request.get_json(silent=True) or {}
+        channel_id = str(body.get("channelId") or "").strip()
+        if not channel_id:
+            return reply(False, "The TV is not showing a live channel.")
+        try:
+            out = dvr.record(JellyfinClient(), channel_id, series=bool(body.get("series")))
+        except (dvr.DvrError, ApiError, ConfigError) as exc:
+            return reply(False, str(exc))
+        return reply(out["result"] in ("scheduled", "already"), out["message"], result=out["result"])
+
+    @app.post("/api/tv/dvr/timers/<timer_id>/cancel")
+    def api_tv_dvr_cancel(timer_id):
+        """Cancel a scheduled recording (kind 'timer') or a series rule (kind 'series') from the Sessions page."""
+        from synchub import dvr
+        from synchub.clients import ApiError, ConfigError
+        from synchub.clients.jellyfin import JellyfinClient
+        kind = (request.get_json(silent=True) or {}).get("kind") or "timer"
+        try:
+            dvr.cancel(JellyfinClient(), timer_id, kind)
+        except (dvr.DvrError, ApiError, ConfigError) as exc:
+            return reply(False, str(exc))
+        with db.connection() as conn:                         # gone from the schedule now, not at the next check
+            conn.execute("UPDATE dvr_timer SET removed_at = ? WHERE timer_id = ? AND removed_at IS NULL", (db.now(), timer_id))
+        return reply(True, "Cancelled.")
+
     # ------------------------------------------------------------------ playing a title on a TV
     def play_by_url(d, body, prior_steps=()):
         """Hand the device a stream URL (no Jellyfin app or session involved)."""

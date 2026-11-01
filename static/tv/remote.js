@@ -47,6 +47,7 @@ function renderStatus() {
   const note = $('#pairNote'); if (note) note.hidden = !(st && st.needsPairing);
 }
 
+const REC = {msg: '', ok: true};      // the answer to the last Record press, kept so a redraw of Now playing does not wipe it
 // Now playing is part of the remote: what the TV is showing, with Jellyfin's own controls when it is playing a Jellyfin item.
 function renderNow() {
   const d = dev(), el = $('#now'); if (!d || !el) return;
@@ -61,6 +62,8 @@ function renderNow() {
     body = `<div class="np-title">${esc(itemLabel(n))}</div>
       <div class="np-sub">${now.playing ? '▶ playing' : '⏸ paused'} · ${clockText(key, len)}</div>
       ${clockBar(key, len)}
+      ${n.Type === 'TvChannel' ? `<div class="np-ctl"><button data-act="record" data-channel="${esc(n.Id)}" title="Record what is on now. If it started a while ago, only the rest is recorded.">⏺ Record this airing</button>
+        <button data-act="record" data-series="1" data-channel="${esc(n.Id)}" title="Record every new episode of this series">⏺ Record series</button></div><div class="np-sub" style="${REC.ok ? '' : 'color: var(--bad, #e66);'}">${esc(REC.msg)}</div>` : ''}
       ${s.SupportsRemoteControl ? `<div class="np-ctl"><button data-act="relseek" data-d="-30" title="Back 30 seconds">−30s</button>
         <button data-act="playstate" data-cmd="PlayPause">${now.playing ? '⏸ Pause' : '▶ Resume'}</button>
         <button data-act="relseek" data-d="30" title="Forward 30 seconds">+30s</button>
@@ -150,6 +153,13 @@ async function camCall(btn, path, body) {
   return r;
 }
 Object.assign(ACTIONS, {
+  record: async b => {
+    const series = !!b.dataset.series;
+    if (series && !confirm('Record every new episode of this series? It keeps recording until you cancel the rule in Jellyfin.')) return;
+    const res = await run(b, api('POST', devPath('/record'), {channelId: b.dataset.channel, series}));
+    REC.msg = (res && res.body) || 'No answer from SyncHub.'; REC.ok = !!(res && res.ok);
+    renderNow();
+  },
   cameras: async () => {
     CAM.steps = ''; $('#cam').showModal();
     await loadCameras(); await loadCamState();

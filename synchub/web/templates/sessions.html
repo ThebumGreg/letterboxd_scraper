@@ -23,6 +23,17 @@
         if (!isNaN(d)) el.textContent = d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
     });
     local();
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    live.addEventListener('click', async (ev) => {
+        const b = ev.target.closest('[data-cancel-timer]');
+        if (!b || !confirm(`Cancel the recording of ${b.dataset.name}?`)) return;
+        b.disabled = true;
+        try {
+            const res = await fetch(`/api/tv/dvr/timers/${encodeURIComponent(b.dataset.cancelTimer)}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify({ kind: 'timer' }) });
+            const data = await res.json().catch(() => ({}));
+            if (data.ok) b.closest('.mb-2')?.remove(); else { alert(data.body || 'Could not cancel it.'); b.disabled = false; }
+        } catch (e) { alert(e.message); b.disabled = false; }
+    });
     setInterval(async () => {
         if (document.hidden) return;
         try {

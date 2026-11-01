@@ -16,6 +16,7 @@ from synchub.ingest import letterboxd_ids
 from synchub.ingest import radarr as radarr_ingest
 from synchub.ingest import serializd as sz_ingest
 from synchub.ingest import sonarr as sonarr_ingest
+from synchub.notifications import emit
 
 logger = logging.getLogger(__name__)
 _LOCKS = {}
@@ -127,6 +128,9 @@ def sync_dvr():
         timers, rules = client.timers(), client.series_timers()
         with db.connection() as conn:
             result = dvr.sync_timers(conn, timers, rules)
+            problems = dvr.recording_problems(conn)
+            for pr in problems:
+                emit.notify(conn, "recording_problem", f"dvr:{pr['timer_id']}:{pr['kind']}", pr)
         return f"Jellyfin DVR: {result['timers']} timer(s), {result['series']} series rule(s)."
     return run("dvr", "Reading Jellyfin's recording schedule", work)
 
