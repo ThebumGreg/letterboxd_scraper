@@ -1,0 +1,18 @@
+# Installed by setup-player.sh (it fills in the paths); shown here so you can see what runs.
+[Unit]
+Description=SyncHub TV player
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+# A system user that may use the screen and graphics (groups video, render, input) and owns the checkout so the Update button can pull new code.
+User=synchubplayer
+SupplementaryGroups=video render input
+ExecStart=/usr/bin/python3 /opt/synchub-player/player/synchub_player.py --config /etc/synchub-player.ini
+# A command from SyncHub (Update, Restart) ends the program on purpose; systemd starts it again with the new code.
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -67,7 +67,7 @@ RULES = (
     ("resolution_center", "resolution"), ("api_resolution_*", "resolution"),
     ("ddns_*", "ddns"), ("api_ddns_*", "ddns"),
     ("library_*", "library"), ("api_library_*", "library"),
-    ("workers_*", "workers"), ("jobs_*", "workers"), ("api_worker*", "workers"), ("api_job*", "workers"), ("api_test_copy", "workers"),
+    ("workers_*", "workers"), ("players_*", "workers"), ("jobs_*", "workers"), ("api_worker*", "workers"), ("api_player*", "workers"), ("api_job*", "workers"), ("api_test_copy", "workers"),
     ("storage_page", "storage"), ("api_storage*", "storage"),
     ("tv_setup*", "tv_setup"), ("api_tv_setup*", "tv_setup"), ("tv_*", "tv"), ("api_tv_*", "tv"),
     ("tools", "tools"), ("trigger", "tools"), ("export_csv", "tools"), ("api_tools_*", "tools"),

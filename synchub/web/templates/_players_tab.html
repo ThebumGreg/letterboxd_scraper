@@ -1,0 +1,48 @@
+<!-- synchub/web/templates/_players_tab.html: the Players tab of the Media page -->
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+        <h3 class="visually-hidden">Players</h3>
+        <p class="text-body-secondary mb-0">The small PCs behind your TVs. Like workers they only call out to SyncHub, with a token each, and SyncHub is the master. This step connects and manages them (status, update, restart, logs); playing media on them comes next.</p>
+    </div>
+    <button type="button" class="btn btn-success" id="addPlayerBtn"><i class="bi bi-plus-lg" aria-hidden="true"></i> Add player</button>
+</div>
+<div id="playerMessage" class="alert d-none player-message" role="status"></div>
+
+<div id="players">{% include "_players_list.html" %}</div>
+
+<div class="modal fade" id="playerModal" tabindex="-1" aria-labelledby="playerModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <form class="modal-content" id="playerForm">
+            <div class="modal-header"><h5 class="modal-title" id="playerModalTitle">Add player</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+            <div class="modal-body">
+                <div class="mb-3"><label for="playerName" class="form-label">Name</label><input class="form-control" id="playerName" required maxlength="60" placeholder="player-living-room"></div>
+                <div class="mb-3"><label for="playerTv" class="form-label">TV it is plugged into</label><input class="form-control" id="playerTv" maxlength="60" placeholder="Front Room TV"><div class="form-text">Just a label for now. Optional.</div></div>
+                <div class="small text-danger" id="playerError" role="alert"></div>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-success">Save</button></div>
+        </form>
+    </div>
+</div>
+
+<div class="modal fade" id="playerSetupModal" tabindex="-1" aria-labelledby="playerSetupTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title" id="playerSetupTitle">Set up the player</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+            <div class="modal-body">
+                <p class="small">On the PC behind the TV (Ubuntu or Debian), run these commands. They contain the player's token, which is shown only now; copy it before you close this window.</p>
+                <pre class="p-3 border rounded small" id="playerSetupText" style="white-space:pre-wrap"></pre>
+                <p class="small text-body-secondary mb-0">The setup address must be one the PC can reach; if SyncHub shows <code>localhost</code> above, replace it with SyncHub's real address.</p>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" id="playerSetupCopy">Copy</button><button type="button" class="btn btn-success" data-bs-dismiss="modal">Done</button></div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="playerLogModal" tabindex="-1" aria-labelledby="playerLogTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title" id="playerLogTitle">Player log</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+            <div class="modal-body"><div class="small text-body-secondary mb-2" id="playerLogStatus"></div><pre class="small" id="playerLogText" style="white-space:pre-wrap"></pre></div>
+        </div>
+    </div>
+</div>

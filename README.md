@@ -8,6 +8,7 @@
 |---|---|
 | Install SyncHub on Unraid or Docker, move a database, back up and restore | [docs/DEPLOY.md](docs/DEPLOY.md) |
 | Set up, update or fix a worker PC (one command, then everything on the Workers page) | [docs/WORKERS.md](docs/WORKERS.md) |
+| Set up a small PC behind a TV as a player (first step: connect and manage it) | [docs/PLAYERS.md](docs/PLAYERS.md) |
 | Update SyncHub and see per-release notes | [docs/UPGRADE.md](docs/UPGRADE.md) and [CHANGELOG.md](CHANGELOG.md) |
 | Learn what each part of the app does | [docs/FEATURES.md](docs/FEATURES.md) |
 | Use or extend the TV remote, or add camera feeds | [docs/TV_REMOTE.md](docs/TV_REMOTE.md), [docs/CAMERAS.md](docs/CAMERAS.md) |

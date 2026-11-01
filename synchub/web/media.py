@@ -12,6 +12,7 @@ TABS = (
     ("versions", "Versions", "library_versions_page", "Smaller extra copies of big films and Dolby Vision 7 conversions, for you to approve"),
     ("originals", "Originals", "workers_originals_page", "Original files kept after a file was replaced: restore, keep longer or delete"),
     ("workers", "Workers", "workers_page", "The PCs that do the heavy work, and the hardware behind each"),
+    ("players", "Players", "players_page", "The small PCs behind your TVs that play media, controlled from here"),
     ("jobs", "Jobs", "jobs_page", "What the workers have been asked to do and how it is going"),
     ("storage", "Storage", "storage_page", "The shares the workers mount"),
     ("options", "Options", "library_options_page", "Where files go, when films are compressed, previews and conversion profiles"),
@@ -28,6 +29,9 @@ def _data(key, conn):
     if key == "options":
         from synchub.web import library
         return library.overview(conn)
+    if key == "players":
+        from synchub.web import players_web
+        return players_web.snapshot(conn)
     if key in ("workers", "jobs"):
         from synchub.web import fleet
         return fleet.snapshot(conn)

@@ -14,6 +14,8 @@ New states need no code or schema change: add a row to `state_def` and have a sc
 
 **Storage** (Media menu) defines the Unraid shares the workers use: a short name, SMB or NFS, the server address, the share, and the folder every worker mounts it at, plus, once, the **Share login** (kept encrypted, given only to a worker that proves its token). SyncHub cannot mount anything on a worker PC itself, so `setup-worker.sh` writes the `/etc/fstab` lines, and a worker refuses any share whose `.synchub-root` marker file is missing or names a different share.
 
+**Players** (Media menu) are the small PCs behind your TVs, managed like workers (token each, only call out). Today you can add one, see it online with its mpv, graphics and connected screens, and Ping, Update, Restart and fetch its log from SyncHub; playing media comes next. See [PLAYERS.md](PLAYERS.md).
+
 The worker side is a small API (`/api/worker/v1/...`, token per worker, documented in [DESIGN_ENCODING.md](DESIGN_ENCODING.md), Appendix A) and an agent in `agent/` ([agent/README.md](../agent/README.md)). Workers ask for jobs; a job whose worker goes silent returns to the queue.
 
 ## Library

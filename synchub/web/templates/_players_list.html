@@ -1,0 +1,60 @@
+<!-- The TV players: rendered with the page and swapped in every few seconds. -->
+<div class="panel p-0 overflow-hidden">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0 stack-sm" id="playerTable">
+            <thead class="table-light">
+                <tr><th class="ps-4">Player</th><th>Status</th><th class="d-none d-md-table-cell">Machine</th><th class="d-none d-md-table-cell">Version</th><th class="d-none d-md-table-cell">Seen</th><th class="pe-4 text-end">Actions</th></tr>
+            </thead>
+            <tbody>
+                {% for p in players %}
+                <tr data-player="{{ p.id }}">
+                    <td class="ps-4">
+                        <div class="fw-bold">{{ p.name }}</div>
+                        <div class="small text-body-secondary">{% if p.tv_name %}TV: {{ p.tv_name }} &middot; {% endif %}token ...{{ p.token_hint or 'none' }}</div>
+                        <div class="small text-body-secondary d-md-none">{% if p.version %}v{{ p.version }} &middot; {% endif %}seen {{ p.seen }}</div>
+                    </td>
+                    <td>
+                        <span class="badge bg-{{ p.state_color }}{% if p.state_color in ['info', 'warning'] %} text-dark{% endif %}">{{ p.state }}</span>
+                        {% if p.waiting %}<div class="small text-body-secondary">{{ p.waiting }} waiting</div>{% endif %}
+                        {% if p.playing %}<div class="small">Playing: {{ p.playing }}</div>{% endif %}
+                    </td>
+                    <td class="small d-none d-md-table-cell">
+                        {{ p.hostname or p.os or '-' }}{% if p.hostname and p.os %}<div class="text-body-secondary">{{ p.os }}</div>{% endif %}
+                        <details class="mt-1"><summary class="text-body-secondary">Details</summary>
+                            <div class="text-body-secondary">{% if p.mpv %}mpv {{ p.mpv }}{% else %}mpv not found{% endif %}</div>
+                            {% for g in p.graphics %}<div class="text-body-secondary">{{ g }}</div>{% endfor %}
+                            {% for s in p.screens %}<div class="text-body-secondary" title="A screen the PC sees plugged in">Screen: {{ s }}</div>{% else %}<div class="text-body-secondary">No screen detected</div>{% endfor %}
+                            {% if p.uptime %}<div class="text-body-secondary">up {{ p.uptime }}</div>{% endif %}
+                            {% for c in p.commands %}<div class="text-body-secondary">{{ c.kind }}: {{ c.status }}{% if c.result %} ({{ c.result }}){% endif %}</div>{% endfor %}
+                        </details>
+                    </td>
+                    <td class="small d-none d-md-table-cell">{% if not p.version %}-{% else %}<span class="badge bg-{{ 'success' if p.version == app_version else 'warning text-dark' }}" title="{{ 'Matches this SyncHub' if p.version == app_version else 'SyncHub is ' ~ app_version ~ '. Press Update.' }}">{{ p.version }}</span>{% endif %}</td>
+                    <td class="small d-none d-md-table-cell">{{ p.seen }}</td>
+                    <td class="pe-4 text-end actions-cell">
+                        {% if not p.revoked and p.enabled %}
+                        <button type="button" class="btn btn-sm btn-outline-info" data-player-action="ping" data-id="{{ p.id }}" title="Ask the player to answer, to prove the link works">Ping</button>
+                        <button type="button" class="btn btn-sm btn-outline-info" data-player-logs="{{ p.id }}" data-name="{{ p.name }}" title="Fetch the player's own log"><i class="bi bi-card-text" aria-hidden="true"></i> Logs</button>
+                        <button type="button" class="btn btn-sm btn-outline-primary" data-player-action="update" data-id="{{ p.id }}"
+                                data-confirm="Update {{ p.name }} to the newest code now? Its program restarts itself when it is done."><i class="bi bi-arrow-repeat" aria-hidden="true"></i> Update</button>
+                        {% endif %}
+                        <div class="btn-group">
+                            <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" aria-label="More for {{ p.name }}">More</button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                <li><button type="button" class="dropdown-item" data-edit-player="{{ p.id }}" data-name="{{ p.name }}" data-tv="{{ p.tv_name }}">Edit name and TV</button></li>
+                                <li><button type="button" class="dropdown-item" data-player-action="restart" data-id="{{ p.id }}" data-confirm="Restart {{ p.name }}'s program? Anything playing stops.">Restart program</button></li>
+                                <li><button type="button" class="dropdown-item" data-player-action="{{ 'enable' if not p.enabled else 'disable' }}" data-id="{{ p.id }}">{{ 'Enable' if not p.enabled else 'Disable' }}</button></li>
+                                <li><button type="button" class="dropdown-item" data-player-action="rotate" data-id="{{ p.id }}" data-confirm="Make a new token for {{ p.name }}? The old one stops working at once.">New token</button></li>
+                                {% if not p.revoked %}<li><button type="button" class="dropdown-item" data-player-action="revoke" data-id="{{ p.id }}" data-confirm="Revoke {{ p.name }}'s token? It will be refused until you make a new one.">Revoke token</button></li>{% endif %}
+                                <li><hr class="dropdown-divider"></li>
+                                <li><button type="button" class="dropdown-item text-danger" data-player-action="delete" data-id="{{ p.id }}" data-confirm="Remove {{ p.name }}?">Remove</button></li>
+                            </ul>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="text-center text-body-secondary py-4">No players yet. Add one, then run the command it shows on the PC behind the TV.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>

@@ -1,0 +1,95 @@
+<script>
+(() => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const holder = document.getElementById('players');
+    if (!holder) return;
+    // These dialogs sit inside the Players tab; on <body> they show from any tab.
+    const modal = (id) => {
+        const el = document.getElementById(id);
+        if (el.parentElement !== document.body) document.body.appendChild(el);
+        return bootstrap.Modal.getOrCreateInstance(el);
+    };
+    const post = async (url, body) => {
+        try {
+            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(body || {}) });
+            return await res.json();
+        } catch (e) { return { ok: false, message: 'Could not reach the server.' }; }
+    };
+    const say = (text, ok) => { const box = document.getElementById('playerMessage'); box.className = 'alert player-message ' + (ok ? 'alert-success' : 'alert-danger'); box.textContent = text; };
+    const busy = () => document.querySelector('.modal.show, .dropdown-menu.show');
+    async function refresh() {
+        if (busy() || !document.getElementById('media-pane-players')?.classList.contains('active')) return;
+        try {
+            const res = await fetch('/players/fragment');
+            if (res.ok && !busy()) holder.innerHTML = await res.text();
+        } catch (e) { /* the next tick tries again */ }
+    }
+    setInterval(refresh, 5000);
+
+    let editing = null;
+    const form = document.getElementById('playerForm');
+    document.getElementById('addPlayerBtn').addEventListener('click', () => {
+        editing = null;
+        document.getElementById('playerModalTitle').textContent = 'Add player';
+        document.getElementById('playerName').value = ''; document.getElementById('playerTv').value = ''; document.getElementById('playerError').textContent = '';
+        modal('playerModal').show();
+    });
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const body = { name: document.getElementById('playerName').value, tv_name: document.getElementById('playerTv').value };
+        const out = await post(editing ? `/api/players/${editing}/edit` : '/api/players', body);
+        if (!out.ok) { document.getElementById('playerError').textContent = out.message; return; }
+        modal('playerModal').hide();
+        if (out.setup) showSetup(out);
+        say(out.message, true); refresh();
+    });
+    function showSetup(out) {
+        document.getElementById('playerSetupText').textContent = out.setup;
+        modal('playerSetupModal').show();
+    }
+    document.getElementById('playerSetupCopy').addEventListener('click', () => {
+        const text = document.getElementById('playerSetupText').textContent;
+        (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(() => say('Copied.', true), () => say('Select the text and copy it by hand.', false));
+    });
+
+    // Buttons inside the list (it is replaced every few seconds, so listen on the holder).
+    holder.addEventListener('click', async (event) => {
+        const edit = event.target.closest('[data-edit-player]');
+        if (edit) {
+            editing = edit.dataset.editPlayer;
+            document.getElementById('playerModalTitle').textContent = 'Edit player';
+            document.getElementById('playerName').value = edit.dataset.name; document.getElementById('playerTv').value = edit.dataset.tv || ''; document.getElementById('playerError').textContent = '';
+            modal('playerModal').show();
+            return;
+        }
+        const logs = event.target.closest('[data-player-logs]');
+        if (logs) { openLog(logs.dataset.playerLogs, logs.dataset.name); return; }
+        const act = event.target.closest('[data-player-action]');
+        if (!act || act.disabled) return;
+        if (act.dataset.confirm && !confirm(act.dataset.confirm)) return;
+        const out = await post(`/api/players/${act.dataset.id}/${act.dataset.playerAction}`);
+        if (out.setup) showSetup(out);
+        say(out.message || (out.ok ? 'Done.' : 'Failed.'), out.ok); refresh();
+    });
+
+    let timer = null;
+    async function openLog(id, name) {
+        document.getElementById('playerLogTitle').textContent = `Log of ${name}`;
+        document.getElementById('playerLogText').textContent = '';
+        document.getElementById('playerLogStatus').textContent = 'Asking the player...';
+        modal('playerLogModal').show();
+        await post(`/api/players/${id}/log`);
+        let tries = 0;
+        clearInterval(timer);
+        timer = setInterval(async () => {
+            const res = await fetch(`/api/players/${id}/log`).then((r) => r.json()).catch(() => null);
+            if (res && res.log && !res.pending) {
+                clearInterval(timer);
+                document.getElementById('playerLogStatus').textContent = `Received ${res.log.received}${res.log.truncated ? ' (shortened)' : ''}.`;
+                document.getElementById('playerLogText').textContent = res.log.content;
+            } else if (++tries > 20) { clearInterval(timer); document.getElementById('playerLogStatus').textContent = 'The player has not answered yet. Try again in a moment.'; }
+        }, 2000);
+    }
+    document.getElementById('playerLogModal').addEventListener('hidden.bs.modal', () => clearInterval(timer));
+})();
+</script>
