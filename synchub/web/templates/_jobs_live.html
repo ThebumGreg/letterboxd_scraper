@@ -7,6 +7,26 @@
                 <tr><th class="ps-4">Job</th><th>Status</th><th style="min-width: 180px;">Progress</th><th class="d-none d-md-table-cell">Worker</th><th class="d-none d-md-table-cell">Tries</th><th class="d-none d-md-table-cell">Updated</th><th class="pe-4 text-end">Actions</th></tr>
             </thead>
             <tbody>
+                {% for t in tasks or [] %}
+                <tr data-task="{{ t.id }}">
+                    <td class="ps-4">
+                        <a href="#" class="fw-bold text-decoration-none" data-task-details="{{ t.id }}">{{ t.title }}</a>
+                        <div class="small text-body-secondary">{{ t.kind }} &middot; {{ t.how }}<span class="d-md-none"> &middot; {{ t.updated }}</span></div>
+                    </td>
+                    <td><span class="badge bg-{{ t.color }}">{{ t.label }}</span></td>
+                    <td class="small">
+                        {% if t.message %}<div class="text-body-secondary">{{ t.message }}</div>{% endif %}
+                        {% if t.status == 'running' %}<div class="progress mt-1" style="height: 5px;" role="progressbar" aria-label="Working"><div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%"></div></div>{% endif %}
+                        {% if t.status == 'failed' and t.error %}<div class="text-danger">{{ t.error[:200] }}{% if t.error|length > 200 %}&hellip;{% endif %}</div>{% endif %}
+                    </td>
+                    <td class="small d-none d-md-table-cell">{{ t.worker_name or '-' }}</td>
+                    <td class="small d-none d-md-table-cell">-</td>
+                    <td class="small d-none d-md-table-cell">{{ t.updated }}</td>
+                    <td class="pe-4 text-end actions-cell">
+                        {% if t.status == 'queued' %}<button type="button" class="btn btn-sm btn-outline-danger" data-task-cancel="{{ t.id }}" data-confirm="Take this request back?">Cancel</button>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
                 {% for j in jobs %}
                 {% set color = {'queued': 'secondary', 'needs_you': 'warning', 'completed': 'success', 'failed': 'danger', 'cancelled': 'secondary'}.get(j.lifecycle.code, 'primary') %}
                 <tr data-job="{{ j.id }}">
@@ -41,7 +61,7 @@
                     </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="7" class="text-center text-body-secondary py-4">No jobs yet.</td></tr>
+                {% if not tasks %}<tr><td colspan="7" class="text-center text-body-secondary py-4">No jobs yet.</td></tr>{% endif %}
                 {% endfor %}
             </tbody>
         </table>

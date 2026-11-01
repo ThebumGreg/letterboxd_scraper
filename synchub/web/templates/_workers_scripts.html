@@ -280,6 +280,26 @@
             return;
         }
 
+        const taskCancel = e.target.closest('[data-task-cancel]');
+        if (taskCancel) {
+            if (taskCancel.dataset.confirm && !confirm(taskCancel.dataset.confirm)) return;
+            const data = await post(`/api/worker-tasks/${taskCancel.dataset.taskCancel}/cancel`);
+            say(data.message || (data.ok ? 'Done.' : 'Failed.'), data.ok);
+            refresh();
+            return;
+        }
+
+        const taskDetails = e.target.closest('[data-task-details]');
+        if (taskDetails) {
+            e.preventDefault();
+            const res = await fetch(`/api/worker-tasks/${taskDetails.dataset.taskDetails}`);
+            const data = await res.json();
+            if (!data.ok) { say(data.message || 'Could not load the task.', false); return; }
+            renderTask(data.task);
+            modal('jobModal').show();
+            return;
+        }
+
         const details = e.target.closest('[data-job-details]');
         if (details) {
             e.preventDefault();
@@ -290,6 +310,27 @@
             modal('jobModal').show();
         }
     });
+
+    function renderTask(task) {
+        const body = document.getElementById('jobBody');
+        body.textContent = '';
+        stopLog();
+        document.getElementById('jobModalTitle').textContent = task.title;
+        const facts = [['Status', task.label], ['Worker', task.worker_name], ['How', task.how], ['What happened', task.message], ['Error', task.error],
+                       ['Asked', task.created_at], ['Started', task.started_at], ['Finished', task.finished_at]];
+        const list = document.createElement('dl');
+        list.className = 'row small';
+        facts.filter(([, value]) => value).forEach(([label, value]) => {
+            const dt = document.createElement('dt'); dt.className = 'col-sm-3'; dt.textContent = label;
+            const dd = document.createElement('dd'); dd.className = 'col-sm-9'; dd.textContent = value;
+            list.append(dt, dd);
+        });
+        body.appendChild(list);
+        const title = document.createElement('h6'); title.textContent = task.kind === 'update' ? 'Update helper log' : 'Results'; body.appendChild(title);
+        const pre = document.createElement('pre'); pre.className = 'p-2 rounded border'; pre.style.whiteSpace = 'pre-wrap';
+        pre.textContent = task.log || (task.status === 'queued' || task.status === 'running' ? 'Nothing reported yet.' : 'No log was sent.');
+        body.appendChild(pre);
+    }
 
     function renderJob(job) {
         const body = document.getElementById('jobBody');

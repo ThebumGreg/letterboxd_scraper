@@ -43,6 +43,7 @@ Other options: `--mode native` (python3, ffmpeg and a systemd service, no Docker
 | Restart | More → **Restart worker** | Restarts the container within a minute; running jobs resume. |
 | Look at the log | **Logs** | Fetches the worker's own log. |
 | Compare CPU and GPU | **Run benchmark** | Times each working encoder on a 30 second clip and scores the quality; the result stays under *Last benchmark*. |
+| Follow an update or benchmark | **Media > Jobs** | Each Update, Run benchmark and automatic update appears as a row (Queued, Running, Completed or Failed) with its log; a request that has not started can be cancelled there. |
 | Change settings | More → **Edit name, tags, settings** | Applied by the worker within a minute; no PC login. |
 
 The settings: **video encoder** (automatic, CPU only, or a given GPU type); **GPU encodes at once** (keep 1 for integrated graphics: a job over the limit encodes on the CPU instead of waiting); **copy speed limit**; **files analysed at once in a scan**; **log detail**; **slots** (jobs at once; this is what the worker really runs); **update window** and **update automatically**. A setting left at its default is not sent, so the PC's own value (an old `.env` or ini) still applies.

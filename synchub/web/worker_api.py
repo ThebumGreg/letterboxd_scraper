@@ -158,6 +158,7 @@ def register(app):
             resume = jobs.resume_for(conn, worker["id"], data["active"]) if isinstance(data.get("active"), list) else []
             release = jobs.release_for(conn, data["holding"]) if isinstance(data.get("holding"), list) else []
             free_bytes = data.get("free_bytes")
+            workers.benchmark_polled(conn, worker)
             cleanup.sweep(conn)                                                  # sources whose waiting time is over get their deletion job before this claim
             claimed = jobs.claim(conn, worker, data.get("free_slots") or 0, free_bytes if isinstance(free_bytes, (int, float)) else None)
             downloads.process(conn)

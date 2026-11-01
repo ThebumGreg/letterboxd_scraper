@@ -348,6 +348,8 @@ fi
 touch "$CHECKED"; rm -f "$STATE/waiting"
 
 previous="$(agent_version HEAD)"
+# Tells SyncHub the update has begun, so the Jobs page shows it running. Best effort: nothing is kept for later if SyncHub cannot be reached.
+api /update/report "{\"status\":\"started\",\"commit\":\"$short\"}" >/dev/null 2>&1 || true
 if ! git_run merge --ff-only --quiet "$REMOTE" 2>"$STATE/git.err"; then
     error="git merge --ff-only failed: $(tail -n3 "$STATE/git.err")"
     echo "$REMOTE" > "$STATE/failed"; log "FAILED $error"
