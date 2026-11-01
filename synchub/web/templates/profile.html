@@ -13,7 +13,7 @@
         {% if person.has_pin %}<span class="badge bg-success"><i class="bi bi-lock-fill" aria-hidden="true"></i> PIN set</span>{% else %}<span class="badge bg-warning text-dark">No PIN</span>{% endif %}
         {% if person.as_guest %}<span class="badge bg-secondary" title="Anyone on the network can choose a profile that has no PIN, so until it has one it gets the Guests pages and rating limit, whatever is set below.">guest limits apply</span>{% endif %}
         {% if person.locked_for %}<span class="badge bg-danger">locked for {{ person.locked_for }} s after wrong tries</span>{% endif %}
-        {% if person_is_admin %}<span class="badge bg-dark">admin alerts</span>{% endif %}
+        {% if person_is_admin %}<span class="badge bg-secondary">admin alerts</span>{% endif %}
     </div>
 </div>
 

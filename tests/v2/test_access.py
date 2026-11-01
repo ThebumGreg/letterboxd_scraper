@@ -460,16 +460,16 @@ def test_the_menu_groups_workers_library_and_storage_and_tools_logs_and_payloads
     sign_in(browser, pid)
     shown = menu(text(browser.get("/")))
     assert shown["links"] == ["Dashboard", "Remote", "Settings"]
-    assert shown["dropdowns"] == {"Discover": ["New &amp; trending", "Find &amp; request", "My watchlist"], "Media": ["Library", "Resolution Center"],       # Workers and Storage are tabs of Library
+    assert shown["dropdowns"] == {"Discover": ["New &amp; trending", "Find &amp; request", "My watchlist"], "Media": ["Library", "Versions", "Originals", "Workers", "Jobs", "Storage", "Options", "Resolution Center"],
                                   "System": ["Tools &amp; Operations", "System status", "Sessions", "What it&#39;s doing now", "Logs", "Jellyfin events", "Payloads", "Dynamic DNS", "People", "Remote Apps", "TVs", "Remote Tools"]}
     page = text(browser.get("/"))
-    assert re.findall(r'class="dropdown-header">(.*?)</h6>', page) == ["Run", "Monitor", "Admin", "TV"]
+    assert re.findall(r'class="dropdown-header">(.*?)</h6>', page) == ["Matching", "Run", "Monitor", "Admin", "Remote"]
 
 
 def test_the_menu_shows_only_what_the_person_may_open(browser, people):
     sign_in(browser, people["cara"], "1357")
     shown = menu(text(browser.get("/library")))
-    assert shown == {"links": [], "dropdowns": {"Media": ["Library"]}}
+    assert shown == {"links": [], "dropdowns": {"Media": ["Library", "Versions", "Originals", "Workers", "Jobs", "Options"]}}
     sign_in(browser, people["bob"], "2468")
     assert menu(text(browser.get("/"))) == {"links": ["Dashboard"], "dropdowns": {"Discover": ["New &amp; trending", "Find &amp; request"]}}
 
@@ -531,7 +531,7 @@ def test_a_menu_heading_with_nothing_under_it_is_left_out(browser, v2, conn):
     pid = add_profile(conn, "Mon", "logs,tv", "3333")
     sign_in(browser, pid, "3333")
     page = text(browser.get("/logs"))
-    assert re.findall(r'class="dropdown-header">(.*?)</h6>', page) == ["Monitor", "TV"]
+    assert re.findall(r'class="dropdown-header">(.*?)</h6>', page) == ["Monitor", "Remote"]
     assert menu(page)["dropdowns"] == {"System": ["System status", "Sessions", "What it&#39;s doing now", "Logs", "Jellyfin events", "Remote Apps"]}
 
 

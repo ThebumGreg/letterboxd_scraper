@@ -211,7 +211,7 @@ async function loadNotices() {
 function renderNotices() {   // one at a time, so a notice never pushes the remote off a phone screen
   const el = $('#notices'); if (!el) return;
   const seen = seenNotices(), unseen = S.notices.filter(n => !seen.includes(n.id)), n = unseen[0];
-  el.innerHTML = !n ? '' : `<div class="notice" role="status"><div class="ntext"><b>${esc(n.title)}</b>${unseen.length > 1 ? ` <span class="dim small">(${unseen.length - 1} more)</span>` : ''}<div class="small">${esc(n.body)}</div></div>
+  el.innerHTML = !n ? '' : `<div class="notice" role="status"><div class="ntext"><b>${esc(n.title)}</b>${unseen.length > 1 ? ` <span class="dim small">(${unseen.length - 1} more tip${unseen.length - 1 === 1 ? "" : "s"} after this one)</span>` : ''}<div class="small">${esc(n.body)}</div></div>
     <div class="nbtns">${n.href ? `<a class="tv-btn primary" href="${esc(n.href)}" data-notice="${esc(n.id)}">${esc(n.action || 'Open')}</a>` : ''}<button data-act="dismissNotice" data-id="${esc(n.id)}">Dismiss</button></div></div>`;
 }
 document.addEventListener('click', e => { const a = e.target.closest('[data-notice]'); if (a) markSeen(a.dataset.notice); });

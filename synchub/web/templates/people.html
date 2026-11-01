@@ -54,7 +54,7 @@
                             {% if o.as_guest %}<span class="badge bg-secondary" title="Anyone on the network can choose a profile that has no PIN, so until it has one it gets the Guests pages and rating limit, whatever is set on its page.">guest limits apply</span>{% endif %}
                             {% if o.locked_for %}<span class="badge bg-danger">locked for {{ o.locked_for }} s after wrong tries</span>{% endif %}{% endif %}
                             {% if prof.id == me %}<span class="badge bg-info text-dark">you</span>{% endif %}
-                            {% if prof.id in admin_ids %}<span class="badge bg-dark" title="Gets administrator alerts">admin alerts</span>{% endif %}</div></td>
+                            {% if prof.id in admin_ids %}<span class="badge bg-secondary" title="Gets administrator alerts">admin alerts</span>{% endif %}</div></td>
                         <td>{{ prof.letterboxd_username or '—' }}</td>
                         <td>{{ prof.serializd_username or '—' }}</td>
                         <td><code class="small">{{ prof.jellyfin_user_id or '—' }}</code></td>

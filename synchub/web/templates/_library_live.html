@@ -12,7 +12,7 @@
         <span class="badge bg-primary" title="A worker is converting or copying these now">{{ migration.running }} running</span>
         {% if migration.waiting %}<span class="badge bg-warning text-dark" title="Held for a decision on the Workers page">{{ migration.waiting }} waiting for you</span>{% endif %}
         {% if migration.failed %}<span class="badge bg-danger">{{ migration.failed }} failed</span>{% endif %}
-        {% if migration.cancelled %}<span class="badge bg-dark" title="Cancelled files stay cancelled until you queue them again">{{ migration.cancelled }} cancelled</span>{% endif %}
+        {% if migration.cancelled %}<span class="badge bg-secondary" title="Cancelled files stay cancelled until you queue them again">{{ migration.cancelled }} cancelled</span>{% endif %}
         <span class="badge bg-success" title="Converted, copied into the destination share and verified">{{ migration.completed }} completed</span>
         <a class="ms-auto small" href="{{ url_for('jobs_page') }}">Jobs</a>
     </div>
@@ -21,7 +21,7 @@
     <div class="table-responsive mt-3"><table class="table table-sm align-middle mb-0">
         <thead><tr><th>Stopped</th><th>Why</th><th class="text-end"></th></tr></thead>
         <tbody>{% for a in attention %}<tr><td class="small"><a href="{{ url_for('library_record', record_id=a.id) }}">{{ a.file_name }}</a><div class="text-body-secondary">{{ a.root_name }}</div></td>
-            <td class="small"><span class="badge bg-{{ 'dark' if a.migration_cancelled_at else 'danger' }}">{{ 'cancelled' if a.migration_cancelled_at else 'failed' }}</span> {{ a.migration_last_error or '' }}</td>
+            <td class="small"><span class="badge bg-{{ 'secondary' if a.migration_cancelled_at else 'danger' }}">{{ 'cancelled' if a.migration_cancelled_at else 'failed' }}</span> {{ a.migration_last_error or '' }}</td>
             <td class="text-end"><button type="button" class="btn btn-sm btn-outline-primary" data-requeue="{{ a.id }}">Queue again</button></td></tr>{% endfor %}</tbody></table></div>
     {% endif %}
     {% if cleanup.days or cleanup.waiting or cleanup.queued or cleanup.failed %}
@@ -46,7 +46,7 @@
         {% if download_summary.problems %}<span class="badge bg-danger">{{ download_summary.problems }} need attention</span>{% endif %}
         <span class="badge bg-success">{{ download_summary.replaced }} replaced</span>
     </div>
-    <p class="small text-body-secondary mb-2 mt-2">When Radarr or Sonarr imports a file, a worker looks at it. If it needs tracks removed or an older format converted, the result replaces the file under the same name, the original is kept on the worker for {{ originals_days }} day{{ '' if originals_days == 1 else 's' }}, and Radarr/Sonarr and Jellyfin are told. {% if download_summary.mode == 'off' %}This is switched off: choose how it behaves under Settings below.{% endif %}</p>
+    <p class="small text-body-secondary mb-2 mt-2">When Radarr or Sonarr imports a file, a worker looks at it. If it needs tracks removed or an older format converted, the result replaces the file under the same name, the original is kept on the worker for {{ originals_days }} day{{ '' if originals_days == 1 else 's' }}, and Radarr/Sonarr and Jellyfin are told. {% if download_summary.mode == 'off' %}This is switched off: choose how it behaves on the Options tab.{% endif %}</p>
     {% if downloads %}
     <div class="table-responsive"><table class="table table-sm align-middle mb-0">
         <thead><tr><th>File</th><th>State</th><th class="text-end"></th></tr></thead>
@@ -118,7 +118,7 @@
             <thead class="table-light"><tr><th class="ps-4">Started</th><th>What</th><th style="min-width: 220px;">State</th><th>Found</th><th class="pe-4 text-end"></th></tr></thead>
             <tbody>
             {% for run in runs %}
-                {% set color = {'queued': 'secondary', 'running': 'primary', 'waiting': 'warning', 'completed': 'success', 'completed_with_errors': 'warning', 'failed': 'danger', 'cancelled': 'dark'}.get(run.status, 'secondary') %}
+                {% set color = {'queued': 'secondary', 'running': 'primary', 'waiting': 'warning', 'completed': 'success', 'completed_with_errors': 'warning', 'failed': 'danger', 'cancelled': 'secondary'}.get(run.status, 'secondary') %}
                 <tr data-run="{{ run.id }}">
                     <td class="ps-4 small">{{ run.when }}<div class="text-body-secondary">{{ run.started_by or '' }}</div></td>
                     <td>{% if run.kind == 'scan' %}Scan <strong>{{ run.root_name }}</strong>{% if run.prefix %}/{{ run.prefix }}{% endif %}{% if run.options.force %} <span class="badge bg-secondary">every file</span>{% endif %}

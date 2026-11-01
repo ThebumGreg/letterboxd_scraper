@@ -23,6 +23,9 @@
 {% for key, label, endpoint, help in tabs %}{{ panes[key].scripts|safe }}{% endfor %}
 <script>
 (() => {
+    // On a phone the tab row scrolls sideways: bring the open tab into view.
+    const open = document.querySelector('#mediaTabs .nav-link.active');
+    if (open && open.scrollIntoView) open.scrollIntoView({ block: 'nearest', inline: 'center' });
     // The address follows the tab, so a reload or a shared link opens the same one. Pollers on a hidden tab stand down.
     document.querySelectorAll('#mediaTabs [data-bs-toggle="tab"]').forEach((el) => {
         el.addEventListener('shown.bs.tab', () => { try { history.replaceState(null, '', el.dataset.mediaUrl + location.search.replace(/[?&]done=[^&]*/, '')); } catch (e) { /* the tab still works */ } });

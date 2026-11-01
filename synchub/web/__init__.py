@@ -21,12 +21,16 @@ NAV = (
     ("index", "Dashboard"),
     ("tv_remote_page", "Remote"),
     ("Discover", (("discover_page", "New & trending"), ("search_page", "Find & request"), ("watchlist_page", "My watchlist"))),
-    ("Media", (("library_page", "Library"), ("resolution_center", "Resolution Center"))),     # Workers, Jobs, Storage and Options are tabs of the Library page
+    ("Media", (                                                                 # these seven are the tabs of one page (synchub/web/media.py)
+        ("library_page", "Library"), ("library_versions_page", "Versions"), ("workers_originals_page", "Originals"),
+        ("workers_page", "Workers"), ("jobs_page", "Jobs"), ("storage_page", "Storage"), ("library_options_page", "Options"),
+        (None, "Matching"), ("resolution_center", "Resolution Center"),
+    )),
     ("System", (
         (None, "Run"), ("tools", "Tools & Operations"),
         (None, "Monitor"), ("status_page", "System status"), ("sessions_page", "Sessions"), ("activity_page", "What it's doing now"), ("logs_page", "Logs"), ("jellyfin_events_page", "Jellyfin events"), ("payloads_page", "Payloads"),
         (None, "Admin"), ("ddns_page", "Dynamic DNS"), ("people_page", "People"),
-        (None, "TV"), ("tv_settings_page", "Remote Apps"), ("tv_setup_devices_page", "TVs"), ("tv_setup_advanced_page", "Remote Tools"),
+        (None, "Remote"), ("tv_settings_page", "Remote Apps"), ("tv_setup_devices_page", "TVs"), ("tv_setup_advanced_page", "Remote Tools"),
     )),
     ("settings_page", "Settings"),
 )

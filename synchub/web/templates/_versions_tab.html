@@ -1,12 +1,12 @@
 <!-- synchub/web/templates/_versions_tab.html: the Versions tab of the Media page -->
 <div class="mb-3">
-    <h3 class="h4 mb-2">Versions</h3>
+    <h3 class="visually-hidden">Versions</h3>
     <p class="text-body-secondary mb-0">Two things for films that are already in the library. A <strong>smaller extra copy</strong> (for phones and remote viewing) is saved next to the film, and Jellyfin shows it as another version of the same film; the original is never touched. A <strong>Dolby Vision 7 to 8.1</strong> conversion fixes big 4K files that almost nothing can play directly, without re-encoding the picture. Nothing happens until you approve it. The list comes from the Library scan, so scan the share first.</p>
 </div>
 <div id="versionsMessage" class="alert d-none" role="status"></div>
 
 <p class="small text-body-secondary mb-4">
-    Extra copies are {{ 'recommended' if config.on else 'off' }}{% if config.on %} for films over {{ '%g'|format(config.min_gb) }} GB, as {{ config.height }}p &ldquo;{{ config.label }}&rdquo; copies{% endif %}; Dolby Vision 7 conversion is {{ 'recommended' if config.dv7 else 'off' }}.
+    Extra copies are {{ 'recommended' if config.on else 'off' }}{% if config.on %} for films over {{ '%g'|format(config.min_gb) }} GB, as {{ config.height }}p copies named &ldquo;{{ config.label }}&rdquo;{% endif %}; Dolby Vision 7 conversion is {{ 'recommended' if config.dv7 else 'off' }}.
     Change these in <a href="{{ url_for('library_options_page') }}">Options</a>, or per conversion profile.
 </p>
 
@@ -52,7 +52,7 @@
 </section>
 {% endmacro %}
 
-{{ rec_list('dv_remux', 'Dolby Vision 7 to 8.1', 'Almost no phone, Roku or Google TV plays profile 7 directly, so your server would have to convert it live. This changes the file in place, fast, without re-encoding; the original is kept on the worker for the retention period (Originals tab).', recommended.dv_remux, false) }}
+{{ rec_list('dv_remux', 'Dolby Vision 7 to 8.1', 'Almost no phone, Roku or Google TV plays profile 7 directly, so your server would have to convert it live. This changes the file in place, fast, without re-encoding the picture, so it takes minutes and the size stays about the same. The Dolby Vision enhancement layer is dropped (HDR10 and Dolby Vision 8.1 keep working). The original is kept on the worker for the retention period and can be restored from the Originals tab.', recommended.dv_remux, false) }}
 {{ rec_list('variant', 'Smaller extra copy', 'Saved next to the film as “Film (Year) - ' ~ config.label ~ '.mkv”. Change the height for a film in its row, or untick it to leave it out. It is made on a worker, on the CPU for HDR films, so a long film takes hours.', recommended.variant, true) }}
 
 <section class="mb-4">
