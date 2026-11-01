@@ -60,6 +60,16 @@
         </div>
     </div>
     <div class="col-md-6">
+        <div class="panel p-3 p-md-4 h-100 d-flex flex-column gap-3" id="liveSession">
+            <div>
+                <h5 class="m-0 text-success">Live TV session details</h5>
+                <p class="text-body-secondary m-0 mt-1">Start a live channel in Jellyfin, then press the button. It shows what Jellyfin reports for it, including what is on air. It leaves out keys, tokens and addresses, so you can copy it into the chat. It only reads from Jellyfin.</p>
+            </div>
+            <div><button type="button" class="btn btn-secondary btn-sm" id="showLiveSession">Show live session details</button></div>
+            <pre id="liveSessionResult" class="small mb-0 text-wrap" style="max-height: 24rem; overflow: auto;"></pre>
+        </div>
+    </div>
+    <div class="col-md-6">
         <div class="panel p-3 p-md-4 h-100 d-flex flex-column justify-content-between gap-3">
             <div>
                 <h5 class="m-0 text-success">Export</h5>
@@ -89,6 +99,16 @@ document.addEventListener("DOMContentLoaded", function() {
             out.innerHTML = bad + `<details><summary>${body.libraries.length} libraries</summary><ul>${libs}</ul></details>`;
         } catch (e) { out.innerHTML = `<span class="text-danger">${esc(e.message)}</span>`; }
         finally { checkBtn.disabled = false; }
+    });
+    const liveBtn = document.getElementById('showLiveSession'), liveOut = document.getElementById('liveSessionResult');
+    if (liveBtn) liveBtn.addEventListener('click', async () => {
+        liveBtn.disabled = true; liveOut.textContent = 'Asking Jellyfin...';
+        try {
+            const res = await fetch('/api/tools/live-session', {headers: {Accept: 'application/json'}});
+            const body = await res.json();
+            liveOut.textContent = !body.ok ? body.message : (body.sessions.length ? JSON.stringify(body.sessions, null, 2) : 'No one is watching live TV right now. Start a live channel in Jellyfin and press the button again.');
+        } catch (e) { liveOut.textContent = e.message; }
+        finally { liveBtn.disabled = false; }
     });
     document.querySelectorAll('[data-task-last]').forEach(el => {
         const val = el.textContent.trim();
