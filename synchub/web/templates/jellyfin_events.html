@@ -63,7 +63,7 @@
                     <td class="pe-4 small text-nowrap">{% if e.position_ticks is not none %}{{ ticks_to_time(e.position_ticks) }}{% if e.runtime_ticks %} / {{ ticks_to_time(e.runtime_ticks) }}{% endif %}{% endif %}{% if e.is_paused %} <span class="badge bg-warning text-dark">paused</span>{% endif %}{% if e.played_to_completion %} <span class="badge bg-success">finished</span>{% endif %}</td>
                 </tr>
             {% else %}
-                <tr><td colspan="5" class="text-center text-muted py-4">{% if f.type or f.user or f.q %}Nothing matches this filter.{% else %}No events kept yet.{% endif %}</td></tr>
+                <tr><td colspan="5" class="text-center text-body-secondary py-4">{% if f.type or f.user or f.q %}Nothing matches this filter.{% else %}No events kept yet.{% endif %}</td></tr>
             {% endfor %}
             </tbody>
         </table>

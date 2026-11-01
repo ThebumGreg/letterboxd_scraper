@@ -41,7 +41,7 @@
         if (!body) return;
         body.textContent = "";
         if (!rows.length) {
-            const tr = el("tr"); const td = el("td", "Nothing has been sent to you yet.", "text-center text-muted p-4"); td.colSpan = 4; tr.appendChild(td); body.appendChild(tr);
+            const tr = el("tr"); const td = el("td", "Nothing has been sent to you yet.", "text-center text-body-secondary p-4"); td.colSpan = 4; tr.appendChild(td); body.appendChild(tr);
             return;
         }
         rows.forEach((h) => {

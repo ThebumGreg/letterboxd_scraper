@@ -152,7 +152,7 @@
                         <td><span class="badge {{ badge.get(h.status, 'bg-secondary') }}">{{ h.status|capitalize }}</span>{% if h.error %}<div class="small text-body-secondary">{{ h.error }}</div>{% endif %}</td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="4" class="text-center text-muted p-4">Nothing has been sent to you yet.</td></tr>
+                    <tr><td colspan="4" class="text-center text-body-secondary p-4">Nothing has been sent to you yet.</td></tr>
                     {% endfor %}
                 </tbody>
             </table>

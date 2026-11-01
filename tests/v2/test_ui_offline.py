@@ -35,3 +35,20 @@ def test_no_badge_is_dark_on_the_dark_page():
     templates = Path(__file__).resolve().parents[2] / "synchub/web/templates"
     bad = [f.name for f in templates.glob("*.html") if re.search(r'class="badge bg-dark"|bg-\{\{ \'dark\'', f.read_text())]
     assert not bad, bad
+
+
+def test_the_jobs_summary_counts_cancelled_jobs_and_a_finished_job_says_finished(client, v2):
+    from synchub import jobs
+    with v2.connection() as conn:
+        done, cancelled = jobs.create(conn, "library", title="Done one"), jobs.create(conn, "library", title="Cancelled one")
+        conn.execute("UPDATE job SET status = 'done', stage = 'done', message = 'Verifying: 1016 MB of 1.1 GB' WHERE id = ?", (done,))
+        conn.execute("UPDATE job SET status = 'cancelled' WHERE id = ?", (cancelled,))
+    page = client.get("/jobs").get_data(as_text=True)
+    assert "1 done" in page and "1 cancelled" in page
+    assert "Finished." in page and "Verifying: 1016 MB" not in page
+
+
+def test_wide_tables_stack_on_a_phone(client):
+    page = client.get("/jobs").get_data(as_text=True)
+    assert 'class="table table-hover align-middle mb-0 stack-sm" id="jobTable"' in page
+    assert "stack-sm" in (STATIC / "css/synchub.css").read_text()

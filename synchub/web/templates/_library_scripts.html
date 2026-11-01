@@ -4,10 +4,25 @@
     const $ = (id) => document.getElementById(id);
     const live = $('libraryLive');
     let timer = null;
+    // Long lists show their first rows; "Show more" opens the rest, and stays open when the page refreshes itself.
+    const expanded = new Set();
+    function applyMore() {
+        live.querySelectorAll('[data-more]').forEach((row) => row.classList.toggle('d-none', !expanded.has(row.dataset.more)));
+        live.querySelectorAll('[data-toggle-more]').forEach((btn) => {
+            btn.textContent = expanded.has(btn.dataset.toggleMore) ? 'Show fewer' : (btn.dataset.toggleMore === 'runs' ? `Show ${btn.dataset.count} older` : `Show ${btn.dataset.count} more`);
+        });
+    }
+    live.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-toggle-more]');
+        if (!btn) return;
+        const key = btn.dataset.toggleMore;
+        if (expanded.has(key)) expanded.delete(key); else expanded.add(key);
+        applyMore();
+    });
     async function refresh() {
         try {
             const res = await fetch('/library/fragment');
-            if (res.ok && !document.querySelector('.modal.show') && document.getElementById('media-pane-library')?.classList.contains('active')) live.innerHTML = await res.text();
+            if (res.ok && !document.querySelector('.modal.show') && document.getElementById('media-pane-library')?.classList.contains('active')) { live.innerHTML = await res.text(); applyMore(); }
         } catch (e) { /* next time */ }
         schedule();
     }

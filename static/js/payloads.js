@@ -29,7 +29,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         if (filteredLogs.length === 0) {
-            tableBody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-muted">No payloads matched the current filters.</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-body-secondary">No payloads matched the current filters.</td></tr>';
             return;
         }
 
@@ -46,7 +46,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     <td class="text-capitalize fw-bold">${log.service}</td>
                     <td>
                         <div class="fw-bold">${log.event_type}</div>
-                        <div class="text-muted small text-truncate" style="max-width: 300px;" title="${log.endpoint}">${log.endpoint}</div>
+                        <div class="text-body-secondary small text-truncate" style="max-width: 300px;" title="${log.endpoint}">${log.endpoint}</div>
                     </td>
                     <td><span class="badge ${statusBadge}">${log.status_code === 0 ? "ERR" : log.status_code}</span></td>
                     <td>${log.duration_ms} ms</td>

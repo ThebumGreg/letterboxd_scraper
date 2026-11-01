@@ -71,7 +71,7 @@
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="6" class="text-center text-muted py-4">No profiles yet. Add one or import from Jellyfin to start scraping.</td>
+                        <td colspan="6" class="text-center text-body-secondary py-4">No profiles yet. Add one or import from Jellyfin to start scraping.</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -164,7 +164,7 @@
                     row.className = 'list-group-item d-flex justify-content-between align-items-center';
                     const info = document.createElement('div');
                     const name = document.createElement('strong'); name.textContent = u.name;
-                    const id = document.createElement('div'); id.className = 'small text-muted font-monospace'; id.textContent = u.id;
+                    const id = document.createElement('div'); id.className = 'small text-body-secondary font-monospace'; id.textContent = u.id;
                     info.append(name, id);
                     const form = document.createElement('form');
                     form.action = '{{ url_for("save_profile") }}'; form.method = 'POST'; form.className = 'm-0';

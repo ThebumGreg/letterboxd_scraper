@@ -1,6 +1,6 @@
 <!-- The live part of the Sessions page: swapped in every few seconds -->
 {% set watching = rows|selectattr('playing')|list %}
-<h4 class="mb-3">Watching now <small class="text-muted">({{ watching|length }})</small></h4>
+<h4 class="mb-3">Watching now <small class="text-body-secondary">({{ watching|length }})</small></h4>
 {% if error %}
 <div class="alert alert-warning" role="alert">Could not read Jellyfin's sessions: {{ error }}. Check the Jellyfin address and key under Settings.</div>
 {% endif %}
@@ -22,7 +22,7 @@
                     <td class="pe-4 small">{% if r.method %}<span class="badge bg-{{ r.method_color }}{% if r.method_color == 'warning' %} text-dark{% endif %}">{{ r.method }}</span>{% endif %}{% if r.why %}<div class="text-body-secondary">{{ r.why }}</div>{% endif %}</td>
                 </tr>
                 {% else %}
-                <tr><td colspan="5" class="text-center text-muted py-4">{{ 'Nobody is watching right now.' if not error else 'Nothing to show.' }}</td></tr>
+                <tr><td colspan="5" class="text-center text-body-secondary py-4">{{ 'Nobody is watching right now.' if not error else 'Nothing to show.' }}</td></tr>
                 {% endfor %}
             </tbody>
         </table>

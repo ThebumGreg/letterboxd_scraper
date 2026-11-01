@@ -5,6 +5,30 @@
     {% else %}Choose a share below and press <em>Start scan</em>. A worker on the <a href="{{ url_for('workers_page') }}">Workers</a> page does the looking; this page fills as files are analysed.{% endif %}</div>
 {% endif %}
 
+<div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3 mb-4" id="queueCards">
+    {% for g in groups %}
+    <div class="col">
+        <div class="panel h-100 p-3 d-flex flex-column" data-queue="{{ g.key }}">
+            <div class="d-flex justify-content-between align-items-start mb-1">
+                <h5 class="mb-0">{{ g.title }}</h5>
+                <span class="fs-4 fw-bold lh-1" aria-label="{{ g.total }} files">{{ g.total }}</span>
+            </div>
+            <div class="small mb-2">
+                {% if g.high %}<span class="badge bg-success">{{ g.high }} high</span>{% endif %}
+                {% if g.medium %}<span class="badge bg-warning text-dark">{{ g.medium }} medium</span>{% endif %}
+                {% if g.low %}<span class="badge bg-danger">{{ g.low }} low</span>{% endif %}
+            </div>
+            <p class="small text-body-secondary flex-grow-1">{{ g.hint }}</p>
+            <div class="d-flex gap-2 flex-wrap">
+                {% if g.total and g.key not in ('done', 'queued') %}<a class="btn btn-sm btn-success" href="{{ url_for('library_review', group=g.key) }}">Review one by one</a>{% endif %}
+                <a class="btn btn-sm btn-outline-secondary{% if not g.total %} disabled{% endif %}" href="{{ url_for('library_queue', group=g.key) }}"{% if not g.total %} aria-disabled="true" tabindex="-1"{% endif %}>Open list</a>
+                {% if g.key == 'needs' and missing_count %}<button type="button" class="btn btn-sm btn-outline-danger" data-forget-missing="{{ missing_count }}" title="Removes the records of files that are gone from their share. No file is touched.">Clear {{ missing_count }} missing</button>{% endif %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
 <div class="panel p-3 mb-4" id="migrationQueue">
     <div class="d-flex flex-wrap align-items-center gap-3">
         <h5 class="mb-0">Migration queue</h5>
@@ -20,9 +44,10 @@
     {% if attention %}
     <div class="table-responsive mt-3"><table class="table table-sm align-middle mb-0">
         <thead><tr><th>Stopped</th><th>Why</th><th class="text-end"></th></tr></thead>
-        <tbody>{% for a in attention %}<tr><td class="small"><a href="{{ url_for('library_record', record_id=a.id) }}">{{ a.file_name }}</a><div class="text-body-secondary">{{ a.root_name }}</div></td>
+        <tbody>{% for a in attention %}<tr{% if loop.index > 3 %} class="more-row d-none" data-more="stopped"{% endif %}><td class="small"><a href="{{ url_for('library_record', record_id=a.id) }}">{{ a.file_name }}</a><div class="text-body-secondary">{{ a.root_name }}</div></td>
             <td class="small"><span class="badge bg-{{ 'secondary' if a.migration_cancelled_at else 'danger' }}">{{ 'cancelled' if a.migration_cancelled_at else 'failed' }}</span> {{ a.migration_last_error or '' }}</td>
             <td class="text-end"><button type="button" class="btn btn-sm btn-outline-primary" data-requeue="{{ a.id }}">Queue again</button></td></tr>{% endfor %}</tbody></table></div>
+    {% if attention|length > 3 %}<button type="button" class="btn btn-sm btn-outline-secondary mt-2" data-toggle-more="stopped" data-count="{{ attention|length - 3 }}">Show {{ attention|length - 3 }} more</button>{% endif %}
     {% endif %}
     {% if cleanup.days or cleanup.waiting or cleanup.queued or cleanup.failed %}
     <p class="small text-body-secondary mt-3 mb-0"><i class="bi bi-trash3" aria-hidden="true"></i> Source clean-up: {% if cleanup.days %}sources are deleted {{ cleanup.days }} days after a verified copy.{% else %}switched off.{% endif %}
@@ -69,29 +94,6 @@
     {% else %}<p class="small text-body-secondary mb-0">No imports yet.</p>{% endif %}
 </div>
 
-<div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3 mb-4" id="queueCards">
-    {% for g in groups %}
-    <div class="col">
-        <div class="panel h-100 p-3 d-flex flex-column" data-queue="{{ g.key }}">
-            <div class="d-flex justify-content-between align-items-start mb-1">
-                <h5 class="mb-0">{{ g.title }}</h5>
-                <span class="fs-4 fw-bold lh-1" aria-label="{{ g.total }} files">{{ g.total }}</span>
-            </div>
-            <div class="small mb-2">
-                {% if g.high %}<span class="badge bg-success">{{ g.high }} high</span>{% endif %}
-                {% if g.medium %}<span class="badge bg-warning text-dark">{{ g.medium }} medium</span>{% endif %}
-                {% if g.low %}<span class="badge bg-danger">{{ g.low }} low</span>{% endif %}
-            </div>
-            <p class="small text-body-secondary flex-grow-1">{{ g.hint }}</p>
-            <div class="d-flex gap-2 flex-wrap">
-                {% if g.total and g.key not in ('done', 'queued') %}<a class="btn btn-sm btn-success" href="{{ url_for('library_review', group=g.key) }}">Review one by one</a>{% endif %}
-                <a class="btn btn-sm btn-outline-secondary{% if not g.total %} disabled{% endif %}" href="{{ url_for('library_queue', group=g.key) }}"{% if not g.total %} aria-disabled="true" tabindex="-1"{% endif %}>Open list</a>
-                {% if g.key == 'needs' and missing_count %}<button type="button" class="btn btn-sm btn-outline-danger" data-forget-missing="{{ missing_count }}" title="Removes the records of files that are gone from their share. No file is touched.">Clear {{ missing_count }} missing</button>{% endif %}
-            </div>
-        </div>
-    </div>
-    {% endfor %}
-</div>
 
 <h5 class="mb-2">Shares</h5>
 <div class="panel p-0 overflow-hidden mb-4">
@@ -104,7 +106,7 @@
                     <td class="text-end">{{ s.files }}</td><td class="text-end">{{ s.size }}</td><td class="text-end">{{ s.approved }}</td>
                     <td class="text-end">{{ s.missing or '-' }}</td><td class="text-end pe-4">{{ s.unreadable or '-' }}</td></tr>
             {% else %}
-                <tr><td colspan="6" class="text-center text-muted py-4">No shares yet. Add them on the <a href="{{ url_for('storage_page') }}">Storage</a> page.</td></tr>
+                <tr><td colspan="6" class="text-center text-body-secondary py-4">No shares yet. Add them on the <a href="{{ url_for('storage_page') }}">Storage</a> page.</td></tr>
             {% endfor %}
             </tbody>
         </table>
@@ -119,7 +121,7 @@
             <tbody>
             {% for run in runs %}
                 {% set color = {'queued': 'secondary', 'running': 'primary', 'waiting': 'warning', 'completed': 'success', 'completed_with_errors': 'warning', 'failed': 'danger', 'cancelled': 'secondary'}.get(run.status, 'secondary') %}
-                <tr data-run="{{ run.id }}">
+                <tr data-run="{{ run.id }}"{% if loop.index > 5 %} class="more-row d-none" data-more="runs"{% endif %}>
                     <td class="ps-4 small">{{ run.when }}<div class="text-body-secondary">{{ run.started_by or '' }}</div></td>
                     <td>{% if run.kind == 'scan' %}Scan <strong>{{ run.root_name }}</strong>{% if run.prefix %}/{{ run.prefix }}{% endif %}{% if run.options.force %} <span class="badge bg-secondary">every file</span>{% endif %}
                         {% else %}Duplicate search{% endif %}</td>
@@ -140,10 +142,11 @@
                     <td class="pe-4 text-end">{% if run.active %}<button type="button" class="btn btn-sm btn-outline-danger" data-cancel-run="{{ run.id }}" data-confirm="Stop this {{ 'scan' if run.kind == 'scan' else 'search' }}? What it already reported is kept.">Stop</button>{% endif %}</td>
                 </tr>
             {% else %}
-                <tr><td colspan="5" class="text-center text-muted py-4">No scans yet.</td></tr>
+                <tr><td colspan="5" class="text-center text-body-secondary py-4">No scans yet.</td></tr>
             {% endfor %}
             </tbody>
         </table>
     </div>
 </div>
+{% if runs|length > 5 %}<button type="button" class="btn btn-sm btn-outline-secondary mb-4" data-toggle-more="runs" data-count="{{ runs|length - 5 }}">Show {{ runs|length - 5 }} older</button>{% endif %}
 <div id="libraryActive" data-active="{{ 1 if active else 0 }}" hidden></div>
