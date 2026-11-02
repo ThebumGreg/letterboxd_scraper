@@ -245,14 +245,18 @@ def create(conn, subject_type, subject_id, by, mode="random", seconds=None, now=
     if live and live["status"] in ("queued", "making"):
         raise PreviewError("A preview of this file is already being made.")
     plans = plans_of(rec, approved=rec.get("approval_status") == v.APPROVAL_APPROVED)
-    size = size_policy.decide(rec, plans, size_policy.load(conn, profiles.effective(conn, rec)))
+    profile = profiles.effective(conn, rec)
+    size = size_policy.decide(rec, plans, size_policy.load(conn, profile))
     if size.profile is None:
         raise PreviewError("The size rules would leave this file alone, so there is nothing to preview. " + (size.summary or ""))
-    plan, _ = size_policy.apply({"change": dict(plans[0]) if plans else {}}, size, None)
+    base = {"change": dict(plans[0]) if plans else {}}
+    if profile["video_codec"] == "hevc":                      # the clip is made with the profile's own quality and speed, like the real job (the cap is added on top)
+        base["profile"] = profiles.for_plan(profile)
+    plan, _ = size_policy.apply(base, size, None)
     seconds = int(seconds or clip_seconds(conn))
     now = now or db.now()
     sig = signature(rec)
-    stats = {"plan": {**size.numbers, "duration": rec.get("duration_seconds")}, "notes": size.notes, "reasons": size.reasons, "duration": rec.get("duration_seconds")}
+    stats = {"plan": {**size.numbers, "duration": rec.get("duration_seconds"), "profile_name": profile["name"], "saved_target_gb": rec.get("size_target_gb")}, "notes": size.notes, "reasons": size.reasons, "duration": rec.get("duration_seconds")}
     preview_id = conn.execute(
         "INSERT INTO preview (subject_type, subject_id, record_id, title, mode, seconds, target_gb, signature, status, message, stats_json, source_bytes, created_at, updated_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'Waiting for a worker.', ?, ?, ?, ?)",

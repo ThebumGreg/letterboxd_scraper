@@ -279,6 +279,8 @@ def queue(conn, intake_id, by, now=None):
     if change.get("audio_add") or any(isinstance(c, dict) and c.get("kbps") for c in (change.get("audio_convert") or {}).values()):
         plan["needs"] = ["audio_add"]
     if size.profile is not None:                         # compress (or a quality-floor review the person has just accepted by approving)
+        if profile["video_codec"] == "hevc":              # the profile's own quality and speed, with the size cap on top
+            plan["profile"] = profiles.for_plan(profile)
         plan, dest_rel = size_policy.apply(plan, size, dest_rel)
     job_id = jobs.create(conn, "download", title=f"Replace: {rec['file_name']}", ref=(REF, row["id"]), source=(row["root_name"], row["relative_path"]), dest=(row["root_name"], dest_rel),
                          plan=plan, policy={"originals_retention_days": plan["originals_retention_days"]}, need_bytes=(rec["size_bytes"] or 0) * 2 + WORK_MARGIN_BYTES)

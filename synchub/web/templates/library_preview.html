@@ -48,7 +48,9 @@
         <dt class="col-sm-4 text-body-secondary fw-normal">This window</dt><dd class="col-sm-8">{{ p.clip.start|int // 60 }}:{{ '%02d' % (p.clip.start|int % 60) }} for {{ p.clip.length|round|int }} s</dd>
         <dt class="col-sm-4 text-body-secondary fw-normal">Video bits</dt><dd class="col-sm-8">{{ p.clip.source_video_kbps }} &rarr; {{ p.clip.encoded_video_kbps }} kbps{% if p.ratio %} ({{ (p.ratio * 100)|round|int }}% of the original){% endif %}</dd>
         {% if p.predicted_gb %}<dt class="col-sm-4 text-body-secondary fw-normal">Whole film, estimated</dt><dd class="col-sm-8">about {{ p.predicted_gb }} GB (from this window alone: a busier or calmer part will differ){% if p.size_gb %}, now {{ p.size_gb }} GB{% endif %}</dd>{% endif %}
-        <dt class="col-sm-4 text-body-secondary fw-normal">Settings</dt><dd class="col-sm-8">HEVC, quality {{ p.clip.crf }}{% if p.plan.target_video_kbps %}, capped near {{ p.plan.target_video_kbps }} kbps{% endif %}</dd>
+        {% if p.plan.profile_name %}<dt class="col-sm-4 text-body-secondary fw-normal">Profile</dt><dd class="col-sm-8">{{ p.plan.profile_name }}</dd>{% endif %}
+        <dt class="col-sm-4 text-body-secondary fw-normal">Settings</dt><dd class="col-sm-8">HEVC, quality {{ p.clip.crf }}{% if p.plan.target_video_kbps %}, at most {{ p.plan.target_video_kbps }} kbps (a limit: quality decides how much of it is used){% endif %}</dd>
+        {% if p.plan.saved_target_gb %}<dt class="col-sm-4 text-body-secondary fw-normal">Size target</dt><dd class="col-sm-8">{{ '%g' % p.plan.saved_target_gb }} GB saved for this film; it sets the limit above instead of the profile's ceiling</dd>{% endif %}
     </dl>
     {% if p.notes or p.reasons %}<ul class="small mt-2 mb-0">{% for r in p.reasons %}<li class="text-warning-emphasis">{{ r }}</li>{% endfor %}{% for n in p.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
     <p class="form-text mb-0 mt-2">If a clip will not play, your browser may not decode HEVC: use Download and open it in a video player. The clips are removed after {{ p.expires_at[:10] if p.expires_at else 'a few days' }}.</p>
