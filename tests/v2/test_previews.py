@@ -128,6 +128,17 @@ def test_only_one_preview_is_made_at_a_time_for_a_file(pipe):
         previews.create(pipe, "library_file", big, "greg")
 
 
+def test_the_preview_is_made_with_the_chosen_profile(pipe):
+    from synchub.library import profiles
+    profile_id = profiles.save(pipe, {"name": "Test high quality", "video_codec": "hevc", "crf": 16, "preset": "slow", "ten_bit": True, "audio_kbps": 256, "subtitles": "keep_all"}, "greg")
+    big = add(pipe, root="media", rel="Big/Big.mkv", name="Big (2001).mkv", size=45 * GIB)
+    pipe.execute("UPDATE library_file SET duration_seconds = 7200, media_type = 'Movie/Unknown', approved_profile_id = ? WHERE id = ?", (profile_id, big))
+    preview_id = previews.create(pipe, "library_file", big, "greg")
+    plan = json.loads(pipe.execute("SELECT j.plan FROM job j JOIN preview p ON p.job_id = j.id WHERE p.id = ?", (preview_id,)).fetchone()[0])
+    assert plan["profile"]["crf"] == 16 and plan["profile"]["preset"] == "slow" and plan["profile"].get("maxrate_kbps")
+    assert previews.describe(previews.get(pipe, preview_id))["plan"]["profile_name"] == "Test high quality"
+
+
 def test_the_preview_follows_its_job_and_needs_both_clips(pipe):
     made, _ = big_download(pipe)
     preview = previews.latest_for(pipe, "download_import", made)
