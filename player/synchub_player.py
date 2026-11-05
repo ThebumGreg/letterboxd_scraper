@@ -84,6 +84,35 @@ def os_name():
     return platform.platform()
 
 
+
+_BUILD = None
+
+
+def build_info():
+    """The commit this code was built from, and when: {"commit": "061cd30", "built": "..."}. The version number only changes at a release; the commit says what is really running.
+    Docker builds and installs write a BUILD_INFO file (commit=..., built=...) next to this file; a copy run straight from a git checkout asks git."""
+    global _BUILD
+    if _BUILD is not None:
+        return _BUILD
+    here = os.path.dirname(os.path.abspath(__file__))
+    info = {}
+    try:
+        with open(os.path.join(here, "BUILD_INFO"), encoding="utf-8") as fh:
+            info = dict(line.strip().split("=", 1) for line in fh if "=" in line)
+    except OSError:
+        pass
+    commit = (info.get("commit") or "").strip().lower()
+    if not (len(commit) >= 7 and all(c in "0123456789abcdef" for c in commit)):
+        try:
+            out = subprocess.run(["git", "-c", "safe.directory=*", "-C", here, "log", "-1", "--format=%h %cI"], capture_output=True, text=True, timeout=5)
+            commit, _, built = out.stdout.strip().partition(" ") if out.returncode == 0 else ("", "", "")
+            info["built"] = info.get("built") or built
+        except (OSError, subprocess.SubprocessError):
+            commit = ""
+    _BUILD = {"commit": commit[:7], "built": (info.get("built") or "").strip()[:40]}
+    return _BUILD
+
+
 def mpv_version():
     if not shutil.which("mpv"):
         return ""
@@ -271,7 +300,7 @@ def serve(cfg, log, api=None, sleep=time.sleep, rounds=None):
     delay = 5
     while True:
         try:
-            info = api.post("/register", {"protocol": PROTOCOL, "version": __version__, "os": os_name(), "hostname": socket.gethostname(), "capabilities": capabilities()})
+            info = api.post("/register", {"protocol": PROTOCOL, "version": __version__, **build_info(), "os": os_name(), "hostname": socket.gethostname(), "capabilities": capabilities()})
             log.info("registered with SyncHub as %s", info.get("name"))
             break
         except ApiError as exc:
@@ -316,7 +345,7 @@ def main(argv=None):
     parser.add_argument("--version", action="store_true")
     args = parser.parse_args(argv)
     if args.version:
-        print(__version__)
+        print(f"{__version__} ({build_info()['commit'] or 'unknown build'})")
         return 0
     try:
         cfg = load_config(args.config)
@@ -328,12 +357,12 @@ def main(argv=None):
     log = build_logger(cfg["state_dir"])
     if args.check:
         caps = capabilities()
-        print(f"player {cfg['name']} version {__version__} on {os_name()}")
+        print(f"player {cfg['name']} version {__version__} ({build_info()['commit'] or 'unknown build'}) on {os_name()}")
         print(f"  mpv: {caps['mpv'] or 'NOT FOUND (sudo apt install mpv)'}")
         print(f"  graphics: {', '.join(caps['graphics']) or 'none found (no /dev/dri render device)'}")
         print(f"  screens: {', '.join(caps['screens']) or 'none connected (check the HDMI cable and that the TV is on)'}")
         try:
-            Api(cfg).post("/register", {"protocol": PROTOCOL, "version": __version__, "os": os_name(), "hostname": socket.gethostname(), "capabilities": caps})
+            Api(cfg).post("/register", {"protocol": PROTOCOL, "version": __version__, **build_info(), "os": os_name(), "hostname": socket.gethostname(), "capabilities": caps})
             print("  SyncHub: token accepted")
             return 0
         except ApiError as exc:
@@ -341,7 +370,7 @@ def main(argv=None):
         except Unreachable as exc:
             print(f"  SyncHub: cannot be reached ({exc})")
         return 1
-    log.info("synchub-player %s starting, SyncHub at %s", __version__, cfg["url"])
+    log.info("synchub-player %s (%s) starting, SyncHub at %s", __version__, build_info()["commit"] or "unknown build", cfg["url"])
     serve(cfg, log)
     log.info("exiting so that the service manager starts the program again")
     return EXIT_RESTART

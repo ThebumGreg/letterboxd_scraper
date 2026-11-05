@@ -29,3 +29,6 @@ __pycache__/
 .env
 .vscode/
 .idea/
+
+# Written before a worker image build (commit and build time); see agent/update-worker.sh
+agent/BUILD_INFO

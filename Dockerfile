@@ -25,6 +25,9 @@ RUN pip install -r requirements.txt
 
 ARG VERSION=dev
 ARG REVISION=unknown
+ARG BUILD_DATE=
+# The code this image holds, for the footer and the Workers page (synchub/buildinfo.py).
+ENV SYNCHUB_COMMIT=${REVISION} SYNCHUB_BUILT=${BUILD_DATE}
 LABEL org.opencontainers.image.title="SyncHub" \
       org.opencontainers.image.description="Letterboxd/Serializd, Jellyfin, Radarr and Sonarr in one place, with a whole-house TV remote" \
       org.opencontainers.image.source="https://github.com/ThebumGreg/letterboxd_scraper" \

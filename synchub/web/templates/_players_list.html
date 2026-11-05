@@ -28,7 +28,7 @@
                             {% for c in p.commands %}<div class="text-body-secondary">{{ c.kind }}: {{ c.status }}{% if c.result %} ({{ c.result }}){% endif %}</div>{% endfor %}
                         </details>
                     </td>
-                    <td class="small d-none d-md-table-cell">{% if not p.version %}-{% else %}<span class="badge bg-{{ 'success' if p.version == app_version else 'warning text-dark' }}" title="{{ 'Matches this SyncHub' if p.version == app_version else 'SyncHub is ' ~ app_version ~ '. Press Update.' }}">{{ p.version }}</span>{% endif %}</td>
+                    <td class="small d-none d-md-table-cell">{% if not p.version %}-{% else %}<span class="badge bg-{{ 'success' if p.version == app_version else 'warning text-dark' }}" title="{{ 'Matches this SyncHub' if p.version == app_version else 'SyncHub is ' ~ app_version ~ '. Press Update.' }}">{{ p.version }}</span>{% if p.commit %}<div class="text-body-secondary" title="The code this player runs{% if p.built %}, built {{ p.built }}{% endif %}">{{ p.commit }}</div>{% endif %}{% endif %}</td>
                     <td class="small d-none d-md-table-cell">{{ p.seen }}</td>
                     <td class="pe-4 text-end actions-cell">
                         {% if not p.revoked and p.enabled %}
