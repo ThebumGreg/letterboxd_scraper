@@ -98,6 +98,12 @@ if [ "$(cd "$CONTEXT" && pwd -P)" != "$(cd "$SRC" && pwd -P)" ]; then
     done
 fi
 
+# Which code this image is made from: the commit of this checkout and the time of the build. The agent reports it, and the Workers page shows it.
+if [ "$DRY_RUN" != 1 ]; then
+    commit="$(git -c safe.directory='*' -C "$SRC" rev-parse HEAD 2>/dev/null || true)"
+    if [ -n "$commit" ]; then printf 'commit=%s\nbuilt=%s\n' "$commit" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CONTEXT/BUILD_INFO" 2>/dev/null || echo "WARNING: could not write $CONTEXT/BUILD_INFO; the Workers page will not show the commit." >&2; fi
+fi
+
 # A warning only: the mounts are yours to manage.
 if mount | grep -q ' /mnt/tower/'; then :; else echo "WARNING: nothing is mounted under /mnt/tower/. The worker will start but cannot reach the shares." >&2; fi
 

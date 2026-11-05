@@ -1,7 +1,7 @@
 """Pages for the worker fleet: the Workers page, its live fragment and the actions behind its buttons."""
 from flask import jsonify, render_template, request
 
-from synchub import __version__
+from synchub import __version__, buildinfo
 from synchub import db, jobs, protect, storage, versions, webhooks, workers
 from synchub.library import cleanup, migrate
 
@@ -128,11 +128,11 @@ def describe_update(report):
     if not report:
         return None
     if report.get("status") == "current":
-        return {"ok": True, "text": f"checked, already up to date ({webhooks.ago(report['at']) if report.get('at') else 'earlier'})", "error": None}
+        return {"ok": True, "text": f"checked, already up to date on {workers._build(report.get('version'), report.get('commit'))} ({webhooks.ago(report['at']) if report.get('at') else 'earlier'})", "error": None}
     if report.get("status") == "problem":
         return {"ok": False, "text": f"problem, see the log ({webhooks.ago(report['at']) if report.get('at') else 'earlier'})", "error": report.get("error"), "log": report.get("log")}
     ok = report.get("status") == "ok"
-    what = f"updated to {report.get('version') or report.get('commit') or 'the newest code'}" if ok else f"update to {report.get('commit') or 'the newest code'} failed"
+    what = f"updated to {workers._build(report.get('version'), report.get('commit')) if (report.get('version') or report.get('commit')) else 'the newest code'}" if ok else f"update to {report.get('commit') or 'the newest code'} failed"
     return {"ok": ok, "text": f"{what} ({webhooks.ago(report['at']) if report.get('at') else 'earlier'})", "error": None if ok else report.get("error"), "log": report.get("log")}
 
 
@@ -168,6 +168,8 @@ def describe_worker(w, root_names=(), update=None, host_seen=False):
              free=_gb(status.get("work_free_bytes")), originals=(f"{held} held, {_gb(status.get('originals_bytes')) or '?'}" if held else None),
              seen=webhooks.ago(w["last_seen"]) if w["last_seen"] else "never", roots=describe_roots(w, root_names), host=describe_host(w), auto_update=describe_update(update),
              remote={"seen": host_seen, "request": w.get("host_request"), "settings": {k: workers.setting(w, k) for k in workers.SETTINGS}})
+    w["commit"], w["built"] = w["capabilities"].get("commit") or "", w["capabilities"].get("built") or ""
+    w["build_differs"] = bool(w["commit"] and buildinfo.get()["commit"] and w["commit"] != buildinfo.get()["commit"] and w["version"] == __version__)
     w["benchmark"] = describe_benchmark(w)
     w["relay"] = describe_relay(w)
     return w
@@ -230,7 +232,7 @@ def snapshot(conn):
     for j in listed:
         j["waiting_for"] = _waiting_for(j, able)
     tasks = [describe_task(t) for t in workers.recent_tasks(conn, 30)]
-    return {"workers": [describe_worker(w, root_names, workers.last_update(conn, w["id"]), workers.host_seen(conn, w["id"])) for w in raw], "jobs": listed, "tasks": tasks, "counts": counts, "summary": summary, "root_names": root_names, "app_version": __version__}
+    return {"workers": [describe_worker(w, root_names, workers.last_update(conn, w["id"]), workers.host_seen(conn, w["id"])) for w in raw], "jobs": listed, "tasks": tasks, "counts": counts, "summary": summary, "root_names": root_names, "app_version": __version__, "app_build": buildinfo.get()}
 
 
 def _setup(conn, name, token=None):

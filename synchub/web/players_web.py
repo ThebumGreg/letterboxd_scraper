@@ -2,7 +2,7 @@
 from flask import jsonify, render_template, request
 
 from synchub import db, players, webhooks
-from synchub import __version__
+from synchub import __version__, buildinfo
 
 CLONE = "git clone https://github.com/ThebumGreg/letterboxd_scraper.git && cd letterboxd_scraper"
 
@@ -22,12 +22,13 @@ def describe(p, commands):
     caps = p["capabilities"]
     return {**p, "state": state, "state_color": color, "seen": webhooks.ago(p["last_seen"]) or "never", "mpv": caps.get("mpv") or "", "screens": caps.get("screens") or [],
             "graphics": caps.get("graphics") or [], "load": p["status"].get("load"), "uptime": p["status"].get("uptime_text") or "", "playing": p["now_playing"].get("title") or "",
-            "commands": commands}
+            "commands": commands,
+            "commit": caps.get("commit") or "", "built": caps.get("built") or ""}
 
 
 def snapshot(conn):
     items = players.list_all(conn)
-    return {"players": [describe(p, players.recent_commands(conn, p["id"], 3)) for p in items], "app_version": __version__}
+    return {"players": [describe(p, players.recent_commands(conn, p["id"], 3)) for p in items], "app_version": __version__, "app_build": buildinfo.get()}
 
 
 def _fail(message, status=400):
