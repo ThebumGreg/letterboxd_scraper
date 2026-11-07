@@ -26,11 +26,13 @@
                         {% else %}<span class="text-body-secondary">No workers yet</span>{% endfor %}
                     </td>
                     <td class="small">
-                        {% for label, path in [('Jellyfin', r.jellyfin_path), ('Radarr', r.radarr_path), ('Sonarr', r.sonarr_path)] if path %}<div>{{ label }}: <code>{{ path }}</code></div>{% else %}<span class="text-body-secondary">-</span>{% endfor %}
+                        {% for label, path in [('Jellyfin', r.jellyfin_path), ('Radarr', r.radarr_path), ('Sonarr', r.sonarr_path)] if path %}<div>{{ label }}: <code>{{ path }}</code></div>{% endfor %}
+                        {% for line in (r.jellyfin_extra_paths or '').split('\n') if line.strip() %}<div>Jellyfin: <code>{{ line }}</code></div>{% endfor %}
+                        {% if not (r.jellyfin_path or r.radarr_path or r.sonarr_path or r.jellyfin_extra_paths) %}<span class="text-body-secondary">-</span>{% endif %}
                     </td>
                     <td class="pe-4 text-end text-nowrap">
                         <button type="button" class="btn btn-sm btn-outline-secondary" data-edit-share="{{ r.id }}"
-                                data-values="{{ {'name': r.name, 'label': r.label or '', 'protocol': r.protocol, 'host': r.host or '', 'share': r.share, 'options': r.options, 'mount_point': r.mount_point, 'jellyfin_path': r.jellyfin_path or '', 'radarr_path': r.radarr_path or '', 'sonarr_path': r.sonarr_path or ''}|tojson|forceescape }}">Edit</button>
+                                data-values="{{ {'name': r.name, 'label': r.label or '', 'protocol': r.protocol, 'host': r.host or '', 'share': r.share, 'options': r.options, 'mount_point': r.mount_point, 'jellyfin_path': r.jellyfin_path or '', 'radarr_path': r.radarr_path or '', 'sonarr_path': r.sonarr_path or '', 'jellyfin_extra_paths': r.jellyfin_extra_paths or ''}|tojson|forceescape }}">Edit</button>
                         <button type="button" class="btn btn-sm btn-outline-danger" data-delete-share="{{ r.id }}" data-name="{{ r.name }}">Remove</button>
                     </td>
                 </tr>
@@ -97,7 +99,10 @@
                         <div class="col-md-4 mb-2"><label for="shareRadarr" class="form-label small">Radarr</label><input class="form-control form-control-sm" id="shareRadarr" placeholder="/data/media"></div>
                         <div class="col-md-4 mb-2"><label for="shareSonarr" class="form-label small">Sonarr</label><input class="form-control form-control-sm" id="shareSonarr" placeholder="/data/media"></div>
                     </div>
-                    <div class="form-text">Used later to tell Jellyfin where a finished file is, when its container sees the share under a different path.</div>
+                    <div class="mb-2"><label for="shareJellyfinMore" class="form-label small">Jellyfin: other mounts of this share (one per line)</label>
+                        <textarea class="form-control form-control-sm font-monospace" id="shareJellyfinMore" rows="3" placeholder="/OldMovie = Old Movies&#10;/KidsMovie = Kids Movies"></textarea>
+                        <div class="form-text">When Jellyfin mounts parts of this share separately, write each one as <code>the path Jellyfin sees = the folder inside the share</code>. They are used to find which files belong to a film and to tell Jellyfin about new files.</div></div>
+                    <div class="form-text">Used to tell Jellyfin where a finished file is, to match a film to its files, and (Radarr) to tell which movie a file belongs to, when a container sees the share under a different path.</div>
                 </details>
                 <div class="small text-danger" id="shareError" role="alert"></div>
             </div>

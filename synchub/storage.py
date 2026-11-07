@@ -92,7 +92,72 @@ def validate(data):
         if value and not _APP_PATH.match(value):
             raise StorageError(f"The path {label_text} sees must start with / (for example /data/media).")
         paths[key] = value.rstrip("/") or None if value else None
+    paths["jellyfin_extra_paths"] = normalize_mappings(data.get("jellyfin_extra_paths"))
     return {"name": name, "label": label, "protocol": protocol, "host": host or None, "share": share, "options": options, "mount_point": mount_point, **paths}
+
+
+# ---------------------------------------------------------------- how another program sees a share
+def parse_mappings(text):
+    """[(path the program sees, folder inside the share)] from lines like `/OldMovie = Old Movies`. Raises StorageError for a line that is not one."""
+    out = []
+    for number, line in enumerate(str(text or "").replace("\r", "").split("\n"), start=1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        prefix, sep, folder = (part.strip() for part in line.partition("="))
+        folder = folder.replace("\\", "/").strip("/")
+        if not sep or not _APP_PATH.match(prefix) or prefix.rstrip("/") == "" or ".." in folder.split("/") or "\x00" in folder:
+            raise StorageError(f"Line {number} should look like /OldMovie = Old Movies: the path Jellyfin sees, an equals sign, then the folder inside the share (leave it empty for the whole share).")
+        out.append((prefix.rstrip("/"), folder))
+    return out
+
+
+def normalize_mappings(text):
+    """The mappings as stored (one clean `path = folder` per line), or None when there are none."""
+    lines = [f"{prefix} = {folder}" for prefix, folder in parse_mappings(text)]
+    return "\n".join(lines) or None
+
+
+def app_mappings(root, service="jellyfin"):
+    """Every (path the program sees, folder inside the share) for one share: the plain path stands for the whole share, the extra lines for parts of it."""
+    out = []
+    base = (root.get(f"{service}_path") or "").rstrip("/")
+    if base:
+        out.append((base, ""))
+    if service == "jellyfin":
+        try:
+            out.extend(parse_mappings(root.get("jellyfin_extra_paths")))
+        except StorageError:
+            pass
+    return out
+
+
+def to_app_path(root, rel, service="jellyfin"):
+    """The path a program sees for a file in the share, using the mapping with the longest folder that holds it. None when no mapping covers the file."""
+    rel = str(rel or "").strip("/")
+    best = None
+    for prefix, folder in app_mappings(root, service):
+        if not folder or rel.casefold() == folder.casefold() or rel.casefold().startswith(folder.casefold() + "/"):
+            if best is None or len(folder) > len(best[1]):
+                best = (prefix, folder)
+    if best is None:
+        return None
+    rest = rel[len(best[1]):].strip("/")
+    return f"{best[0]}/{rest}" if rest else best[0]
+
+
+def from_app_path(roots, path, service="jellyfin"):
+    """(share name, path inside the share) for a path as a program sees it, using the longest matching prefix over every share. None when nothing matches."""
+    path = str(path or "").replace("\\", "/")
+    best = None
+    for root in roots:
+        for prefix, folder in app_mappings(root, service):
+            if path.startswith(prefix + "/") and (best is None or len(prefix) > len(best[0])):
+                best = (prefix, root["name"], folder)
+    if best is None:
+        return None
+    rest = path[len(best[0]) + 1:].strip("/")
+    return best[1], "/".join(p for p in (best[2], rest) if p)
 
 
 # ---------------------------------------------------------------- managing roots
