@@ -1,0 +1,84 @@
+{# Quality check pieces shared by the movie page, the Library record page and the Low quality page. #}
+{% macro size_text(n) %}{% if n %}{% if n >= 1073741824 %}{{ '%.1f'|format(n / 1073741824) }} GB{% else %}{{ '%.0f'|format(n / 1048576) }} MB{% endif %}{% endif %}{% endmacro %}
+
+{% macro quality_badge(q) %}
+{% set color = 'danger' if q.low else ('success' if q.result and q.result.grade == 'good' else ('secondary' if not q.result else ('warning text-dark' if q.result.grade in ('ok', 'poor') else 'danger'))) %}
+<span class="badge bg-{{ color }}" title="{% if q.result and q.result.score is not none %}Score {{ q.result.score|round|int }} of 100{% else %}No score yet{% endif %}">{{ q.label }}{% if q.result and q.result.score is not none and not q.low %} · {{ q.result.score|round|int }}{% endif %}</span>
+{% endmacro %}
+
+{# The findings and buttons for one file. `act` is true when the person may run checks. #}
+{% macro quality_detail(file_id, q, act) %}
+<div class="small" data-quality-file="{{ file_id }}">
+    <div class="d-flex flex-wrap align-items-center gap-2">
+        {{ quality_badge(q) }}
+        {% if q.result and q.result.finished_at %}<span class="text-body-secondary">checked {{ q.result.finished_at[:10] }}{% if not q.current %}, before the file or the rules changed{% endif %} · {{ q.result.samples }} parts sampled</span>{% endif %}
+        {% if q.check and q.check.status in ('queued', 'running') %}<span class="text-body-secondary">{{ q.check.message }}</span>{% endif %}
+        {% if q.check and q.check.status == 'failed' %}<span class="text-danger">The last check failed: {{ q.check.message }}</span>{% endif %}
+        {% if act and not (q.check and q.check.status in ('queued', 'running')) %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-check="{{ file_id }}">{{ 'Check again' if q.result else 'Check quality' }}</button>{% endif %}
+        {% if act and q.low %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-accept="{{ file_id }}" title="Stop flagging this file. It is flagged again only if the file changes.">Accept as is</button>{% endif %}
+        {% if act and q.accepted %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-accept="{{ file_id }}" data-undo="1">Flag it again</button>{% endif %}
+    </div>
+    {% if q.result and q.result.findings %}
+    <ul class="mb-0 mt-1 ps-3">{% for fnd in q.result.findings %}<li class="{{ 'text-danger' if fnd.severity == 'bad' else ('text-warning' if fnd.severity == 'warn' else 'text-body-secondary') }}">{{ fnd.text }}</li>{% endfor %}</ul>
+    {% elif q.result and q.result.score is not none %}<div class="text-body-secondary mt-1">Nothing wrong found in the sampled parts.</div>{% endif %}
+</div>
+{% endmacro %}
+
+{# One handler for every button above; include once per page. #}
+{% macro quality_script() %}
+<script>
+(() => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    async function send(url, body, button) {
+        button.disabled = true;
+        try {
+            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(body) });
+            const data = await res.json().catch(() => ({}));
+            button.title = data.message || '';
+            button.textContent = data.ok ? 'Done' : (data.message || 'Failed');
+            if (data.ok) setTimeout(() => location.reload(), 900); else button.disabled = false;
+        } catch (e) { button.textContent = 'Could not reach the server'; button.disabled = false; }
+    }
+    document.addEventListener('click', (e) => {
+        const check = e.target.closest('[data-quality-check]');
+        if (check) send('/api/library/quality/check', { file_id: check.dataset.qualityCheck }, check);
+        const accept = e.target.closest('[data-quality-accept]');
+        if (accept) send('/api/library/quality/accept', { file_id: accept.dataset.qualityAccept, undo: accept.dataset.undo === '1' }, accept);
+    });
+})();
+</script>
+{% endmacro %}
+
+{# "Your copies" on the movie page. `copies` comes from quality.copies(). #}
+{% macro copies_card(copies, act, media_id) %}
+<div class="panel p-3 p-md-4 mb-4" id="yourCopies">
+    <h5 class="mb-3">Your copies</h5>
+    {% if not copies.files %}
+    <p class="small text-body-secondary mb-0">No file of this film is in the Library yet. Scan its folder on the Library page, and check that the share has its Jellyfin path set on the Storage page.</p>
+    {% else %}
+    <div class="d-flex flex-wrap gap-2 mb-3">
+        <span class="badge bg-success"><i class="bi bi-film" aria-hidden="true"></i> Full quality copy: {{ copies.full_label }}</span>
+        {% if copies.remote %}<span class="badge bg-info text-dark"><i class="bi bi-phone" aria-hidden="true"></i> Remote copy: {{ copies.remote[0].height }}p, {{ size_text(copies.remote[0].size_bytes) }}</span>
+        {% elif copies.missing_remote %}<span class="badge bg-warning text-dark"><i class="bi bi-phone" aria-hidden="true"></i> No smaller copy for remote viewing</span>
+        {% else %}<span class="badge bg-secondary"><i class="bi bi-phone" aria-hidden="true"></i> No separate remote copy</span>{% endif %}
+    </div>
+    {% if copies.missing_remote %}<p class="small text-body-secondary">The full copy is above 1080p. A smaller copy plays on phones and away from home without transcoding. Create one on the <a href="{{ url_for('library_versions_page') }}">Versions</a> tab.</p>{% endif %}
+    {% for f in copies.files %}
+    <div class="border-top pt-2 mt-2">
+        <div class="d-flex flex-wrap justify-content-between gap-2">
+            <strong style="overflow-wrap: anywhere;">{{ f.name }}</strong>
+            <span class="text-body-secondary small">{% if f.is_extra %}extra version{% elif f is sameas copies.main %}full copy{% endif %}</span>
+        </div>
+        <dl class="sd-facts small mb-1">
+            <div><dt>Picture</dt><dd>{% if f.width and f.height %}{{ f.width }}×{{ f.height }}{% else %}unknown size{% endif %} · {{ f.picture }}{% if f.bit_depth %} · {{ f.bit_depth }}-bit{% endif %}</dd></div>
+            <div><dt>Video</dt><dd>{{ (f.codec or 'unknown')|upper }}{% if f.video_kbps %} · {{ '%.1f'|format(f.video_kbps / 1000) }} Mbps{% endif %}{% if f.bits_per_pixel is not none %} · {{ '%.3f'|format(f.bits_per_pixel) }} bits/pixel{% endif %}{% if f.fps %} · {{ '%g'|format(f.fps) }} fps{% endif %}</dd></div>
+            <div><dt>File</dt><dd>{{ size_text(f.size_bytes) }}{% if f.container %} · {{ f.container }}{% endif %}{% if f.integrity %} · file check: {{ f.integrity }}{% endif %}</dd></div>
+            <div><dt>Audio</dt><dd>{{ f.audio or 'unknown' }}{% if f.audio_languages %} ({{ f.audio_languages }}){% endif %}</dd></div>
+            {% if f.subtitles %}<div><dt>Subtitles</dt><dd>{{ f.subtitles }}</dd></div>{% endif %}
+        </dl>
+        {{ quality_detail(f.id, f.quality, act) }}
+    </div>
+    {% endfor %}
+    {% endif %}
+</div>
+{% endmacro %}

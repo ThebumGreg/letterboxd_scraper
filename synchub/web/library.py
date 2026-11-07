@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from flask import Response, jsonify, redirect, render_template, request, send_file, url_for
 
-from synchub import db, downloads, jobs, previews, settings, storage, versions
+from synchub import db, downloads, jobs, previews, quality, settings, storage, versions
 from synchub.library import cleanup, findings, migrate, profiles, recommend as rc, report, rule_steps, scan, size_policy, store
 from synchub.library import vocab as v
 from settings_validation import validate_setting
@@ -196,6 +196,7 @@ def register(app):
         with db.connection() as conn:
             size = size_policy.decide(rec, previews.plans_of(rec, approved=rec["approval_status"] == v.APPROVAL_APPROVED), size_policy.load(conn, chosen))
             latest = previews.latest_for(conn, "library_file", record_id)
+            data["quality_state"] = quality.state_for(conn, rec)
             data["quality"] = rule_steps.quality_facts(conn, rec, previews.plans_of(rec, approved=rec["approval_status"] == v.APPROVAL_APPROVED))
         preview_info = {"summary": size.summary or "The size rules would compress this file; watch a short window first.", "latest": previews.describe(latest) if latest else None} if size.profile is not None else None
         data.update(preview_info=preview_info, cfg=cfg, profiles=all_profiles, chosen_profile=chosen, rename_to=rc.rename_path(rec, cfg), source_cleanup=cleanup.source_days())

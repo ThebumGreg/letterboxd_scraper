@@ -1,5 +1,6 @@
 <!-- synchub/web/templates/movie_details.html -->
 {% extends "base.html" %}
+{% from "_quality.html" import copies_card, quality_script with context %}
 {% from "_macros.html" import rating_facts, state_badge, watchlist_button, watch_now, watch_badge, watch_unlinked with context %}
 
 {% block title %}{{ movie.title }} - Details{% endblock %}
@@ -77,9 +78,11 @@
         </div>
     </div>
 </div>
+{% if copies is not none %}{{ copies_card(copies, can('library'), movie.id) }}{% endif %}
 {% endblock %}
 
 {% block scripts %}
+{% if copies is not none %}{{ quality_script() }}{% endif %}
 <script>
 (() => {
     const token = document.querySelector('meta[name="csrf-token"]')?.content || '';

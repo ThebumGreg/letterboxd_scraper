@@ -918,6 +918,66 @@ def parse_vmaf(text):
     return float(found[-1]) if found else None
 
 
+QUALITY_FILTERS = ("blockdetect", "blurdetect", "idet", "freezedetect")
+QUALITY_SLICE_TIMEOUT = 900             # seconds one slice may take before it is given up on
+_ERROR_WORDS = re.compile(r"error|invalid|corrupt|missing|concealing|damaged|truncated|overread|illegal|not found|non-monoton|co located", re.I)
+_QUALITY_OWN_LINES = re.compile(r"blockdetect|blurdetect|Parsed_idet|freezedetect|^frame=|^size=|^video:|^\[out#|^Stream mapping|^Press|^Output|^Input|^  (Duration|Stream|Metadata|Side data|encoder|major_brand|minor_version|compatible_brands|creation_time|handler_name|vendor_id)")
+
+
+def quality_windows(duration, count, seconds, seed=0):
+    """(start, length) of `count` slices spread over the film, skipping the first and last 3 minutes (logos and credits) when the film is long enough. The seed nudges
+    every slice a little, so two checks of the same film do not look at exactly the same frames."""
+    if not duration or duration <= 0:
+        return []
+    length = min(float(seconds), float(duration))
+    margin = 180.0 if duration > 1500 else duration * 0.05
+    low, high = margin, max(margin, duration - margin - length)
+    if count <= 1 or high <= low:
+        return [(round(max(0.0, (duration - length) / 2), 3), length)]
+    step = (high - low) / (count - 1)
+    jitter = ((seed * 2654435761) % 1000) / 1000.0 * min(step * 0.4, 20.0)
+    return [(round(min(high, low + step * i + (jitter if 0 < i < count - 1 else 0.0)), 3), length) for i in range(count)]
+
+
+def quality_command(ffmpeg, source, start, length, filters, niceness=True):
+    """One slice, decoded once, measured by the filters that exist in this ffmpeg. Everything goes to the log so it can be read back."""
+    chain = []
+    if "blockdetect" in filters:
+        chain.append("blockdetect")
+    if "blurdetect" in filters:
+        chain.append("blurdetect")
+    if "idet" in filters:
+        chain.append("idet")
+    if "freezedetect" in filters:
+        chain.append("freezedetect=n=-60dB:d=2")
+    command = [ffmpeg, "-nostdin", "-hide_banner", "-v", "info", "-ss", f"{start:.3f}", "-t", f"{length:.3f}", "-i", source, "-map", "0:v:0", "-an", "-sn", "-dn"]
+    if chain:
+        command += ["-vf", ",".join(chain)]
+    command += ["-f", "null", "-"]
+    nice = shutil.which("nice") if niceness else None
+    return [nice, "-n", "10", *command] if nice else command
+
+
+def parse_quality(text, length):
+    """The numbers of one slice from ffmpeg's log: block and blur means, the share of interlaced frames, seconds of frozen picture and how many lines were decode errors."""
+    out = {"seconds": round(float(length), 1), "block": None, "blur": None, "interlaced": None, "freeze_seconds": 0.0, "errors": 0}
+    text = text or ""
+    found = re.findall(r"block mean:\s*([0-9.]+)", text)
+    if found:
+        out["block"] = round(float(found[-1]), 3)
+    found = re.findall(r"blur mean:\s*([0-9.]+)", text)
+    if found:
+        out["blur"] = round(float(found[-1]), 3)
+    idet = re.findall(r"Multi frame detection:\s*TFF:\s*(\d+)\s*BFF:\s*(\d+)\s*Progressive:\s*(\d+)\s*Undetermined:\s*(\d+)", text)
+    if idet:
+        tff, bff, prog, _ = (int(x) for x in idet[-1])
+        total = tff + bff + prog
+        out["interlaced"] = round((tff + bff) / total, 3) if total >= 24 else None
+    out["freeze_seconds"] = round(sum(float(x) for x in re.findall(r"freeze_duration:\s*([0-9.]+)", text)), 2)
+    out["errors"] = sum(1 for line in text.splitlines() if _ERROR_WORDS.search(line) and not _QUALITY_OWN_LINES.search(line))
+    return out
+
+
 PREVIEW_PROBE_SECONDS = 10         # how much of the film one "most demanding part" sample reads
 PREVIEW_SAMPLES = 16
 PREVIEW_COPY_LIMIT = 450 * 1024 ** 2     # a copied (unmodified) clip bigger than this is re-encoded at a high quality instead, so it stays under SyncHub's upload limit
@@ -1018,8 +1078,8 @@ def detect_capabilities(cfg):
     if code == 0:
         caps["ffprobe"] = out.splitlines()[0] if out else "ffprobe"
         if media_analysis and caps["ffmpeg"]:
-            caps["ops"].extend(["scan", "convert", "preview"])          # a scan needs ffprobe to read files and ffmpeg to check them; a conversion also runs ffmpeg, then checks the result
-            caps["features"].append("preview")
+            caps["ops"].extend(["scan", "convert", "preview", "quality"])          # a scan needs ffprobe to read files and ffmpeg to check them; a conversion also runs ffmpeg, then checks the result
+            caps["features"].extend(["preview", "quality"])
     if caps["ffmpeg"] and caps["ffprobe"] and media_analysis:
         dovi_code, _ = run_quiet([cfg.dovi_tool, "--version"])
         mkv_code, _ = run_quiet([cfg.mkvmerge, "--version"])
@@ -1484,10 +1544,10 @@ class JobRunner(threading.Thread):
         self.reporter.start()
         try:
             op = (self.job.get("plan") or {}).get("op")
-            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash, "convert": self.do_convert, "preview": self.do_preview, "rename": self.do_rename, "delete_source": self.do_delete_source, "originals": self.do_originals}.get(op)
-            if work is None or (op in ("scan", "hash", "convert", "preview") and media_analysis is None):
+            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash, "convert": self.do_convert, "preview": self.do_preview, "quality": self.do_quality, "rename": self.do_rename, "delete_source": self.do_delete_source, "originals": self.do_originals}.get(op)
+            if work is None or (op in ("scan", "hash", "convert", "preview", "quality") and media_analysis is None):
                 raise JobFailure("unsupported_job", f"This agent ({__version__}) cannot do '{op or self.job.get('kind')}' jobs. Update the agent"
-                                 + (" (media_analysis.py must be next to synchub_agent.py)." if op in ("scan", "hash", "convert", "preview") else "."), retryable=False)
+                                 + (" (media_analysis.py must be next to synchub_agent.py)." if op in ("scan", "hash", "convert", "preview", "quality") else "."), retryable=False)
             final = ("complete", {"result": work()}, "done")
         except Interrupted:
             self.log.info("Stopping for a restart or shutdown; the job resumes from its last checkpoint", stage=self.stage)
@@ -2043,6 +2103,48 @@ class JobRunner(threading.Thread):
         self.save()
         self.log.info(f"Copied out the smaller copy to {rel}")
         return {"bytes": size, "sha256": digest, "rel": rel, "encode_seconds": made.get("encode_seconds"), "encoder": made.get("encoder")}
+
+    def do_quality(self):
+        """Samples a film and measures what a viewer would notice (blockiness, blur, interlacing, frozen picture, decode errors). Reads the film where it is and keeps
+        nothing. It only reports numbers: SyncHub works out the score."""
+        plan = self.job["plan"]
+        if not self.job.get("source"):
+            raise JobFailure("bad_job", "A quality check needs a source.", retryable=False)
+        src = self.folder_in(self.job["source"]["root"], self.job["source"]["rel"])
+        if not os.path.isfile(src):
+            raise JobFailure("source_changed", f"The film is not there any more: {self.job['source']['rel']}")
+        stat = os.stat(src)
+        if plan.get("source_size") and stat.st_size != plan["source_size"]:
+            raise JobFailure("source_changed", f"{self.job['source']['rel']} is not the file SyncHub analysed (its size differs). It will be looked at again.", retryable=False)
+        code, text = run_quiet([self.cfg.ffmpeg, "-hide_banner", "-filters"])
+        have = [name for name in QUALITY_FILTERS if code == 0 and re.search(rf"\b{name}\b", text)]
+        skipped = [name for name in QUALITY_FILTERS if name not in have]
+        if skipped:
+            self.log.warning("This ffmpeg lacks some quality filters; those checks are skipped", skipped=skipped)
+        duration = media_duration(media_analysis.run_ffprobe(self.media_settings({}), src)) or plan.get("duration")
+        windows = quality_windows(float(duration or 0), max(1, min(24, int(plan.get("samples") or 10))), max(10, min(120, int(plan.get("seconds") or 30))), plan.get("seed") or 0)
+        if not windows:
+            raise JobFailure("bad_job", "The film's length could not be read, so nothing could be sampled.", retryable=False)
+        started, slices = time.monotonic(), []
+        for index, (start, length) in enumerate(windows):
+            self.guard()
+            self.report_progress("scan", index / len(windows), f"Checking part {index + 1} of {len(windows)}", force=True)
+            command = quality_command(self.cfg.ffmpeg, src, start, length, have)
+            try:
+                done = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=QUALITY_SLICE_TIMEOUT, text=True, errors="replace")
+            except subprocess.TimeoutExpired:
+                raise JobFailure("transient", f"Part {index + 1} took longer than {QUALITY_SLICE_TIMEOUT // 60} minutes to read. Is the share slow?")
+            except OSError as exc:
+                raise JobFailure("transient", f"ffmpeg could not run: {exc}")
+            numbers = parse_quality(done.stdout, length)
+            numbers["start"] = start
+            if done.returncode != 0:
+                numbers["errors"] = max(numbers["errors"], 1)
+                numbers["exit_code"] = done.returncode
+            slices.append(numbers)
+            self.log.info(f"Part {index + 1}/{len(windows)} at {start:.0f} s", **{k: v for k, v in numbers.items() if k not in ("seconds",)})
+        self.report_progress("scan", 1.0, "Quality check finished", force=True)
+        return {"op": "quality", "slices": slices, "skipped": skipped, "filters": have, "duration": duration, "elapsed": round(time.monotonic() - started, 1)}
 
     def do_preview(self):
         """Makes the two clips of a preview (docs/DESIGN_ENCODING.md section 12) and uploads them: a window of the film encoded with the planned settings, and the same

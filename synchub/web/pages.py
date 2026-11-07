@@ -5,7 +5,7 @@ import os
 from flask import abort, flash, g, jsonify, redirect, render_template, request, send_file, send_from_directory, url_for
 
 from config import BASE_DIR
-from synchub import access, backup, catalog, db, ddns, discover, posters, profiles, ratings, search, settings, states, status, tasks, watch, watchlist, webhooks, workers
+from synchub import access, backup, catalog, db, ddns, discover, posters, profiles, quality, ratings, search, settings, states, status, tasks, watch, watchlist, webhooks, workers
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.tmdb import TmdbClient
 from synchub.notifications import dispatch
@@ -54,6 +54,7 @@ def register(app):
             health = status.snapshot(conn) if access.allowed(getattr(g, "permissions", None), "logs") else None
             reconcile = catalog.jellyfin_movie_reconcile(conn) if access.allowed(getattr(g, "permissions", None), "logs") else None
             first_run = _first_run_steps(conn, health) if not rows and health else []
+            low_quality = quality.low_count(conn) if access.allowed(getattr(g, "permissions", None), "library") else 0
         by_id = {r["id"]: r for r in rows}
         resume = []
         for item in keep_going:
@@ -67,7 +68,7 @@ def register(app):
         status_options = [(code, defs[code]["label"]) for code in STATUS_ORDER if code in defs]
         ratings_seen = sorted({r["certification"] for r in rows if r["certification"]}, key=lambda c: (ratings.rank(c) is None, ratings.rank(c) or 0, c))
         return render_template("index.html", rows=rows, stats=catalog.dashboard_stats(rows), all_users=users, status_options=status_options,
-                               resume=resume, can_filter_watch=bool(user), certifications=ratings_seen, health=health, reconcile=reconcile, first_run=first_run)
+                               resume=resume, can_filter_watch=bool(user), certifications=ratings_seen, health=health, reconcile=reconcile, first_run=first_run, low_quality=low_quality)
 
     @app.route("/discover")
     def discover_page():
@@ -106,7 +107,8 @@ def register(app):
             defs = states.definitions(conn)
             progress = _progress(conn, "movie", media_id)
             on_watchlist = _on_watchlist(conn, media_id)
-        return render_template("movie_details.html", movie=movie, state=state, state_info=defs.get(state["state"], defs["missing"]), progress=progress, on_watchlist=on_watchlist)
+            copies = quality.copies(conn, media_id) if access.allowed(getattr(g, "permissions", None), "library") else None
+        return render_template("movie_details.html", movie=movie, state=state, state_info=defs.get(state["state"], defs["missing"]), progress=progress, on_watchlist=on_watchlist, copies=copies)
 
     @app.route("/show/<int:media_id>")
     def show_details(media_id):

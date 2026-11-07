@@ -1,5 +1,6 @@
 <!-- synchub/web/templates/library_record.html -->
 {% extends "base.html" %}
+{% from "_quality.html" import quality_detail, quality_script with context %}
 {% block title %}Library: {{ final_name or rec.file_name }}{% endblock %}
 
 {% macro badge(level) %}<span class="badge bg-{{ {'high': 'success', 'medium': 'warning', 'low': 'danger'}[level] }}{% if level == 'medium' %} text-dark{% endif %}">{{ level }} confidence</span>{% endmacro %}
@@ -27,6 +28,8 @@
             {% if in_place %}<p class="small mb-0"><i class="bi bi-check2-circle text-success" aria-hidden="true"></i> This file is already at its place in the library.</p>
             {% elif r.path %}<p class="small mb-0">It will be placed at <code>{{ r.path }}</code> in the destination share.</p>{% endif %}
         </div>
+
+        <div class="panel p-3 mb-3" id="qualityPanel"><h6 class="mb-2">Picture quality</h6>{{ quality_detail(rec.id, quality_state, can('library')) }}</div>
 
         {% if (r.can_approve or r.needs_name) and r.kind not in ('skip_duplicate',) and not decided %}
         <div class="panel p-3 p-md-4 mb-3" id="handling">
@@ -161,6 +164,7 @@
 {% endblock %}
 
 {% block scripts %}
+{{ quality_script() }}
 <script src="{{ url_for('static', filename='js/library.js') }}"></script>
 <script>
 (() => {

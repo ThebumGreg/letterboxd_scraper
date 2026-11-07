@@ -1,0 +1,81 @@
+<!-- synchub/web/templates/quality.html -->
+{% extends "base.html" %}
+{% from "_quality.html" import quality_badge, quality_detail, quality_script, size_text with context %}
+{% block title %}Low quality{% endblock %}
+
+{% block content %}
+<h2 class="mb-1">Low quality</h2>
+<p class="text-body-secondary small mb-3">Files whose quality check scored under {{ flag_below }} out of 100. A check samples a few short parts of a film and looks for blockiness, blur, interlacing, frozen picture, decode errors and too few bits for the picture. It judges the file on its own; the scores are a guide, not a verdict. Scoring rules version {{ version }}.</p>
+
+<div class="row g-3 mb-3">
+    <div class="col-6 col-md-3"><div class="panel p-3"><div class="fs-4">{{ counts.low }}</div><div class="small text-body-secondary">flagged</div></div></div>
+    <div class="col-6 col-md-3"><div class="panel p-3"><div class="fs-4">{{ counts.waiting }}</div><div class="small text-body-secondary">waiting for a worker</div></div></div>
+    <div class="col-6 col-md-3"><div class="panel p-3"><div class="fs-4">{{ counts.running }}</div><div class="small text-body-secondary">being checked</div></div></div>
+</div>
+
+<div class="panel p-3 p-md-4 mb-4">
+    <h5 class="mb-3">Flagged files</h5>
+    {% for f in low %}
+    <div class="border-top pt-2 mt-2">
+        <div class="d-flex flex-wrap justify-content-between gap-2">
+            <strong style="overflow-wrap: anywhere;"><a class="text-decoration-none" href="{{ url_for('library_record', record_id=f.id) }}">{{ f.recommended_name or f.file_name }}</a></strong>
+            <span class="text-body-secondary small">{{ f.resolution or '' }} · {{ size_text(f.size_bytes) }} · score {{ f.q_score|round|int }}</span>
+        </div>
+        <div class="small text-body-secondary" style="overflow-wrap: anywhere;">{{ f.root_name }}: {{ f.relative_path }}</div>
+        <ul class="small mb-1 ps-3">{% for fnd in f.findings %}<li class="{{ 'text-danger' if fnd.severity == 'bad' else 'text-warning' }}">{{ fnd.text }}</li>{% endfor %}</ul>
+        <button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-accept="{{ f.id }}">Accept as is</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-check="{{ f.id }}">Check again</button>
+    </div>
+    {% else %}
+    <p class="small text-body-secondary mb-0">Nothing is flagged. {% if not counts.waiting and not counts.running and not recent %}No file has been checked yet: press <em>Check quality</em> on a film's page, or turn on the Library pass below.{% endif %}</p>
+    {% endfor %}
+</div>
+
+{% if waiting %}
+<div class="panel p-3 mb-4"><h6>Waiting or running</h6>
+    {% for w in waiting %}<div class="small"><a href="{{ url_for('library_record', record_id=w.file_id) }}" class="text-decoration-none">{{ w.file_name }}</a> · {{ w.status }} · {{ w.source }}{% if w.message %} · {{ w.message }}{% endif %}</div>{% endfor %}
+</div>
+{% endif %}
+{% if recent %}
+<div class="panel p-3 mb-4"><h6>Latest results</h6>
+    {% for r in recent %}<div class="small"><a href="{{ url_for('library_record', record_id=r.file_id) }}" class="text-decoration-none">{{ r.file_name }}</a> · {{ r.message }}</div>{% endfor %}
+</div>
+{% endif %}
+
+<div class="panel p-3 p-md-4 mb-4" id="qualitySettings">
+    <h5 class="mb-3">Settings</h5>
+    <div class="row g-3">
+        <div class="col-md-4"><label class="form-label small" for="qSamples">Parts sampled per film</label><input class="form-control form-control-sm" type="number" min="1" max="24" id="qSamples" value="{{ values.quality_samples }}"></div>
+        <div class="col-md-4"><label class="form-label small" for="qSlice">Seconds in each part</label><input class="form-control form-control-sm" type="number" min="10" max="120" id="qSlice" value="{{ values.quality_slice_seconds }}"></div>
+        <div class="col-md-4"><label class="form-label small" for="qBelow">Flag a file scoring under</label><input class="form-control form-control-sm" type="number" min="1" max="100" id="qBelow" value="{{ values.quality_flag_below }}"></div>
+        <div class="col-md-4"><label class="form-label small" for="qDownload">New downloads</label>
+            <select class="form-select form-select-sm" id="qDownload"><option value="flag"{% if values.quality_on_download == 'flag' %} selected{% endif %}>Check, and flag low scores</option><option value="off"{% if values.quality_on_download == 'off' %} selected{% endif %}>Do not check</option></select></div>
+        <div class="col-md-4"><label class="form-label small" for="qPass">Library pass</label>
+            <select class="form-select form-select-sm" id="qPass"><option value="0"{% if values.quality_scan_library != '1' %} selected{% endif %}>Off: only when asked</option><option value="1"{% if values.quality_scan_library == '1' %} selected{% endif %}>Check unchecked films in the background</option></select></div>
+        <div class="col-md-4"><label class="form-label small" for="qOrder">Library pass order</label>
+            <select class="form-select form-select-sm" id="qOrder"><option value="newest"{% if values.quality_scan_order != 'oldest' %} selected{% endif %}>Newest files first</option><option value="oldest"{% if values.quality_scan_order == 'oldest' %} selected{% endif %}>Oldest files first</option></select></div>
+    </div>
+    <p class="small text-body-secondary mt-2 mb-2">The Library pass queues a few files at a time, never while someone is watching in Jellyfin. A worker reads only the sampled parts of each film.</p>
+    <button type="button" class="btn btn-sm btn-primary" id="qSave">Save</button> <span class="small ms-2" id="qSaved" role="status"></span>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ quality_script() }}
+<script>
+(() => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const value = (id) => document.getElementById(id).value;
+    document.getElementById('qSave').addEventListener('click', async () => {
+        const out = document.getElementById('qSaved');
+        const body = { quality_samples: value('qSamples'), quality_slice_seconds: value('qSlice'), quality_flag_below: value('qBelow'), quality_on_download: value('qDownload'), quality_scan_library: value('qPass'), quality_scan_order: value('qOrder') };
+        try {
+            const res = await fetch('/api/library/quality/settings', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(body) });
+            const data = await res.json().catch(() => ({}));
+            out.className = 'small ms-2 ' + (data.ok ? 'text-success' : 'text-danger');
+            out.textContent = data.message || (data.ok ? 'Saved.' : 'Failed.');
+        } catch (e) { out.className = 'small ms-2 text-danger'; out.textContent = 'Could not reach the server.'; }
+    });
+})();
+</script>
+{% endblock %}

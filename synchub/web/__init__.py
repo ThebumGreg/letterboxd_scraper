@@ -214,8 +214,8 @@ def create_app(start_scheduler=False, csrf=True):
                 "profile_link": link("my_profile", "My profile"),
                 "max_rating": getattr(g, "max_rating", None), "app_version": __version__, "app_build": buildinfo.get()}
 
-    from synchub.web import admin, api, fleet, library, notifications, pages, player_api, players_web, security, shares, tv, watchlist, worker_api, originals, sessions as sessions_web, versions as versions_web
-    for module in (pages, api, admin, fleet, library, notifications, shares, security, tv, watchlist, worker_api, player_api, players_web, originals, sessions_web, versions_web):
+    from synchub.web import admin, api, fleet, library, notifications, pages, player_api, players_web, security, shares, tv, watchlist, worker_api, originals, sessions as sessions_web, versions as versions_web, quality_web
+    for module in (pages, api, admin, fleet, library, notifications, shares, security, tv, watchlist, worker_api, player_api, players_web, originals, sessions_web, versions_web, quality_web):
         module.register(app)
     if csrf:
         csrf.exempt(app.view_functions["api_webhook"])

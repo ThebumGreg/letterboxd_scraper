@@ -48,6 +48,13 @@ def _purge_previews():
     previews.purge()
 
 
+def _quality_pass():
+    from synchub import quality
+    queued = quality.library_step()
+    if queued:
+        logger.info(f"[quality] the Library pass queued {queued} check(s).")
+
+
 def _announce_aired():
     from synchub import db
     from synchub.notifications import arrivals
@@ -91,6 +98,7 @@ def configure():
             scheduler.add_job(fn, "interval", hours=hours, id=job_id, max_instances=1, coalesce=True)
     scheduler.add_job(_reap_jobs, "interval", seconds=REAPER_SECONDS, id="job_reaper", max_instances=1, coalesce=True)
     scheduler.add_job(_prune_jellyfin_events, "interval", hours=24, id="job_prune_jellyfin_events", max_instances=1, coalesce=True)
+    scheduler.add_job(_quality_pass, "interval", minutes=5, id="job_quality_pass", max_instances=1, coalesce=True)
     scheduler.add_job(_purge_previews, "interval", hours=6, id="job_purge_previews", max_instances=1, coalesce=True)
     scheduler.add_job(dispatch.run_due, "interval", seconds=NOTIFY_SECONDS, id="job_notify", max_instances=1, coalesce=True)
     scheduler.add_job(watch.check, "interval", seconds=NOTIFY_SECONDS, id="job_notify_watch", max_instances=1, coalesce=True)
