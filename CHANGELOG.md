@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+**Request better copy for films Radarr does not have.** The button now adds such a film (a loose file in `Old Movies/`, for example) to Radarr and searches, using the TMDB match Jellyfin has for the file. The old file is kept; delete it by hand once the new copy is in Jellyfin.
+
 **Quality follow-ups: the Library section, settings on Options, AI test card, Resume menu (migrations 034 and 035).**
 - **Below minimum quality moved to the Library tab.** The flagged-files list (with Request better copy, Show releases, Accept as is, Check again) is a section of Media > Library. `/library/quality` redirects there. The Dashboard's "files flagged as low quality" line is gone.
 - **Quality settings moved to Media > Options.** Minimum resolution (default 1080p), the score limit, parts sampled, new downloads and the Library pass. Same settings, same save call, nothing to migrate. They were always user-set.

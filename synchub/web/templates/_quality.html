@@ -16,7 +16,7 @@
         {% if q.check and q.check.status == 'failed' %}<span class="text-danger">The last check failed: {{ q.check.message }}</span>{% endif %}
         {% if act and not (q.check and q.check.status in ('queued', 'running')) %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-check="{{ file_id }}">{{ 'Check again' if q.result else 'Check quality' }}</button>{% endif %}
         {% if act and q.low %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-accept="{{ file_id }}" title="Stop flagging this file. It is flagged again only if the file changes.">Accept as is</button>{% endif %}
-        {% if act and q.low %}<button type="button" class="btn btn-sm btn-outline-info py-0" data-quality-better="{{ file_id }}" title="Blocks the release that was grabbed for this film in Radarr and asks Radarr to search again.">Request better copy</button>
+        {% if act and q.low %}<button type="button" class="btn btn-sm btn-outline-info py-0" data-quality-better="{{ file_id }}" title="Blocks the release that was grabbed for this film in Radarr and asks Radarr to search again. A film Radarr does not have is added to Radarr and searched; the old file is kept.">Request better copy</button>
         <button type="button" class="btn btn-sm btn-outline-info py-0" data-quality-releases="{{ file_id }}" title="Lists what the indexers have. Changes nothing until you pick one.">Show releases</button>{% endif %}
         {% if act and q.accepted %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-accept="{{ file_id }}" data-undo="1">Flag it again</button>{% endif %}
     </div>

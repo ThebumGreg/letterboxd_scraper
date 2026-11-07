@@ -71,7 +71,7 @@ Blocking uses Radarr's "mark as failed" on the grab in the film's history, which
 
 The old file is not deleted. When the new download arrives it goes through the normal download workflow, including a quality check, and Radarr replaces the old file on import if it treats the new one as an upgrade. The share needs its **Radarr path** on the Storage page, so SyncHub can tell which Radarr movie a file belongs to.
 
-A film that is **not in Radarr** (or sits outside Radarr's folders, like loose files in `Old Movies/`) cannot be requested this way: there is no Radarr movie and no grab to block, and the buttons say so. Checks, scores, the flag and *Accept as is* still work. To replace such a film, add it to Radarr with *Request in Radarr* on the movie page; Radarr downloads a new copy into its own folder, and the old file is deleted by hand once the new one is in Jellyfin.
+A film that is **not in Radarr** (or sits outside Radarr's folders, like loose files in `Old Movies/`) has no grab to block. *Request better copy* then adds the film to Radarr (its default quality profile and root folder from Settings) and starts a search, using the TMDB match Jellyfin has for the file. If Jellyfin has no match, the button says so. Radarr downloads the new copy into its own folder; the old file is never deleted by SyncHub, so delete it by hand once the new copy is in Jellyfin. *Show releases* and *Get this one* still need the film to be in Radarr first.
 
 Not run against a live Radarr from here: the calls are Radarr v3's documented ones (`history/movie`, `history/failed/{id}`, `command` MoviesSearch, `release`). If one differs on your version, the page shows Radarr's own error.
 
