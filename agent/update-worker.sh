@@ -16,6 +16,8 @@ BRANCH=""
 DO_PULL=1
 DRY_RUN=0
 REPORT=0
+AI_MODE=keep
+AI_STATUS=0
 AGENT_FILES=(Dockerfile synchub_agent.py media_analysis.py)
 
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -29,12 +31,16 @@ while [ $# -gt 0 ]; do
         --no-pull) DO_PULL=0; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         --report) REPORT=1; shift ;;
+        --ai-quality) AI_MODE="${2:?--ai-quality needs on, off or keep}"; case "$AI_MODE" in on|off|keep) ;; *) die "--ai-quality must be on, off or keep" ;; esac; shift 2 ;;
+        --ai-status) AI_STATUS=1; shift ;;
         -h|--help)
             echo "Usage: update-worker.sh [--dir WORKER_FOLDER] [--branch NAME] [--no-pull] [--dry-run] [--report]"
             echo "  --dir      folder with the worker's docker-compose.yml (default /opt/synchub-worker)"
             echo "  --branch   check out and pull this branch first (default: the branch already checked out)"
             echo "  --no-pull  use the checkout as it is"
             echo "  --dry-run  show what would happen without changing anything"
+            echo "  --ai-quality on|off|keep  build the image with the AI quality test layer (PyTorch and the models, about 1 GB) or without it; keep = as it was (default)"
+            echo "  --ai-status  print 'on' or 'off': whether the worker's build folder is set to include the AI layer, and exit"
             echo "  --report   print the worker's current state (changes nothing) and exit; paste it when asking for help"
             exit 0 ;;
         *) die "unknown option '$1' (try --help)" ;;
@@ -90,6 +96,18 @@ CONTEXT="$(cd "$DIR" && docker compose config 2>/dev/null | awk '/^ *context:/ {
 [ -d "$CONTEXT" ] || die "The build folder $CONTEXT from $COMPOSE does not exist."
 say "The worker builds from $CONTEXT"
 
+# The AI quality test layer: the Dockerfile installs PyTorch and the models only when this file says "on". It is a file in the build folder (like BUILD_INFO), so the
+# choice survives updates and needs no change to the compose file.
+AI_FILE="$CONTEXT/AI_QUALITY"
+ai_state() { if [ -f "$AI_FILE" ] && grep -qx on "$AI_FILE" 2>/dev/null; then echo on; else echo off; fi; }
+if [ "$AI_STATUS" = 1 ]; then ai_state; exit 0; fi
+AI_PREV=""
+if [ "$AI_MODE" != keep ] && [ "$AI_MODE" != "$(ai_state)" ]; then
+    AI_PREV="$(ai_state)"
+    say "AI quality test layer: $(ai_state) -> $AI_MODE (the image is rebuilt; switching it on downloads about 1 GB)"
+    if [ "$DRY_RUN" != 1 ]; then printf '%s\n' "$AI_MODE" > "$AI_FILE" || die "could not write $AI_FILE"; fi
+fi
+
 if [ "$(cd "$CONTEXT" && pwd -P)" != "$(cd "$SRC" && pwd -P)" ]; then
     say "Copying the agent files into $CONTEXT"
     for f in "${AGENT_FILES[@]}"; do
@@ -109,6 +127,7 @@ if mount | grep -q ' /mnt/tower/'; then :; else echo "WARNING: nothing is mounte
 
 say "Rebuilding and restarting the worker"
 if ! ( cd "$DIR" && run docker compose up -d --build ); then
+    [ -z "$AI_PREV" ] || { printf '%s\n' "$AI_PREV" > "$AI_FILE" 2>/dev/null || true; echo "The AI quality test layer is back to '$AI_PREV' because the build failed." >&2; }
     # docker compose builds the image before it touches the container, so a failed build leaves the running worker alone; say so, and prove it.
     if [ -n "$(cd "$DIR" && docker compose ps -q --status running 2>/dev/null)" ]; then
         die "Docker could not rebuild the worker. The worker that was running is still running, on its old code."

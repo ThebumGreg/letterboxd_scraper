@@ -4,8 +4,10 @@ It is an experiment for comparing the two. It never flags a file, requests a bet
 job (a `scan`-kind job like the usual check) that only a worker reporting the `quality_ai` feature takes. The worker reports, for each model it ran, a
 `mean` already scaled to 0-100 (higher is better) and the unscaled `raw_mean`:
 
-    {"op": "quality_ai", "device": "cpu", "elapsed": 212.4, "slices": 10,
-     "models": {"fast_vqa": {"version": "...", "mean": 71.2, "raw_mean": 0.712, "scores": [..]}, ...}, "errors": {"dover": "why it did not run"}}
+    {"op": "quality_ai", "device": "cpu", "elapsed": 212.4, "slices": 10, "frames": 30, "tonemapped": false,
+     "models": {"musiq": {"version": "...", "mean": 71.2, "raw_mean": 71.2, "scores": [..]}, ...}, "errors": {"clipiqa": "why it did not run"}, "notes": []}
+
+The models (pyiqa: MUSIQ, TOPIQ-NR, CLIP-IQA) score single frames, so they do not see motion.
 """
 import json
 import logging
@@ -17,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 REF = "quality_ai_test"
 MODES = ("standard", "ai", "both")
-MODELS = ("fast_vqa", "dover", "musiq")
-MODEL_LABELS = {"fast_vqa": "FAST-VQA", "dover": "DOVER (technical)", "musiq": "MUSIQ"}
+MODELS = ("musiq", "topiq_nr", "clipiqa")
+MODEL_LABELS = {"musiq": "MUSIQ", "topiq_nr": "TOPIQ", "clipiqa": "CLIP-IQA"}
 PRIORITY = 70
 KEEP = 20                       # tests shown on the page
 
@@ -113,6 +115,7 @@ def recent(conn, limit=KEEP):
             if job:
                 result = job["result"] if isinstance(job.get("result"), dict) else {}
                 ai = {"status": _part(job["status"]), "models": _models(result), "device": result.get("device"), "elapsed": result.get("elapsed"),
+                      "frames": result.get("frames"), "notes": [str(n)[:200] for n in (result.get("notes") or []) if n],
                       "message": job.get("error") or job.get("review_reason") or job.get("message")}
             else:
                 ai = {"status": "failed", "models": [], "message": "The job was removed."}

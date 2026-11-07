@@ -11,11 +11,12 @@
             {% else %}<span class="small text-danger">{{ t.standard.message or t.standard.status|capitalize }}</span>{% endif %}{% else %}<span class="small text-body-secondary">&ndash;</span>{% endif %}</td>
         <td>{% if t.ai %}{% if t.ai.status == 'done' %}
                 {% for m in t.ai.models %}<div class="small">{{ m.label }}: {% if m.score is not none %}<span class="badge bg-secondary">{{ m.score|round|int }}</span>{% else %}<span class="text-danger">{{ m.error }}</span>{% endif %}</div>{% else %}<span class="small text-body-secondary">No model reported a score.</span>{% endfor %}
-                {% if t.ai.device or t.ai.elapsed %}<div class="small text-body-secondary">{% if t.ai.device %}{{ t.ai.device }}{% endif %}{% if t.ai.elapsed %} &middot; {{ (t.ai.elapsed / 60)|round(1) }} min{% endif %}</div>{% endif %}
+                {% if t.ai.device or t.ai.elapsed %}<div class="small text-body-secondary">{% if t.ai.device %}{{ t.ai.device }}{% endif %}{% if t.ai.frames %} &middot; {{ t.ai.frames }} frames{% endif %}{% if t.ai.elapsed %} &middot; {{ (t.ai.elapsed / 60)|round(1) }} min{% endif %}</div>{% endif %}
+                {% for n in t.ai.notes %}<div class="small text-warning">{{ n }}</div>{% endfor %}
             {% elif t.ai.status in ('queued', 'running') %}<span class="small text-body-secondary">{{ 'Running' if t.ai.status == 'running' else 'Waiting for a worker' }}</span>
             {% else %}<span class="small text-danger">{{ t.ai.message or t.ai.status|capitalize }}</span>{% endif %}{% else %}<span class="small text-body-secondary">&ndash;</span>{% endif %}</td>
     </tr>
     {% endfor %}
     </tbody></table></div>
-<p class="small text-body-secondary mt-2 mb-0">Scores are 0 to 100, higher is better. The AI models were trained on phone and web video, so treat them as a comparison, not a verdict. The worker's job also shows on the Jobs tab.</p>
+<p class="small text-body-secondary mt-2 mb-0">Scores are 0 to 100, higher is better. The AI models look at single frames and were trained on photos, so they cannot see motion problems; treat them as a comparison, not a verdict. The worker's job also shows on the Jobs tab.</p>
 {% else %}<p class="small text-body-secondary mb-0">No tests yet.</p>{% endif %}
