@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+**Request better copy for films Radarr does not have.** The button now adds such a film (a loose file in `Old Movies/`, for example) to Radarr and searches, using the TMDB match Jellyfin has for the file. The old file is kept; delete it by hand once the new copy is in Jellyfin.
+
 **AI quality test, worker side (PR 2 of 2).**
 - **Worker op `quality_ai`.** Takes 3 frames from each sampled part of a film (HDR tone-mapped to SDR, wide pictures scaled to 1920) and scores them with MUSIQ, TOPIQ and CLIP-IQA from `pyiqa`. A model that cannot load is reported and the others still run. The models see one picture at a time. Not run against real models or films yet (tested with stand-ins).
 - **Same worker image, optional layer.** The Dockerfile installs PyTorch (CPU) and fetches the model weights at build time when the build folder's `AI_QUALITY` file says `on`. Off by default; a failed download leaves a normal image.

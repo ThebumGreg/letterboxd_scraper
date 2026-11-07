@@ -146,13 +146,47 @@ def preview(file_id, radarr=None):
     return {"movie": movie.get("title"), "bad_release": bad, "can_block": history_id is not None, "wanted_height": wanted, "candidates": found, "message": note}
 
 
+def tmdb_id_for(conn, rec):
+    """The TMDB id of the film a Library file is, through its Jellyfin item and the share's Jellyfin mappings. None when Jellyfin does not have it."""
+    from synchub import storage
+    root = next((r for r in storage.list_all(conn) if r["name"] == rec["root_name"]), None)
+    app = storage.to_app_path(root, rec["relative_path"], "jellyfin") if root else None
+    if not app:
+        return None
+    row = conn.execute("""SELECT m.tmdb_id FROM src_jellyfin_item t JOIN link l ON l.source = 'jellyfin' AND l.source_key = t.item_id AND l.entity_type = 'media'
+                          JOIN media m ON m.id = l.entity_id WHERE m.kind = 'movie' AND t.removed_at IS NULL AND lower(t.path) = lower(?) LIMIT 1""", (app,)).fetchone()
+    return row["tmdb_id"] if row and row["tmdb_id"] else None
+
+
+def add_to_radarr(client, file_id, rec, by):
+    """For a film Radarr does not track (an old loose file): adds it to Radarr with its default destination and searches. The old file is left alone."""
+    with db.connection() as conn:
+        tmdb_id = tmdb_id_for(conn, rec)
+    if not tmdb_id:
+        raise BetterCopyError("Radarr has no movie for this file, and SyncHub cannot tell which film it is (Jellyfin has no TMDB match for it), so it cannot be added.")
+    from synchub import automation
+    try:
+        title = automation._add_movie(client, tmdb_id)
+    except (ApiError, ConfigError, automation.RequestError) as exc:
+        raise BetterCopyError(str(exc))
+    message = (f"“{title}” was not in Radarr. It is added now and Radarr is searching for it. When the new copy is in Jellyfin, delete this old file by hand: "
+               "SyncHub does not delete it.")
+    request_id = _record(file_id, rec, {"id": tmdb_id, "title": title}, "auto", None, None, False, "requested", message, by)
+    logger.info(f"[quality] added to Radarr for {rec['file_name']} by {by}: {message}")
+    return {"id": request_id, "status": "requested", "message": message}
+
+
 def request_auto(file_id, by="someone", radarr=None):
-    """Blocks the release that was grabbed for the file and asks Radarr to search again. Returns {'id', 'status', 'message'}."""
+    """Blocks the release that was grabbed for the file and asks Radarr to search again. Returns {'id', 'status', 'message'}.
+    A film Radarr does not have is added to Radarr instead."""
     with db.connection() as conn:
         rec, path = target(conn, file_id)
     try:
         client = _client(radarr)
-        movie = find_movie(client, path)
+        try:
+            movie = find_movie(client, path)
+        except BetterCopyError:
+            return add_to_radarr(client, file_id, rec, by)
         history_id, bad = bad_release(client, movie["id"])
         blocked, problem = _block(client, file_id, history_id)
         client.search_movie(movie["id"])

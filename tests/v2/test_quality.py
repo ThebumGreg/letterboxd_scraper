@@ -612,6 +612,23 @@ def test_a_loose_old_movie_finds_only_itself_not_the_other_films_in_its_folder(c
     assert out["main"]["id"] == ours
 
 
+def test_a_film_radarr_does_not_have_is_added_and_searched_and_the_old_file_is_kept(conn, monkeypatch):
+    from synchub import automation
+    greg_shares(conn)
+    conn.execute("UPDATE storage_root SET radarr_path = '/media/Media' WHERE name = 'media'")
+    media_id = conn.execute("INSERT INTO media (kind, title, year, tmdb_id) VALUES ('movie', 'The Wedding Singer', 1998, '2')").lastrowid
+    conn.execute("INSERT INTO src_jellyfin_item (item_id, type, name, first_seen, last_seen, path) VALUES ('jf2', 'movie', 'The Wedding Singer', ?, ?, '/OldMovie/The Wedding Singer (1998).avi')", (NOW, NOW))
+    conn.execute("INSERT INTO link (entity_type, entity_id, source, source_key, method, confidence) VALUES ('media', ?, 'jellyfin', 'jf2', 'x', 1.0)", (media_id,))
+    conn.commit()
+    file_id = add(conn, root="media", rel="Old Movies/The Wedding Singer (1998).avi", name="The Wedding Singer (1998).avi", size=700_000_000)
+    added = []
+    monkeypatch.setattr(automation, "_add_movie", lambda client, tmdb_id, destination=None: added.append(tmdb_id) or "The Wedding Singer")
+    out = better_copy.request_auto(file_id, by="Greg", radarr=FakeRadarr(movies=[]))
+    assert added == ["2"] and out["status"] == "requested" and "delete this old file by hand" in out["message"]
+    assert conn.execute("SELECT status FROM quality_request").fetchone()[0] == "requested"
+    assert conn.execute("SELECT missing_since FROM library_file WHERE id = ?", (file_id,)).fetchone()[0] is None
+
+
 def test_jellyfin_is_told_the_mounted_path_of_a_new_file(conn):
     from synchub.library import migrate
     greg_shares(conn)
