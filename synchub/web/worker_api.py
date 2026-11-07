@@ -8,7 +8,7 @@ from functools import wraps
 
 from flask import Response, g, jsonify, request
 
-from synchub import downloads, db, jobs, pipeline_events, previews, protect, states, storage, tasks, versions, workers
+from synchub import downloads, db, jobs, pipeline_events, previews, protect, quality, states, storage, tasks, versions, workers
 from synchub.library import cleanup, migrate, scan
 
 logger = logging.getLogger(__name__)
@@ -164,6 +164,7 @@ def register(app):
             downloads.process(conn)
             finished = migrate.sync_active(conn) + downloads.sync_active(conn) + versions.sync_active(conn)
             previews.sync_active(conn)
+            quality.sync_active(conn)
             cleanup.sync_active(conn)
             for job in claimed:
                 logger.info(f"[jobs] job {job['id']} ({job['kind']}: {job['title']}) went to {worker['name']}, attempt {job['attempt']}")
@@ -198,6 +199,7 @@ def register(app):
             jobs.complete(conn, job_id, g.worker["id"], data.get("result"), command=_text(data.get("command"), 8000))
             arrived = migrate.sync(conn, job_id) or downloads.sync(conn, job_id) or versions.sync(conn, job_id)
             previews.sync(conn, job_id)
+            quality.sync(conn, job_id)
             cleanup.sync(conn, job_id)
             updates = migrate.jellyfin_updates(conn, job_id) if arrived else None
         logger.info(f"[jobs] job {job_id} completed by {g.worker['name']}")
@@ -220,6 +222,7 @@ def register(app):
             downloads.sync(conn, job_id)
             versions.sync(conn, job_id)
             previews.sync(conn, job_id)
+            quality.sync(conn, job_id)
             cleanup.sync(conn, job_id)
         _dashboard([job_id])
         logger.warning(f"[jobs] job {job_id} failed on {g.worker['name']} ({data.get('error_class')}): {_text(data.get('message'), 300)} -> {outcome}")
@@ -235,6 +238,7 @@ def register(app):
             downloads.sync(conn, job_id)
             versions.sync(conn, job_id)
             previews.sync(conn, job_id)
+            quality.sync(conn, job_id)
             cleanup.sync(conn, job_id)
         _dashboard([job_id])
         logger.info(f"[jobs] job {job_id} is waiting for review: {_text(data.get('reason'), 200)}")

@@ -13,7 +13,7 @@ import logging
 import os
 import posixpath
 
-from synchub import db, jobs, previews, settings, storage
+from synchub import db, jobs, previews, quality, settings, storage
 from synchub.library import audio, profiles, scan, size_policy, store
 from synchub.library import vocab as v
 
@@ -231,6 +231,7 @@ def decide(conn, row, rec, now=None):
     if rec["analysis_status"] != v.ANALYSIS_COMPLETED or rec.get("unreadable_reason"):
         why = rec.get("unreadable_reason") or rec.get("audit_error") or rec.get("integrity_status") or "the analysis did not finish"
         return _set(conn, row["id"], now, record_id=rec["id"], status="blocked", message=f"Could not analyse the file: {why}")
+    quality.request_for_import(conn, rec, now)              # a new file is measured whatever happens next; a low score only flags it (docs/QUALITY.md)
     plans, profile, cfg = _plans(conn, rec)
     size = size_policy.decide(rec, plans, cfg)
     if not plans and size.action != size_policy.COMPRESS and size.action != size_policy.REVIEW:

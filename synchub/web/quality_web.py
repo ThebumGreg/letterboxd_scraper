@@ -1,0 +1,86 @@
+"""Quality checks on the web: the Low quality page (what is flagged, what is waiting, the settings), and the buttons that check or accept a file."""
+from flask import jsonify, render_template, request
+
+from synchub import db, jobs, quality, settings
+from settings_validation import validate_setting
+
+SETTING_KEYS = ("quality_samples", "quality_slice_seconds", "quality_flag_below", "quality_on_download", "quality_scan_library", "quality_scan_order")
+
+
+def _fail(message, status=400):
+    return jsonify(ok=False, message=message), status
+
+
+def _who(conn):
+    from synchub.web import current_profile
+    profile = current_profile(conn)
+    return profile["name"] if profile else "guest"
+
+
+def _file_id(data):
+    try:
+        return int(data.get("file_id"))
+    except (TypeError, ValueError):
+        return None
+
+
+def overview(conn):
+    waiting = [dict(r) for r in conn.execute(
+        """SELECT q.id, q.status, q.source, q.message, f.file_name, f.id AS file_id FROM quality_check q JOIN library_file f ON f.id = q.library_file_id
+           WHERE q.status IN ('queued', 'running') ORDER BY q.id DESC LIMIT 30""")]
+    recent = [dict(r) for r in conn.execute(
+        """SELECT q.id, q.status, q.score, q.grade, q.message, q.finished_at, f.file_name, f.id AS file_id FROM quality_check q JOIN library_file f ON f.id = q.library_file_id
+           WHERE q.status IN ('done', 'failed') ORDER BY q.id DESC LIMIT 15""")]
+    return {"low": quality.low_quality(conn), "counts": quality.counts(conn), "waiting": waiting, "recent": recent, "flag_below": quality.flag_below(conn),
+            "values": {k: settings.get(k, conn=conn) for k in SETTING_KEYS}, "version": quality.CHECK_VERSION}
+
+
+def register(app):
+    @app.route("/library/quality")
+    def library_quality_page():
+        with db.connection() as conn:
+            data = overview(conn)
+        return render_template("quality.html", **data)
+
+    @app.route("/api/library/quality/check", methods=["POST"])
+    def api_library_quality_check():
+        file_id = _file_id(request.get_json(silent=True) or {})
+        if file_id is None:
+            return _fail("Choose a file to check.")
+        try:
+            with db.connection() as conn:
+                quality.request(conn, file_id, by=_who(conn), source="manual")
+        except (quality.QualityError, jobs.JobError) as exc:
+            return _fail(str(exc))
+        return jsonify(ok=True, message="Queued. A worker will check it soon; this page does not need to stay open.")
+
+    @app.route("/api/library/quality/accept", methods=["POST"])
+    def api_library_quality_accept():
+        data = request.get_json(silent=True) or {}
+        file_id = _file_id(data)
+        if file_id is None:
+            return _fail("Choose a file.")
+        try:
+            with db.connection() as conn:
+                if data.get("undo"):
+                    quality.unaccept(conn, file_id)
+                    return jsonify(ok=True, message="It will be flagged again if it is still low quality.")
+                quality.accept(conn, file_id, by=_who(conn))
+        except quality.QualityError as exc:
+            return _fail(str(exc))
+        return jsonify(ok=True, message="Accepted as it is. It is flagged again only if the file changes.")
+
+    @app.route("/api/library/quality/settings", methods=["POST"])
+    def api_library_quality_settings():
+        data = request.get_json(silent=True) or {}
+        cleaned, errors = {}, []
+        for key in SETTING_KEYS:
+            if key in data:
+                ok, result = validate_setting(key, str(data[key]))
+                (cleaned.__setitem__(key, result) if ok else errors.append(result))
+        if errors:
+            return _fail(" ".join(errors))
+        with db.connection() as conn:
+            for key, value in cleaned.items():
+                settings.set_value(key, value, conn=conn)
+        return jsonify(ok=True, message="Saved.")
