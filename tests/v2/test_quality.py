@@ -318,3 +318,241 @@ def test_a_damaged_file_is_measured_as_damaged(tmp_path):
         run = subprocess.run(agent.quality_command("ffmpeg", str(path), 0, 4, agent.QUALITY_FILTERS, niceness=False), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         out[name] = agent.parse_quality(run.stdout, 4)
     assert out["good"]["errors"] == 0 and out["bad"]["errors"] > 0
+
+
+# ---------------------------------------------------------------- smoother scoring and the minimum resolution
+def test_a_bitrate_just_under_the_line_costs_almost_nothing(conn):
+    # 3440 kbps of H.264 at 1920x1080 and 23.976 fps is 0.0692 bits per pixel: under the old 0.07 cliff, now a fraction of a point
+    near = rec_of(conn, fixture_file(conn, rel="A (2000)/A (2000).mkv", kbps=3440, codec="h264", resolution="1920x1080"))
+    assert 0.068 < quality.bits_per_pixel(near) < 0.07
+    out = quality.score(clean_metrics(), near)
+    assert out["findings"] == [] and out["score"] > 99
+    thin = rec_of(conn, fixture_file(conn, rel="B (2000)/B (2000).mkv", kbps=2200, codec="h264", resolution="1920x1080"))      # about 0.044
+    (mild,) = quality.score(clean_metrics(), thin)["findings"]
+    assert mild["key"] == "low_bitrate" and mild["severity"] == "warn" and "may show blocks" in mild["text"]
+    starved = rec_of(conn, fixture_file(conn, rel="C (2000)/C (2000).mkv", kbps=900, codec="h264", resolution="1920x1080"))      # about 0.018
+    (bad,) = quality.score(clean_metrics(), starved)["findings"]
+    assert bad["severity"] == "bad" and "will look blocky" in bad["text"]
+    assert quality._curve(0.0695, quality.BPP_CURVE) < quality._curve(0.05, quality.BPP_CURVE) < quality._curve(0.03, quality.BPP_CURVE)
+
+
+def test_mild_findings_are_information_not_warnings(conn):
+    rec = rec_of(conn, fixture_file(conn))
+    out = quality.score(clean_metrics(blur=10.5), rec)
+    (blur,) = out["findings"]
+    assert blur["key"] == "blurry" and blur["severity"] == "info" and "Slightly soft" in blur["text"] and out["grade"] == "good"
+
+
+def test_a_picture_under_the_minimum_resolution_is_flagged_whatever_the_check_says(conn):
+    sd = fixture_file(conn, rel="Old (1980)/Old (1980).mkv", kbps=1500, codec="h264", resolution="720x480")
+    rec = rec_of(conn, sd)
+    state = quality.state_for(conn, rec)
+    assert state["low"] and state["small"] and state["label"] == "Low quality" and "720x480" in state["extra"][0]["text"] and "1080p" in state["extra"][0]["text"]
+    rows = quality.low_quality(conn)
+    assert [r["id"] for r in rows] == [sd] and rows[0]["findings"][0]["key"] == "below_minimum" and quality.low_count(conn) == 1
+
+
+def test_widescreen_black_bars_and_the_minimum_setting(conn):
+    scope = fixture_file(conn, rel="Scope (2000)/Scope (2000).mkv", kbps=8000, resolution="1920x800")
+    hd = fixture_file(conn, rel="HD (2000)/HD (2000).mkv", kbps=8000, resolution="1280x720")
+    assert quality.below_minimum(rec_of(conn, scope), 1080) is None and quality.below_minimum(rec_of(conn, hd), 1080) == (1280, 720)
+    settings.set_value("quality_min_height", "720", conn=conn)
+    conn.commit()
+    assert quality.low_quality(conn) == []
+    settings.set_value("quality_min_height", "0", conn=conn)
+    conn.commit()
+    assert quality.min_height() == 0 and quality.low_quality(conn) == []
+
+
+def test_accepting_a_small_file_stops_the_flag_and_a_change_brings_it_back(conn):
+    sd = fixture_file(conn, rel="Old (1980)/Old (1980).mkv", resolution="720x480")
+    quality.accept(conn, sd, by="Greg")
+    assert quality.low_quality(conn) == [] and quality.state_for(conn, rec_of(conn, sd))["label"] == "Accepted as is"
+    conn.execute("UPDATE library_file SET size_bytes = size_bytes + 1 WHERE id = ?", (sd,))
+    assert quality.low_count(conn) == 1
+
+
+def test_older_scores_are_worked_out_again_from_the_stored_numbers(conn):
+    file_id = fixture_file(conn)
+    metrics = clean_metrics(blur=10.5)
+    check_id = finish_job(conn, quality.request(conn, file_id), metrics)["id"]
+    conn.execute("UPDATE quality_check SET check_version = 1, score = 55, grade = 'poor', findings_json = '[]' WHERE id = ?", (check_id,))
+    assert quality.rescore_stale(conn) == 1
+    again = quality.get(conn, check_id)
+    assert again["check_version"] == quality.CHECK_VERSION and again["score"] > 55 and again["findings"][0]["key"] == "blurry"
+    assert quality.rescore_stale(conn) == 0
+
+
+# ---------------------------------------------------------------- request a better copy
+from synchub import better_copy                                      # noqa: E402
+from synchub.clients import ApiError                                 # noqa: E402
+
+
+def release(title, resolution=1080, guid=None, indexer=3, size=8_000_000_000, rejections=(), allowed=True, seeders=20):
+    return {"guid": guid or title, "indexerId": indexer, "title": title, "size": size, "seeders": seeders, "indexer": "Tracker", "protocol": "torrent", "ageHours": 5,
+            "quality": {"quality": {"name": f"Bluray-{resolution}p", "resolution": resolution}}, "rejections": list(rejections), "downloadAllowed": allowed}
+
+
+class FakeRadarr:
+    def __init__(self, releases=(), history=None, movies=None, fail_block=False):
+        self.movie_list = movies if movies is not None else [{"id": 7, "title": "Heat", "path": "/movies/Heat (1995)"}]
+        self.history = history if history is not None else [{"id": 11, "eventType": "grabbed", "sourceTitle": "Heat.1995.DVDRip", "date": "2020-01-01"},
+                                                            {"id": 12, "eventType": "downloadFolderImported", "sourceTitle": "Heat.1995.DVDRip", "date": "2020-01-02"}]
+        self.release_list, self.fail_block, self.calls = list(releases), fail_block, []
+
+    def movies(self):
+        return self.movie_list
+
+    def movie_history(self, movie_id):
+        self.calls.append(("history", movie_id))
+        return self.history
+
+    def mark_history_failed(self, history_id):
+        self.calls.append(("block", history_id))
+        if self.fail_block:
+            raise ApiError("Radarr MarkHistoryFailed failed: HTTP 500")
+
+    def search_movie(self, movie_id):
+        self.calls.append(("search", movie_id))
+
+    def releases(self, movie_id):
+        self.calls.append(("releases", movie_id))
+        return self.release_list
+
+    def grab_release(self, guid, indexer_id):
+        self.calls.append(("grab", guid, indexer_id))
+
+
+def sd_film(conn, radarr_path="/movies"):
+    storage.create(conn, {"name": "media", "protocol": "local", "share": "/mnt/media", "mount_point": "/mnt/media", **({"radarr_path": radarr_path} if radarr_path else {})})
+    return fixture_file(conn, rel="Heat (1995)/Heat (1995).mkv", kbps=1500, resolution="720x480")
+
+
+def test_auto_request_blocks_the_grabbed_release_then_searches(conn):
+    file_id = sd_film(conn)
+    radarr = FakeRadarr()
+    out = better_copy.request_auto(file_id, by="Greg", radarr=radarr)
+    assert [c[0] for c in radarr.calls] == ["history", "block", "search"] and ("block", 11) in radarr.calls
+    assert out["status"] == "requested" and "Heat.1995.DVDRip" in out["message"] and "cutoff" in out["message"]
+    row = conn.execute("SELECT * FROM quality_request").fetchone()
+    assert (row["status"], row["mode"], row["blocklisted"], row["bad_release"], row["service_item_id"], row["requested_by"]) == ("requested", "auto", 1, "Heat.1995.DVDRip", "7", "Greg")
+
+
+def test_a_second_request_does_not_block_the_same_release_again(conn):
+    file_id = sd_film(conn)
+    radarr = FakeRadarr()
+    better_copy.request_auto(file_id, radarr=radarr)
+    better_copy.request_auto(file_id, radarr=radarr)
+    assert [c for c in radarr.calls if c[0] == "block"] == [("block", 11)] and [c for c in radarr.calls if c[0] == "search"] == [("search", 7)] * 2
+
+
+def test_no_grab_in_the_history_still_searches_and_says_so(conn):
+    file_id = sd_film(conn)
+    radarr = FakeRadarr(history=[])
+    out = better_copy.request_auto(file_id, radarr=radarr)
+    assert ("search", 7) in radarr.calls and not any(c[0] == "block" for c in radarr.calls) and "no grab" in out["message"]
+
+
+def test_a_failed_block_is_reported_but_the_search_goes_ahead(conn):
+    file_id = sd_film(conn)
+    radarr = FakeRadarr(fail_block=True)
+    out = better_copy.request_auto(file_id, radarr=radarr)
+    assert "could not be blocked" in out["message"] and ("search", 7) in radarr.calls
+    assert conn.execute("SELECT blocklisted FROM quality_request").fetchone()[0] == 0
+
+
+def test_requests_that_cannot_be_made_say_why_and_are_logged(conn):
+    file_id = sd_film(conn, radarr_path=None)
+    with pytest.raises(better_copy.BetterCopyError, match="Radarr path"):
+        better_copy.request_auto(file_id, radarr=FakeRadarr())
+    conn.execute("UPDATE storage_root SET radarr_path = '/movies'")
+    conn.commit()
+    with pytest.raises(better_copy.BetterCopyError, match="no movie"):
+        better_copy.request_auto(file_id, radarr=FakeRadarr(movies=[{"id": 9, "title": "Other", "path": "/movies/Other (2000)"}]))
+    with pytest.raises(better_copy.BetterCopyError, match="not in the Library"):
+        better_copy.preview(99999, radarr=FakeRadarr())
+    assert conn.execute("SELECT COUNT(*) FROM quality_request WHERE status = 'failed'").fetchone()[0] == 1
+
+
+def test_the_release_list_keeps_only_real_upgrades_best_first_and_changes_nothing(conn):
+    file_id = sd_film(conn)
+    radarr = FakeRadarr(releases=[release("Heat.1995.DVDRip", 480), release("Heat.1995.720p", 720), release("Heat.1995.1080p.A", 1080, seeders=5), release("Heat.1995.1080p.B", 1080, seeders=50),
+                                  release("Heat.1995.2160p", 2160, guid="g4k"), release("Heat.1995.1080p.Banned", 1080, rejections=["Release is blocklisted"]),
+                                  release("Heat.1995.1080p.Nope", 1080, allowed=False)])
+    out = better_copy.preview(file_id, radarr=radarr)
+    assert [c["title"] for c in out["candidates"]] == ["Heat.1995.2160p", "Heat.1995.1080p.B", "Heat.1995.1080p.A"]
+    assert out["wanted_height"] == 1080 and out["bad_release"] == "Heat.1995.DVDRip" and out["can_block"]
+    assert not any(c[0] in ("block", "search", "grab") for c in radarr.calls)
+
+
+def test_grabbing_a_chosen_release_blocks_the_old_one_first(conn):
+    file_id = sd_film(conn)
+    radarr = FakeRadarr(releases=[release("Heat.1995.1080p.B", 1080, guid="gB", indexer=4)])
+    out = better_copy.grab(file_id, "gB", 4, by="Greg", radarr=radarr)
+    assert radarr.calls.index(("block", 11)) < radarr.calls.index(("grab", "gB", 4)) and out["status"] == "grabbed"
+    assert conn.execute("SELECT chosen_release, mode FROM quality_request").fetchone()[:] == ("Heat.1995.1080p.B", "pick")
+
+
+def test_only_a_release_on_offer_now_can_be_grabbed(conn):
+    file_id = sd_film(conn)
+    radarr = FakeRadarr(releases=[release("Heat.1995.720p", 720, guid="g720"), release("Heat.1995.1080p", 1080, guid="g1")])
+    for guid in ("made-up", "g720"):
+        with pytest.raises(better_copy.BetterCopyError, match="not on offer"):
+            better_copy.grab(file_id, guid, 3, radarr=radarr)
+    assert not any(c[0] in ("block", "grab") for c in radarr.calls)
+
+
+def test_tv_episodes_are_not_requested_yet(conn):
+    file_id = sd_film(conn)
+    conn.execute("UPDATE library_file SET media_type = 'TV Episode' WHERE id = ?", (file_id,))
+    conn.commit()
+    with pytest.raises(better_copy.BetterCopyError, match="TV"):
+        better_copy.request_auto(file_id, radarr=FakeRadarr())
+
+
+def test_the_buttons_reach_radarr_and_the_page_shows_the_request(client, conn, monkeypatch):
+    file_id = sd_film(conn)
+    radarr = FakeRadarr(releases=[release("Heat.1995.1080p.B", 1080, guid="gB", indexer=4)])
+    monkeypatch.setattr(better_copy, "_client", lambda radarr_=None: radarr)
+    listed = client.post("/api/library/quality/releases", json={"file_id": file_id}).get_json()
+    assert listed["ok"] and listed["candidates"][0]["guid"] == "gB"
+    asked = client.post("/api/library/quality/better", json={"file_id": file_id}).get_json()
+    assert asked["ok"] and "Blocked" in asked["message"]
+    grabbed = client.post("/api/library/quality/grab", json={"file_id": file_id, "guid": "gB", "indexer_id": 4}).get_json()
+    assert grabbed["ok"] and ("grab", "gB", 4) in radarr.calls
+    assert not client.post("/api/library/quality/grab", json={"file_id": file_id}).get_json()["ok"]
+    page = client.get("/library/quality").get_data(as_text=True)
+    assert "Request better copy" in page and "Show releases" in page and "Below your minimum resolution" in page
+    assert "Better copy grabbed" in client.get(f"/library/record/{file_id}").get_data(as_text=True)
+
+
+def test_the_radarr_client_sends_the_calls_radarr_documents(monkeypatch):
+    from synchub import http
+    from synchub.clients.arr import RadarrClient
+    seen = []
+
+    class Answer:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return [] if seen[-1][2] == "GET" else {}
+
+    def fake(service, event, method, url, **kw):
+        seen.append((event, url, method, kw.get("params"), kw.get("json")))
+        return Answer()
+
+    monkeypatch.setattr(http, "request", fake)
+    client = RadarrClient("http://radarr:7878", "key")
+    client.movie_history(7)
+    client.mark_history_failed(11)
+    client.search_movie(7)
+    client.releases(7)
+    client.grab_release("g1", 4)
+    assert seen == [
+        ("GetMovieHistory", "http://radarr:7878/api/v3/history/movie", "GET", {"movieId": 7}, None),
+        ("MarkHistoryFailed", "http://radarr:7878/api/v3/history/failed/11", "POST", None, {}),
+        ("SearchMovie", "http://radarr:7878/api/v3/command", "POST", None, {"name": "MoviesSearch", "movieIds": [7]}),
+        ("GetReleases", "http://radarr:7878/api/v3/release", "GET", {"movieId": 7}, None),
+        ("GrabRelease", "http://radarr:7878/api/v3/release", "POST", None, {"guid": "g1", "indexerId": 4}),
+    ]

@@ -16,10 +16,14 @@
         {% if q.check and q.check.status == 'failed' %}<span class="text-danger">The last check failed: {{ q.check.message }}</span>{% endif %}
         {% if act and not (q.check and q.check.status in ('queued', 'running')) %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-check="{{ file_id }}">{{ 'Check again' if q.result else 'Check quality' }}</button>{% endif %}
         {% if act and q.low %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-accept="{{ file_id }}" title="Stop flagging this file. It is flagged again only if the file changes.">Accept as is</button>{% endif %}
+        {% if act and q.low %}<button type="button" class="btn btn-sm btn-outline-info py-0" data-quality-better="{{ file_id }}" title="Blocks the release that was grabbed for this film in Radarr and asks Radarr to search again.">Request better copy</button>
+        <button type="button" class="btn btn-sm btn-outline-info py-0" data-quality-releases="{{ file_id }}" title="Lists what the indexers have. Changes nothing until you pick one.">Show releases</button>{% endif %}
         {% if act and q.accepted %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-accept="{{ file_id }}" data-undo="1">Flag it again</button>{% endif %}
     </div>
-    {% if q.result and q.result.findings %}
-    <ul class="mb-0 mt-1 ps-3">{% for fnd in q.result.findings %}<li class="{{ 'text-danger' if fnd.severity == 'bad' else ('text-warning' if fnd.severity == 'warn' else 'text-body-secondary') }}">{{ fnd.text }}</li>{% endfor %}</ul>
+    {% if q.request %}<div class="mt-1 {{ 'text-danger' if q.request.status == 'failed' else 'text-body-secondary' }}">Better copy {{ q.request.status }} {{ q.request.created_at[:10] }}{% if q.request.requested_by %} by {{ q.request.requested_by }}{% endif %}: {{ q.request.message }}</div>{% endif %}
+    <div class="mt-1" data-quality-out="{{ file_id }}" role="status"></div>
+    {% if q.extra or (q.result and q.result.findings) %}
+    <ul class="mb-0 mt-1 ps-3">{% for fnd in (q.extra + (q.result.findings if q.result and q.current else [])) %}<li class="{{ 'text-danger' if fnd.severity == 'bad' else ('text-warning' if fnd.severity == 'warn' else 'text-body-secondary') }}">{{ fnd.text }}</li>{% endfor %}</ul>
     {% elif q.result and q.result.score is not none %}<div class="text-body-secondary mt-1">Nothing wrong found in the sampled parts.</div>{% endif %}
 </div>
 {% endmacro %}
@@ -39,6 +43,41 @@
             if (data.ok) setTimeout(() => location.reload(), 900); else button.disabled = false;
         } catch (e) { button.textContent = 'Could not reach the server'; button.disabled = false; }
     }
+    const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const out = (id) => document.querySelector('[data-quality-out="' + id + '"]');
+    async function call(url, body) {
+        const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(body) });
+        return res.json().catch(() => ({ ok: false, message: 'The server gave no answer.' }));
+    }
+    function say(id, text, bad) { const box = out(id); if (box) { box.className = 'mt-1 ' + (bad ? 'text-danger' : 'text-body-secondary'); box.textContent = text; } }
+    async function releases(id, button) {
+        button.disabled = true; say(id, 'Asking the indexers through Radarr. This can take a minute...');
+        const data = await call('/api/library/quality/releases', { file_id: id });
+        button.disabled = false;
+        if (!data.ok) return say(id, data.message || 'Failed.', true);
+        const box = out(id); box.className = 'mt-1';
+        const rows = (data.candidates || []).map((c) => '<div class="border-top pt-1 mt-1"><div style="overflow-wrap:anywhere">' + esc(c.title) + '</div><div class="text-body-secondary">' +
+            esc(c.quality || (c.resolution ? c.resolution + 'p' : '')) + ' · ' + (c.size ? (c.size / 1073741824).toFixed(1) + ' GB' : '') + (c.seeders != null ? ' · ' + c.seeders + ' seeders' : '') + ' · ' + esc(c.indexer || '') +
+            (c.notes && c.notes.length ? ' · ' + esc(c.notes.join('; ')) : '') + '</div><button type="button" class="btn btn-sm btn-outline-info py-0 mt-1" data-quality-grab="' + id + '" data-guid="' + esc(c.guid) + '" data-indexer="' + esc(c.indexerId) + '">Get this one</button></div>').join('');
+        box.innerHTML = '<div class="text-body-secondary">' + esc(data.movie) + (data.bad_release ? '. “' + esc(data.bad_release) + '” will be blocked when you pick one.' : '. Radarr\'s history has no grab to block.') + ' ' + esc(data.message || '') + '</div>' + rows;
+    }
+    document.addEventListener('click', async (e) => {
+        const better = e.target.closest('[data-quality-better]');
+        if (better) {
+            const id = better.dataset.qualityBetter; better.disabled = true; say(id, 'Asking Radarr...');
+            const data = await call('/api/library/quality/better', { file_id: id }); better.disabled = !!data.ok;
+            say(id, data.message || (data.ok ? 'Done.' : 'Failed.'), !data.ok);
+        }
+        const list = e.target.closest('[data-quality-releases]');
+        if (list) releases(list.dataset.qualityReleases, list);
+        const grab = e.target.closest('[data-quality-grab]');
+        if (grab) {
+            const id = grab.dataset.qualityGrab; grab.disabled = true; say(id, 'Sending it to the download client...');
+            const data = await call('/api/library/quality/grab', { file_id: id, guid: grab.dataset.guid, indexer_id: grab.dataset.indexer });
+            say(id, data.message || (data.ok ? 'Done.' : 'Failed.'), !data.ok);
+            if (!data.ok) grab.disabled = false;
+        }
+    });
     document.addEventListener('click', (e) => {
         const check = e.target.closest('[data-quality-check]');
         if (check) send('/api/library/quality/check', { file_id: check.dataset.qualityCheck }, check);
