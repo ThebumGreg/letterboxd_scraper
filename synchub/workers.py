@@ -109,6 +109,7 @@ SETTINGS = {
     "scan_threads": ("agent", "int", 2, (1, 16)),
     "log_level": ("agent", "choice", "INFO", ("DEBUG", "INFO", "WARNING", "ERROR")),
     "auto_update": ("host", "bool", True, None),
+    "ai_quality": ("host", "bool", False, None),                # build the image with the AI quality test layer (PyTorch and models, about 1 GB); see agent/auto-update.sh
     "update_window": ("host", "window", "", None),              # HH:MM-HH:MM local time on the PC, empty = only when idle
 }
 _WINDOW = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$")
@@ -372,7 +373,7 @@ def host_check(conn, worker_id, now=None):
     want_log = settings.get(UPDATER_WANT_KEY.format(worker_id), "", conn=conn) == "1"
     if want_log:
         settings.set_value(UPDATER_WANT_KEY.format(worker_id), "", conn=conn)
-    return {"want_log": want_log, "idle": running == 0, "running": running, "auto_update": bool(setting(w, "auto_update")), "window": setting(w, "update_window"), "request": request,
+    return {"want_log": want_log, "idle": running == 0, "running": running, "auto_update": bool(setting(w, "auto_update")), "ai_quality": bool(setting(w, "ai_quality")), "window": setting(w, "update_window"), "request": request,
             **protect.host_instruction(conn, worker_id)}
 
 
@@ -394,12 +395,16 @@ def report_update(conn, worker_id, info, now=None):
     info = info if isinstance(info, dict) else {}
     status = info.get("status")
     if status == "started":                                           # the helper is about to update (an hourly check, or a request that found new code)
-        task_note(conn, worker_id, "update", f"Updating to {str(info.get('commit') or 'the newest code')[:80]}", running=True, create="auto", now=now)
+        task_note(conn, worker_id, "update", str(info.get("note") or "")[:200] or f"Updating to {str(info.get('commit') or 'the newest code')[:80]}", running=True, create="auto", now=now)
         return {"status": "started", "commit": str(info.get("commit") or "")[:80]}
     if status not in ("ok", "failed", "current", "problem"):
         raise ValueError("The update report needs a status of 'ok', 'failed', 'current' or 'problem'.")
     report = {k: str(info.get(k) or "")[:{"error": 2000, "log": 6000}.get(k, 80)] for k in UPDATE_FIELDS if k != "at"}
     report["status"], report["at"] = status, now or db.now()
+    note = str(info.get("note") or "")[:200]
+    if note and status in ("ok", "failed"):                          # a rebuild the Workers page asked for (the AI quality test layer): a Jobs row, not an update report or an alert
+        task_finish(conn, worker_id, "update", "failed" if status == "failed" else "done", note, error=report["error"] if status == "failed" else None, log=report["log"], create=True, now=report["at"])
+        return report
     settings.set_value(UPDATE_KEY.format(worker_id), json.dumps(report), conn=conn)
     if status in ("ok", "failed", "current"):
         if status == "ok":

@@ -978,6 +978,59 @@ def parse_quality(text, length):
     return out
 
 
+# ---------------------------------------------------------------- the AI quality test (optional: torch and pyiqa are in the image only when the AI layer was built)
+# key: (pyiqa metric name, factor that brings the model's own score range onto 0-100). MUSIQ answers roughly 0-100, TOPIQ and CLIP-IQA 0-1. All three judge one
+# frame at a time (no motion), trained on photos, so a score is a comparison with the standard check, not a verdict.
+AI_MODELS = {"musiq": ("musiq", 1.0), "topiq_nr": ("topiq_nr", 100.0), "clipiqa": ("clipiqa", 100.0)}
+AI_FRAMES_PER_SLICE = 3                 # frames scored in each sampled part of the film
+AI_FRAME_WIDTH = 1920                   # wider pictures are scaled down to this before scoring (4K on a CPU is too slow, and the models were not made for it)
+AI_TONEMAP = ("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,"
+              "zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
+_AI = {}
+
+
+def ai_probe():
+    """(True, {device, models, ...}) when torch and pyiqa are installed and import, else (False, {reason}). Looked at once; importing torch takes a few seconds."""
+    if "probe" not in _AI:
+        try:
+            import pyiqa
+            import torch
+        except Exception as exc:                                    # not installed (the usual case), or a broken install
+            _AI["probe"] = (False, {"reason": f"{type(exc).__name__}: {exc}"[:200]})
+        else:
+            device = os.environ.get("SYNCHUB_AI_DEVICE") or ("cuda" if torch.cuda.is_available() else
+                                                              "xpu" if getattr(torch, "xpu", None) is not None and torch.xpu.is_available() else "cpu")
+            _AI["probe"] = (True, {"device": device, "models": list(AI_MODELS), "torch": torch.__version__, "pyiqa": getattr(pyiqa, "__version__", "")})
+    return _AI["probe"]
+
+
+def ai_frame_times(windows, per_slice=AI_FRAMES_PER_SLICE):
+    """When to take frames: `per_slice` evenly spread inside each (start, length) part."""
+    return [round(start + length * (i + 0.5) / per_slice, 3) for start, length in windows for i in range(per_slice)]
+
+
+def ai_frame_command(ffmpeg, source, at, out_path, tonemap=False):
+    """One picture of the film at `at` seconds, scaled down to AI_FRAME_WIDTH, HDR tone-mapped to SDR first when asked."""
+    chain = ([AI_TONEMAP] if tonemap else []) + [f"scale='min({AI_FRAME_WIDTH},iw)':-2"]
+    return [ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-ss", f"{at:.3f}", "-i", source, "-map", "0:v:0", "-frames:v", "1", "-vf", ",".join(chain), "-y", out_path]
+
+
+def ai_scale(key, raw):
+    """A model's own score on the 0-100 scale, kept inside it."""
+    return round(max(0.0, min(100.0, float(raw) * AI_MODELS[key][1])), 2)
+
+
+def ai_summarise(raw_scores, version=None):
+    """{model: {mean, raw_mean, scores, version}} from {model: [raw score per frame]}. A model with no scores is left out."""
+    out = {}
+    for key, raws in raw_scores.items():
+        raws = [float(x) for x in raws if x is not None]
+        if key in AI_MODELS and raws:
+            scaled = [ai_scale(key, x) for x in raws]
+            out[key] = {"mean": round(sum(scaled) / len(scaled), 2), "raw_mean": round(sum(raws) / len(raws), 4), "scores": scaled, "version": version}
+    return out
+
+
 PREVIEW_PROBE_SECONDS = 10         # how much of the film one "most demanding part" sample reads
 PREVIEW_SAMPLES = 16
 PREVIEW_COPY_LIMIT = 450 * 1024 ** 2     # a copied (unmodified) clip bigger than this is re-encoded at a high quality instead, so it stays under SyncHub's upload limit
@@ -1080,6 +1133,11 @@ def detect_capabilities(cfg):
         if media_analysis and caps["ffmpeg"]:
             caps["ops"].extend(["scan", "convert", "preview", "quality"])          # a scan needs ffprobe to read files and ffmpeg to check them; a conversion also runs ffmpeg, then checks the result
             caps["features"].extend(["preview", "quality"])
+            ai_ok, ai_info = ai_probe()
+            if ai_ok:                                                              # the image was built with the AI layer: it can run the AI quality test
+                caps["ops"].append("quality_ai")
+                caps["features"].append("quality_ai")
+                caps["ai_quality"] = {"device": ai_info["device"], "models": ai_info["models"], "torch": ai_info["torch"]}
     if caps["ffmpeg"] and caps["ffprobe"] and media_analysis:
         dovi_code, _ = run_quiet([cfg.dovi_tool, "--version"])
         mkv_code, _ = run_quiet([cfg.mkvmerge, "--version"])
@@ -1544,10 +1602,10 @@ class JobRunner(threading.Thread):
         self.reporter.start()
         try:
             op = (self.job.get("plan") or {}).get("op")
-            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash, "convert": self.do_convert, "preview": self.do_preview, "quality": self.do_quality, "rename": self.do_rename, "delete_source": self.do_delete_source, "originals": self.do_originals}.get(op)
-            if work is None or (op in ("scan", "hash", "convert", "preview", "quality") and media_analysis is None):
+            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash, "convert": self.do_convert, "preview": self.do_preview, "quality": self.do_quality, "quality_ai": self.do_quality_ai, "rename": self.do_rename, "delete_source": self.do_delete_source, "originals": self.do_originals}.get(op)
+            if work is None or (op in ("scan", "hash", "convert", "preview", "quality", "quality_ai") and media_analysis is None):
                 raise JobFailure("unsupported_job", f"This agent ({__version__}) cannot do '{op or self.job.get('kind')}' jobs. Update the agent"
-                                 + (" (media_analysis.py must be next to synchub_agent.py)." if op in ("scan", "hash", "convert", "preview", "quality") else "."), retryable=False)
+                                 + (" (media_analysis.py must be next to synchub_agent.py)." if op in ("scan", "hash", "convert", "preview", "quality", "quality_ai") else "."), retryable=False)
             final = ("complete", {"result": work()}, "done")
         except Interrupted:
             self.log.info("Stopping for a restart or shutdown; the job resumes from its last checkpoint", stage=self.stage)
@@ -2145,6 +2203,80 @@ class JobRunner(threading.Thread):
             self.log.info(f"Part {index + 1}/{len(windows)} at {start:.0f} s", **{k: v for k, v in numbers.items() if k not in ("seconds",)})
         self.report_progress("scan", 1.0, "Quality check finished", force=True)
         return {"op": "quality", "slices": slices, "skipped": skipped, "filters": have, "duration": duration, "elapsed": round(time.monotonic() - started, 1)}
+
+    def do_quality_ai(self):
+        """The AI quality test: takes a few frames from each sampled part of the film (HDR tone-mapped to SDR), scores each with every available model and reports the
+        mean per model on a 0-100 scale. Reads the film where it is and keeps nothing. It judges frames one at a time, so motion problems are not seen."""
+        plan = self.job["plan"]
+        ok, info = ai_probe()
+        if not ok:
+            raise JobFailure("bad_job", f"This worker was built without the AI quality models ({info.get('reason')}).", retryable=False)
+        if not self.job.get("source"):
+            raise JobFailure("bad_job", "An AI quality test needs a source.", retryable=False)
+        src = self.folder_in(self.job["source"]["root"], self.job["source"]["rel"])
+        if not os.path.isfile(src):
+            raise JobFailure("source_changed", f"The film is not there any more: {self.job['source']['rel']}")
+        if plan.get("source_size") and os.stat(src).st_size != plan["source_size"]:
+            raise JobFailure("source_changed", f"{self.job['source']['rel']} is not the file SyncHub analysed (its size differs). It will be looked at again.", retryable=False)
+        code, text = run_quiet([self.cfg.ffmpeg, "-hide_banner", "-filters"])
+        hdr = str(plan.get("hdr") or "sdr").lower() not in ("", "sdr", "none")
+        tonemap = hdr and code == 0 and bool(re.search(r"\bzscale\b", text)) and bool(re.search(r"\btonemap\b", text))
+        notes = [] if tonemap or not hdr else ["This ffmpeg cannot tone-map HDR, so the frames were scored as they are; HDR scores are not comparable."]
+        duration = media_duration(media_analysis.run_ffprobe(self.media_settings({}), src)) or plan.get("duration")
+        windows = quality_windows(float(duration or 0), max(1, min(24, int(plan.get("samples") or 10))), max(10, min(120, int(plan.get("seconds") or 30))), plan.get("seed") or 0)
+        if not windows:
+            raise JobFailure("bad_job", "The film's length could not be read, so nothing could be sampled.", retryable=False)
+        import pyiqa
+        import torch
+        device = torch.device(info["device"])
+        metrics, errors = {}, {}
+        for key in plan.get("models") or list(AI_MODELS):
+            if key not in AI_MODELS:
+                continue
+            try:
+                metrics[key] = pyiqa.create_metric(AI_MODELS[key][0], device=device)
+            except Exception as exc:                                    # missing weights, no memory: the other models still run
+                errors[key] = f"{type(exc).__name__}: {exc}"[:200]
+                self.log.warning(f"The AI model {key} could not be loaded", error=errors[key])
+        if not metrics:
+            raise JobFailure("bad_job", "No AI model could be loaded: " + "; ".join(f"{k}: {v}" for k, v in errors.items()), retryable=False)
+        times = ai_frame_times(windows)
+        started, raw, frames = time.monotonic(), {key: [] for key in metrics}, 0
+        work = tempfile.mkdtemp(prefix="quality-ai-", dir=self.cfg.work_dir)
+        try:
+            for index, at in enumerate(times):
+                self.guard()
+                self.report_progress("scan", index / len(times), f"Scoring frame {index + 1} of {len(times)}", force=True)
+                image = os.path.join(work, "frame.png")
+                try:
+                    done = subprocess.run(ai_frame_command(self.cfg.ffmpeg, src, at, image, tonemap), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                          timeout=QUALITY_SLICE_TIMEOUT, text=True, errors="replace")
+                except subprocess.TimeoutExpired:
+                    raise JobFailure("transient", f"A frame took longer than {QUALITY_SLICE_TIMEOUT // 60} minutes to read. Is the share slow?")
+                except OSError as exc:
+                    raise JobFailure("transient", f"ffmpeg could not run: {exc}")
+                if done.returncode != 0 or not os.path.isfile(image):
+                    self.log.warning(f"No picture at {at:.0f} s", output=(done.stdout or "")[-200:])
+                    continue
+                frames += 1
+                for key, metric in metrics.items():
+                    try:
+                        with torch.no_grad():
+                            raw[key].append(float(metric(image)))
+                    except Exception as exc:
+                        errors.setdefault(key, f"{type(exc).__name__}: {exc}"[:200])
+                os.remove(image)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        if frames == 0:
+            raise JobFailure("transient", "No frame of the film could be read.")
+        models = ai_summarise(raw, version=info.get("pyiqa") or None)
+        for key in metrics:
+            if key not in models:
+                errors.setdefault(key, "no frame could be scored")
+        self.report_progress("scan", 1.0, "AI quality test finished", force=True)
+        return {"op": "quality_ai", "device": info["device"], "elapsed": round(time.monotonic() - started, 1), "slices": len(windows), "frames": frames,
+                "tonemapped": bool(tonemap), "models": models, "errors": errors, "notes": notes}
 
     def do_preview(self):
         """Makes the two clips of a preview (docs/DESIGN_ENCODING.md section 12) and uploads them: a window of the film encoded with the planned settings, and the same

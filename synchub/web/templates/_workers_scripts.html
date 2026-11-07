@@ -194,6 +194,7 @@
         document.getElementById('setLog').value = st.log_level || 'INFO';
         document.getElementById('setWindow').value = st.update_window || '';
         document.getElementById('setAutoUpdate').checked = st.auto_update !== false;
+        document.getElementById('setAiQuality').checked = st.ai_quality === true;
         document.getElementById('workerError').textContent = '';
         modal('workerModal').show();
     }
@@ -202,7 +203,7 @@
         e.preventDefault();
         const body = { name: document.getElementById('workerName').value, tags: document.getElementById('workerTags').value, slots: document.getElementById('workerSlots').value,
             settings: { encoder: document.getElementById('setEncoder').value, gpu_slots: document.getElementById('setGpuSlots').value, max_copy_mb_s: document.getElementById('setCopy').value, scan_threads: document.getElementById('setScan').value,
-                        log_level: document.getElementById('setLog').value, update_window: document.getElementById('setWindow').value, auto_update: document.getElementById('setAutoUpdate').checked } };
+                        log_level: document.getElementById('setLog').value, update_window: document.getElementById('setWindow').value, auto_update: document.getElementById('setAutoUpdate').checked, ai_quality: document.getElementById('setAiQuality').checked } };
         const data = await post(editing ? `/api/workers/${editing}/update` : '/api/workers', body);
         if (!data.ok) { document.getElementById('workerError').textContent = data.message || 'Failed.'; return; }
         modal('workerModal').hide();

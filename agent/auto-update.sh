@@ -277,7 +277,33 @@ relay_sync() {
         relay_report failed "docker compose up failed: $(tail -n 3 "$STATE/relay.out" | cut -c1-300)"
     fi
 }
+# The AI quality test layer chosen on the Workers page (Edit worker > AI quality test). The image holds PyTorch and the models only when it was built with them, so a
+# change means a rebuild: it runs when the worker is idle (a rebuild restarts the container), and tells SyncHub so the Jobs page shows it.
+ai_sync() {
+    local want have text
+    want="$(jget ai_quality)"; [ -n "$want" ] || return 0
+    if [ "$want" = true ]; then want=on; else want=off; fi
+    have="$("$UPDATER" --dir "$DIR" --no-pull --ai-status 2>/dev/null | tail -n 1)"
+    [ "$have" = on ] || [ "$have" = off ] || return 0
+    [ "$want" != "$have" ] || { rm -f "$STATE/ai-waiting"; return 0; }
+    if ! printf '%s' "$answer" | grep -Eq '"idle": ?true'; then
+        [ "$(cat "$STATE/ai-waiting" 2>/dev/null)" = "$want" ] || log "The AI quality test layer is waiting: the worker is busy (the image is rebuilt when it is idle)"
+        echo "$want" > "$STATE/ai-waiting"; return 0
+    fi
+    rm -f "$STATE/ai-waiting"
+    if [ "$want" = on ]; then text="the AI quality test layer (downloads about 1 GB)"; else text="no AI quality test layer"; fi
+    log "Rebuilding the worker with $text"
+    api /update/report "{\"status\":\"started\",\"note\":$(printf 'Rebuilding the worker with %s' "$text" | json_escape)}" >/dev/null 2>&1 || true
+    if output="$("$UPDATER" --dir "$DIR" --no-pull --ai-quality "$want" 2>&1)"; then
+        log "Rebuilt the worker: AI quality test layer is $want"
+        send_report "{\"status\":\"ok\",\"note\":$(printf 'AI quality test layer is now %s' "$want" | json_escape)}"
+    else
+        log "ERROR rebuilding the worker with the AI quality test layer $want failed: $(printf '%s' "$output" | tail -n 2)"
+        send_report "{\"status\":\"failed\",\"note\":\"The AI quality test layer could not be switched $want\",\"error\":$(printf '%s' "$output" | tail -n 5 | json_escape)}"
+    fi
+}
 [ "$FORCE" = 1 ] || [ -z "$answer" ] || relay_sync
+[ "$FORCE" = 1 ] || [ -z "$answer" ] || ai_sync
 
 # The installed copy of this script is what the timer runs: when the checkout holds a newer one, replace it (a rename, so a run in progress is not disturbed).
 refresh_self() {

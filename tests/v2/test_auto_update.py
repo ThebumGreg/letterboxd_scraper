@@ -89,7 +89,9 @@ def box(tmp_path):
     curl = ('echo "curl $*" >> "$SHIM_LOG"\n[ -z "${SHIM_HUB_DOWN:-}" ] || { echo "curl: (7) down" >&2; exit 7; }\n'
             'case "$*" in *update/check*) if [ -n "${SHIM_ANSWER:-}" ]; then printf \"%s\\n\" \"$SHIM_ANSWER\"; else echo "{\\"ok\\":true,\\"idle\\":${SHIM_IDLE:-true}}"; fi;; *) echo "{\\"ok\\":true}";; esac')
     # the updater: succeeds, or fails with a build error while $SHIM_FAIL_UPDATE exists; writes down which version it was asked to deploy
-    updater = ('echo "update $* $(sed -n "s/.*\\"\\(.*\\)\\".*/\\1/p" "$SYNCHUB_REPO/agent/synchub_agent.py")" >> "$SHIM_LOG"\n'
+    updater = ('case "$*" in *--ai-status*) cat "$SHIM_AI" 2>/dev/null || echo off; exit 0;; esac\n'
+               'case "$*" in *"--ai-quality on"*) echo on > "$SHIM_AI";; *"--ai-quality off"*) echo off > "$SHIM_AI";; esac\n'
+               'echo "update $* $(sed -n "s/.*\\"\\(.*\\)\\".*/\\1/p" "$SYNCHUB_REPO/agent/synchub_agent.py")" >> "$SHIM_LOG"\n'
                'if [ -f "$SHIM_FAIL_UPDATE" ] && grep -q 2.0.0 "$SYNCHUB_REPO/agent/synchub_agent.py"; then echo "ERROR: build failed: no space left"; exit 1; fi')
     for name, body in (("curl", curl), ("updater", updater), ("logger", "true"), ("docker", 'echo "docker $*" >> "$SHIM_LOG"')):
         f = bin_dir / name
@@ -100,7 +102,7 @@ def box(tmp_path):
     sh(f"git clone -q {origin} {maker}", tmp_path)
 
     def run(*args, **extra):
-        env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "SHIM_LOG": str(calls), "SHIM_FAIL_UPDATE": str(fail), "SYNCHUB_UPDATE_CONF": str(tmp_path / "none"),
+        env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "SHIM_LOG": str(calls), "SHIM_FAIL_UPDATE": str(fail), "SHIM_AI": str(tmp_path / "ai-state"), "SYNCHUB_UPDATE_CONF": str(tmp_path / "none"),
                "SYNCHUB_REPO": str(clone), "SYNCHUB_WORKER_DIR": str(dirw), "SYNCHUB_UPDATE_STATE": str(state), "SYNCHUB_UPDATE_LOCK": str(tmp_path / "lock"),
                "SYNCHUB_UPDATE_SCRIPT": str(bin_dir / "updater"), **extra}
         done = subprocess.run(["bash", str(AUTO), *args], capture_output=True, text=True, env=env, timeout=60)
@@ -475,3 +477,78 @@ def test_a_benchmark_becomes_running_when_the_worker_is_told_and_done_with_its_r
     assert _tasks(v2)[0][1] == "done"
     with v2.connection() as conn:
         assert "CPU (libx265): 1.2x, VMAF 96.1" in workers.get_task(conn, workers.recent_tasks(conn)[0]["id"])["log"]
+
+
+# ---------------------------------------------------------------- the AI quality test layer: Workers page setting -> rebuild
+def test_the_ai_setting_rebuilds_an_idle_worker_with_the_layer_and_tells_synchub(box):
+    code, out, calls = box.run(SHIM_ANSWER=answer(ai_quality=True))
+    assert code == 0 and "Rebuilding the worker with the AI quality test layer" in out
+    assert "--no-pull --ai-quality on" in calls
+    sent = [c for c in calls.splitlines() if "update/report" in c]
+    assert '"status":"started"' in sent[0] and "AI quality test layer" in sent[0] and '"status":"ok"' in sent[-1] and "now on" in sent[-1]
+    again = box.run(SHIM_ANSWER=answer(ai_quality=True))[2]                              # already built that way: nothing more
+    assert again.count("--ai-quality on") == 1
+    off = box.run(SHIM_ANSWER=answer(ai_quality=False))[2]
+    assert "--ai-quality off" in off
+
+
+def test_the_ai_rebuild_waits_for_an_idle_worker_and_ignores_a_silent_synchub(box):
+    code, out, calls = box.run(SHIM_ANSWER=answer(ai_quality=True, idle=False))
+    assert "AI quality test layer is waiting" in out and "--ai-quality" not in calls
+    assert "--ai-quality" not in box.run(SHIM_ANSWER=answer())[2]                      # SyncHub did not mention it: leave the image alone
+
+
+def bash_update(tmp_path, args, build_ok=True):
+    repo = tmp_path / "repo"
+    if not repo.exists():
+        (repo / "agent").mkdir(parents=True)
+        sh("git init -q", repo)
+        for f in ("Dockerfile", "synchub_agent.py", "media_analysis.py"):
+            (repo / "agent" / f).write_text("x\n")
+        (repo / "agent" / "update-worker.sh").write_text(UPDATE.read_text())
+        sh("git add -A && git -c user.name=t -c user.email=t@t commit -qm x", repo)
+    worker = tmp_path / "worker"
+    worker.mkdir(exist_ok=True)
+    (worker / "docker-compose.yml").write_text("services: {}\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    build = 'echo built' if build_ok else 'echo "build failed" >&2; exit 1'
+    docker = ('case "$*" in\n  "compose config") echo "    context: ' + str(repo / "agent") + '" ;;\n  "compose up -d --build") ' + build + ' ;;\n'
+              '  "compose ps -q --status running") echo abc123 ;;\n  "compose ps -q") echo abc123 ;;\n  inspect*) echo healthy ;;\n  *) ;;\nesac')
+    for name, body in (("docker", docker), ("mount", "echo x /mnt/tower/ x")):
+        f = bin_dir / name
+        f.write_text(f"#!/bin/sh\n{body}\n")
+        f.chmod(f.stat().st_mode | stat.S_IXUSR)
+    done = subprocess.run(["bash", str(repo / "agent" / "update-worker.sh"), "--dir", str(worker), "--no-pull", *args], capture_output=True, text=True,
+                          env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"})
+    return done, repo / "agent" / "AI_QUALITY"
+
+
+def test_update_worker_switches_the_ai_layer_and_reports_its_state(tmp_path):
+    status = lambda: bash_update(tmp_path, ["--ai-status"])[0].stdout.strip().splitlines()[-1]
+    assert status() == "off"
+    done, flag = bash_update(tmp_path, ["--ai-quality", "on"])
+    assert done.returncode == 0 and flag.read_text().strip() == "on" and status() == "on"
+    assert bash_update(tmp_path, [])[1].read_text().strip() == "on"                      # no option: the choice is kept through updates
+    assert bash_update(tmp_path, ["--ai-quality", "off"])[1].read_text().strip() == "off"
+    assert bash_update(tmp_path, ["--ai-quality", "maybe"])[0].returncode == 1
+
+
+def test_a_failed_build_puts_the_ai_layer_choice_back(tmp_path):
+    done, flag = bash_update(tmp_path, ["--ai-quality", "on"], build_ok=False)
+    assert done.returncode == 1 and "back to 'off'" in done.stderr and flag.read_text().strip() == "off"
+
+
+def test_the_workers_ai_setting_is_sent_to_the_pcs_helper(client, v2):
+    wid, headers = authed(v2, "t-ai")
+    assert client.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()["ai_quality"] is False
+    with v2.connection() as conn:
+        workers.update(conn, wid, settings={"ai_quality": True})
+    assert client.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()["ai_quality"] is True
+    note = {"status": "ok", "note": "AI quality test layer is now on"}
+    with v2.connection() as conn:
+        workers.report_update(conn, wid, {"status": "started", "note": "Rebuilding the worker with the AI quality test layer"})
+        assert workers.recent_tasks(conn)[0]["message"].startswith("Rebuilding") and workers.last_update(conn, wid) is None
+        workers.report_update(conn, wid, note)
+        task = workers.recent_tasks(conn)[0]
+        assert task["status"] == "done" and task["message"] == "AI quality test layer is now on" and workers.last_update(conn, wid) is None

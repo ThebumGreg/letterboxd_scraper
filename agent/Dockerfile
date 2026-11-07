@@ -51,6 +51,21 @@ RUN set -e; \
     fi; \
     if ffmpeg -hide_banner -filters | grep -q libvmaf; then echo "ffmpeg has libvmaf: quality scores are available"; else echo "NOTE: this ffmpeg has no libvmaf; quality scores will be skipped"; fi
 
+# The AI quality test layer (optional, about 1 GB): PyTorch (CPU build) and pyiqa with the MUSIQ, TOPIQ-NR and CLIP-IQA weights, so the worker can run the AI half of the
+# Options page's quality test. It is built only when AI_QUALITY holds "on" (update-worker.sh / setup-worker.sh write it; the Workers page's "AI quality test" box turns it
+# on). The copy of the Dockerfile is only there so the COPY has something to match when AI_QUALITY does not exist. Best-effort like the parts above: if a download fails
+# the image still builds and the worker simply does not offer the AI test. The weights are fetched here, at build time, so the running worker needs no internet.
+# AI_TORCH_INDEX picks the PyTorch build: the CPU one by default; for an NVIDIA card use https://download.pytorch.org/whl/cu124 (and give the container the GPU).
+ARG AI_TORCH_INDEX=https://download.pytorch.org/whl/cpu
+COPY Dockerfile AI_QUALITY* /tmp/ai/
+RUN if grep -qx on /tmp/ai/AI_QUALITY 2>/dev/null; then \
+        ( pip install --no-cache-dir torch torchvision --index-url "$AI_TORCH_INDEX" \
+          && pip install --no-cache-dir pyiqa \
+          && python -c "import pyiqa; [pyiqa.create_metric(m, device='cpu') for m in ('musiq', 'topiq_nr', 'clipiqa')]; print('AI quality models are ready')" \
+        ) || echo "WARNING: the AI quality layer could not be installed; this worker will not offer the AI quality test"; \
+    else echo "NOTE: the AI quality layer is off for this worker (Workers page > Edit worker > AI quality test)"; fi; \
+    rm -rf /tmp/ai /root/.cache/pip
+
 WORKDIR /app
 # BUILD_INFO (commit and build time) is written by update-worker.sh / setup-worker.sh before the build; the pattern lets a hand build without it still work.
 COPY synchub_agent.py media_analysis.py BUILD_INFO* /app/

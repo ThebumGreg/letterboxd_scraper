@@ -38,6 +38,7 @@
                         <div class="col-6"><label for="setWindow" class="form-label small mb-0">Update window (optional)</label><input class="form-control form-control-sm" id="setWindow" placeholder="02:00-06:00" maxlength="11">
                             <div class="form-text">Inside it the worker updates even if busy; otherwise only when idle.</div></div>
                         <div class="col-12 form-check ms-1"><input type="checkbox" class="form-check-input" id="setAutoUpdate" checked><label class="form-check-label small" for="setAutoUpdate">Update automatically (needs <code>agent/auto-update.sh</code> on the PC)</label></div>
+                        <div class="col-12 form-check ms-1"><input type="checkbox" class="form-check-input" id="setAiQuality"><label class="form-check-label small" for="setAiQuality">AI quality test (rebuilds the worker with PyTorch and three models, about 1 GB; runs when the worker is idle; needs <code>agent/auto-update.sh</code> on the PC)</label></div>
                     </div>
                 </details>
                 <div class="small text-danger" id="workerError" role="alert"></div>
