@@ -49,6 +49,7 @@ DO_MOUNTS=1
 DO_INIT_ROOTS=1
 DO_START=1
 DO_GPU=1
+DO_AI=0
 DO_WATCHDOG=1
 DO_AUTO_UPDATE=1
 ADOPT=0
@@ -100,6 +101,8 @@ Options:
   --no-init-roots       do not write the .synchub-root marker files into the shares
   --no-start            set everything up but do not build and start the worker
   --no-gpu              do not give the container a GPU even if one is found (/dev/dri for Intel and AMD, nvidia-smi for NVIDIA)
+  --ai-quality          build the worker image with the AI quality test layer (PyTorch and three models, about 1 GB of downloads). Then tick "AI quality test"
+                        under Edit worker on the Workers page, so SyncHub and automatic updates keep it. Same as turning it on there later.
   --no-watchdog         do not install the mount watchdog (agent/mount-watchdog.sh) that remounts the shares after a network outage
   --no-auto-update      do not install the update timer (agent/auto-update.sh) behind the Workers page's Update button
   --adopt               take over a worker that was set up by hand: keep its /etc/fstab lines and mounts, back up its .env, compose file and fstab first
@@ -128,6 +131,7 @@ parse_args() {
             --no-init-roots) DO_INIT_ROOTS=0 ;;
             --no-start) DO_START=0 ;;
             --no-gpu) DO_GPU=0 ;;
+            --ai-quality) DO_AI=1 ;;
             --no-watchdog) DO_WATCHDOG=0 ;;
             --no-auto-update) DO_AUTO_UPDATE=0 ;;
             --adopt) ADOPT=1; DO_MOUNTS=0; DO_INIT_ROOTS=0 ;;
@@ -587,6 +591,7 @@ start_docker() {
     if [ "$DO_START" != 1 ]; then say "Not starting the worker (--no-start). Start it with:  cd $DIR && docker compose up -d --build"; return 0; fi
     say "Building the worker image and starting it (the first build takes a minute or two)"
     write_build_info "$REPO_DIR/agent/BUILD_INFO"
+    if [ "$DO_AI" = 1 ]; then say "Building with the AI quality test layer (--ai-quality)"; [ "$DRY_RUN" = 1 ] || printf "on\n" > "$REPO_DIR/agent/AI_QUALITY"; fi
     if [ "$DRY_RUN" = 1 ]; then say "[dry run] cd $DIR && docker compose up -d --build"; return 0; fi
     ( cd "$DIR" && docker compose up -d --build ) || die "Docker could not start the worker (see above). 'cd $DIR && docker compose logs' may say more."
     say "The worker container is up"

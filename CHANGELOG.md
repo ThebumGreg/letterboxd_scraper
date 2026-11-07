@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**AI quality test, worker side (PR 2 of 2).**
+- **Worker op `quality_ai`.** Takes 3 frames from each sampled part of a film (HDR tone-mapped to SDR, wide pictures scaled to 1920) and scores them with MUSIQ, TOPIQ and CLIP-IQA from `pyiqa`. A model that cannot load is reported and the others still run. The models see one picture at a time. Not run against real models or films yet (tested with stand-ins).
+- **Same worker image, optional layer.** The Dockerfile installs PyTorch (CPU) and fetches the model weights at build time when the build folder's `AI_QUALITY` file says `on`. Off by default; a failed download leaves a normal image.
+- **No SSH.** Workers page > Edit worker > **AI quality test** makes the PC's helper rebuild the image when the worker is idle, as a row on Jobs. `setup-worker.sh --ai-quality` does it for a new worker; `update-worker.sh --ai-quality on|off` and `--ai-status` for by hand.
+- **Changed from the plan:** the plan named FAST-VQA and DOVER, but `pyiqa` does not include them. Those are separate projects and stay a later option.
+
 **Quality follow-ups: the Library section, settings on Options, AI test card, Resume menu (migrations 034 and 035).**
 - **Below minimum quality moved to the Library tab.** The flagged-files list (with Request better copy, Show releases, Accept as is, Check again) is a section of Media > Library. `/library/quality` redirects there. The Dashboard's "files flagged as low quality" line is gone.
 - **Quality settings moved to Media > Options.** Minimum resolution (default 1080p), the score limit, parts sampled, new downloads and the Library pass. Same settings, same save call, nothing to migrate. They were always user-set.

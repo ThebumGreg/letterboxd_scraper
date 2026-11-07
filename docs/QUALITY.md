@@ -86,5 +86,16 @@ Not run against a live Radarr from here: the calls are Radarr v3's documented on
 A test card to compare today's check with an AI model on one file. Type part of a file name, choose **Standard**, **AI** or **Both**, press *Run test*, and the table below shows both results side by side, with the worker's own row on the Jobs tab (`AI quality test: <file>`).
 
 - **Standard** is the usual ffmpeg check above.
-- **AI** is a `quality_ai` job that only a worker reporting the `quality_ai` feature takes: it samples the same parts of the film, tone-maps HDR to SDR, and scores them with FAST-VQA, DOVER (technical score) and MUSIQ. Each model reports a 0 to 100 mean (higher is better). **AI** and **Both** stay greyed out until an online worker has the feature.
+- **AI** is a `quality_ai` job that only a worker reporting the `quality_ai` feature takes. It takes 3 frames from each sampled part of the film (HDR is tone-mapped to SDR first, and anything wider than 1920 pixels is scaled down), and scores every frame with three models from the `pyiqa` library: **MUSIQ**, **TOPIQ** (no-reference) and **CLIP-IQA**. Each reports a 0 to 100 mean (higher is better). **AI** and **Both** stay greyed out until an online worker has the feature.
+- The models judge one picture at a time, so they cannot see motion problems, and they were trained on photos, not films: film grain and soft photography can read as poor quality. Read the scores next to the standard score, not as a verdict. FAST-VQA and DOVER (video models) are not part of this first version: they are separate projects, not in `pyiqa`.
 - It is a test only. It never flags a file, asks Radarr for a better copy or changes anything. The models were trained on phone and web video, so read their scores as a comparison with the standard score, not as a verdict. Plan: `plans/ai-quality-worker-plan.md`.
+
+### Turning the AI test on for a worker
+
+The AI layer is PyTorch (CPU build) and the three models, about 1 GB, built into the worker's own image (no second image). It is off by default.
+
+- **Existing worker (no SSH):** Update the worker first (Workers page, *Update*), so the PC has the new helper. Then *More > Edit* the worker and tick **AI quality test**. Within a minute, when the worker is idle, the PC rebuilds the image with the layer and the Jobs page shows *Rebuilding the worker with the AI quality test layer*. The first build downloads about 1 GB. When it finishes, the worker reports the `quality_ai` feature and the Options card turns AI and Both on. Untick the box to go back to the small image.
+- **New worker:** `sudo ./agent/setup-worker.sh ... --ai-quality`, then tick the box in Edit worker so automatic updates keep it.
+- **Weights** are downloaded at build time, so the running worker needs no internet. If a download fails the image still builds without the layer and the build output says so; the Workers page then shows no AI feature. The choice is a file, `AI_QUALITY`, in the worker's build folder; `update-worker.sh --ai-status` prints `on` or `off`, and `--ai-quality on|off` changes it.
+- **GPU:** the default build is CPU only. An NVIDIA card needs the CUDA build (`AI_TORCH_INDEX=https://download.pytorch.org/whl/cu124` as a build arg) and the GPU given to the container; set `SYNCHUB_AI_DEVICE` to force `cpu`, `cuda` or `xpu`.
+- **Licence:** `pyiqa` is PolyForm Noncommercial. Fine for a home server; check it before using SyncHub commercially.
