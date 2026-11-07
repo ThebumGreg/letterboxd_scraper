@@ -49,7 +49,9 @@ def _purge_previews():
 
 
 def _quality_pass():
-    from synchub import quality
+    from synchub import db, quality
+    with db.connection() as conn:
+        quality.rescore_stale(conn)
     queued = quality.library_step()
     if queued:
         logger.info(f"[quality] the Library pass queued {queued} check(s).")

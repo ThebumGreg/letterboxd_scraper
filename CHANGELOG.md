@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**Quality checks, part 2: minimum resolution, gentler scores, request a better copy (migration 032).**
+- **Minimum resolution (default 1080p).** A file with a smaller picture is flagged Low quality whatever its check says, even if never checked (a 480p file used to score "good"). Width counts as well as height, so widescreen films with black bars pass. Setting *Minimum resolution* on the Low quality page; 0 turns it off.
+- **Smoother scoring.** The bitrate, block and blur penalties now grow gradually instead of jumping at a line (0.069 bits per pixel used to cost 10 points, 0.071 nothing). Mild results show as plain information, not warnings, and only a real shortfall says dark scenes will look blocky. Older results are scored again from their stored numbers; no new check is needed.
+- **Request a better copy from Radarr (movies).** On a flagged film: *Show releases* (read only: lists the real upgrades from Radarr's indexers), *Get this one* (blocks the release that was grabbed for the file, then sends the chosen release to the download client) and *Request better copy* (blocks it and asks Radarr to search again). Each request is recorded. See [docs/QUALITY.md](docs/QUALITY.md). Not run against a live Radarr yet. TV shows are not included.
+
 **Quality checks (movies, PR 1 of 2; migration 031).** Rate how a file looks without an original to compare with. See [docs/QUALITY.md](docs/QUALITY.md).
 - **Worker op `quality`.** A worker samples about 10 short parts of a film (low CPU priority, read from the share, nothing copied) and reports decode errors, blockiness, blur, interlacing and frozen picture. SyncHub scores the numbers, so the rules can change without a new worker. Update workers first: only an agent with the `quality` feature takes these jobs.
 - **Where it runs.** A *Check quality* button on the movie page and the Library record page; every new Radarr/Sonarr import (flag only, setting *New downloads*); and an optional Library pass that checks unchecked films a few at a time and never while Jellyfin is playing something (off by default).

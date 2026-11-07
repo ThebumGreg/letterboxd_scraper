@@ -5,7 +5,7 @@
 
 {% block content %}
 <h2 class="mb-1">Low quality</h2>
-<p class="text-body-secondary small mb-3">Files whose quality check scored under {{ flag_below }} out of 100. A check samples a few short parts of a film and looks for blockiness, blur, interlacing, frozen picture, decode errors and too few bits for the picture. It judges the file on its own; the scores are a guide, not a verdict. Scoring rules version {{ version }}.</p>
+<p class="text-body-secondary small mb-3">Files smaller than your minimum resolution ({{ values.quality_min_height }}p; 0 means no minimum), and files whose quality check scored under {{ flag_below }} out of 100. A check samples a few short parts of a film and looks for blockiness, blur, interlacing, frozen picture, decode errors and too few bits for the picture. It judges the file on its own; the scores are a guide, not a verdict. Scoring rules version {{ version }}.</p>
 
 <div class="row g-3 mb-3">
     <div class="col-6 col-md-3"><div class="panel p-3"><div class="fs-4">{{ counts.low }}</div><div class="small text-body-secondary">flagged</div></div></div>
@@ -19,12 +19,15 @@
     <div class="border-top pt-2 mt-2">
         <div class="d-flex flex-wrap justify-content-between gap-2">
             <strong style="overflow-wrap: anywhere;"><a class="text-decoration-none" href="{{ url_for('library_record', record_id=f.id) }}">{{ f.recommended_name or f.file_name }}</a></strong>
-            <span class="text-body-secondary small">{{ f.resolution or '' }} · {{ size_text(f.size_bytes) }} · score {{ f.q_score|round|int }}</span>
+            <span class="text-body-secondary small">{{ f.resolution or '' }} · {{ size_text(f.size_bytes) }}{% if f.q_score is not none and f.sort_score == f.q_score %} · score {{ f.q_score|round|int }}{% endif %}</span>
         </div>
         <div class="small text-body-secondary" style="overflow-wrap: anywhere;">{{ f.root_name }}: {{ f.relative_path }}</div>
         <ul class="small mb-1 ps-3">{% for fnd in f.findings %}<li class="{{ 'text-danger' if fnd.severity == 'bad' else 'text-warning' }}">{{ fnd.text }}</li>{% endfor %}</ul>
+        <button type="button" class="btn btn-sm btn-outline-info py-0" data-quality-better="{{ f.id }}" title="Blocks the release that was grabbed for this film in Radarr and asks Radarr to search again.">Request better copy</button>
+        <button type="button" class="btn btn-sm btn-outline-info py-0" data-quality-releases="{{ f.id }}" title="Lists what the indexers have. Changes nothing until you pick one.">Show releases</button>
         <button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-accept="{{ f.id }}">Accept as is</button>
-        <button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-check="{{ f.id }}">Check again</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-check="{{ f.id }}">{{ 'Check again' if f.q_score is not none else 'Check quality' }}</button>
+        <div class="small mt-1" data-quality-out="{{ f.id }}" role="status"></div>
     </div>
     {% else %}
     <p class="small text-body-secondary mb-0">Nothing is flagged. {% if not counts.waiting and not counts.running and not recent %}No file has been checked yet: press <em>Check quality</em> on a film's page, or turn on the Library pass below.{% endif %}</p>
@@ -47,6 +50,7 @@
     <div class="row g-3">
         <div class="col-md-4"><label class="form-label small" for="qSamples">Parts sampled per film</label><input class="form-control form-control-sm" type="number" min="1" max="24" id="qSamples" value="{{ values.quality_samples }}"></div>
         <div class="col-md-4"><label class="form-label small" for="qSlice">Seconds in each part</label><input class="form-control form-control-sm" type="number" min="10" max="120" id="qSlice" value="{{ values.quality_slice_seconds }}"></div>
+        <div class="col-md-4"><label class="form-label small" for="qMin">Minimum resolution (height, 0 = none)</label><input class="form-control form-control-sm" type="number" min="0" max="4320" step="1" id="qMin" value="{{ values.quality_min_height }}"></div>
         <div class="col-md-4"><label class="form-label small" for="qBelow">Flag a file scoring under</label><input class="form-control form-control-sm" type="number" min="1" max="100" id="qBelow" value="{{ values.quality_flag_below }}"></div>
         <div class="col-md-4"><label class="form-label small" for="qDownload">New downloads</label>
             <select class="form-select form-select-sm" id="qDownload"><option value="flag"{% if values.quality_on_download == 'flag' %} selected{% endif %}>Check, and flag low scores</option><option value="off"{% if values.quality_on_download == 'off' %} selected{% endif %}>Do not check</option></select></div>
@@ -68,7 +72,7 @@
     const value = (id) => document.getElementById(id).value;
     document.getElementById('qSave').addEventListener('click', async () => {
         const out = document.getElementById('qSaved');
-        const body = { quality_samples: value('qSamples'), quality_slice_seconds: value('qSlice'), quality_flag_below: value('qBelow'), quality_on_download: value('qDownload'), quality_scan_library: value('qPass'), quality_scan_order: value('qOrder') };
+        const body = { quality_samples: value('qSamples'), quality_slice_seconds: value('qSlice'), quality_flag_below: value('qBelow'), quality_min_height: value('qMin'), quality_on_download: value('qDownload'), quality_scan_library: value('qPass'), quality_scan_order: value('qOrder') };
         try {
             const res = await fetch('/api/library/quality/settings', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(body) });
             const data = await res.json().catch(() => ({}));

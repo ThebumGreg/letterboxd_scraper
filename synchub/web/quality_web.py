@@ -1,10 +1,10 @@
 """Quality checks on the web: the Low quality page (what is flagged, what is waiting, the settings), and the buttons that check or accept a file."""
 from flask import jsonify, render_template, request
 
-from synchub import db, jobs, quality, settings
+from synchub import better_copy, db, jobs, quality, settings
 from settings_validation import validate_setting
 
-SETTING_KEYS = ("quality_samples", "quality_slice_seconds", "quality_flag_below", "quality_on_download", "quality_scan_library", "quality_scan_order")
+SETTING_KEYS = ("quality_samples", "quality_slice_seconds", "quality_flag_below", "quality_min_height", "quality_on_download", "quality_scan_library", "quality_scan_order")
 
 
 def _fail(message, status=400):
@@ -69,6 +69,44 @@ def register(app):
         except quality.QualityError as exc:
             return _fail(str(exc))
         return jsonify(ok=True, message="Accepted as it is. It is flagged again only if the file changes.")
+
+    @app.route("/api/library/quality/releases", methods=["POST"])
+    def api_library_quality_releases():
+        """Read only: what Radarr's indexers have for this film. Changes nothing."""
+        file_id = _file_id(request.get_json(silent=True) or {})
+        if file_id is None:
+            return _fail("Choose a file.")
+        try:
+            return jsonify(ok=True, **better_copy.preview(file_id))
+        except better_copy.BetterCopyError as exc:
+            return _fail(str(exc))
+
+    @app.route("/api/library/quality/better", methods=["POST"])
+    def api_library_quality_better():
+        """Blocks the release that was grabbed for this file and asks Radarr to search again."""
+        file_id = _file_id(request.get_json(silent=True) or {})
+        if file_id is None:
+            return _fail("Choose a file.")
+        try:
+            with db.connection() as conn:
+                who = _who(conn)
+            return jsonify(ok=True, **better_copy.request_auto(file_id, by=who))
+        except better_copy.BetterCopyError as exc:
+            return _fail(str(exc))
+
+    @app.route("/api/library/quality/grab", methods=["POST"])
+    def api_library_quality_grab():
+        """Blocks the release that was grabbed for this file and sends one release from the list to the download client."""
+        data = request.get_json(silent=True) or {}
+        file_id = _file_id(data)
+        if file_id is None or not data.get("guid") or data.get("indexer_id") in (None, ""):
+            return _fail("Choose a release from the list.")
+        try:
+            with db.connection() as conn:
+                who = _who(conn)
+            return jsonify(ok=True, **better_copy.grab(file_id, str(data["guid"]), data["indexer_id"], by=who))
+        except better_copy.BetterCopyError as exc:
+            return _fail(str(exc))
 
     @app.route("/api/library/quality/settings", methods=["POST"])
     def api_library_quality_settings():

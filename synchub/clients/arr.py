@@ -80,6 +80,26 @@ class RadarrClient(_Arr):
         """Stops Radarr tracking the movie. Files are only deleted if asked, and they are not by default."""
         return self._send("DeleteMovie", "DELETE", f"/api/v3/movie/{int(movie_id)}?deleteFiles={'true' if delete_files else 'false'}&addImportExclusion=false", ok=(200, 202, 204))
 
+    def movie_history(self, movie_id):
+        """Radarr's history of one movie: what was grabbed and imported, newest first as Radarr returns it. Each entry has `id`, `eventType` and `sourceTitle`."""
+        return self._get("GetMovieHistory", "/api/v3/history/movie", params={"movieId": int(movie_id)}, timeout=30)
+
+    def mark_history_failed(self, history_id):
+        """Marks a grab as failed. Radarr adds that release to its blocklist, so it is not picked again for this movie."""
+        return self._send("MarkHistoryFailed", "POST", f"/api/v3/history/failed/{int(history_id)}", {}, ok=(200, 201, 202, 204))
+
+    def search_movie(self, movie_id):
+        """Asks Radarr to search its indexers for the movie now. Radarr applies its quality profile and its blocklist."""
+        return self._send("SearchMovie", "POST", "/api/v3/command", {"name": "MoviesSearch", "movieIds": [int(movie_id)]})
+
+    def releases(self, movie_id):
+        """What the indexers have for the movie right now (the same list as Radarr's interactive search). Slow: Radarr asks every indexer."""
+        return self._get("GetReleases", "/api/v3/release", params={"movieId": int(movie_id)}, timeout=120)
+
+    def grab_release(self, guid, indexer_id):
+        """Sends one release from `releases()` to the download client."""
+        return self._send("GrabRelease", "POST", "/api/v3/release", {"guid": guid, "indexerId": int(indexer_id)})
+
     def lookup(self, tmdb_id):
         results = self._get("LookupMovie", "/api/v3/movie/lookup", params={"term": f"tmdb:{tmdb_id}"})
         return results[0] if results else None

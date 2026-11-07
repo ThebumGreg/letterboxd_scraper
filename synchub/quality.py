@@ -20,7 +20,7 @@ from synchub.library import vocab as v
 logger = logging.getLogger(__name__)
 
 REF = "quality_check"
-CHECK_VERSION = 1
+CHECK_VERSION = 2
 GRADES = (("good", 80), ("ok", 65), ("poor", 45), ("bad", 0))
 LIVE = ("queued", "running")
 JOB_STATUS = {"queued": "queued", "running": "running", "done": "done", "failed": "failed", "needs_review": "failed", "cancelled": "cancelled"}
@@ -30,9 +30,11 @@ CLEANUP_IN_FLIGHT = 3                 # the background pass never has more than 
 
 # How efficient a codec is compared with H.264, so the bits-per-pixel limits mean the same thing for every file.
 CODEC_EFFICIENCY = {"hevc": 1.6, "h265": 1.6, "av1": 2.0, "vp9": 1.6, "h264": 1.0, "avc": 1.0, "vc1": 0.9, "mpeg4": 0.7, "msmpeg4": 0.6, "mpeg2video": 0.5, "mpeg1video": 0.4}
-BPP_LIMITS = ((0.030, 45, "far too few bits for the picture"), (0.045, 28, "few bits for the picture"), (0.070, 10, "a little low for the picture"))
-BLOCK_LIMITS = ((30.0, 25), (20.0, 12))
-BLUR_LIMITS = ((14.0, 20), (10.0, 10))         # per 1080 lines of picture height
+# Penalties grow smoothly between these points (value, points lost), so a file just either side of a line is treated almost the same.
+BPP_CURVE = ((0.070, 0), (0.045, 10), (0.030, 28), (0.020, 45))
+BLOCK_CURVE = ((20.0, 0), (25.0, 12), (30.0, 25))
+BLUR_CURVE = ((9.0, 0), (12.0, 10), (16.0, 20))         # per 1080 lines of picture height
+MIN_PICTURE_SHARE = 0.9              # a picture this much of the minimum's width counts as meeting it (a 1920x800 scope film meets 1080p)
 
 
 class QualityError(ValueError):
@@ -57,6 +59,11 @@ def slice_seconds(conn=None):
 
 def flag_below(conn=None):
     return _int("quality_flag_below", 60, 1, 100, conn)
+
+
+def min_height(conn=None):
+    """The smallest picture height a person wants (0 = no minimum)."""
+    return _int("quality_min_height", 1080, 0, 4320, conn)
 
 
 def on_download(conn=None):
@@ -115,6 +122,39 @@ def bits_per_pixel(rec):
     return round(kbps * 1000 / (width * height * fps) * efficiency, 4)
 
 
+def _curve(value, points):
+    """Points lost for a value, by straight lines between the curve's points; flat beyond the ends."""
+    first, last = points[0], points[-1]
+    ascending = last[0] > first[0]
+    if (value <= first[0]) if ascending else (value >= first[0]):
+        return 0.0 if first[1] == 0 else float(first[1])
+    if (value >= last[0]) if ascending else (value <= last[0]):
+        return float(last[1])
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        if (x0 <= value <= x1) if ascending else (x1 <= value <= x0):
+            return y0 + (y1 - y0) * (value - x0) / (x1 - x0)
+    return 0.0
+
+
+def below_minimum(rec, min_height):
+    """(width, height) when the picture is smaller than the minimum resolution, else None. Judged by width as well as height, so a widescreen film with black bars
+    (1920x800) still meets 1080p."""
+    if not min_height:
+        return None
+    width, height, _, _, _ = _facts(rec)
+    if not (width and height):
+        return None
+    need = min_height * 16 / 9 * MIN_PICTURE_SHARE
+    return None if max(width, height * 16 / 9) >= need else (width, height)
+
+
+def resolution_finding(rec, min_height):
+    found = below_minimum(rec, min_height)
+    if not found:
+        return None
+    return {"key": "below_minimum", "severity": "bad", "text": f"Below your minimum resolution: the picture is {found[0]}x{found[1]} and you want at least {min_height}p. A bigger copy is needed; stretching this one adds no detail."}
+
+
 def score(metrics, rec):
     """{'score', 'grade', 'findings'} from what the worker measured and the file's record. Pure: the same inputs always give the same answer."""
     slices = [s for s in (metrics or {}).get("slices") or [] if isinstance(s, dict)]
@@ -135,24 +175,26 @@ def score(metrics, rec):
             f"The video had decode errors in {len(broken)} of {len(slices)} sampled parts ({sum(s.get('errors') or 0 for s in broken)} messages in all): the file is damaged or badly encoded.")
     bpp = bits_per_pixel(rec)
     if bpp is not None:
-        for limit, points, words in BPP_LIMITS:
-            if bpp < limit:
-                add("low_bitrate", "bad" if points >= 28 else "warn", points, f"{words.capitalize()}: {bpp:.3f} bits per pixel (H.264 equivalent). Dark scenes and grain will look blocky.")
-                break
+        lost = _curve(bpp, BPP_CURVE)
+        if lost >= 1:
+            if lost < 4:
+                add("low_bitrate", "info", lost, f"Bitrate is a little thin for the picture: {bpp:.3f} bits per pixel (H.264 equivalent). Fine for most films.")
+            elif lost < 20:
+                add("low_bitrate", "warn", lost, f"Few bits for the picture: {bpp:.3f} bits per pixel (H.264 equivalent). Dark scenes and grain may show blocks.")
+            else:
+                add("low_bitrate", "bad", lost, f"Far too few bits for the picture: {bpp:.3f} bits per pixel (H.264 equivalent). Dark scenes and grain will look blocky.")
     block = _median(s.get("block") for s in slices)
     if block is not None:
-        for limit, points in BLOCK_LIMITS:
-            if block > limit:
-                add("blocky", "warn", points, f"Visible blockiness (advisory): block score {block:.1f}, typical clean films stay well below {BLOCK_LIMITS[1][0]:g}.")
-                break
+        lost = _curve(block, BLOCK_CURVE)
+        if lost >= 1:
+            add("blocky", "warn" if lost >= 8 else "info", lost, f"Some blockiness (advisory): block score {block:.1f}; clean films usually stay under {BLOCK_CURVE[0][0]:g}.")
     _, height, _, _, _ = _facts(rec)
     blur = _median(s.get("blur") for s in slices)
     if blur is not None and height:
         per_1080 = blur * 1080 / height
-        for limit, points in BLUR_LIMITS:
-            if per_1080 > limit:
-                add("blurry", "warn", points, f"Soft or blurry picture (advisory): blur score {per_1080:.1f} per 1080 lines. Some films are shot soft on purpose.")
-                break
+        lost = _curve(per_1080, BLUR_CURVE)
+        if lost >= 1:
+            add("blurry", "warn" if lost >= 8 else "info", lost, f"{'Soft or blurry picture' if lost >= 8 else 'Slightly soft picture'} (advisory): blur score {per_1080:.1f} per 1080 lines. Some films are shot soft on purpose.")
     interlaced = _median(s.get("interlaced") for s in slices)
     if interlaced is not None and interlaced > 0.5:
         add("interlaced", "warn", 12, f"The picture looks interlaced ({interlaced * 100:.0f}% of frames): expect combing on moving edges unless the player deinterlaces.")
@@ -199,23 +241,30 @@ def is_accepted(conn, rec):
 
 
 def state_for(conn, rec, check=None):
-    """What to show for one file: {'check', 'current', 'low', 'accepted', 'label'}. `low` is only true for a current check below the flag threshold that nobody accepted."""
+    """What to show for one file: {'check', 'result', 'current', 'low', 'accepted', 'small', 'label', 'extra'}. `low` is true for a file under the minimum resolution, or with a
+    current check below the flag threshold, that nobody accepted. `extra` holds findings that do not come from the check (the resolution)."""
     check = check if check is not None else latest(conn, rec["id"])
     done = check if check and check["status"] == "done" else (latest(conn, rec["id"], done_only=True) if check else None)
     current = is_current(done, rec)
     accepted = is_accepted(conn, rec)
-    low = bool(current and done["score"] is not None and done["score"] < flag_below(conn) and not accepted)
+    small = resolution_finding(rec, min_height(conn))
+    scored_low = bool(current and done["score"] is not None and done["score"] < flag_below(conn))
+    low = bool((scored_low or small) and not accepted)
     if check and check["status"] in LIVE:
         label = "Checking" if check["status"] == "running" else "Waiting for a worker"
+    elif accepted and (scored_low or small):
+        label = "Accepted as is"
+    elif small:
+        label = "Low quality"
     elif done is None:
         label = "Not checked"
     elif done["score"] is None:
         label = "No result"
     else:
         label = ("Low quality" if low else {"good": "Good", "ok": "OK", "poor": "Poor", "bad": "Bad"}.get(done["grade"], "")) + ("" if current else " (old)")
-        if accepted and done["score"] < flag_below(conn):
-            label = "Accepted as is"
-    return {"check": check, "result": done, "current": current, "low": low, "accepted": accepted, "label": label}
+    asked = conn.execute("SELECT * FROM quality_request WHERE library_file_id = ? ORDER BY id DESC LIMIT 1", (rec["id"],)).fetchone()
+    return {"check": check, "result": done, "current": current, "low": low, "accepted": accepted, "small": bool(small), "label": label, "extra": [small] if small else [],
+            "request": dict(asked) if asked else None}
 
 
 # ---------------------------------------------------------------- asking for a check
@@ -286,6 +335,23 @@ def sync(conn, job_id, now=None):
         values["message"] = job.get("message") or "A worker is checking the file."
     conn.execute(f"UPDATE quality_check SET {', '.join(f'{k} = ?' for k in values)} WHERE id = ?", [*values.values(), row["id"]])
     return True
+
+
+def rescore_stale(conn):
+    """Scores checks made under older rules again from the numbers the worker sent, so a change to the rules needs no new check. Returns how many were updated."""
+    done = 0
+    for row in conn.execute("SELECT q.id, q.metrics_json, q.size_bytes, q.mtime, f.* FROM quality_check q JOIN library_file f ON f.id = q.library_file_id "
+                            "WHERE q.status = 'done' AND q.check_version < ? AND q.metrics_json IS NOT NULL", (CHECK_VERSION,)).fetchall():
+        rec = dict(row)
+        metrics = _json(rec.get("metrics_json"), {})
+        if not metrics.get("slices"):
+            continue
+        outcome = score(metrics, rec)
+        conn.execute("UPDATE quality_check SET check_version = ?, score = ?, grade = ?, findings_json = ?, message = ?, updated_at = ? WHERE id = ?",
+                     (CHECK_VERSION, outcome["score"], outcome["grade"], json.dumps(outcome["findings"]),
+                      f"Score {outcome['score']:g} ({outcome['grade']})." if outcome["score"] is not None else "No result.", db.now(), row["id"]))
+        done += 1
+    return done
 
 
 def sync_active(conn):
@@ -359,21 +425,30 @@ def library_step(client=None):
 
 # ---------------------------------------------------------------- lists and the movie page
 def low_quality(conn, limit=50):
-    """Files whose current check is below the flag threshold and that nobody accepted, worst first."""
-    below = flag_below(conn)
+    """Files flagged low quality, worst first: under the minimum resolution, or a current check below the flag threshold, and not accepted. Each row carries `findings`."""
+    below, wanted = flag_below(conn), min_height(conn)
     rows = conn.execute("""
-        SELECT f.*, q.id AS check_id, q.score AS q_score, q.grade AS q_grade, q.findings_json AS q_findings, q.finished_at AS q_finished
-        FROM quality_check q JOIN library_file f ON f.id = q.library_file_id
-        WHERE q.status = 'done' AND q.id = (SELECT MAX(id) FROM quality_check WHERE library_file_id = f.id AND status = 'done')
-          AND q.check_version = ? AND q.size_bytes = f.size_bytes AND q.mtime = f.mtime AND q.score < ? AND f.missing_since IS NULL
-          AND NOT EXISTS (SELECT 1 FROM quality_accept a WHERE a.library_file_id = f.id AND a.size_bytes = f.size_bytes AND a.mtime = f.mtime)
-        ORDER BY q.score ASC, f.id LIMIT ?""", (CHECK_VERSION, below, int(limit))).fetchall()
+        SELECT f.*, q.id AS check_id, q.score AS q_score, q.findings_json AS q_findings, q.finished_at AS q_finished, q.check_version AS q_version, q.size_bytes AS q_size, q.mtime AS q_mtime,
+               (SELECT 1 FROM quality_accept a WHERE a.library_file_id = f.id AND a.size_bytes = f.size_bytes AND a.mtime = f.mtime) AS accepted
+        FROM library_file f
+        LEFT JOIN quality_check q ON q.id = (SELECT MAX(id) FROM quality_check WHERE library_file_id = f.id AND status = 'done')
+        WHERE f.missing_since IS NULL AND f.analysis_status = 'completed'""").fetchall()
     out = []
     for r in rows:
         d = dict(r)
-        d["findings"] = _json(d.pop("q_findings"), [])
+        if d.pop("accepted"):
+            continue
+        findings = _json(d.pop("q_findings"), [])
+        current = d["check_id"] is not None and d["q_size"] == d["size_bytes"] and d["q_mtime"] == d["mtime"] and d["q_version"] == CHECK_VERSION
+        scored_low = bool(current and d["q_score"] is not None and d["q_score"] < below)
+        small = resolution_finding(d, wanted)
+        if not (scored_low or small):
+            continue
+        d["findings"] = ([small] if small else []) + (findings if current else [])
+        d["sort_score"] = d["q_score"] if current and d["q_score"] is not None else (0 if small else 100)
         out.append(d)
-    return out
+    out.sort(key=lambda d: (d["sort_score"], d["id"]))
+    return out[:int(limit)]
 
 
 def low_count(conn):

@@ -14,7 +14,7 @@ _INT_RANGES = {
     "radarr_quality_profile_id": (1, 1_000_000), "sonarr_quality_profile_id": (1, 1_000_000),
     "payload_retention_limit": (1, 100_000), "metadata_refresh_hours": (1, 8760), "queue_poll_seconds": (0, 3600), "dvr_poll_seconds": (0, 86400),
     "library_tail_seconds": (5, 600), "jellyfin_events_keep_days": (0, 36500), "notify_history_keep_days": (0, 36500), "ddns_interval_minutes": (1, 60), "access_session_days": (1, 365), "backup_keep": (0, 365), "size_crf": (14, 35), "trust_after": (1, 50), "preview_seconds": (30, 60), "preview_keep_days": (1, 365), "originals_retention_days": (0, 3650), "variant_height": (240, 2160), "variant_crf": (14, 35), "variant_maxrate_kbps": (500, 100000), "variant_audio_kbps": (64, 640),
-    "library_default_profile": (1, 1_000_000), "quality_samples": (1, 24), "quality_slice_seconds": (10, 120), "quality_flag_below": (1, 100),
+    "library_default_profile": (1, 1_000_000), "quality_samples": (1, 24), "quality_slice_seconds": (10, 120), "quality_flag_below": (1, 100), "quality_min_height": (0, 4320),
 }
 _FLOAT_KEYS = {"cap_mbps_2160", "cap_mbps_1080", "cap_mbps_720", "cap_mbps_sd", "tv_cap_share", "size_trigger_factor", "safety_gb_2160", "safety_gb_1080", "variant_min_gb", "request_delay_min", "request_delay_max", "user_delay_min", "user_delay_max", "movie_max_gb", "movie_target_gb", "tv_max_gb_per_hour", "tv_target_gb_per_hour"}
 _URL_KEYS = {"jellyfin_url", "radarr_url", "sonarr_url", "synchub_url"}
