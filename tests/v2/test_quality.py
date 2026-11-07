@@ -257,16 +257,19 @@ def test_the_movie_page_shows_the_card_and_the_buttons_work(client, conn):
     assert not client.post("/api/library/quality/check", json={}).get_json()["ok"]
 
 
-def test_the_low_quality_page_lists_flagged_files_and_saves_settings(client, conn):
+def test_the_library_tab_lists_flagged_files_and_options_saves_settings(client, conn):
     file_id = fixture_file(conn)
     metrics = clean_metrics()
     metrics["slices"][0]["errors"] = 40
     finish_job(conn, quality.request(conn, file_id), metrics)
-    page = client.get("/library/quality").get_data(as_text=True)
-    assert "Heat (1995).mkv" in page and "decode errors" in page and "Accept as is" in page
-    assert "flagged as low quality" in client.get("/").get_data(as_text=True)
+    page = client.get("/library").get_data(as_text=True)
+    assert "Below minimum quality" in page and "Heat (1995).mkv" in page and "decode errors" in page and "Accept as is" in page
+    assert "flagged as low quality" not in client.get("/").get_data(as_text=True)
+    assert client.get("/library/quality").status_code == 302 and "/library" in client.get("/library/quality").headers["Location"]
     assert client.post("/api/library/quality/accept", json={"file_id": file_id}).get_json()["ok"]
-    assert "Nothing is flagged" in client.get("/library/quality").get_data(as_text=True)
+    assert "Nothing is flagged" in client.get("/library").get_data(as_text=True)
+    options = client.get("/library/options").get_data(as_text=True)
+    assert 'id="qualitySettings"' in options and 'id="qMin"' in options and 'id="aiTest"' in options
     saved = client.post("/api/library/quality/settings", json={"quality_samples": "6", "quality_scan_library": "1", "quality_on_download": "off"}).get_json()
     assert saved["ok"] and quality.samples() == 6 and quality.library_pass() and not quality.on_download()
     assert not client.post("/api/library/quality/settings", json={"quality_samples": "99"}).get_json()["ok"]
@@ -521,7 +524,7 @@ def test_the_buttons_reach_radarr_and_the_page_shows_the_request(client, conn, m
     grabbed = client.post("/api/library/quality/grab", json={"file_id": file_id, "guid": "gB", "indexer_id": 4}).get_json()
     assert grabbed["ok"] and ("grab", "gB", 4) in radarr.calls
     assert not client.post("/api/library/quality/grab", json={"file_id": file_id}).get_json()["ok"]
-    page = client.get("/library/quality").get_data(as_text=True)
+    page = client.get("/library").get_data(as_text=True)
     assert "Request better copy" in page and "Show releases" in page and "Below your minimum resolution" in page
     assert "Better copy grabbed" in client.get(f"/library/record/{file_id}").get_data(as_text=True)
 

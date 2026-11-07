@@ -408,6 +408,21 @@ def test_an_update_from_the_button_is_followed_from_queued_to_done(client, v2):
     assert page["log"] == "Updated 1.2.0 -> 1.3.0" and page["requested_by"] == "Greg"
 
 
+def test_a_restart_and_a_relay_setup_are_rows_on_the_jobs_page_too(client, v2):
+    wid, headers = authed(v2, "t3")
+    with v2.connection() as conn:
+        workers.request_host(conn, wid, "restart", by="Greg")
+    assert [t[:3] for t in _tasks(v2)] == [("restart", "queued", "manual")]
+    assert client.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()["request"] == "restart"
+    assert [t[:2] for t in _tasks(v2)] == [("restart", "done")]
+    with v2.connection() as conn:
+        workers.request_host(conn, wid, "relay", by="Greg")
+    client.post("/api/worker/v1/update/check", json={}, headers=headers)
+    assert [t[:2] for t in _tasks(v2)] == [("restart", "done"), ("relay", "done")]
+    fragment = client.get("/jobs/fragment").get_data(as_text=True)
+    assert "Restart worker t3" in fragment and "Set up camera relay on t3" in fragment
+
+
 def test_a_busy_worker_shows_why_the_update_waits_and_an_automatic_update_makes_its_own_task(client, v2):
     wid, headers = authed(v2, "t2")
     with v2.connection() as conn:
