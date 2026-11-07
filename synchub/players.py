@@ -207,6 +207,9 @@ def register(conn, player_id, info, now=None):
     if info.get("protocol") != PROTOCOL:
         raise ProtocolError(f"This SyncHub speaks player protocol {PROTOCOL}; the player sent {info.get('protocol')!r}. Update the player.")
     capabilities = info.get("capabilities") if isinstance(info.get("capabilities"), dict) else {}
+    for key, limit in (("commit", 12), ("built", 40)):
+        if info.get(key):
+            capabilities[key] = str(info[key])[:limit]
     text = json.dumps(capabilities)
     if len(text) > MAX_CAPABILITIES_BYTES:
         text = json.dumps({"truncated": True})

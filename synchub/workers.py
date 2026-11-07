@@ -252,6 +252,7 @@ def register(conn, worker_id, info, now=None):
         raise ProtocolError(f"This SyncHub speaks worker protocol {PROTOCOL}; the agent sent {info.get('protocol')!r}. Update the agent.")
     capabilities = info.get("capabilities") if isinstance(info.get("capabilities"), dict) else {}
     capabilities["agent_slots"] = info.get("slots")
+    capabilities["commit"], capabilities["built"] = str(info.get("commit") or "")[:12], str(info.get("built") or "")[:40]
     text = json.dumps(capabilities)
     if len(text) > MAX_CAPABILITIES_BYTES:                  # cutting the text would leave invalid JSON; drop the bulky part instead
         capabilities.pop("host", None)
@@ -326,7 +327,12 @@ def stored_log(conn, worker_id):
 
 # ---------------------------------------------------------------- the automatic update (agent/auto-update.sh on the worker PC)
 UPDATE_KEY = "worker_update:{}"
-UPDATE_FIELDS = ("status", "version", "previous", "commit", "restored", "error", "log", "at")
+UPDATE_FIELDS = ("status", "version", "previous", "commit", "previous_commit", "restored", "error", "log", "at")
+
+
+def _build(version, commit):
+    """"1.4.0 (061cd30)": the version says the release, the commit says the code."""
+    return f"{version} ({commit})" if version and commit else (version or commit or "unknown")
 
 
 HOST_REQUESTS = ("update", "restart", "relay")
@@ -394,7 +400,7 @@ def report_update(conn, worker_id, info, now=None):
     settings.set_value(UPDATE_KEY.format(worker_id), json.dumps(report), conn=conn)
     if status in ("ok", "failed", "current"):
         if status == "ok":
-            text = f"Updated {report['previous']} to {report['version'] or report['commit']}" if report["previous"] else f"Updated to {report['version'] or report['commit']}"
+            text = f"Updated {_build(report['previous'], report['previous_commit'])} to {_build(report['version'], report['commit'])}" if report["previous"] or report["previous_commit"] else f"Updated to {_build(report['version'], report['commit'])}"
         elif status == "current":
             text = "Already on the newest code"
         else:

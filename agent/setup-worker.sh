@@ -569,14 +569,24 @@ write_native_files() {
     if [ "$DRY_RUN" = 1 ]; then say "[dry run] would copy the agent to $AGENT_DIR, write $INI_FILE and the systemd service"; return 0; fi
     local file
     for file in synchub_agent.py media_analysis.py; do install_file "$REPO_DIR/agent/$file" "$AGENT_DIR/$file" 644; done
+    write_build_info "$AGENT_DIR/BUILD_INFO"
     install_file "$TMP/ini.final" "$INI_FILE" 640 root:synchub
     install_file "$REPO_DIR/agent/synchub-agent.service" "$SYSTEMD_DIR/synchub-agent.service" 644
     if have systemctl; then systemctl daemon-reload; fi
 }
 
+# Which code is being built, for the Workers page: the commit of the checkout and the time. Best effort.
+write_build_info() { # write_build_info TARGET_FILE
+    [ "$DRY_RUN" = 1 ] && return 0
+    local commit; commit="$(git -c safe.directory='*' -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
+    [ -n "$commit" ] || return 0
+    printf 'commit=%s\nbuilt=%s\n' "$commit" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$1" 2>/dev/null || true
+}
+
 start_docker() {
     if [ "$DO_START" != 1 ]; then say "Not starting the worker (--no-start). Start it with:  cd $DIR && docker compose up -d --build"; return 0; fi
     say "Building the worker image and starting it (the first build takes a minute or two)"
+    write_build_info "$REPO_DIR/agent/BUILD_INFO"
     if [ "$DRY_RUN" = 1 ]; then say "[dry run] cd $DIR && docker compose up -d --build"; return 0; fi
     ( cd "$DIR" && docker compose up -d --build ) || die "Docker could not start the worker (see above). 'cd $DIR && docker compose logs' may say more."
     say "The worker container is up"
