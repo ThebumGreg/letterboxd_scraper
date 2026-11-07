@@ -52,7 +52,8 @@ RUN set -e; \
     if ffmpeg -hide_banner -filters | grep -q libvmaf; then echo "ffmpeg has libvmaf: quality scores are available"; else echo "NOTE: this ffmpeg has no libvmaf; quality scores will be skipped"; fi
 
 WORKDIR /app
-COPY synchub_agent.py media_analysis.py /app/
+# BUILD_INFO (commit and build time) is written by update-worker.sh / setup-worker.sh before the build; the pattern lets a hand build without it still work.
+COPY synchub_agent.py media_analysis.py BUILD_INFO* /app/
 
 # /work holds the job folders, the original files kept for the retention period and the logs: mount a big local disk there.
 ENV PYTHONUNBUFFERED=1 \

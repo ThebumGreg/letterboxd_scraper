@@ -1088,6 +1088,35 @@ def detect_capabilities(cfg):
     return caps
 
 
+
+_BUILD = None
+
+
+def build_info():
+    """The commit this code was built from, and when: {"commit": "061cd30", "built": "..."}. The version number only changes at a release; the commit says what is really running.
+    Docker builds and installs write a BUILD_INFO file (commit=..., built=...) next to this file; a copy run straight from a git checkout asks git."""
+    global _BUILD
+    if _BUILD is not None:
+        return _BUILD
+    here = os.path.dirname(os.path.abspath(__file__))
+    info = {}
+    try:
+        with open(os.path.join(here, "BUILD_INFO"), encoding="utf-8") as fh:
+            info = dict(line.strip().split("=", 1) for line in fh if "=" in line)
+    except OSError:
+        pass
+    commit = (info.get("commit") or "").strip().lower()
+    if not (len(commit) >= 7 and all(c in "0123456789abcdef" for c in commit)):
+        try:
+            out = subprocess.run(["git", "-c", "safe.directory=*", "-C", here, "log", "-1", "--format=%h %cI"], capture_output=True, text=True, timeout=5)
+            commit, _, built = out.stdout.strip().partition(" ") if out.returncode == 0 else ("", "", "")
+            info["built"] = info.get("built") or built
+        except (OSError, subprocess.SubprocessError):
+            commit = ""
+    _BUILD = {"commit": commit[:7], "built": (info.get("built") or "").strip()[:40]}
+    return _BUILD
+
+
 def os_name():
     try:
         with open("/etc/os-release", encoding="utf-8") as handle:
@@ -2896,7 +2925,7 @@ class Agent:
             self.capabilities = detect_capabilities(self.cfg)
             cpu = (self.capabilities.get("host") or {}).get("cpu") or {}
             self.log.info("Capabilities", cpu=cpu.get("model"), **{k: v for k, v in self.capabilities.items() if k not in ("ops", "host")})
-        body = {"protocol": PROTOCOL, "version": __version__, "os": os_name(), "hostname": self.cfg.hostname, "slots": self.cfg.slots, "capabilities": self.capabilities}
+        body = {"protocol": PROTOCOL, "version": __version__, **build_info(), "os": os_name(), "hostname": self.cfg.hostname, "slots": self.cfg.slots, "capabilities": self.capabilities}
         answer = self.api.post("/register", body)
         self.poll_seconds = max(self.MIN_POLL, float(answer.get("poll_seconds") or 5))
         self.apply_settings(answer)
@@ -2912,7 +2941,7 @@ class Agent:
         roots = {name: {"ok": r["ok"], "state": r["state"], "message": (r["message"] or "")[:200], "free_bytes": r["free_bytes"]} for name, r in self.monitor.snapshot().items()}
         host, self._cpu_sample = live_host_stats(self._cpu_sample)
         count, held = self.originals_held()
-        return {"version": __version__, "uptime_seconds": int(time.monotonic() - self.started), "work_free_bytes": self.work_free(), "roots": roots, "jobs": jobs, "host": host,
+        return {"version": __version__, "commit": build_info()["commit"], "uptime_seconds": int(time.monotonic() - self.started), "work_free_bytes": self.work_free(), "roots": roots, "jobs": jobs, "host": host,
                 "originals_count": count, "originals_bytes": held, **({"relay": self.relay_state} if self.relay_state else {})}
 
     def originals(self):
@@ -3200,7 +3229,7 @@ class Agent:
         self.sweep_originals()
 
     def run(self):
-        self.log.info(f"SyncHub worker agent {__version__} starting", url=self.cfg.url, work_dir=os.path.abspath(self.cfg.work_dir), slots=self.cfg.slots)
+        self.log.info(f"SyncHub worker agent {__version__} ({build_info()['commit'] or 'unknown build'}) starting", url=self.cfg.url, work_dir=os.path.abspath(self.cfg.work_dir), slots=self.cfg.slots)
         self.monitor.start()
         while not self.stopping.is_set():
             try:

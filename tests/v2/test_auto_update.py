@@ -132,7 +132,7 @@ def reports_of(calls):
 def test_an_idle_worker_is_updated_and_the_result_reported(box):
     publish(box, "1.1.0")
     code, out, calls = box.run()
-    assert code == 0 and "Updated 1.0.0 -> 1.1.0" in out
+    assert code == 0 and "Updated 1.0.0 (" in out and "-> 1.1.0 (" in out
     assert "update --dir" in calls and "--no-pull 1.1.0" in calls and head_version(box) == "1.1.0"
     report = reports_of(calls)[0]
     assert '"status":"ok"' in report and '"version":"1.1.0"' in report and '"previous":"1.0.0"' in report and "Bearer sw_secret" in report
@@ -401,7 +401,7 @@ def test_an_update_from_the_button_is_followed_from_queued_to_done(client, v2):
     assert _tasks(v2)[0][1] == "running"
     client.post("/api/worker/v1/update/report", json={"status": "started", "commit": "abc1234"}, headers=headers)
     client.post("/api/worker/v1/update/report", json={"status": "ok", "version": "1.3.0", "previous": "1.2.0", "commit": "abc1234", "log": "Updated 1.2.0 -> 1.3.0"}, headers=headers)
-    assert _tasks(v2) == [("update", "done", "manual", "Updated 1.2.0 to 1.3.0")]
+    assert _tasks(v2) == [("update", "done", "manual", "Updated 1.2.0 to 1.3.0 (abc1234)")]
     fragment = client.get("/jobs/fragment").get_data(as_text=True)
     assert "Update worker t1" in fragment and "Updated 1.2.0 to 1.3.0" in fragment and "Completed" in fragment
     page = client.get("/api/worker-tasks/1").get_json()["task"]

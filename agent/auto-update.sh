@@ -324,7 +324,7 @@ LOCAL="$(git_run rev-parse HEAD)"
 REMOTE="$(git_run rev-parse '@{u}' 2>/dev/null)" || { problem "the checkout's branch has no upstream"; exit 1; }
 if [ "$LOCAL" = "$REMOTE" ]; then
     touch "$CHECKED"; rm -f "$STATE/waiting"
-    [ "$REQUEST" = update ] && { log "Already on the newest code ($(agent_version HEAD))"; send_report "{\"status\":\"current\",\"version\":\"$(agent_version HEAD)\",\"commit\":\"$(git_run rev-parse --short HEAD)\"}"; }
+    [ "$REQUEST" = update ] && { log "Already on the newest code ($(agent_version HEAD) ($(git_run rev-parse --short HEAD)))"; send_report "{\"status\":\"current\",\"version\":\"$(agent_version HEAD)\",\"commit\":\"$(git_run rev-parse --short HEAD)\"}"; }
     exit 0
 fi
 if ! git_run merge-base --is-ancestor "$LOCAL" "$REMOTE"; then touch "$CHECKED"; log "WARNING $REPO has commits that are not on origin: not updating"; exit 0; fi
@@ -348,6 +348,7 @@ fi
 touch "$CHECKED"; rm -f "$STATE/waiting"
 
 previous="$(agent_version HEAD)"
+previous_commit="$(git_run rev-parse --short HEAD)"
 # Tells SyncHub the update has begun, so the Jobs page shows it running. Best effort: nothing is kept for later if SyncHub cannot be reached.
 api /update/report "{\"status\":\"started\",\"commit\":\"$short\"}" >/dev/null 2>&1 || true
 if ! git_run merge --ff-only --quiet "$REMOTE" 2>"$STATE/git.err"; then
@@ -361,8 +362,8 @@ version="$(agent_version HEAD)"
 output="$("$UPDATER" --dir "$DIR" --no-pull 2>&1)"; status=$?
 if [ "$status" = 0 ]; then
     rm -f "$STATE/failed"
-    log "Updated $previous -> $version ($short)"
-    send_report "{\"status\":\"ok\",\"version\":\"$version\",\"previous\":\"$previous\",\"commit\":\"$short\"}"
+    log "Updated $previous ($previous_commit) -> $version ($short)"
+    send_report "{\"status\":\"ok\",\"version\":\"$version\",\"previous\":\"$previous\",\"commit\":\"$short\",\"previous_commit\":\"$previous_commit\"}"
     exit 0
 fi
 
