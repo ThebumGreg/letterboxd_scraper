@@ -198,10 +198,13 @@ def describe_job(j):
 TASK_LABELS = {"queued": ("Queued", "secondary"), "running": ("Running", "primary"), "done": ("Completed", "success"), "failed": ("Failed", "danger"), "cancelled": ("Cancelled", "secondary")}
 
 
+TASK_TITLES = {"update": "Update worker", "benchmark": "Benchmark worker", "restart": "Restart worker", "relay": "Set up camera relay on"}
+
+
 def describe_task(t):
     """A worker update or benchmark as the Jobs page shows it."""
     t["label"], t["color"] = TASK_LABELS.get(t["status"], (t["status"], "secondary"))
-    t["title"] = ("Update worker" if t["kind"] == "update" else "Benchmark worker") + (f" {t['worker_name']}" if t.get("worker_name") else "")
+    t["title"] = TASK_TITLES.get(t["kind"], "Worker task") + (f" {t['worker_name']}" if t.get("worker_name") else "")
     t["updated"] = webhooks.ago(t["updated_at"]) if t["updated_at"] else ""
     t["how"] = "automatic" if t["source"] == "auto" else (f"asked by {t['requested_by']}" if t.get("requested_by") else "asked on the Workers page")
     return t

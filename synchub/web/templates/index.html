@@ -18,7 +18,6 @@
     {{ stat_card('Missing', stats.missing, 'danger', '', 'missing') }}
     {% if stats.partial %}{{ stat_card('Partial', stats.partial, 'warning', '', 'partial') }}{% endif %}
 </div>
-{% if low_quality %}<p class="small mb-3"><a href="{{ url_for('library_quality_page') }}" class="text-decoration-none text-warning"><i class="bi bi-exclamation-triangle" aria-hidden="true"></i> {{ low_quality }} file{{ '' if low_quality == 1 else 's' }} flagged as low quality</a></p>{% endif %}
 {% if reconcile and reconcile.jellyfin_items %}
 <p class="small text-body-secondary mb-4">Jellyfin movies: {{ reconcile.jellyfin_items }} item{{ '' if reconcile.jellyfin_items == 1 else 's' }} = {{ reconcile.titles }} title{{ '' if reconcile.titles == 1 else 's' }} here{% if reconcile.duplicates %} ({{ reconcile.duplicates }} extra version{{ '' if reconcile.duplicates == 1 else 's' }} of a film already counted){% endif %}{% if reconcile.unmatched %}, {{ reconcile.unmatched }} not matched yet (see Match review){% endif %}.</p>
 {% endif %}

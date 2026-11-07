@@ -1,7 +1,7 @@
 """Quality checks on the web: the Low quality page (what is flagged, what is waiting, the settings), and the buttons that check or accept a file."""
-from flask import jsonify, render_template, request
+from flask import jsonify, redirect, render_template, request, url_for
 
-from synchub import better_copy, db, jobs, quality, settings
+from synchub import ai_test, better_copy, db, jobs, quality, settings
 from settings_validation import validate_setting
 
 SETTING_KEYS = ("quality_samples", "quality_slice_seconds", "quality_flag_below", "quality_min_height", "quality_on_download", "quality_scan_library", "quality_scan_order")
@@ -24,7 +24,11 @@ def _file_id(data):
         return None
 
 
-def overview(conn):
+def overview(conn, full=True):
+    """What the Library tab (the flagged files) and the Options tab (`full=False`, only the settings) show about quality checks."""
+    values = {k: settings.get(k, conn=conn) for k in SETTING_KEYS}
+    if not full:
+        return {"values": values, "flag_below": quality.flag_below(conn), "version": quality.CHECK_VERSION}
     waiting = [dict(r) for r in conn.execute(
         """SELECT q.id, q.status, q.source, q.message, f.file_name, f.id AS file_id FROM quality_check q JOIN library_file f ON f.id = q.library_file_id
            WHERE q.status IN ('queued', 'running') ORDER BY q.id DESC LIMIT 30""")]
@@ -32,15 +36,38 @@ def overview(conn):
         """SELECT q.id, q.status, q.score, q.grade, q.message, q.finished_at, f.file_name, f.id AS file_id FROM quality_check q JOIN library_file f ON f.id = q.library_file_id
            WHERE q.status IN ('done', 'failed') ORDER BY q.id DESC LIMIT 15""")]
     return {"low": quality.low_quality(conn), "counts": quality.counts(conn), "waiting": waiting, "recent": recent, "flag_below": quality.flag_below(conn),
-            "values": {k: settings.get(k, conn=conn) for k in SETTING_KEYS}, "version": quality.CHECK_VERSION}
+            "values": values, "version": quality.CHECK_VERSION}
 
 
 def register(app):
     @app.route("/library/quality")
     def library_quality_page():
+        """The flagged files moved into the Library tab; old links and bookmarks land there."""
+        return redirect(url_for("library_page") + "#belowMinimumSection")
+
+    @app.route("/library/quality/ai")
+    def library_ai_fragment():
         with db.connection() as conn:
-            data = overview(conn)
-        return render_template("quality.html", **data)
+            return render_template("_quality_ai_results.html", ai=ai_test.overview(conn))
+
+    @app.route("/api/library/quality/ai/files")
+    def api_library_ai_files():
+        with db.connection() as conn:
+            rows = ai_test.files(conn, request.args.get("q", ""))
+        return jsonify(files=[{"id": r["id"], "label": f"{r['recommended_name'] or r['file_name']} ({r['root_name']}: {r['relative_path']})"[:200]} for r in rows])
+
+    @app.route("/api/library/quality/ai/run", methods=["POST"])
+    def api_library_ai_run():
+        data = request.get_json(silent=True) or {}
+        file_id = _file_id(data)
+        if file_id is None:
+            return _fail("Choose a file.")
+        try:
+            with db.connection() as conn:
+                ai_test.run(conn, file_id, str(data.get("mode") or ""), by=_who(conn))
+        except (ai_test.AiTestError, jobs.JobError) as exc:
+            return _fail(str(exc))
+        return jsonify(ok=True, message={"standard": "Standard check queued.", "ai": "AI test queued.", "both": "Standard check and AI test queued."}[data["mode"]] + " A worker will take it soon; the result appears below.")
 
     @app.route("/api/library/quality/check", methods=["POST"])
     def api_library_quality_check():

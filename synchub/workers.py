@@ -336,6 +336,7 @@ def _build(version, commit):
 
 
 HOST_REQUESTS = ("update", "restart", "relay")
+TASK_OF_HOST_REQUEST = ("update", "restart", "relay")      # every request to the PC shows as a row on the Jobs page
 HOST_SEEN_KEY = "worker_host_seen:{}"
 HOST_SEEN_SECONDS = 300           # the PC's timer asks every minute; this long without it and the buttons say it is not installed
 
@@ -346,8 +347,8 @@ def request_host(conn, worker_id, what, by=None):
         raise WorkerError("Unknown request.")
     if conn.execute("UPDATE worker SET host_request = ? WHERE id = ? AND revoked_at IS NULL", (what, worker_id)).rowcount != 1:
         raise WorkerError("That worker no longer exists or its token is revoked.")
-    if what == "update":
-        task_open(conn, worker_id, "update", "Waiting for the PC's update helper to check in (it asks every minute)", by=by)
+    if what in TASK_OF_HOST_REQUEST:
+        task_open(conn, worker_id, what, "Waiting for the PC's helper to check in (it asks every minute)", by=by)
 
 
 def host_check(conn, worker_id, now=None):
@@ -358,13 +359,15 @@ def host_check(conn, worker_id, now=None):
     running = idle(conn, worker_id)
     request = w["host_request"] if w else None
     if request in ("update", "relay") and running:
-        if request == "update":
-            task_note(conn, worker_id, "update", f"Waiting for the worker to finish {running} job(s) before updating", now=now)
+        task_note(conn, worker_id, request, f"Waiting for the worker to finish {running} job(s) before {'updating' if request == 'update' else 'setting up the relay'}", now=now)
         request = None                                              # it stays requested until the worker is idle
     if request:
         conn.execute("UPDATE worker SET host_request = NULL WHERE id = ? AND host_request = ?", (worker_id, request))
         if request == "update":
             task_note(conn, worker_id, "update", "The PC is checking for new code", running=True, now=now)
+        else:                                                       # the helper does not report back for these: handing it over is the last thing SyncHub sees
+            task_finish(conn, worker_id, request, "done", "Handed to the PC's helper, which restarts the worker within a minute" if request == "restart"
+                        else "Handed to the PC's helper, which sets up the camera relay", now=now)
     from synchub import protect
     want_log = settings.get(UPDATER_WANT_KEY.format(worker_id), "", conn=conn) == "1"
     if want_log:
@@ -486,7 +489,7 @@ def last_benchmark(conn, worker_id):
 
 
 # ---------------------------------------------------------------- updates and benchmarks as tasks (shown on the Jobs page)
-TASK_EXPIRES_MINUTES = {"update": 30, "benchmark": 45}       # an open task nobody reported on for this long is closed as failed
+TASK_EXPIRES_MINUTES = {"update": 30, "benchmark": 45, "restart": 15, "relay": 15}       # an open task nobody reported on for this long is closed as failed
 TASK_KEEP = 200
 TASK_LOG_CHARS = 6000
 

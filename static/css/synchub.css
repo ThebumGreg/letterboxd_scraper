@@ -76,6 +76,12 @@
     z-index: 1020;
 }
 
+/* Continue Watching sits above the controls panel below it, so a Resume menu opens over the search bar, not under it (the navbar stays on top). */
+#continueWatching {
+    position: relative;
+    z-index: 1025;
+}
+
 .form-select {
     position: relative;
     z-index: 1;

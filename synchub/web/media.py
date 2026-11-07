@@ -21,14 +21,15 @@ TABS = (
 
 def _data(key, conn):
     if key == "library":
-        from synchub.web import library
-        return library.overview(conn)
+        from synchub.web import library, quality_web
+        return {**library.overview(conn), "qual": quality_web.overview(conn)}
     if key == "versions":
         from synchub.web import versions
         return versions.overview(conn)
     if key == "options":
-        from synchub.web import library
-        return library.overview(conn)
+        from synchub import ai_test
+        from synchub.web import library, quality_web
+        return {**library.overview(conn), "qual": quality_web.overview(conn, full=False), "ai": ai_test.overview(conn)}
     if key == "players":
         from synchub.web import players_web
         return players_web.snapshot(conn)

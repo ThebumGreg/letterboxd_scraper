@@ -47,7 +47,7 @@ The thresholds are starting points. Tune them after you have looked at a few fil
 
 ## The flag
 
-A file below the minimum resolution, or whose current check scores under *Flag a file scoring under* (default 60), is **Low quality**. The Dashboard shows a link with the count, and the **Low quality** page (`/library/quality`) lists the files with their findings and the settings. *Accept as is* stops the flag for that file until the file changes; *Flag it again* undoes it.
+A file below the minimum resolution, or whose current check scores under *Flag a file scoring under* (default 60), is **Low quality**. The flagged files are listed in the **Below minimum quality** section of the **Library** tab (Media > Library), with the findings and the buttons below. The old address `/library/quality` opens that section. The settings (minimum resolution, score limit, parts sampled, new downloads, Library pass) are on **Media > Options > Quality check settings**; they are yours to change, none is fixed. The Dashboard no longer carries a flagged-files line. *Accept as is* stops the flag for that file until the file changes; *Flag it again* undoes it.
 
 ## Movie page: Your copies
 
@@ -61,7 +61,7 @@ The film is matched to its files through the Jellyfin item's path and the share'
 
 ## Request a better copy (movies, through Radarr)
 
-On a flagged file (the Low quality page, the movie page, the Library record page):
+On a flagged file (the Library tab's Below minimum quality section, the movie page, the Library record page):
 
 - **Show releases** is read only. SyncHub asks Radarr for what the indexers have for this film (the same list as Radarr's interactive search) and lists the real upgrades: allowed to download, not on the blocklist, not the release being replaced, and at least the minimum height (or the file's own height when that is larger). Best first. Nothing in Radarr changes. It can take a minute, because Radarr asks every indexer.
 - **Get this one** sends one release from that list to the download client. SyncHub first blocks the release that was grabbed for the file, then grabs the chosen one. This ignores Radarr's quality-profile cutoff.
@@ -80,3 +80,11 @@ Not run against a live Radarr from here: the calls are Radarr v3's documented on
 - TV shows (Sonarr). Episodes show "not built yet" instead of a button's result.
 - Banding and upscale detection.
 - Grabbing a replacement automatically without a person choosing.
+
+## Quality test: standard or AI (Media > Options)
+
+A test card to compare today's check with an AI model on one file. Type part of a file name, choose **Standard**, **AI** or **Both**, press *Run test*, and the table below shows both results side by side, with the worker's own row on the Jobs tab (`AI quality test: <file>`).
+
+- **Standard** is the usual ffmpeg check above.
+- **AI** is a `quality_ai` job that only a worker reporting the `quality_ai` feature takes: it samples the same parts of the film, tone-maps HDR to SDR, and scores them with FAST-VQA, DOVER (technical score) and MUSIQ. Each model reports a 0 to 100 mean (higher is better). **AI** and **Both** stay greyed out until an online worker has the feature.
+- It is a test only. It never flags a file, asks Radarr for a better copy or changes anything. The models were trained on phone and web video, so read their scores as a comparison with the standard score, not as a verdict. Plan: `plans/ai-quality-worker-plan.md`.

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**Quality follow-ups: the Library section, settings on Options, AI test card, Resume menu (migrations 034 and 035).**
+- **Below minimum quality moved to the Library tab.** The flagged-files list (with Request better copy, Show releases, Accept as is, Check again) is a section of Media > Library. `/library/quality` redirects there. The Dashboard's "files flagged as low quality" line is gone.
+- **Quality settings moved to Media > Options.** Minimum resolution (default 1080p), the score limit, parts sampled, new downloads and the Library pass. Same settings, same save call, nothing to migrate. They were always user-set.
+- **Quality test card (Options): Standard, AI or Both** on one file, results side by side. The AI half is a `quality_ai` worker job that only a worker with that feature takes, so AI and Both are greyed out until a worker has it (the worker side comes in the next PR). Compare only: it never flags a file or requests a copy.
+- **Jobs page covers more worker actions.** *Restart worker* and *Set up camera relay* now show as rows next to updates and benchmarks (migration 035 widens the task kinds).
+- **Resume menu no longer hides behind the search bar** on the Dashboard (Continue Watching now stacks above the controls panel).
+
 **Jellyfin mounts of one share, and matching a film to its files (migration 033).**
 - **Storage page: "Jellyfin: other mounts of this share".** A share that Jellyfin mounts in pieces (`/media` is `Movies`, `/OldMovie` is `Old Movies`, `/TV2` is `TV Shows`...) is now described one line per mount, `path Jellyfin sees = folder inside the share`. The single Jellyfin path still works for a whole share. The same lines tell Jellyfin where a finished file is.
 - **"Your copies" works for loose files.** The movie page matches a film to its Library files by the Jellyfin item's path through those mappings. A loose file in a shared folder (`Old Movies/X.avi`) matches only itself and its `- 1080p` extra, not every film beside it. (The first version matched every file in the folder.)

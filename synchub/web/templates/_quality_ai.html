@@ -1,0 +1,25 @@
+<!-- synchub/web/templates/_quality_ai.html: the AI quality test card of the Options tab -->
+<div class="panel p-3 p-md-4 mb-4" id="aiTest">
+    <h5 class="mb-1">Quality test: standard or AI</h5>
+    <p class="small text-body-secondary">Pick a film file and run the usual quality check, an AI model check, or both, to see how they compare. This is a test: nothing here flags a file, asks Radarr for a better copy or changes anything.</p>
+    <div class="row g-2 align-items-end">
+        <div class="col-md-6"><label class="form-label small mb-1" for="aiFile">File (type part of its name)</label>
+            <input class="form-control form-control-sm" id="aiFile" list="aiFiles" autocomplete="off" placeholder="Heat (1995)"><datalist id="aiFiles"></datalist>
+            <div class="small text-body-secondary mt-1" id="aiPicked">No file chosen.</div></div>
+        <div class="col-md-4">
+            <div class="small mb-1">Run</div>
+            <div class="btn-group btn-group-sm" role="group" aria-label="Which test to run">
+                <input type="radio" class="btn-check" name="aiMode" id="aiModeStandard" value="standard" checked><label class="btn btn-outline-secondary" for="aiModeStandard">Standard</label>
+                <input type="radio" class="btn-check" name="aiMode" id="aiModeAi" value="ai"{% if not ai.workers %} disabled{% endif %}><label class="btn btn-outline-secondary" for="aiModeAi">AI</label>
+                <input type="radio" class="btn-check" name="aiMode" id="aiModeBoth" value="both"{% if not ai.workers %} disabled{% endif %}><label class="btn btn-outline-secondary" for="aiModeBoth">Both</label>
+            </div></div>
+        <div class="col-md-2"><button type="button" class="btn btn-sm btn-primary w-100" id="aiRun">Run test</button></div>
+    </div>
+    <div class="small mt-2 {{ 'text-body-secondary' if ai.workers else 'text-warning' }}" id="aiWorkers">
+        {% if ai.workers %}AI test ready on {% for w in ai.workers %}{{ w.name }}{% if w.device %} ({{ w.device }}){% endif %}{{ ', ' if not loop.last }}{% endfor %}. Models: {% for k, label in ai.models %}{{ label }}{{ ', ' if not loop.last }}{% endfor %}.
+        {% else %}No online worker has the AI test yet, so only Standard can run. Updating a worker to a version with the AI test turns on AI and Both.{% endif %}
+    </div>
+    <div class="small mt-1" id="aiOut" role="status"></div>
+    <h6 class="mt-3">Latest tests</h6>
+    <div id="aiResults">{% include "_quality_ai_results.html" %}</div>
+</div>
