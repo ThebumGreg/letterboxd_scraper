@@ -556,3 +556,72 @@ def test_the_radarr_client_sends_the_calls_radarr_documents(monkeypatch):
         ("GetReleases", "http://radarr:7878/api/v3/release", "GET", {"movieId": 7}, None),
         ("GrabRelease", "http://radarr:7878/api/v3/release", "POST", None, {"guid": "g1", "indexerId": 4}),
     ]
+
+
+# ---------------------------------------------------------------- a share that Jellyfin mounts in pieces
+def greg_shares(conn):
+    """Greg's layout: Jellyfin mounts parts of Media and TFiles separately; Radarr mounts all of /mnt/user at /media."""
+    storage.create(conn, {"name": "media", "protocol": "local", "share": "/mnt/media", "mount_point": "/mnt/media", "radarr_path": "/media/Media",
+                          "jellyfin_extra_paths": "/media = Movies\n/TV1 = TV Shows\n/OldMovie = Old Movies\n/KidsMovie = Kids Movies"})
+    storage.create(conn, {"name": "tfiles", "protocol": "local", "share": "/mnt/tfiles", "mount_point": "/mnt/tfiles", "radarr_path": "/data",
+                          "jellyfin_extra_paths": "/media2 = Movies\n/TV2 = TV Shows"})
+    conn.commit()
+
+
+def test_mappings_are_checked_and_stored_cleanly():
+    assert storage.parse_mappings("/OldMovie = Old Movies\n\n# a note\n/media=Movies/") == [("/OldMovie", "Old Movies"), ("/media", "Movies")]
+    assert storage.normalize_mappings("  /OldMovie =  Old Movies/ ") == "/OldMovie = Old Movies" and storage.normalize_mappings("") is None
+    for bad in ("OldMovie = Old Movies", "/OldMovie Old Movies", "/OldMovie = ../etc", "/ = x"):
+        with pytest.raises(storage.StorageError, match="Line 1"):
+            storage.parse_mappings(bad)
+
+
+def test_paths_translate_both_ways_with_the_longest_match(conn):
+    greg_shares(conn)
+    roots = storage.list_all(conn)
+    assert storage.from_app_path(roots, "/OldMovie/The Wedding Singer (1998).avi") == ("media", "Old Movies/The Wedding Singer (1998).avi")
+    assert storage.from_app_path(roots, "/media2/Heat (1995)/Heat.mkv") == ("tfiles", "Movies/Heat (1995)/Heat.mkv")
+    assert storage.from_app_path(roots, "/media/Heat (1995)/Heat.mkv") == ("media", "Movies/Heat (1995)/Heat.mkv")
+    assert storage.from_app_path(roots, "/elsewhere/x.mkv") is None
+    media = roots[0] if roots[0]["name"] == "media" else roots[1]
+    assert storage.to_app_path(media, "Old Movies/The Wedding Singer (1998).avi") == "/OldMovie/The Wedding Singer (1998).avi"
+    assert storage.to_app_path(media, "Movies/Heat (1995)/Heat.mkv") == "/media/Heat (1995)/Heat.mkv" and storage.to_app_path(media, "Downloads/x.mkv") is None
+    assert storage.to_app_path(media, "Movies/Heat (1995)/Heat.mkv", "radarr") == "/media/Media/Movies/Heat (1995)/Heat.mkv"
+
+
+def test_a_whole_share_path_still_works_beside_the_extra_mounts(conn):
+    storage.create(conn, {"name": "media", "protocol": "local", "share": "/mnt/media", "mount_point": "/mnt/media", "jellyfin_path": "/data", "jellyfin_extra_paths": "/OldMovie = Old Movies"})
+    roots = storage.list_all(conn)
+    assert storage.from_app_path(roots, "/data/Movies/X.mkv") == ("media", "Movies/X.mkv") and storage.from_app_path(roots, "/OldMovie/Y.avi") == ("media", "Old Movies/Y.avi")
+
+
+def test_a_loose_old_movie_finds_only_itself_not_the_other_films_in_its_folder(conn):
+    greg_shares(conn)
+    media_id = conn.execute("INSERT INTO media (kind, title, year, tmdb_id) VALUES ('movie', 'The Wedding Singer', 1998, '2')").lastrowid
+    conn.execute("INSERT INTO src_jellyfin_item (item_id, type, name, first_seen, last_seen, path) VALUES ('jf2', 'movie', 'The Wedding Singer', ?, ?, '/OldMovie/The Wedding Singer (1998).avi')", (NOW, NOW))
+    conn.execute("INSERT INTO link (entity_type, entity_id, source, source_key, method, confidence) VALUES ('media', ?, 'jellyfin', 'jf2', 'x', 1.0)", (media_id,))
+    conn.commit()
+    ours = add(conn, root="media", rel="Old Movies/The Wedding Singer (1998).avi", name="The Wedding Singer (1998).avi", size=700_000_000)
+    add(conn, root="media", rel="Old Movies/Grease (1978).avi", name="Grease (1978).avi", size=700_000_000)
+    add(conn, root="media", rel="Old Movies/The Wedding Singer (1998) - 1080p.mkv", name="The Wedding Singer (1998) - 1080p.mkv", size=2_000_000_000)
+    out = quality.copies(conn, media_id)
+    assert sorted(f["name"] for f in out["files"]) == ["The Wedding Singer (1998) - 1080p.mkv", "The Wedding Singer (1998).avi"]
+    assert out["main"]["id"] == ours
+
+
+def test_jellyfin_is_told_the_mounted_path_of_a_new_file(conn):
+    from synchub.library import migrate
+    greg_shares(conn)
+    conn.execute("INSERT INTO job (kind, plan, source_root, source_rel, dest_root, dest_rel, status) VALUES ('library', '{}', 'media', 'Old Movies/A.avi', 'media', 'Movies/A (1999)/A (1999).mkv', 'done')")
+    conn.commit()
+    job_id = conn.execute("SELECT MAX(id) FROM job").fetchone()[0]
+    assert migrate.jellyfin_updates(conn, job_id) == [{"Path": "/media/A (1999)/A (1999).mkv", "UpdateType": "Created"}]
+
+
+def test_the_storage_page_saves_and_rejects_the_extra_mounts(client, conn):
+    greg_shares(conn)
+    row = conn.execute("SELECT id FROM storage_root WHERE name = 'media'").fetchone()
+    page = client.get("/storage").get_data(as_text=True)
+    assert "/OldMovie = Old Movies" in page and 'id="shareJellyfinMore"' in page
+    bad = client.post(f"/api/storage/{row['id']}/update", json={"jellyfin_extra_paths": "nonsense"})
+    assert bad.status_code == 400 and "Line 1" in bad.get_json()["message"]

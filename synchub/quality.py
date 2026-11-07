@@ -464,27 +464,39 @@ def folder_of(path):
     return os.path.dirname(v.clean_relative(path)).casefold()
 
 
+def _stem(name):
+    return os.path.splitext(os.path.basename(name))[0].casefold()
+
+
+def _title_key(text):
+    return "".join(ch for ch in str(text or "").casefold() if ch.isalnum())
+
+
 def files_for_movie(conn, media_id):
-    """The Library files of a film: every file in the folder of the Jellyfin item, found through the share's Jellyfin path. [] when the film is not in Jellyfin yet
-    or the share has no Jellyfin path on the Storage page."""
-    item = conn.execute("""SELECT t.path FROM link l JOIN src_jellyfin_item t ON t.item_id = l.source_key
+    """The Library files of a film. The film's Jellyfin item gives the main file's path; SyncHub turns it into a share and a path with the share's Jellyfin mappings
+    (storage page). Its other files are the ones in the same folder named after it (`Heat (1995) - 1080p.mkv` beside `Heat (1995).mkv`), or every file in the folder
+    when the folder is the film's own (its name starts with the film's title). A loose file in a shared folder like `Old Movies/` matches only itself.
+    [] when the film is not in Jellyfin or no mapping covers its path."""
+    item = conn.execute("""SELECT t.path, m.title FROM link l JOIN src_jellyfin_item t ON t.item_id = l.source_key JOIN media m ON m.id = l.entity_id
                            WHERE l.source = 'jellyfin' AND l.entity_type = 'media' AND l.entity_id = ? AND t.removed_at IS NULL AND t.path IS NOT NULL
                            ORDER BY t.item_id LIMIT 1""", (media_id,)).fetchone()
     if not item:
         return []
-    path = str(item["path"]).replace("\\", "/")
-    best = None
-    for root in conn.execute("SELECT name, jellyfin_path FROM storage_root").fetchall():
-        base = (root["jellyfin_path"] or "").rstrip("/")
-        if base and path.startswith(base + "/") and (best is None or len(base) > len(best[1])):
-            best = (root["name"], base)
-    if best is None:
+    from synchub import storage
+    found = storage.from_app_path(storage.list_all(conn), item["path"], "jellyfin")
+    if found is None:
         return []
-    folder = folder_of(path[len(best[1]) + 1:])
-    if not folder:
-        return []                     # a file at the top of a share has no folder of its own; its neighbours are other films
-    rows = conn.execute("SELECT * FROM library_file WHERE root_name = ? AND missing_since IS NULL ORDER BY size_bytes DESC", (best[0],)).fetchall()
-    return [dict(r) for r in rows if folder_of(r["relative_path"]) == folder]
+    root, rel = found
+    folder, stem = folder_of(rel), _stem(rel)
+    rows = [dict(r) for r in conn.execute("SELECT * FROM library_file WHERE root_name = ? AND missing_since IS NULL ORDER BY size_bytes DESC", (root,))]
+    same_folder = [r for r in rows if folder_of(r["relative_path"]) == folder]
+    own_folder = bool(folder) and os.path.basename(folder) != "" and _title_key(item["title"]) and _title_key(os.path.basename(folder)).startswith(_title_key(item["title"]))
+    keep = []
+    for r in same_folder:
+        name = _stem(r["relative_path"])
+        if v.clean_relative(r["relative_path"]).casefold() == v.clean_relative(rel).casefold() or name == stem or name.startswith(stem + " - ") or own_folder:
+            keep.append(r)
+    return keep
 
 
 def describe_file(conn, rec):

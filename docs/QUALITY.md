@@ -1,3 +1,12 @@
+The film is matched to its files through its Jellyfin item. Jellyfin reports the main file's path; SyncHub turns it into a share and a path with the share's **Jellyfin** settings on the Storage page. Under *How Jellyfin, Radarr and Sonarr see this folder* there are two ways to say it:
+
+- **Jellyfin** (one path): Jellyfin sees the whole share under one folder, for example `/data`.
+- **Jellyfin: other mounts of this share** (one per line): Jellyfin mounts parts of the share separately. Write each as `path Jellyfin sees = folder inside the share`, for example `/OldMovie = Old Movies`, `/media = Movies`, `/TV1 = TV Shows`. The longest matching line wins. These lines also tell Jellyfin where a finished file is.
+
+The other files of the film are the ones in the same folder named after it (`Heat (1995) - 1080p.mkv` beside `Heat (1995).mkv`), or every file in the folder when the folder is the film's own. A loose file in a shared folder such as `Old Movies/` matches only itself, never the other films beside it.
+
+**Radarr:** set the share's **Radarr** path to where Radarr sees the share root. If Radarr mounts `/mnt/user` at `/media`, the Media share is `/media/Media` and TFiles is `/media/TFiles`.
+
 # Quality checks
 
 SyncHub can rate how a film file looks **without** an original to compare with. A worker samples a few short parts of the file and measures what a viewer would notice. SyncHub turns the numbers into a score from 0 to 100, a grade (good, ok, poor, bad) and a short list of findings in plain words.
@@ -61,6 +70,8 @@ On a flagged file (the Low quality page, the movie page, the Library record page
 Blocking uses Radarr's "mark as failed" on the grab in the film's history, which puts that release on Radarr's blocklist. If Radarr's history no longer has the grab (an old file, or a manual import), nothing can be blocked; SyncHub says so and goes on. Each request is recorded (`quality_request`) and shown under the file, with who asked, which release was blocked and what Radarr was told.
 
 The old file is not deleted. When the new download arrives it goes through the normal download workflow, including a quality check, and Radarr replaces the old file on import if it treats the new one as an upgrade. The share needs its **Radarr path** on the Storage page, so SyncHub can tell which Radarr movie a file belongs to.
+
+A film that is **not in Radarr** (or sits outside Radarr's folders, like loose files in `Old Movies/`) cannot be requested this way: there is no Radarr movie and no grab to block, and the buttons say so. Checks, scores, the flag and *Accept as is* still work. To replace such a film, add it to Radarr with *Request in Radarr* on the movie page; Radarr downloads a new copy into its own folder, and the old file is deleted by hand once the new one is in Jellyfin.
 
 Not run against a live Radarr from here: the calls are Radarr v3's documented ones (`history/movie`, `history/failed/{id}`, `command` MoviesSearch, `release`). If one differs on your version, the page shows Radarr's own error.
 

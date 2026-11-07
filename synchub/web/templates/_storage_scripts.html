@@ -46,7 +46,7 @@
         $('shareProtocol').value = v.protocol || 'smb'; $('shareHost').value = v.host || '';
         $('shareShare').value = v.share || ''; $('shareMount').value = v.mount_point || '';
         optionsTouched = v.options !== undefined; $('shareOptions').value = v.options || '';
-        $('shareJellyfin').value = v.jellyfin_path || ''; $('shareRadarr').value = v.radarr_path || ''; $('shareSonarr').value = v.sonarr_path || '';
+        $('shareJellyfin').value = v.jellyfin_path || ''; $('shareRadarr').value = v.radarr_path || ''; $('shareSonarr').value = v.sonarr_path || ''; $('shareJellyfinMore').value = v.jellyfin_extra_paths || '';
         $('shareError').textContent = '';
         adjust();
         modal.show();
@@ -74,7 +74,7 @@
     $('shareForm').addEventListener('submit', async (e) => {
         e.preventDefault();
         const body = { name: $('shareName').value, label: $('shareLabel').value, protocol: $('shareProtocol').value, host: $('shareHost').value, share: $('shareShare').value,
-                       mount_point: $('shareMount').value, options: $('shareOptions').value, jellyfin_path: $('shareJellyfin').value, radarr_path: $('shareRadarr').value, sonarr_path: $('shareSonarr').value };
+                       mount_point: $('shareMount').value, options: $('shareOptions').value, jellyfin_path: $('shareJellyfin').value, radarr_path: $('shareRadarr').value, sonarr_path: $('shareSonarr').value, jellyfin_extra_paths: $('shareJellyfinMore').value };
         const data = await post(editing ? `/api/storage/${editing}/update` : '/api/storage', body);
         if (!data.ok) { $('shareError').textContent = data.message || 'Failed.'; return; }
         location.reload();

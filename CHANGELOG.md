@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**Jellyfin mounts of one share, and matching a film to its files (migration 033).**
+- **Storage page: "Jellyfin: other mounts of this share".** A share that Jellyfin mounts in pieces (`/media` is `Movies`, `/OldMovie` is `Old Movies`, `/TV2` is `TV Shows`...) is now described one line per mount, `path Jellyfin sees = folder inside the share`. The single Jellyfin path still works for a whole share. The same lines tell Jellyfin where a finished file is.
+- **"Your copies" works for loose files.** The movie page matches a film to its Library files by the Jellyfin item's path through those mappings. A loose file in a shared folder (`Old Movies/X.avi`) matches only itself and its `- 1080p` extra, not every film beside it. (The first version matched every file in the folder.)
+
 **Quality checks, part 2: minimum resolution, gentler scores, request a better copy (migration 032).**
 - **Minimum resolution (default 1080p).** A file with a smaller picture is flagged Low quality whatever its check says, even if never checked (a 480p file used to score "good"). Width counts as well as height, so widescreen films with black bars pass. Setting *Minimum resolution* on the Low quality page; 0 turns it off.
 - **Smoother scoring.** The bitrate, block and blur penalties now grow gradually instead of jumping at a line (0.069 bits per pixel used to cost 10 points, 0.071 nothing). Mild results show as plain information, not warnings, and only a real shortfall says dark scenes will look blocky. Older results are scored again from their stored numbers; no new check is needed.

@@ -322,8 +322,7 @@ def jellyfin_updates(conn, job_id):
 
     def seen(root_name, rel):
         root = storage.by_name(conn, root_name)
-        base = (root or {}).get("jellyfin_path")
-        return f"{base.rstrip('/')}/{rel}" if base and rel else None
+        return storage.to_app_path(root, rel) if root and rel else None
 
     created = seen(r["dest_root"], r["dest_rel"])
     if created is None:
