@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+**Faster TV dashboard setup.** On each school day of a student there is a **Copy to...** box (all other weekdays, or one day); each person has a **Duplicate** button (a student's copy keeps the school week but not the phone); and a student can **Copy the week from** another student. Everything stays editable afterwards.
+
 **Cleaner movie names (no migration).** Update SyncHub, then workers. Movie names drop release debris after the year (REPACK, UHD, DV, MA, 5.1, group) and leading site tags like [DEVIL-TORRENTS.PL]. The analysis version is bumped, so run a scan again: every file, including ones already moved into the destination share, gets a new suggested name, and the Library page offers "Rename in place" (folder and file) for those whose name changed.
 
 **Morning TV dashboard (no migration).** Update SyncHub only (no worker change). New Python packages `icalendar` and `recurring-ical-events` (rebuild the image).

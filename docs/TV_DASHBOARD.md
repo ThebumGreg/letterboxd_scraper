@@ -29,6 +29,7 @@ All of it is in **Settings, Connections, Morning TV dashboard** (and **UniFi Net
    - iCloud: in Calendar, share the calendar as a **public calendar** and copy the link (webcal://...).
    - Microsoft 365 / Outlook: *Settings, Calendar, Shared calendars, Publish a calendar*, choose *Can view all details*, copy the **ICS** link.
    - Add a *student* for each child at school: the leave-by, school start and end times for each school day (leave a day blank for no school).
+   To save typing: fill in one day and use **Copy to...** on that row (all other weekdays, or one day); **Duplicate** makes a new person with the same school week (not the phone) to edit; **Copy the week from** copies another student's week. All of it stays editable.
    Anyone with a calendar link can read that calendar, so treat the link like a password. If your account cannot publish an ICS link (some work accounts), that person cannot be added yet.
 4. **No school days**: one line per date or range, with a name (`2026-11-26 Thanksgiving`, `2026-12-21 to 2027-01-03 Winter break`). Students then show the name instead of a school day.
 5. Press **Save** (the *Save* button of the Connections tab), then **Show on the TV now** to try it. **Close on the TV** takes it off. The link under the settings opens the same page in your browser, so you can see it on a phone or computer first.
