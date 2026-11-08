@@ -4,6 +4,8 @@
 
 **Faster TV dashboard setup.** On each school day of a student there is a **Copy to...** box (all other weekdays, or one day); each person has a **Duplicate** button (a student's copy keeps the school week but not the phone); and a student can **Copy the week from** another student. Everything stays editable afterwards.
 
+**Per-student school days.** Each student can have their own **No school days** list and an optional **school calendar link**: all-day *No school*, *Holiday* or *Break* events close that student's day, and *Minimum day* or *Early release* events show as a note. The list under the people stays for everyone. The Ponderosa 2026-27 dates are in the project files (`school/ponderosa-no-school-2026-27.txt`).
+
 **Cleaner movie names (no migration).** Update SyncHub, then workers. Movie names drop release debris after the year (REPACK, UHD, DV, MA, 5.1, group) and leading site tags like [DEVIL-TORRENTS.PL]. The analysis version is bumped, so run a scan again: every file, including ones already moved into the destination share, gets a new suggested name, and the Library page offers "Rename in place" (folder and file) for those whose name changed.
 
 **Morning TV dashboard (no migration).** Update SyncHub only (no worker change). New Python packages `icalendar` and `recurring-ical-events` (rebuild the image).

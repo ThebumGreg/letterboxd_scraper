@@ -78,9 +78,9 @@
         <button type="button" class="btn btn-outline-primary btn-sm" id="addCalendarPerson">Add a calendar person</button>
         <button type="button" class="btn btn-outline-primary btn-sm" id="addStudent">Add a student</button>
         <hr>
-        <h6 class="mb-2">No school days</h6>
+        <h6 class="mb-2">No school days for everyone</h6>
         <textarea class="form-control font-monospace" id="dash_no_school" name="dash_no_school" rows="3" placeholder="2026-11-26 Thanksgiving&#10;2026-12-21 to 2027-01-03 Winter break">{{ settings.dash_no_school }}</textarea>
-        <div class="form-text">One per line, a date or a range, then a name. Students show the name instead of a school day.</div>
+        <div class="form-text">One per line, a date or a range, then a name. Students show the name instead of a school day. A student's own list and school calendar (on the student) are added to this.</div>
         <div class="row g-3 mt-1 mb-2">
             <div class="col-6 col-md-3"><label for="dash_presence_from" class="form-label">Phone can only "leave" after</label><input type="time" class="form-control" id="dash_presence_from" name="dash_presence_from" value="{{ settings.dash_presence_from }}"></div>
             <div class="col-6 col-md-3"><label for="dash_presence_grace" class="form-label">Away for (minutes)</label><input type="number" min="1" max="30" class="form-control" id="dash_presence_grace" name="dash_presence_grace" value="{{ settings.dash_presence_grace }}"></div>

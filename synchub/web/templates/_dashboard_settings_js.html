@@ -74,6 +74,24 @@
                         card.append(from);
                     }
                     card.append(grid, el('div', 'form-text mb-2', 'Leave a day blank for no school. Add a time for "Leave by" and "School starts" to show the day.'));
+                    const extra = el('div', 'row g-2 mb-2');
+                    const cal = input('url', p.ics, 'https://... or webcal:// (the school\'s calendar, optional)', (v) => { p.ics = v; save(); });
+                    const calTest = el('button', 'btn btn-outline-info btn-sm', 'Test'); calTest.type = 'button';
+                    const calOut = el('span', 'small ms-2');
+                    calTest.addEventListener('click', async () => {
+                        calOut.textContent = 'Reading...';
+                        try {
+                            const r = await (await fetch('/api/dashboard/test_calendar', { method: 'POST', headers: { ...json, ...csrf() }, body: JSON.stringify({ url: p.ics || '' }) })).json();
+                            calOut.textContent = r.message; calOut.className = 'small ms-2 ' + (r.ok ? 'text-success' : 'text-danger');
+                        } catch (e) { calOut.textContent = 'Failed: ' + e.message; }
+                    });
+                    const calBox = labeled('School calendar link (optional): all-day "No school", "Holiday" or "Break" events close the day; "Minimum day" or "Early release" events show as a note', cal, 'col-12 col-md-8');
+                    const calBtn = el('div', 'col-12 col-md-4 align-self-end'); calBtn.append(calTest, calOut);
+                    const ns = el('textarea', 'form-control form-control-sm font-monospace'); ns.rows = 3; ns.value = p.no_school || '';
+                    ns.placeholder = '2026-11-26 to 2026-11-27 Thanksgiving break';
+                    ns.addEventListener('input', () => { p.no_school = ns.value; save(); });
+                    extra.append(calBox, calBtn, labeled('No school days for this student (one per line: a date or range, then a name). Added to the list for everyone below.', ns, 'col-12'));
+                    card.append(extra);
                     const phone = el('div', 'row g-2 align-items-end');
                     const mac = input('text', p.mac, 'aa:bb:cc:dd:ee:ff', (v) => { p.mac = v; save(); });
                     phone.append(labeled('Phone Wi-Fi address (optional)', mac, 'col-12 col-md-5'));

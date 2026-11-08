@@ -102,6 +102,7 @@
       html += '<div class="big ' + (mins < 0 ? "warn" : "") + '">' + (mins > 0 ? "Leave in " + (mins >= 60 ? Math.floor(mins / 60) + " h " + (mins % 60) + " min" : mins + " min") : mins >= -5 ? "Time to go!" : "Running late") + "</div>";
       html += '<div class="none">Leave by ' + hm(leave) + "</div>";
     }
+    if (s.note) { html += '<div class="big warn" style="font-size:3vh">' + esc(s.note) + "</div>"; }
     html += '<div class="none">School starts ' + hm(start) + (s.end ? ", ends " + hm(new Date(s.end)) : "") + "</div>";
     if (s.presence === "home") { html += '<div class="none">Phone is home</div>'; }
     return html;

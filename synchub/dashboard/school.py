@@ -1,17 +1,42 @@
 """A student's day (from the typed school week) and "left for school" (from the phone's Wi-Fi)."""
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 
 from synchub import settings, unifi_network
-from synchub.dashboard import config
+from synchub.dashboard import calendars, config
 
 logger = logging.getLogger(__name__)
 
 
+OFF_WORDS = re.compile(r"\bno school\b|\bholiday\b|\bbreak\b|\brecess\b|\bstaff (development|day)\b|\bpupil[- ]free\b|\bnon[- ]?student\b|\bteacher (work|institute|in-?service)|\bconference day|\bschool closed|\bvacation\b", re.I)
+NOTE_WORDS = re.compile(r"minimum day|early release|early dismissal|shortened|late start|half day|short day|modified day", re.I)
+
+
+def calendar_flags(kid, now):
+    """What the student's school calendar says about today: (no-school label or None, note or ''). Only all-day events can close the school; a bad or
+    unreachable calendar says nothing, so the typed week still applies."""
+    if not kid.get("ics"):
+        return None, ""
+    try:
+        text, _ = calendars.download(kid["ics"])
+        start, end = calendars.day_range(now.date(), now.tzinfo)
+        found = calendars.events_between(text, start, end)
+    except Exception as exc:
+        logger.warning(f"[dashboard] {kid['name']}'s school calendar could not be read: {exc.__class__.__name__}")
+        return None, ""
+    off = next((e["title"] for e in found if e["all_day"] and OFF_WORDS.search(e["title"]) and not NOTE_WORDS.search(e["title"])), None)
+    note = next((e["title"] for e in found if NOTE_WORDS.search(e["title"])), "")
+    return off, note
+
+
 def day_plan(kid, now):
-    """-> {"state": "school"|"none"|"holiday", "leave", "start", "end", "label"} for today. Times are ISO strings."""
-    label = config.no_school_on(now.date())
+    """-> {"state": "school"|"none"|"holiday", "leave", "start", "end", "label", "note"} for today. Times are ISO strings."""
+    label = config.no_school_on(now.date(), kid.get("no_school") or "") or config.no_school_on(now.date())
+    note = ""
+    if label is None:
+        label, note = calendar_flags(kid, now)
     if label is not None:
         return {"state": "holiday", "label": label}
     entry = (kid.get("week") or {}).get(config.DAYS[now.weekday()])
@@ -21,7 +46,7 @@ def day_plan(kid, now):
     def at(text):
         minutes = config.minutes(text)
         return (now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(minutes=minutes)).isoformat() if minutes is not None else ""
-    return {"state": "school", "leave": at(entry["leave"]), "start": at(entry["start"]), "end": at(entry.get("end"))}
+    return {"state": "school", "leave": at(entry["leave"]), "start": at(entry["start"]), "end": at(entry.get("end")), "note": note}
 
 
 # ------------------------------------------------------------------ presence

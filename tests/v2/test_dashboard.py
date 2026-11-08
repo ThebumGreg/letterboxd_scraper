@@ -527,3 +527,62 @@ def test_test_buttons(client, v2, monkeypatch):
     settings.set_value("unifi_net_host", "10.0.0.1")
     settings.set_value("unifi_net_api_key", "k")
     assert "Network application" in client.get("/api/dashboard/clients").get_json()["message"]
+
+
+# ------------------------------------------------------------------ per-student no-school days and school calendars
+SCHOOL_ICS = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//t//EN
+BEGIN:VEVENT
+UID:a
+DTSTART;VALUE=DATE:20261109
+DTEND;VALUE=DATE:20261110
+SUMMARY:Student Holiday - No School
+END:VEVENT
+BEGIN:VEVENT
+UID:b
+DTSTART;VALUE=DATE:20261116
+DTEND;VALUE=DATE:20261117
+SUMMARY:Minimum Day
+END:VEVENT
+BEGIN:VEVENT
+UID:c
+DTSTART:20261117T150000Z
+DTEND:20261117T160000Z
+SUMMARY:Lunch break with the principal
+END:VEVENT
+END:VCALENDAR
+"""
+
+
+def test_a_students_own_no_school_days_do_not_close_the_others(v2):
+    sam = {**KID, "no_school": "2026-11-09 Ponderosa day"}
+    alex = {"name": "Alex", "kind": "school", "week": KID["week"]}
+    assert school.day_plan(sam, at(2026, 11, 9)) == {"state": "holiday", "label": "Ponderosa day"}
+    assert school.day_plan(alex, at(2026, 11, 9))["state"] == "school"
+    settings.set_value("dash_no_school", "2026-11-09 Everyone")
+    assert school.day_plan(alex, at(2026, 11, 9))["label"] == "Everyone"
+
+
+def test_a_school_calendar_can_close_a_day_or_add_a_note(v2, monkeypatch):
+    monkeypatch.setattr(calendars, "download", lambda url: (SCHOOL_ICS, False))
+    kid = {**KID, "ics": "https://school/cal.ics", "week": {"mon": KID["week"]["mon"]}}
+    assert school.day_plan(kid, at(2026, 11, 9)) == {"state": "holiday", "label": "Student Holiday - No School"}
+    note = school.day_plan(kid, at(2026, 11, 16))
+    assert note["state"] == "school" and note["note"] == "Minimum Day"
+    assert school.day_plan(kid, at(2026, 11, 23))["note"] == ""
+    monkeypatch.setattr(calendars, "download", lambda url: 1 / 0)
+    assert school.day_plan(kid, at(2026, 11, 9))["state"] == "school"          # an unreadable calendar changes nothing
+
+
+def test_a_timed_event_with_break_in_its_name_does_not_close_the_school(v2, monkeypatch):
+    monkeypatch.setattr(calendars, "download", lambda url: (SCHOOL_ICS, False))
+    kid = {**KID, "ics": "https://school/cal.ics", "week": {"tue": KID["week"]["mon"]}}
+    assert school.day_plan(kid, at(2026, 11, 17))["state"] == "school"
+
+
+def test_student_calendar_and_no_school_list_are_validated():
+    ok, text = config.clean_people(json.dumps([{"name": "Sam", "kind": "school", "ics": "webcal://s.example/c.ics", "no_school": "2026-11-26 to 2026-11-27 Thanksgiving break"}]))
+    assert ok and json.loads(text)[0]["ics"] == "https://s.example/c.ics" and json.loads(text)[0]["no_school"].startswith("2026-11-26 to")
+    assert not config.clean_people(json.dumps([{"name": "Sam", "kind": "school", "no_school": "someday"}]))[0]
+    assert not config.clean_people(json.dumps([{"name": "Sam", "kind": "school", "ics": "ftp://x"}]))[0]

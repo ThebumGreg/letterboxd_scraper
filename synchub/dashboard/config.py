@@ -88,6 +88,14 @@ def clean_people(text):
             mac = re.sub(r"[^0-9a-f]", "", str(p.get("mac") or "").lower())
             if mac and len(mac) != 12:
                 return False, f"{name}: the phone's Wi-Fi address (MAC) should look like aa:bb:cc:dd:ee:ff."
+            ics = re.sub(r"^webcal://", "https://", str(p.get("ics") or "").strip(), flags=re.I)
+            if ics and not re.match(r"^https?://\S{4,2000}$", ics):
+                return False, f"{name}: the school calendar link must be an address that starts with https:// (or webcal://)."
+            entry["ics"] = ics
+            ok, lines = clean_no_school(str(p.get("no_school") or ""))
+            if not ok:
+                return False, f"{name}: {lines}"
+            entry["no_school"] = lines
             entry["mac"] = ":".join(mac[i:i + 2] for i in range(0, 12, 2)) if mac else ""
             entry["phone"] = str(p.get("phone") or "").strip()[:60]
         out.append(entry)
@@ -123,9 +131,9 @@ def clean_no_school(text):
     return True, "\n".join(lines[:200])
 
 
-def no_school_on(day):
-    """The label of the no-school entry that covers this date ('No school' when it has none), else None."""
-    for line in settings.get("dash_no_school").split("\n"):
+def no_school_on(day, text=None):
+    """The label of the no-school entry that covers this date ('No school' when it has none), else None. `text` is one student's own list; by default the one for everybody."""
+    for line in (settings.get("dash_no_school") if text is None else text).split("\n"):
         found = re.fullmatch(r"(\d{4}-\d{2}-\d{2})(?: to (\d{4}-\d{2}-\d{2}))?\s*(.*)", line.strip())
         if found:
             first, last = date.fromisoformat(found.group(1)), date.fromisoformat(found.group(2) or found.group(1))
