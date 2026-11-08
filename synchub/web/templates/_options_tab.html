@@ -27,32 +27,57 @@
                         <select class="form-select form-select-sm" id="setDownloads">{% for m, label in [('off', 'Leave alone'), ('review', 'Ask me first'), ('auto', 'Replace when safe')] %}<option value="{{ m }}"{% if m == download_summary.mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
                     <div class="col-5"><label for="setOriginals" class="form-label small mb-1">Keep originals (days)</label><input type="number" min="0" max="3650" class="form-control form-control-sm" id="setOriginals" value="{{ originals_days }}" title="0 drops the original once the replacement is verified"></div>
                 </div>
+                <div class="fw-bold small mb-1">What happens to each file</div>
+                <div class="mb-2"><label for="setProfile" class="form-label small mb-1">Convert with (default profile)</label>
+                    <select class="form-select form-select-sm" id="setProfile">{% for p in profiles %}<option value="{{ p.id }}"{% if p.id == default_profile_id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select>
+                    <div class="form-text">Used for every file unless you pick another when approving it. Profiles are listed below.</div></div>
+                <div class="row g-2 mb-2">
+                    <div class="col-12"><label for="setSourceDelete" class="form-label small mb-1">Delete the source after a verified migration</label>
+                        <select class="form-select form-select-sm" id="setSourceDelete">{% for d, label in [('0', 'Never (off)'), ('7', 'After 7 days'), ('14', 'After 14 days'), ('30', 'After 30 days')] %}<option value="{{ d }}"{% if d == cleanup.days|string %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+                        <div class="form-text">A worker deletes the source only after checking the library copy is still whole and the source is unchanged. You can keep any file's source on its page. Switching this off stops pending deletions.</div></div>
+                    <div class="col-7"><label for="setArr" class="form-label small mb-1">Radarr / Sonarr after a migration</label>
+                        <select class="form-select form-select-sm" id="setArr">{% for m, label in [('none', 'Leave them alone'), ('update_location', 'Tell them the new location'), ('unmonitor', 'Stop monitoring the title'), ('remove', 'Stop tracking the title (no files deleted)')] %}<option value="{{ m }}"{% if m == cleanup.arr_mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+                    <div class="col-5"><label for="setArrWhen" class="form-label small mb-1">When</label>
+                        <select class="form-select form-select-sm" id="setArrWhen">{% for m, label in [('after_copy', 'Right after the copy'), ('with_source_delete', 'When the source is deleted')] %}<option value="{{ m }}"{% if m == cleanup.arr_when %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+                    <div class="form-text">Sonarr cannot forget a single episode without deleting its file, so for TV &ldquo;stop tracking&rdquo; means &ldquo;stop monitoring&rdquo;. A rename inside a share always passes on the new location. Set each share's Radarr and Sonarr path on the Storage page.</div>
+                </div>
+                <hr>
                 <div class="border rounded p-2 mb-2">
-                    <div class="form-check"><input class="form-check-input" type="checkbox" id="setSizePolicy"{% if size.on %} checked{% endif %}><label class="form-check-label small fw-bold" for="setSizePolicy">Compress films that run well over a bitrate ceiling</label></div>
-                    <div class="form-text mb-2">A film is re-encoded to HEVC 10-bit, down to the ceiling for its picture size (the video bitrate, so a short and a long film are judged alike). It is only touched when it is more than the trigger times the ceiling, so files that are already efficient are left alone. Removing unwanted tracks comes first, and HDR10 and HLG are kept. Every conversion profile can use its own numbers; these are the defaults they follow.</div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="setSizePolicy"{% if size.on %} checked{% endif %}><label class="form-check-label small fw-bold" for="setSizePolicy">Compress films with a very high bitrate</label></div>
+                    <div class="form-text mb-2">Right now: {% if size.on %}a 4K film above {{ '%g' % size.trigger_mbps['2160'] }} Mbps is re-encoded to about {{ '%g' % size.caps_mbps['2160'] }} Mbps{% if size.trigger_mbps['1080'] %}, a 1080p film above {{ '%g' % size.trigger_mbps['1080'] }} Mbps to about {{ '%g' % size.caps_mbps['1080'] }} Mbps{% endif %}. Everything else is left alone.{% else %}nothing is compressed.{% endif %}</div>
+                    <div class="fw-bold small mb-1">When to compress</div>
+                    <div class="form-text mb-1">The video bitrate decides, so a short and a long film are judged alike. A file under the first number is never touched. Audio is not counted. 0 turns a picture size off.</div>
                     <div class="row g-2 mb-2">
-                        <div class="col-3"><label for="setCap2160" class="form-label small mb-1">4K ceiling (Mbps)</label><input type="number" min="2" max="80" step="0.5" class="form-control form-control-sm" id="setCap2160" value="{{ '%g' % size.caps_mbps['2160'] }}"></div>
-                        <div class="col-3"><label for="setCap1080" class="form-label small mb-1">1080p (Mbps)</label><input type="number" min="1" max="40" step="0.5" class="form-control form-control-sm" id="setCap1080" value="{{ '%g' % size.caps_mbps['1080'] }}"></div>
-                        <div class="col-3"><label for="setCap720" class="form-label small mb-1">720p (Mbps)</label><input type="number" min="0.5" max="20" step="0.5" class="form-control form-control-sm" id="setCap720" value="{{ '%g' % size.caps_mbps['720'] }}"></div>
-                        <div class="col-3"><label for="setCapSd" class="form-label small mb-1">Smaller (Mbps)</label><input type="number" min="0.3" max="10" step="0.1" class="form-control form-control-sm" id="setCapSd" value="{{ '%g' % size.caps_mbps['sd'] }}"></div>
+                        <div class="col-6 col-md-3"><label for="setTrig2160" class="form-label small mb-1">4K: re-encode above (Mbps)</label><input type="number" min="0" max="200" step="1" class="form-control form-control-sm" id="setTrig2160" value="{{ '%g' % size.trigger_mbps['2160'] }}"></div>
+                        <div class="col-6 col-md-3"><label for="setTrig1080" class="form-label small mb-1">1080p: re-encode above (Mbps)</label><input type="number" min="0" max="100" step="1" class="form-control form-control-sm" id="setTrig1080" value="{{ '%g' % size.trigger_mbps['1080'] }}"></div>
+                        <div class="col-6 col-md-3"><label for="setTrig720" class="form-label small mb-1">720p (0 = never)</label><input type="number" min="0" max="50" step="1" class="form-control form-control-sm" id="setTrig720" value="{{ '%g' % size.trigger_mbps['720'] }}"></div>
+                        <div class="col-6 col-md-3"><label for="setTrigSd" class="form-label small mb-1">Smaller (0 = never)</label><input type="number" min="0" max="20" step="1" class="form-control form-control-sm" id="setTrigSd" value="{{ '%g' % size.trigger_mbps['sd'] }}"></div>
+                    </div>
+                    <div class="fw-bold small mb-1">How to compress</div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-6 col-md-3"><label for="setCap2160" class="form-label small mb-1">4K: aim for (Mbps)</label><input type="number" min="2" max="80" step="0.5" class="form-control form-control-sm" id="setCap2160" value="{{ '%g' % size.caps_mbps['2160'] }}"></div>
+                        <div class="col-6 col-md-3"><label for="setCap1080" class="form-label small mb-1">1080p: aim for (Mbps)</label><input type="number" min="1" max="40" step="0.5" class="form-control form-control-sm" id="setCap1080" value="{{ '%g' % size.caps_mbps['1080'] }}"></div>
+                        <div class="col-6 col-md-3"><label for="setCap720" class="form-label small mb-1">720p: aim for (Mbps)</label><input type="number" min="0.5" max="20" step="0.5" class="form-control form-control-sm" id="setCap720" value="{{ '%g' % size.caps_mbps['720'] }}"></div>
+                        <div class="col-6 col-md-3"><label for="setCapSd" class="form-label small mb-1">Smaller: aim for (Mbps)</label><input type="number" min="0.3" max="10" step="0.1" class="form-control form-control-sm" id="setCapSd" value="{{ '%g' % size.caps_mbps['sd'] }}"></div>
                     </div>
                     <div class="row g-2 mb-2">
-                        <div class="col-4"><label for="setTrigger" class="form-label small mb-1">Only above (× ceiling)</label><input type="number" min="1" max="5" step="0.1" class="form-control form-control-sm" id="setTrigger" value="{{ '%g' % size.trigger_factor }}"></div>
-                        <div class="col-4"><label for="setSafety2160" class="form-label small mb-1">Any 4K film over (GB)</label><input type="number" min="0" max="500" step="1" class="form-control form-control-sm" id="setSafety2160" value="{{ '%g' % size.safety_gb['2160'] }}"></div>
-                        <div class="col-4"><label for="setSafety1080" class="form-label small mb-1">Any 1080p film over (GB)</label><input type="number" min="0" max="500" step="1" class="form-control form-control-sm" id="setSafety1080" value="{{ '%g' % size.safety_gb['1080'] }}"></div>
-                        <div class="form-text">The GB limits catch a huge file whose bitrate looks fine; 0 turns one off.</div>
-                    </div>
-                    <div class="row g-2 mb-2">
-                        <div class="col-4"><label for="setSizeCrf" class="form-label small mb-1">Quality (CRF)</label><input type="number" min="14" max="35" class="form-control form-control-sm" id="setSizeCrf" value="{{ size.crf }}"></div>
-                        <div class="col-4"><label for="setDv5" class="form-label small mb-1">Dolby Vision profile 5</label>
+                        <div class="col-md-6"><label for="setRateMode" class="form-label small mb-1">Encoding</label>
+                            <select class="form-select form-select-sm" id="setRateMode">{% for m, label in [('target', 'Aim for the bitrate (predictable size)'), ('quality', 'Constant quality, never above the bitrate (often smaller)')] %}<option value="{{ m }}"{% if m == size.rate_mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+                        <div class="col-6 col-md-3"><label for="setSizeCrf" class="form-label small mb-1">Quality (CRF)</label><input type="number" min="14" max="35" class="form-control form-control-sm" id="setSizeCrf" value="{{ size.crf }}" title="Only used for 'Constant quality'. Lower is better and larger."></div>
+                        <div class="col-6 col-md-3"><label for="setDv5" class="form-label small mb-1">Dolby Vision 5</label>
                             <select class="form-select form-select-sm" id="setDv5">{% for m, label in [('review', 'Leave it alone'), ('hdr10', 'Compress as HDR10 (wrong colours)')] %}<option value="{{ m }}"{% if m == size.dv_profile_5 %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-                        <div class="col-4"><label for="setDv78" class="form-label small mb-1">Dolby Vision profile 7 and 8</label>
+                        <div class="col-md-6"><label for="setDv78" class="form-label small mb-1">Dolby Vision profile 7 and 8</label>
                             <select class="form-select form-select-sm" id="setDv78">{% for m, label in [('remux', 'Convert 7 to 8.1, no re-encode'), ('hdr10', 'Compress as HDR10 (Dolby layer lost)'), ('review', 'Ask me first'), ('leave', 'Leave it as it is')] %}<option value="{{ m }}"{% if m == size.dv_profile_7_8 %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
                     </div>
-                    <div class="form-check mt-2"><input class="form-check-input" type="checkbox" id="setTvPolicy"{% if size.tv_on %} checked{% endif %}><label class="form-check-label small fw-bold" for="setTvPolicy">Also compress TV episodes</label></div>
-                    <div class="row g-2 mb-2">
-                        <div class="col-6"><label for="setTvShare" class="form-label small mb-1">Episode ceiling (share of a film's)</label><input type="number" min="0.2" max="1" step="0.05" class="form-control form-control-sm" id="setTvShare" value="{{ '%g' % size.tv_cap_share }}"></div>
-                    </div>
+                    <details class="mb-2"><summary class="small fw-bold">Advanced: hard size limits, TV episodes</summary>
+                        <div class="row g-2 mt-1">
+                            <div class="col-6 col-md-3"><label for="setSafety2160" class="form-label small mb-1">Any 4K film over (GB)</label><input type="number" min="0" max="500" step="1" class="form-control form-control-sm" id="setSafety2160" value="{{ '%g' % size.safety_gb['2160'] }}"></div>
+                            <div class="col-6 col-md-3"><label for="setSafety1080" class="form-label small mb-1">Any 1080p film over (GB)</label><input type="number" min="0" max="500" step="1" class="form-control form-control-sm" id="setSafety1080" value="{{ '%g' % size.safety_gb['1080'] }}"></div>
+                            <div class="col-12"><div class="form-text">A size limit catches a huge file whatever its bitrate. 0 = off (the default; the bitrate is what counts).</div></div>
+                            <div class="col-12"><div class="form-check"><input class="form-check-input" type="checkbox" id="setTvPolicy"{% if size.tv_on %} checked{% endif %}><label class="form-check-label small fw-bold" for="setTvPolicy">Also compress TV episodes (same rules, off by default)</label></div></div>
+                            <div class="col-6"><label for="setTvShare" class="form-label small mb-1">Episode limits (share of a film's)</label><input type="number" min="0.2" max="1" step="0.05" class="form-control form-control-sm" id="setTvShare" value="{{ '%g' % size.tv_cap_share }}"></div>
+                        </div>
+                    </details>
                     <div class="row g-2 mb-2">
                         <div class="col-6"><label for="setGpu" class="form-label small mb-1">GPU encoding</label>
                             <select class="form-select form-select-sm" id="setGpu"><option value="0"{% if not size.gpu %} selected{% endif %}>Off (CPU, best quality per GB)</option><option value="1"{% if size.gpu %} selected{% endif %}>Use a worker's GPU when it has one</option></select></div>
@@ -76,9 +101,9 @@
                 </div>
                 <div class="border rounded p-2 mb-2">
                     <div class="fw-bold small mb-1">Extra copies and Dolby Vision 7 (default for every profile)</div>
-                    <div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" id="vOn"{% if versions_config.on %} checked{% endif %}><label class="form-check-label small" for="vOn">Recommend a smaller extra copy of big films</label></div>
+                    <div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" id="vOn"{% if versions_config.on %} checked{% endif %}><label class="form-check-label small" for="vOn">Offer a smaller extra copy (a 1080p version of 4K films)</label></div>
                     <div class="row g-2 mb-2">
-                        <div class="col-6 col-md-3"><label class="form-label small mb-1" for="vMinGb">For films over (GB)</label><input class="form-control form-control-sm" id="vMinGb" type="number" min="0" step="1" value="{{ '%g'|format(versions_config.min_gb) }}"></div>
+                        <div class="col-6 col-md-3"><label class="form-label small mb-1" for="vMinGb">Only films over (GB, 0 = every 4K film)</label><input class="form-control form-control-sm" id="vMinGb" type="number" min="0" step="1" value="{{ '%g'|format(versions_config.min_gb) }}"></div>
                         <div class="col-6 col-md-3"><label class="form-label small mb-1" for="vHeight">Copy height</label>
                             <select class="form-select form-select-sm" id="vHeight">{% for h in heights %}<option value="{{ h }}"{% if h == versions_config.height %} selected{% endif %}>{{ h }}p</option>{% endfor %}</select></div>
                         <div class="col-6 col-md-3"><label class="form-label small mb-1" for="vLabel">Name added to the file</label><input class="form-control form-control-sm" id="vLabel" maxlength="20" value="{{ versions_config.label }}"></div>
@@ -101,20 +126,7 @@
                     <div class="form-check"><input class="form-check-input" type="checkbox" id="setPreviewAuto"{% if preview_auto %} checked{% endif %}><label class="form-check-label small" for="setPreviewAuto">Make the preview for me when a compression is waiting</label></div>
                     <div class="form-text">A worker cuts a short window, compresses it exactly as the real job would and makes the matching original; you watch both side by side. The clips are removed after {{ preview_keep_days }} days. This applies to new Radarr/Sonarr downloads; for a file already in the Library, press Preview on its page.</div>
                 </div>
-                <div class="mb-2"><label for="setProfile" class="form-label small mb-1">Convert with (default profile)</label>
-                    <select class="form-select form-select-sm" id="setProfile">{% for p in profiles %}<option value="{{ p.id }}"{% if p.id == default_profile_id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select>
-                    <div class="form-text">Used for every file unless you pick another when approving it. Profiles are listed below.</div></div>
-                <div class="row g-2 mb-2">
-                    <div class="col-12"><label for="setSourceDelete" class="form-label small mb-1">Delete the source after a verified migration</label>
-                        <select class="form-select form-select-sm" id="setSourceDelete">{% for d, label in [('0', 'Never (off)'), ('7', 'After 7 days'), ('14', 'After 14 days'), ('30', 'After 30 days')] %}<option value="{{ d }}"{% if d == cleanup.days|string %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
-                        <div class="form-text">A worker deletes the source only after checking the library copy is still whole and the source is unchanged. You can keep any file's source on its page. Switching this off stops pending deletions.</div></div>
-                    <div class="col-7"><label for="setArr" class="form-label small mb-1">Radarr / Sonarr after a migration</label>
-                        <select class="form-select form-select-sm" id="setArr">{% for m, label in [('none', 'Leave them alone'), ('update_location', 'Tell them the new location'), ('unmonitor', 'Stop monitoring the title'), ('remove', 'Stop tracking the title (no files deleted)')] %}<option value="{{ m }}"{% if m == cleanup.arr_mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-                    <div class="col-5"><label for="setArrWhen" class="form-label small mb-1">When</label>
-                        <select class="form-select form-select-sm" id="setArrWhen">{% for m, label in [('after_copy', 'Right after the copy'), ('with_source_delete', 'When the source is deleted')] %}<option value="{{ m }}"{% if m == cleanup.arr_when %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-                    <div class="form-text">Sonarr cannot forget a single episode without deleting its file, so for TV &ldquo;stop tracking&rdquo; means &ldquo;stop monitoring&rdquo;. A rename inside a share always passes on the new location. Set each share's Radarr and Sonarr path on the Storage page.</div>
-                </div>
-                <button type="submit" class="btn btn-sm btn-outline-success">Save settings</button>
+                <button type="submit" class="btn btn-sm btn-outline-success">Save settings (all sections above)</button>
                 <div class="form-text">A new destination or folder name changes which files count as already in place.</div>
             </form>
         </div>
@@ -127,7 +139,8 @@
     <div class="table-responsive"><table class="table table-sm align-middle">
         <thead><tr><th>Name</th><th>What it does</th><th class="text-end"></th></tr></thead>
         <tbody>{% for p in profiles %}<tr><td class="small fw-bold">{{ p.name }}{% if p.id == default_profile_id %} <span class="badge bg-success">default</span>{% endif %}{% if p.builtin %} <span class="badge bg-secondary">built in</span>{% endif %}</td>
-            <td class="small">{{ p.summary }}{% if p.audio_kbps != 192 and not p.move_only %} Audio {{ p.audio_kbps }} kbps.{% endif %}</td>
+            <td class="small">{% if p.description %}{{ p.description }}<div class="text-body-secondary">{{ p.summary }}{% if p.audio_kbps != 192 and not p.move_only %} Audio {{ p.audio_kbps }} kbps.{% endif %}</div>{% else %}{{ p.summary }}{% if p.audio_kbps != 192 and not p.move_only %} Audio {{ p.audio_kbps }} kbps.{% endif %}{% endif %}
+                {% if p.chips %}<div class="mt-1">{% for c in p.chips %}<span class="badge text-bg-secondary fw-normal me-1">{{ c }}</span>{% endfor %}</div>{% endif %}</td>
             <td class="text-end text-nowrap"><button type="button" class="btn btn-sm btn-outline-secondary" data-profile-edit="{{ p|tojson|forceescape }}">{{ 'Copy' if p.builtin else 'Edit' }}</button>
                 {% if not p.builtin %}<button type="button" class="btn btn-sm btn-outline-danger" data-profile-delete="{{ p.id }}">Delete</button>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
     <form id="profileForm" class="row g-2">
@@ -144,17 +157,18 @@
         <div class="col-6 col-md-3 d-flex flex-column justify-content-end gap-1">
             <div class="form-check"><input class="form-check-input" type="checkbox" id="pfTenBit" checked><label class="form-check-label small" for="pfTenBit">10-bit (HEVC)</label></div>
             <div class="form-check"><input class="form-check-input" type="checkbox" id="pfMoveOnly"><label class="form-check-label small" for="pfMoveOnly">Move only: change nothing</label></div></div>
-        <div class="col-12"><details><summary class="small fw-bold">Rules for this profile (blank = follow the Options page)</summary>
+        <div class="col-12"><details><summary class="small fw-bold">Rules for this profile (blank = follow the Options page; the grey number is what Options says now)</summary>
             <div class="row g-2 mt-1">
                 <div class="col-6 col-md-3"><label class="form-label small mb-1">Compress films</label><select class="form-select form-select-sm" data-rule="size_policy"><option value="">Follow Options</option><option value="1">On</option><option value="0">Off</option></select></div>
                 <div class="col-6 col-md-3"><label class="form-label small mb-1">Compress TV</label><select class="form-select form-select-sm" data-rule="tv_size_policy"><option value="">Follow Options</option><option value="1">On</option><option value="0">Off</option></select></div>
-                <div class="col-6 col-md-3"><label class="form-label small mb-1">4K ceiling (Mbps)</label><input type="number" class="form-control form-control-sm" data-rule="cap_2160" min="2" max="80" step="0.5" placeholder="Follow Options"></div>
-                <div class="col-6 col-md-3"><label class="form-label small mb-1">1080p ceiling (Mbps)</label><input type="number" class="form-control form-control-sm" data-rule="cap_1080" min="1" max="40" step="0.5" placeholder="Follow Options"></div>
-                <div class="col-6 col-md-3"><label class="form-label small mb-1">720p ceiling (Mbps)</label><input type="number" class="form-control form-control-sm" data-rule="cap_720" min="0.5" max="20" step="0.5" placeholder="Follow Options"></div>
-                <div class="col-6 col-md-3"><label class="form-label small mb-1">Smaller ceiling (Mbps)</label><input type="number" class="form-control form-control-sm" data-rule="cap_sd" min="0.3" max="10" step="0.1" placeholder="Follow Options"></div>
-                <div class="col-6 col-md-3"><label class="form-label small mb-1">Only above (x ceiling)</label><input type="number" class="form-control form-control-sm" data-rule="trigger_factor" min="1" max="5" step="0.1" placeholder="Follow Options"></div>
-                <div class="col-6 col-md-3"><label class="form-label small mb-1">4K safety (GB)</label><input type="number" class="form-control form-control-sm" data-rule="safety_gb_2160" min="0" max="500" step="1" placeholder="Follow Options"></div>
-                <div class="col-6 col-md-3"><label class="form-label small mb-1">1080p safety (GB)</label><input type="number" class="form-control form-control-sm" data-rule="safety_gb_1080" min="0" max="500" step="1" placeholder="Follow Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">4K: aim for (Mbps)</label><input type="number" class="form-control form-control-sm" data-rule="cap_2160" min="2" max="80" step="0.5" placeholder="{{ rule_defaults['cap_2160'] }} from Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">1080p: aim for (Mbps)</label><input type="number" class="form-control form-control-sm" data-rule="cap_1080" min="1" max="40" step="0.5" placeholder="{{ rule_defaults['cap_1080'] }} from Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">720p: aim for (Mbps)</label><input type="number" class="form-control form-control-sm" data-rule="cap_720" min="0.5" max="20" step="0.5" placeholder="{{ rule_defaults['cap_720'] }} from Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">Smaller: aim for (Mbps)</label><input type="number" class="form-control form-control-sm" data-rule="cap_sd" min="0.3" max="10" step="0.1" placeholder="{{ rule_defaults['cap_sd'] }} from Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">4K: re-encode above (Mbps)</label><input type="number" class="form-control form-control-sm" data-rule="trigger_2160" min="0" max="200" step="1" placeholder="{{ rule_defaults['trigger_2160'] }} from Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">1080p: re-encode above (Mbps)</label><input type="number" class="form-control form-control-sm" data-rule="trigger_1080" min="0" max="100" step="1" placeholder="{{ rule_defaults['trigger_1080'] }} from Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">4K size limit (GB, 0 = off)</label><input type="number" class="form-control form-control-sm" data-rule="safety_gb_2160" min="0" max="500" step="1" placeholder="{{ rule_defaults['safety_gb_2160'] }} from Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">1080p size limit (GB, 0 = off)</label><input type="number" class="form-control form-control-sm" data-rule="safety_gb_1080" min="0" max="500" step="1" placeholder="{{ rule_defaults['safety_gb_1080'] }} from Options"></div>
                 <div class="col-6 col-md-3"><label class="form-label small mb-1">Dolby Vision 7 and 8</label><select class="form-select form-select-sm" data-rule="dv_profile_7_8"><option value="">Follow Options</option><option value="remux">Convert 7 to 8.1</option><option value="hdr10">Compress as HDR10</option><option value="review">Ask me first</option><option value="leave">Leave it</option></select></div>
                 <div class="col-6 col-md-3"><label class="form-label small mb-1">Dolby Vision 5</label><select class="form-select form-select-sm" data-rule="dv_profile_5"><option value="">Follow Options</option><option value="review">Leave it</option><option value="hdr10">Compress as HDR10</option></select></div>
                 <div class="col-6 col-md-3"><label class="form-label small mb-1">Audio</label><select class="form-select form-select-sm" data-rule="audio_mode"><option value="">Follow Options</option><option value="add_compatible">Add compatible track</option><option value="compatible_only">Compatible only</option><option value="keep">Leave alone</option></select></div>
@@ -162,8 +176,8 @@
                 <div class="col-6 col-md-3"><label class="form-label small mb-1">GPU encoding</label><select class="form-select form-select-sm" data-rule="gpu"><option value="">Follow Options</option><option value="1">On</option><option value="0">Off</option></select></div>
                 <div class="col-6 col-md-3"><label class="form-label small mb-1">Quality score</label><select class="form-select form-select-sm" data-rule="vmaf_mode"><option value="">Follow Options</option><option value="off">Off</option><option value="warn">Record</option><option value="hold">Hold low</option></select></div>
                 <div class="col-6 col-md-3"><label class="form-label small mb-1">Make an extra copy</label><select class="form-select form-select-sm" data-rule="extra_copy"><option value="">Follow Options</option><option value="1">On</option><option value="0">Off</option></select></div>
-                <div class="col-6 col-md-3"><label class="form-label small mb-1">Extra copy: films over (GB)</label><input type="number" class="form-control form-control-sm" data-rule="extra_min_gb" min="0" max="500" step="1" placeholder="Follow Options"></div>
-                <div class="col-6 col-md-3"><label class="form-label small mb-1">Extra copy height</label><input type="number" class="form-control form-control-sm" data-rule="extra_height" min="240" max="2160" step="1" placeholder="Follow Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">Extra copy: films over (GB, 0 = all 4K)</label><input type="number" class="form-control form-control-sm" data-rule="extra_min_gb" min="0" max="500" step="1" placeholder="{{ rule_defaults['extra_min_gb'] }} from Options"></div>
+                <div class="col-6 col-md-3"><label class="form-label small mb-1">Extra copy height</label><input type="number" class="form-control form-control-sm" data-rule="extra_height" min="240" max="2160" step="1" placeholder="{{ rule_defaults['extra_height'] }} from Options"></div>
                 <div class="col-6 col-md-3"><label class="form-label small mb-1">Extra copy label</label><input class="form-control form-control-sm" data-rule="extra_label" maxlength="20" placeholder="Follow Options"></div>
             </div></details></div>
         <div class="col-12"><label for="pfDesc" class="form-label small mb-1">Note (optional)</label><input class="form-control form-control-sm" id="pfDesc" maxlength="300"></div>

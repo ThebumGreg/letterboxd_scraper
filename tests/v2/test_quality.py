@@ -354,9 +354,19 @@ def test_a_picture_under_the_minimum_resolution_is_flagged_whatever_the_check_sa
     sd = fixture_file(conn, rel="Old (1980)/Old (1980).mkv", kbps=1500, codec="h264", resolution="720x480")
     rec = rec_of(conn, sd)
     state = quality.state_for(conn, rec)
-    assert state["low"] and state["small"] and state["label"] == "Low quality" and "720x480" in state["extra"][0]["text"] and "1080p" in state["extra"][0]["text"]
+    assert state["low"] and state["small"] and state["label"] == "Too small, needs a bigger copy" and "720x480" in state["extra"][0]["text"] and "1080p" in state["extra"][0]["text"]
     rows = quality.low_quality(conn)
     assert [r["id"] for r in rows] == [sd] and rows[0]["findings"][0]["key"] == "below_minimum" and quality.low_count(conn) == 1
+
+
+def test_a_picture_under_the_minimum_is_not_checked_automatically_but_can_be_checked_by_hand(conn):
+    sd = fixture_file(conn, rel="Old (1980)/Old (1980).mkv", kbps=1500, codec="h264", resolution="720x480")
+    hd = fixture_file(conn, rel="New (2020)/New (2020).mkv", kbps=8000, codec="h264", resolution="1920x1080")
+    assert [r["id"] for r in quality.due_files(conn, 10)] == [hd]                       # the background pass skips the small one
+    for source in ("cleanup", "download"):
+        with pytest.raises(quality.QualityError, match="Too small"):
+            quality.request(conn, sd, source=source)
+    assert quality.request(conn, sd, by="greg", source="manual")                       # a person can still ask for it
 
 
 def test_widescreen_black_bars_and_the_minimum_setting(conn):

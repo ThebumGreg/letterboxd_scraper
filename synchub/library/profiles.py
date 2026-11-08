@@ -31,7 +31,29 @@ def _row(r):
     p = dict(r)
     p.update(ten_bit=bool(p["ten_bit"]), move_only=bool(p["move_only"]), builtin=bool(p["builtin"]), rules=profile_rules.loads(p.pop("rules_json", None)))
     p["summary"] = describe(p)
+    p["chips"] = chips(p)
     return p
+
+
+_CHIP_TEXT = {
+    "size_policy": {True: "Compresses above the bitrate limit", False: "No compression"},
+    "tv_size_policy": {True: "Compresses TV too"},
+    "extra_copy": {True: "Makes a 1080p copy of 4K films", False: "No extra copy"},
+    "dv_profile_7_8": {"remux": "Dolby Vision 7 becomes 8.1", "hdr10": "Dolby Vision becomes HDR10 when compressed", "leave": "Dolby Vision untouched", "review": "Asks before touching Dolby Vision"},
+    "audio_mode": {"keep": "Keeps all audio as it is", "compatible_only": "Compatible audio only", "add_compatible": "Adds a compatible audio track"},
+    "clean_names": {False: "Names not cleaned"},
+}
+
+
+def chips(p):
+    """Short labels for what this profile changes from the Options page, so profiles that share a video setting still look different."""
+    if p["move_only"]:
+        return ["Nothing changed"]
+    out = [text[p["rules"][key]] for key, text in _CHIP_TEXT.items() if key in p["rules"] and p["rules"][key] in text]
+    for key, label in (("cap_2160", "4K aims for {} Mbps"), ("cap_1080", "1080p aims for {} Mbps")):
+        if key in p["rules"]:
+            out.append(label.format(f"{p['rules'][key]:g}"))
+    return out
 
 
 def describe(p):

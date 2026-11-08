@@ -87,7 +87,7 @@ def test_the_size_preview_counts_what_the_numbers_would_compress_without_queuing
     info = '{"hdr": "sdr", "bit_depth": 10, "width": 1920, "height": 1080, "video_kbps": 14000}'
     conn.execute("UPDATE library_file SET duration_seconds = 3600, media_type = 'TV Episode', video_codec = 'hevc', resolution = '1920x1080', video_info_json = ? WHERE id = ?", (info, record))
     conn.commit()
-    body = {"cap_mbps_2160": "18", "cap_mbps_1080": "8", "cap_mbps_720": "4", "cap_mbps_sd": "2", "size_trigger_factor": "1.5", "safety_gb_2160": "45", "safety_gb_1080": "15", "tv_cap_share": "0.5"}
+    body = {"cap_mbps_2160": "18", "cap_mbps_1080": "8", "cap_mbps_720": "4", "cap_mbps_sd": "2", "trigger_mbps_2160": "27", "trigger_mbps_1080": "12", "trigger_mbps_720": "6", "trigger_mbps_sd": "3", "safety_gb_2160": "45", "safety_gb_1080": "15", "tv_cap_share": "0.5"}
     off = client.post("/api/library/size_preview", json={**body, "tv_size_policy": "0"}).get_json()
     on = client.post("/api/library/size_preview", json={**body, "tv_size_policy": "1"}).get_json()
     assert off["ok"] and "Nothing" in off["message"] and on["ok"] and "1 episodes" in on["message"]

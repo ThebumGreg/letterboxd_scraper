@@ -38,15 +38,17 @@ def finish_job(conn, job_id, status="done", result=None, error=None):
 # ---------------------------------------------------------------- what is recommended
 def test_a_big_4k_film_is_recommended_a_smaller_copy_and_nothing_else_is(conn):
     big = film(conn)
-    film(conn, rel="Movies/Small (2000)/Small (2000).mkv", size_gb=5)                                       # under the size limit
+    small = film(conn, rel="Movies/Small (2000)/Small (2000).mkv", size_gb=5)                               # every 4K film is offered a copy, whatever its size
     film(conn, rel="Movies/Hd (2001)/Hd (2001).mkv", info={**FOUR_K, "width": 1920, "height": 1080})        # already 1080p
     film(conn, rel="TV Shows/Show/Season 01/S01E01.mkv", media_type="TV Episode", show="Show", season=1)     # films only
     film(conn, rel="Movies/Heat (1995)/Heat (1995) - 1080p.mkv", name="Heat (1995).mkv")                     # an extra version is not copied again
-    assert kinds(conn) == {"variant": [big], "dv_remux": [], "declined": []}
+    assert kinds(conn) == {"variant": [big, small], "dv_remux": [], "declined": []}
 
 
 def test_the_size_limit_and_the_height_come_from_the_settings(conn):
     big = film(conn, size_gb=20)
+    assert kinds(conn)["variant"] == [big]                                                                  # 0 (the default) means every 4K film
+    settings.set_value("variant_min_gb", "30", conn=conn)
     assert kinds(conn)["variant"] == []
     settings.set_value("variant_min_gb", "10", conn=conn)
     assert kinds(conn)["variant"] == [big]

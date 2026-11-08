@@ -18,6 +18,11 @@ SPEC = {
     "cap_sd": ("float", "cap_mbps_sd", (0.3, 10)),
     "tv_cap_share": ("float", "tv_cap_share", (0.2, 1)),         # an episode's ceiling as a share of the film ceiling
     "trigger_factor": ("float", "size_trigger_factor", (1, 5)),  # compress only when the video is this many times over the ceiling
+    "trigger_2160": ("float", "trigger_mbps_2160", (0, 200)),    # compress only above this video bitrate in Mbps by picture height (0 = never)
+    "trigger_1080": ("float", "trigger_mbps_1080", (0, 100)),
+    "trigger_720": ("float", "trigger_mbps_720", (0, 50)),
+    "trigger_sd": ("float", "trigger_mbps_sd", (0, 20)),
+    "rate_mode": ("choice", "rate_mode", ("target", "quality")),   # aim at the bitrate, or a constant quality that the ceiling only caps
     "safety_gb_2160": ("float", "safety_gb_2160", (0, 500)),     # a film this big is compressed whatever its bitrate (0 = never)
     "safety_gb_1080": ("float", "safety_gb_1080", (0, 500)),
     "crf": ("int", "size_crf", (14, 35)),
