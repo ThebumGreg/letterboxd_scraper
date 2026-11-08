@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+**Cleaner movie names (no migration).** Update SyncHub, then workers. Movie names drop release debris after the year (REPACK, UHD, DV, MA, 5.1, group) and leading site tags like [DEVIL-TORRENTS.PL]. The analysis version is bumped, so run a scan again: every file, including ones already moved into the destination share, gets a new suggested name, and the Library page offers "Rename in place" (folder and file) for those whose name changed.
+
 **Morning TV dashboard (no migration).** Update SyncHub only (no worker change). New Python packages `icalendar` and `recurring-ical-events` (rebuild the image).
 - **A morning screen on a TV.** In a window you choose (default 6:30 to 8:30, weekdays) SyncHub wakes a Google TV / Android TV, opens a full-screen page and closes it at the end: time, current weather and five-day forecast (Open-Meteo, ZIP code, US or metric units), a quote of the day (built-in list when offline), and a column per person.
 - **Calendars** for adults through each person's private ICS link (Google, iCloud, Microsoft 365 / Outlook), with repeating events, all-day events and the next day with events when today is over.

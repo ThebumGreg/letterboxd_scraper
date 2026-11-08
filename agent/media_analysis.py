@@ -17,7 +17,7 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-LOGIC_VERSION = 2            # bump when anything below changes what a file's analysis says: SyncHub then asks for every file to be analysed again
+LOGIC_VERSION = 3            # bump when anything below changes what a file's analysis says: SyncHub then asks for every file to be analysed again
 
 ACTION_COPY_RENAME, ACTION_REMUX_COPY, ACTION_TRANSCODE_COPY, ACTION_MANUAL_REVIEW = "copy_rename", "remux_copy", "transcode_copy", "manual_review"
 CONVERT_VIDEO, CONVERT_AUDIO = "h264", "aac"
