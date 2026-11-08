@@ -25,7 +25,9 @@ GRADES = (("good", 80), ("ok", 65), ("poor", 45), ("bad", 0))
 LIVE = ("queued", "running")
 JOB_STATUS = {"queued": "queued", "running": "running", "done": "done", "failed": "failed", "needs_review": "failed", "cancelled": "cancelled"}
 SOURCES = ("manual", "download", "cleanup")
+MODES = ("quality", "damage")
 PRIORITY = {"manual": 70, "download": 110, "cleanup": 5}
+DAMAGE_IN_FLIGHT = 1                  # whole-file reads are heavy: one at a time
 CLEANUP_IN_FLIGHT = 3                 # the background pass never has more than this many checks waiting or running
 
 # How efficient a codec is compared with H.264, so the bits-per-pixel limits mean the same thing for every file.
@@ -68,6 +70,16 @@ def min_height(conn=None):
 
 def on_download(conn=None):
     return settings.get("quality_on_download", conn=conn) == "flag"
+
+
+def paused(conn=None):
+    """True while automatic checks (new downloads and the Library pass) are switched off. A check someone asks for by hand still runs."""
+    return settings.get("quality_paused", conn=conn) == "1"
+
+
+def damage_pass(conn=None):
+    """The background pass that reads whole files for decode errors (off by default)."""
+    return settings.get("quality_damage_pass", conn=conn) == "1"
 
 
 def library_pass(conn=None):
@@ -220,9 +232,9 @@ def get(conn, check_id):
     return _present(conn.execute("SELECT * FROM quality_check WHERE id = ?", (check_id,)).fetchone())
 
 
-def latest(conn, file_id, done_only=False):
-    sql = "SELECT * FROM quality_check WHERE library_file_id = ?" + (" AND status = 'done'" if done_only else "") + " ORDER BY id DESC LIMIT 1"
-    return _present(conn.execute(sql, (file_id,)).fetchone())
+def latest(conn, file_id, done_only=False, mode="quality"):
+    sql = "SELECT * FROM quality_check WHERE library_file_id = ? AND mode = ?" + (" AND status = 'done'" if done_only else "") + " ORDER BY id DESC LIMIT 1"
+    return _present(conn.execute(sql, (file_id, mode)).fetchone())
 
 
 def _record(conn, file_id):
@@ -264,31 +276,33 @@ def state_for(conn, rec, check=None):
         label = ("Low quality" if low else {"good": "Good", "ok": "OK", "poor": "Poor", "bad": "Bad"}.get(done["grade"], "")) + ("" if current else " (old)")
     asked = conn.execute("SELECT * FROM quality_request WHERE library_file_id = ? ORDER BY id DESC LIMIT 1", (rec["id"],)).fetchone()
     return {"check": check, "result": done, "current": current, "low": low, "accepted": accepted, "small": bool(small), "label": label, "extra": [small] if small else [],
-            "request": dict(asked) if asked else None}
+            "request": ({**dict(asked), "track_label": track_label(dict(asked))} if asked else None)}
 
 
 # ---------------------------------------------------------------- asking for a check
-def request(conn, file_id, by="someone", source="manual", now=None):
-    """Queues a quality check of one library file. Returns the check id, or the id of the one already waiting. Raises QualityError for a sentence on the page."""
+def request(conn, file_id, by="someone", source="manual", now=None, mode="quality"):
+    """Queues a quality check of one library file (mode "damage": reads the whole file for decode errors, no score). Returns the check id, or the id of the one already waiting. Raises QualityError for a sentence on the page."""
     rec = _record(conn, file_id)
     if rec is None:
         raise QualityError("That file is not in the Library.")
     if source not in SOURCES:
         source = "manual"
+    if mode not in MODES:
+        mode = "quality"
     if rec.get("missing_since"):
         raise QualityError("This file is missing from its share, so it cannot be checked.")
     if rec["analysis_status"] != v.ANALYSIS_COMPLETED or not rec.get("duration_seconds"):
         raise QualityError("The file has not been analysed yet. Scan its folder first.")
-    waiting = conn.execute("SELECT id FROM quality_check WHERE library_file_id = ? AND status IN ('queued', 'running') ORDER BY id DESC LIMIT 1", (file_id,)).fetchone()
+    waiting = conn.execute("SELECT id FROM quality_check WHERE library_file_id = ? AND mode = ? AND status IN ('queued', 'running') ORDER BY id DESC LIMIT 1", (file_id, mode)).fetchone()
     if waiting:
         return waiting["id"]
     now = now or db.now()
-    check_id = conn.execute("INSERT INTO quality_check (library_file_id, size_bytes, mtime, source, status, requested_by, message, created_at, updated_at) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)",
-                            (file_id, rec["size_bytes"], rec["mtime"], source, by, "Waiting for a worker.", now, now)).lastrowid
+    check_id = conn.execute("INSERT INTO quality_check (library_file_id, size_bytes, mtime, source, status, requested_by, message, created_at, updated_at, mode) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)",
+                            (file_id, rec["size_bytes"], rec["mtime"], source, by, "Waiting for a worker.", now, now, mode)).lastrowid
     title = rec.get("recommended_name") or rec["file_name"]
-    plan = {"op": "quality", "needs": ["quality"], "check_id": check_id, "samples": samples(conn), "seconds": slice_seconds(conn), "duration": rec["duration_seconds"],
+    plan = {"op": "quality", "needs": ["quality", "damage"] if mode == "damage" else ["quality"], "mode": mode, "check_id": check_id, "samples": samples(conn), "seconds": slice_seconds(conn), "duration": rec["duration_seconds"],
             "source_size": rec["size_bytes"], "source_mtime": rec["mtime"], "seed": check_id * 7919 + int(rec["size_bytes"] or 0) % 10007}
-    job_id = jobs.create(conn, "scan", title=f"Quality check: {title}", ref=(REF, check_id), source=(rec["root_name"], rec["relative_path"]), plan=plan,
+    job_id = jobs.create(conn, "scan", title=(f"Damage check: {title}" if mode == "damage" else f"Quality check: {title}"), ref=(REF, check_id), source=(rec["root_name"], rec["relative_path"]), plan=plan,
                          priority=PRIORITY[source], max_attempts=2, now=now)
     conn.execute("UPDATE quality_check SET job_id = ? WHERE id = ?", (job_id, check_id))
     logger.info(f"[quality] check {check_id} of {title} queued by {by} ({source})")
@@ -298,7 +312,7 @@ def request(conn, file_id, by="someone", source="manual", now=None):
 def request_for_import(conn, rec, now=None):
     """Called when a new Radarr/Sonarr import has been analysed. Does nothing when the setting is off or the file already has a current check. Never raises."""
     try:
-        if not on_download(conn) or is_current(latest(conn, rec["id"], done_only=True), rec):
+        if not on_download(conn) or paused(conn) or is_current(latest(conn, rec["id"], done_only=True), rec):
             return None
         return request(conn, rec["id"], by="download", source="download", now=now)
     except (QualityError, jobs.JobError) as exc:
@@ -324,6 +338,14 @@ def sync(conn, job_id, now=None):
         metrics = job["result"] if isinstance(job["result"], dict) else {}
         if rec is None or rec["size_bytes"] != row["size_bytes"] or rec["mtime"] != row["mtime"]:
             values.update(status="failed", message="The file changed while it was being checked. Check it again.", finished_at=now)
+        elif row.get("mode") == "damage":
+            if metrics.get("mode") != "damage":
+                values.update(status="failed", message="This worker is too old for a damage check. Update it on the Workers page.", finished_at=now)
+            else:
+                errors = int(metrics.get("errors") or 0)
+                found = [{"severity": "bad", "text": f"Damaged: {errors} decode error{'s' if errors != 1 else ''} when the whole file was read" + (f" ({metrics['sample'][0][:120]})" if metrics.get("sample") else "")}] if errors else []
+                values.update(check_version=CHECK_VERSION, score=None, grade=None, findings_json=json.dumps(found), metrics_json=json.dumps(metrics), samples=0, finished_at=now,
+                              message=f"Damaged: {errors} decode error(s)." if errors else "Whole file decoded without errors.")
         else:
             outcome = score(metrics, rec)
             values.update(check_version=CHECK_VERSION, score=outcome["score"], grade=outcome["grade"], findings_json=json.dumps(outcome["findings"]), metrics_json=json.dumps(metrics),
@@ -341,7 +363,7 @@ def rescore_stale(conn):
     """Scores checks made under older rules again from the numbers the worker sent, so a change to the rules needs no new check. Returns how many were updated."""
     done = 0
     for row in conn.execute("SELECT q.id, q.metrics_json, q.size_bytes, q.mtime, f.* FROM quality_check q JOIN library_file f ON f.id = q.library_file_id "
-                            "WHERE q.status = 'done' AND q.check_version < ? AND q.metrics_json IS NOT NULL", (CHECK_VERSION,)).fetchall():
+                            "WHERE q.status = 'done' AND q.mode = 'quality' AND q.check_version < ? AND q.metrics_json IS NOT NULL", (CHECK_VERSION,)).fetchall():
         rec = dict(row)
         metrics = _json(rec.get("metrics_json"), {})
         if not metrics.get("slices"):
@@ -352,6 +374,34 @@ def rescore_stale(conn):
                       f"Score {outcome['score']:g} ({outcome['grade']})." if outcome["score"] is not None else "No result.", db.now(), row["id"]))
         done += 1
     return done
+
+
+def stop_all(conn, by="someone"):
+    """Cancels every check that is waiting or running. A waiting one stops at once; a running one stops at its next report. Returns how many were told to stop."""
+    stopped = 0
+    for r in conn.execute("SELECT job_id FROM quality_check WHERE status IN ('queued', 'running') AND job_id IS NOT NULL").fetchall():
+        try:
+            jobs.cancel(conn, r["job_id"], by=by)
+            stopped += 1
+        except jobs.JobError:
+            pass
+    sync_active(conn)
+    return stopped
+
+
+def clear_results(conn, root=None):
+    """Removes the stored scores, flags and 'accept as is' marks of finished checks, for one share or all. The Library list is not touched.
+    Checks that are waiting or running are left alone (use stop_all). Returns how many checks were removed."""
+    where, params = "status NOT IN ('queued', 'running')", []
+    if root:
+        where += " AND library_file_id IN (SELECT id FROM library_file WHERE root_name = ?)"
+        params.append(root)
+    removed = conn.execute(f"DELETE FROM quality_check WHERE {where}", params).rowcount
+    if root:
+        conn.execute("DELETE FROM quality_accept WHERE library_file_id IN (SELECT id FROM library_file WHERE root_name = ?)", (root,))
+    else:
+        conn.execute("DELETE FROM quality_accept")
+    return removed
 
 
 def sync_active(conn):
@@ -372,21 +422,21 @@ def unaccept(conn, file_id):
 
 
 # ---------------------------------------------------------------- the background pass
-def due_files(conn, limit):
-    """Files with no current check and none waiting, in the order the setting gives."""
+def due_files(conn, limit, mode="quality"):
+    """Files with no current check of this kind and none waiting, in the order the setting gives."""
     order = "DESC" if newest_first(conn) else "ASC"
     rows = conn.execute(f"""
         SELECT f.* FROM library_file f
         WHERE f.missing_since IS NULL AND f.analysis_status = 'completed' AND f.duration_seconds > 0 AND f.video_codec IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM quality_check q WHERE q.library_file_id = f.id AND q.status IN ('queued', 'running'))
-          AND NOT EXISTS (SELECT 1 FROM quality_check q WHERE q.library_file_id = f.id AND q.status = 'done' AND q.size_bytes = f.size_bytes AND q.mtime = f.mtime AND q.check_version = ?)
-          AND NOT EXISTS (SELECT 1 FROM quality_check q WHERE q.library_file_id = f.id AND q.status = 'failed' AND q.size_bytes = f.size_bytes AND q.mtime = f.mtime AND q.created_at > datetime('now', '-3 days'))
-        ORDER BY f.first_seen_at {order}, f.id {order} LIMIT ?""", (CHECK_VERSION, int(limit))).fetchall()
+          AND NOT EXISTS (SELECT 1 FROM quality_check q WHERE q.library_file_id = f.id AND q.mode = :mode AND q.status IN ('queued', 'running'))
+          AND NOT EXISTS (SELECT 1 FROM quality_check q WHERE q.library_file_id = f.id AND q.mode = :mode AND q.status = 'done' AND q.size_bytes = f.size_bytes AND q.mtime = f.mtime AND q.check_version = :version)
+          AND NOT EXISTS (SELECT 1 FROM quality_check q WHERE q.library_file_id = f.id AND q.mode = :mode AND q.status = 'failed' AND q.size_bytes = f.size_bytes AND q.mtime = f.mtime AND q.created_at > datetime('now', '-3 days'))
+        ORDER BY f.first_seen_at {order}, f.id {order} LIMIT :limit""", {"mode": mode, "version": CHECK_VERSION, "limit": int(limit)}).fetchall()
     return [dict(r) for r in rows]
 
 
-def waiting_cleanup(conn):
-    return conn.execute("SELECT COUNT(*) FROM quality_check WHERE source = 'cleanup' AND status IN ('queued', 'running')").fetchone()[0]
+def waiting_cleanup(conn, mode="quality"):
+    return conn.execute("SELECT COUNT(*) FROM quality_check WHERE source = 'cleanup' AND mode = ? AND status IN ('queued', 'running')", (mode,)).fetchone()[0]
 
 
 def someone_watching(client=None):
@@ -405,18 +455,23 @@ def someone_watching(client=None):
 
 
 def library_step(client=None):
-    """One turn of the Library clean-up pass: queues a few unchecked files, but not while anyone is watching and not when the pass is off. Returns how many were queued."""
+    """One turn of the Library clean-up passes: queues a few unchecked files (and, when its own pass is on, a few whole-file damage checks), but not while anyone is
+    watching, not while paused and not when a pass is off. Returns how many were queued."""
+    return _pass("quality", client) + _pass("damage", client)
+
+
+def _pass(mode, client=None):
     with db.connection() as conn:
-        if not library_pass(conn):
+        if paused(conn) or not (library_pass(conn) if mode == "quality" else damage_pass(conn)):
             return 0
-        room = CLEANUP_IN_FLIGHT - waiting_cleanup(conn)
+        room = (CLEANUP_IN_FLIGHT if mode == "quality" else DAMAGE_IN_FLIGHT) - waiting_cleanup(conn, mode)
     if room <= 0 or someone_watching(client):
         return 0
     queued = 0
     with db.connection() as conn:
-        for rec in due_files(conn, room):
+        for rec in due_files(conn, room, mode):
             try:
-                request(conn, rec["id"], by="clean-up", source="cleanup")
+                request(conn, rec["id"], by="clean-up", source="cleanup", mode=mode)
                 queued += 1
             except (QualityError, jobs.JobError) as exc:
                 logger.info(f"[quality] skipped {rec['file_name']}: {exc}")
@@ -429,9 +484,11 @@ def low_quality(conn, limit=50):
     below, wanted = flag_below(conn), min_height(conn)
     rows = conn.execute("""
         SELECT f.*, q.id AS check_id, q.score AS q_score, q.findings_json AS q_findings, q.finished_at AS q_finished, q.check_version AS q_version, q.size_bytes AS q_size, q.mtime AS q_mtime,
-               (SELECT 1 FROM quality_accept a WHERE a.library_file_id = f.id AND a.size_bytes = f.size_bytes AND a.mtime = f.mtime) AS accepted
+               (SELECT 1 FROM quality_accept a WHERE a.library_file_id = f.id AND a.size_bytes = f.size_bytes AND a.mtime = f.mtime) AS accepted,
+               (SELECT z.findings_json FROM quality_check z WHERE z.library_file_id = f.id AND z.mode = 'damage' AND z.status = 'done' AND z.size_bytes = f.size_bytes AND z.mtime = f.mtime
+                ORDER BY z.id DESC LIMIT 1) AS damage_findings
         FROM library_file f
-        LEFT JOIN quality_check q ON q.id = (SELECT MAX(id) FROM quality_check WHERE library_file_id = f.id AND status = 'done')
+        LEFT JOIN quality_check q ON q.id = (SELECT MAX(id) FROM quality_check WHERE library_file_id = f.id AND mode = 'quality' AND status = 'done')
         WHERE f.missing_since IS NULL AND f.analysis_status = 'completed'""").fetchall()
     out = []
     for r in rows:
@@ -442,13 +499,44 @@ def low_quality(conn, limit=50):
         current = d["check_id"] is not None and d["q_size"] == d["size_bytes"] and d["q_mtime"] == d["mtime"] and d["q_version"] == CHECK_VERSION
         scored_low = bool(current and d["q_score"] is not None and d["q_score"] < below)
         small = resolution_finding(d, wanted)
-        if not (scored_low or small):
+        damaged = _json(d.pop("damage_findings"), [])
+        if not (scored_low or small or damaged):
             continue
-        d["findings"] = ([small] if small else []) + (findings if current else [])
-        d["sort_score"] = d["q_score"] if current and d["q_score"] is not None else (0 if small else 100)
+        d["findings"] = damaged + ([small] if small else []) + (findings if current else [])
+        d["sort_score"] = d["q_score"] if current and d["q_score"] is not None else (0 if small or damaged else 100)
         out.append(d)
     out.sort(key=lambda d: (d["sort_score"], d["id"]))
-    return out[:int(limit)]
+    out = out[:int(limit)]
+    for d in out:
+        d["request"] = latest_request(conn, d["id"])
+    return out
+
+
+TRACK_WORDS = {"searching": "Radarr is searching", "waiting": "Waiting: Radarr has not started a download yet", "queued": "Queued in the download client", "downloading": "Downloading",
+               "importing": "Importing", "imported": "Imported, check it in Jellyfin", "problem": "Problem", "nothing_found": "Nothing found"}
+TRACK_DONE = ("imported", "nothing_found")
+
+
+def track_label(row):
+    """One line for a better-copy request's progress ('Downloading 42%, 12 min left'), or '' when it is not tracked."""
+    state = (row or {}).get("track_state")
+    if not state:
+        return ""
+    text = TRACK_WORDS.get(state, state)
+    if state == "downloading" and row.get("track_percent") is not None:
+        text += f" {row['track_percent']}%" + (f", {row['track_eta']} left" if row.get("track_eta") else "")
+    if row.get("track_detail") and state in ("problem", "waiting", "nothing_found"):
+        text += f": {row['track_detail']}"
+    return text
+
+
+def latest_request(conn, file_id):
+    row = conn.execute("SELECT * FROM quality_request WHERE library_file_id = ? ORDER BY id DESC LIMIT 1", (file_id,)).fetchone()
+    if row is None:
+        return None
+    d = dict(row)
+    d["track_label"] = track_label(d)
+    return d
 
 
 def low_count(conn):

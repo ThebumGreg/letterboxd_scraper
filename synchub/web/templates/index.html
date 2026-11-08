@@ -12,7 +12,7 @@
 </a>
 {% endif %}
 <div class="row g-3 mb-4" aria-label="Library at a glance">
-    {{ stat_card('In Library', stats.in_library, 'success', '', 'in_library', sub=stats.movies_in_library ~ ' movies · ' ~ stats.shows_in_library ~ ' shows') }}
+    {{ stat_card('In Library', stats.in_library, 'success', '', 'in_library', sub=stats.movies_in_library ~ ' movies · ' ~ stats.shows ~ ' shows (' ~ stats.shows_in_library ~ ' complete)') }}
     {{ stat_card('In Progress', stats.in_flight, 'primary', '', 'in_flight') }}
     {{ stat_card('Queued', stats.queued, 'info', '', 'queued') }}
     {{ stat_card('Missing', stats.missing, 'danger', '', 'missing') }}

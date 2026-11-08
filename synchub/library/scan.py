@@ -18,6 +18,9 @@ from synchub.library import vocab as v
 RUN_REF = "library_run:"
 MAX_INVENTORY_BATCH, MAX_RECORD_BATCH = 5000, 200
 
+# A file read more thoroughly before (tail, full) does not need another look when the scan asks for less (details only).
+_INTEGRITY_RANK = {"metadata": 0, "tail": 1, "full": 2}
+
 # What the worker may set on a record. Everything else (findings that depend on other files, review and approval state) is SyncHub's.
 AGENT_FIELDS = (
     "analysis_status", "analyzed_at", "integrity_mode", "integrity_status", "integrity_scope", "audit_error",
@@ -235,7 +238,7 @@ def inventory(conn, job, files, unreadable=(), now=None):
         elif row["migration_status"] == v.MIGRATION_IN_PROGRESS:
             seen.append(row["path_key"])
         elif (plan.get("force") or row["unreadable_reason"] or row["analysis_status"] != v.ANALYSIS_COMPLETED or row["analysis_logic_version"] != plan.get("logic_version")
-              or row["integrity_mode"] != plan.get("integrity") or row["size_bytes"] != size or abs(row["mtime"] - mtime) > v.MTIME_TOLERANCE_SECONDS):
+              or _INTEGRITY_RANK.get(row["integrity_mode"], -1) < _INTEGRITY_RANK.get(plan.get("integrity"), 0) or row["size_bytes"] != size or abs(row["mtime"] - mtime) > v.MTIME_TOLERANCE_SECONDS):
             need.append(rel)
         else:
             seen.append(row["path_key"])

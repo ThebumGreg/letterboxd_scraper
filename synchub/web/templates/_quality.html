@@ -15,12 +15,13 @@
         {% if q.check and q.check.status in ('queued', 'running') %}<span class="text-body-secondary">{{ q.check.message }}</span>{% endif %}
         {% if q.check and q.check.status == 'failed' %}<span class="text-danger">The last check failed: {{ q.check.message }}</span>{% endif %}
         {% if act and not (q.check and q.check.status in ('queued', 'running')) %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-check="{{ file_id }}">{{ 'Check again' if q.result else 'Check quality' }}</button>{% endif %}
+        {% if act %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-check="{{ file_id }}" data-mode="damage" title="Reads the whole file and counts decode errors. Slow, no score.">Damage check</button>{% endif %}
         {% if act and q.low %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-accept="{{ file_id }}" title="Stop flagging this file. It is flagged again only if the file changes.">Accept as is</button>{% endif %}
         {% if act and q.low %}<button type="button" class="btn btn-sm btn-outline-info py-0" data-quality-better="{{ file_id }}" title="Blocks the release that was grabbed for this film in Radarr and asks Radarr to search again. A film Radarr does not have is added to Radarr and searched; the old file is kept.">Request better copy</button>
         <button type="button" class="btn btn-sm btn-outline-info py-0" data-quality-releases="{{ file_id }}" title="Lists what the indexers have. Changes nothing until you pick one.">Show releases</button>{% endif %}
         {% if act and q.accepted %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-accept="{{ file_id }}" data-undo="1">Flag it again</button>{% endif %}
     </div>
-    {% if q.request %}<div class="mt-1 {{ 'text-danger' if q.request.status == 'failed' else 'text-body-secondary' }}">Better copy {{ q.request.status }} {{ q.request.created_at[:10] }}{% if q.request.requested_by %} by {{ q.request.requested_by }}{% endif %}: {{ q.request.message }}</div>{% endif %}
+    {% if q.request %}<div class="mt-1 {{ 'text-danger' if q.request.status == 'failed' else 'text-body-secondary' }}">Better copy {{ q.request.status }} {{ q.request.created_at[:10] }}{% if q.request.requested_by %} by {{ q.request.requested_by }}{% endif %}: {{ q.request.message }}{% if q.request.track_label %} <strong>{{ q.request.track_label }}.</strong>{% endif %}</div>{% endif %}
     <div class="mt-1" data-quality-out="{{ file_id }}" role="status"></div>
     {% if q.extra or (q.result and q.result.findings) %}
     <ul class="mb-0 mt-1 ps-3">{% for fnd in (q.extra + (q.result.findings if q.result and q.current else [])) %}<li class="{{ 'text-danger' if fnd.severity == 'bad' else ('text-warning' if fnd.severity == 'warn' else 'text-body-secondary') }}">{{ fnd.text }}</li>{% endfor %}</ul>
@@ -80,7 +81,7 @@
     });
     document.addEventListener('click', (e) => {
         const check = e.target.closest('[data-quality-check]');
-        if (check) send('/api/library/quality/check', { file_id: check.dataset.qualityCheck }, check);
+        if (check) send('/api/library/quality/check', { file_id: check.dataset.qualityCheck, mode: check.dataset.mode || 'quality' }, check);
         const accept = e.target.closest('[data-quality-accept]');
         if (accept) send('/api/library/quality/accept', { file_id: accept.dataset.qualityAccept, undo: accept.dataset.undo === '1' }, accept);
     });

@@ -19,7 +19,18 @@
         <span class="fw-bold">{{ i.label }}</span>
         <span class="text-body-secondary small flex-grow-1">{{ i.detail }}</span>
         {% if i.href %}<a href="{{ i.href }}" class="small">Open</a>{% endif %}
+        {% if i.dismiss %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-dismiss="{{ i.dismiss }}" title="Stop counting the jobs that have failed so far. A new failure shows again.">Dismiss</button>{% endif %}
     </li>
     {% endfor %}
 </ul>
 {% endblock %}
+{% block scripts %}<script>
+document.querySelectorAll('[data-dismiss]').forEach(button => button.addEventListener('click', async () => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    button.disabled = true;
+    try {
+        const res = await fetch(button.dataset.dismiss, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: '{}' });
+        if (res.ok) location.reload(); else button.disabled = false;
+    } catch (e) { button.disabled = false; }
+}));
+</script>{% endblock %}

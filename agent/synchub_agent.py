@@ -958,6 +958,32 @@ def quality_command(ffmpeg, source, start, length, filters, niceness=True):
     return [nice, "-n", "10", *command] if nice else command
 
 
+DAMAGE_TIMEOUT = 6 * 3600              # seconds a whole-file read may take
+DAMAGE_PROGRESS_KEYS = ("frame=", "fps=", "stream_", "bitrate=", "total_size=", "out_time", "dup_frames=", "drop_frames=", "speed=", "progress=")
+
+
+def damage_command(ffmpeg, source, niceness=True):
+    """Decodes the first video stream and every audio stream to nowhere, printing only errors and a progress line every few seconds."""
+    command = [ffmpeg, "-hide_banner", "-nostdin", "-v", "error", "-progress", "pipe:1", "-stats_period", "5", "-i", source, "-map", "0:v:0?", "-map", "0:a?", "-f", "null", "-"]
+    return (["nice", "-n", "19"] + command) if niceness and shutil.which("nice") else command
+
+
+def parse_damage(lines):
+    """(error count, up to five example lines) from ffmpeg's output. Progress lines are not errors."""
+    errors = [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith(DAMAGE_PROGRESS_KEYS)]
+    return len(errors), [e[:200] for e in errors[:5]]
+
+
+def out_time_seconds(line):
+    """Seconds from an ffmpeg -progress 'out_time_us=' line, or None."""
+    if line.startswith("out_time_us=") or line.startswith("out_time_ms="):
+        try:
+            return int(line.split("=", 1)[1]) / 1_000_000
+        except ValueError:
+            return None
+    return None
+
+
 def parse_quality(text, length):
     """The numbers of one slice from ffmpeg's log: block and blur means, the share of interlaced frames, seconds of frozen picture and how many lines were decode errors."""
     out = {"seconds": round(float(length), 1), "block": None, "blur": None, "interlaced": None, "freeze_seconds": 0.0, "errors": 0}
@@ -1132,7 +1158,7 @@ def detect_capabilities(cfg):
         caps["ffprobe"] = out.splitlines()[0] if out else "ffprobe"
         if media_analysis and caps["ffmpeg"]:
             caps["ops"].extend(["scan", "convert", "preview", "quality"])          # a scan needs ffprobe to read files and ffmpeg to check them; a conversion also runs ffmpeg, then checks the result
-            caps["features"].extend(["preview", "quality"])
+            caps["features"].extend(["preview", "quality", "damage"])
             ai_ok, ai_info = ai_probe()
             if ai_ok:                                                              # the image was built with the AI layer: it can run the AI quality test
                 caps["ops"].append("quality_ai")
@@ -2166,6 +2192,8 @@ class JobRunner(threading.Thread):
         """Samples a film and measures what a viewer would notice (blockiness, blur, interlacing, frozen picture, decode errors). Reads the film where it is and keeps
         nothing. It only reports numbers: SyncHub works out the score."""
         plan = self.job["plan"]
+        if plan.get("mode") == "damage":
+            return self.do_damage()
         if not self.job.get("source"):
             raise JobFailure("bad_job", "A quality check needs a source.", retryable=False)
         src = self.folder_in(self.job["source"]["root"], self.job["source"]["rel"])
@@ -2203,6 +2231,45 @@ class JobRunner(threading.Thread):
             self.log.info(f"Part {index + 1}/{len(windows)} at {start:.0f} s", **{k: v for k, v in numbers.items() if k not in ("seconds",)})
         self.report_progress("scan", 1.0, "Quality check finished", force=True)
         return {"op": "quality", "slices": slices, "skipped": skipped, "filters": have, "duration": duration, "elapsed": round(time.monotonic() - started, 1)}
+
+    def do_damage(self):
+        """Reads the whole film with ffmpeg and counts decode errors. Keeps nothing and measures nothing else: SyncHub flags the file when the count is not zero."""
+        plan = self.job["plan"]
+        if not self.job.get("source"):
+            raise JobFailure("bad_job", "A damage check needs a source.", retryable=False)
+        src = self.folder_in(self.job["source"]["root"], self.job["source"]["rel"])
+        if not os.path.isfile(src):
+            raise JobFailure("source_changed", f"The film is not there any more: {self.job['source']['rel']}")
+        if plan.get("source_size") and os.stat(src).st_size != plan["source_size"]:
+            raise JobFailure("source_changed", f"{self.job['source']['rel']} is not the file SyncHub analysed (its size differs). It will be looked at again.", retryable=False)
+        duration = float(plan.get("duration") or 0)
+        started, lines, last_report = time.monotonic(), [], 0.0
+        try:
+            proc = subprocess.Popen(damage_command(self.cfg.ffmpeg, src), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+        except OSError as exc:
+            raise JobFailure("transient", f"ffmpeg could not run: {exc}")
+        try:
+            for line in proc.stdout:
+                lines.append(line)
+                lines[:] = lines[-2000:]
+                seconds = out_time_seconds(line.strip())
+                if time.monotonic() - started > DAMAGE_TIMEOUT:
+                    raise JobFailure("transient", f"Reading the whole file took longer than {DAMAGE_TIMEOUT // 3600} hours. Is the share slow?")
+                if seconds is not None and duration and time.monotonic() - last_report > 5:
+                    last_report = time.monotonic()
+                    self.guard()
+                    self.report_progress("scan", min(seconds / duration, 0.99), f"Reading the file: {int(seconds // 60)} of {int(duration // 60)} min", force=True)
+            code = proc.wait()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+        count, sample = parse_damage(lines)
+        if code != 0:
+            count = max(count, 1)
+            sample = sample or [f"ffmpeg exited with code {code}"]
+        self.report_progress("scan", 1.0, "Damage check finished", force=True)
+        return {"op": "quality", "mode": "damage", "errors": count, "sample": sample, "duration": duration, "elapsed": round(time.monotonic() - started, 1)}
 
     def do_quality_ai(self):
         """The AI quality test: takes a few frames from each sampled part of the film (HDR tone-mapped to SDR), scores each with every available model and reports the

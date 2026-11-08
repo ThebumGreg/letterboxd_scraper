@@ -91,6 +91,12 @@ def register(app):
             snapshot = status.snapshot(conn)
         return render_template("status.html", snapshot=snapshot)
 
+    @app.route("/api/status/dismiss-failed", methods=["POST"])
+    def api_status_dismiss_failed():
+        with db.connection() as conn:
+            status.dismiss_failed(conn)
+        return jsonify(ok=True, message="Dismissed. A job that fails from now on shows again.")
+
     def _on_watchlist(conn, media_id):
         me = (g.profile or {}).get("id")
         return bool(me) and watchlist.on_list(conn, me, media_id)

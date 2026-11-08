@@ -41,13 +41,17 @@ The thresholds are starting points. Tune them after you have looked at a few fil
 2. **New downloads:** when a Radarr or Sonarr import has been analysed, before the size policy decides. Setting *New downloads*: **Check, and flag low scores** (default) or **Do not check**. A low score only flags the file; the import carries on as before.
 3. **Library pass (off by default):** every 5 minutes SyncHub queues up to 3 unchecked films, newest first or oldest first. It does nothing while anyone is playing something in Jellyfin. If Jellyfin cannot be asked, the pass goes ahead.
 
+4. **Damage check (on demand, and an optional pass that is off by default):** reads the **whole file** with ffmpeg, throws the picture away and counts decode errors. It gives no score. A file with errors is flagged "Damaged: N decode errors" in Below minimum quality; a clean one is left alone, and it never replaces a scored check. Use the *Damage check* button on a film, or switch on *Damage check pass* under Media > Options > Quality, which reads one file at a time and never while anyone is watching in Jellyfin. It reads every byte, so it is slow and heavy on the share. Workers need an update to take it.
+
+**Pause and stop.** *Automatic checks: Paused* (Options > Quality) stops new downloads and both passes from queuing checks; a check you ask for by hand still runs. *Stop all checks* cancels everything waiting or running. *Clear quality results* removes stored scores, flags and Accept-as-is marks (the Library list is not touched). *Clear results* on the scan form also cancels waiting checks of the files it removes.
+
 ## Minimum resolution
 
 *Minimum resolution* (default 1080p, 0 = none) flags any file whose picture is smaller, whatever its quality check says, and even if it was never checked. Width counts as well as height, so a widescreen 1920x800 film meets 1080p. A flagged file says "Below your minimum resolution". SyncHub does not upscale: stretching a 480p picture adds no detail. The fix is a real larger copy (see below), or *Accept as is* for a film that only exists in SD.
 
 ## The flag
 
-A file below the minimum resolution, or whose current check scores under *Flag a file scoring under* (default 60), is **Low quality**. The flagged files are listed in the **Below minimum quality** section of the **Library** tab (Media > Library), with the findings and the buttons below. The old address `/library/quality` opens that section. The settings (minimum resolution, score limit, parts sampled, new downloads, Library pass) are on **Media > Options > Quality check settings**; they are yours to change, none is fixed. The Dashboard no longer carries a flagged-files line. *Accept as is* stops the flag for that file until the file changes; *Flag it again* undoes it.
+A file below the minimum resolution, or whose current check scores under *Flag a file scoring under* (default 60), is **Low quality**. The flagged files are listed in the **Below minimum quality** section of the **Library** tab (Media > Library), with the findings and the buttons below. The Library tab shows a **Below minimum quality** box next to Done, Rejected and the other boxes, with the count; **Open list** shows the list. The old address `/library/quality` opens it. The settings (minimum resolution, score limit, parts sampled, new downloads, Library pass) are on **Media > Options > Quality check settings**; they are yours to change, none is fixed. The Dashboard no longer carries a flagged-files line. *Accept as is* stops the flag for that file until the file changes; *Flag it again* undoes it.
 
 ## Movie page: Your copies
 
@@ -65,7 +69,9 @@ On a flagged file (the Library tab's Below minimum quality section, the movie pa
 
 - **Show releases** is read only. SyncHub asks Radarr for what the indexers have for this film (the same list as Radarr's interactive search) and lists the real upgrades: allowed to download, not on the blocklist, not the release being replaced, and at least the minimum height (or the file's own height when that is larger). Best first. Nothing in Radarr changes. It can take a minute, because Radarr asks every indexer.
 - **Get this one** sends one release from that list to the download client. SyncHub first blocks the release that was grabbed for the file, then grabs the chosen one. This ignores Radarr's quality-profile cutoff.
-- **Request better copy** blocks the release that was grabbed for the file and asks Radarr to search again. Radarr applies its own quality profile. If the profile says the existing file already meets its cutoff, Radarr may grab nothing; then use *Show releases*.
+- **Request better copy** blocks the release that was grabbed for the file, then picks the best release on offer (the same list as *Show releases*: allowed, not blocklisted, not the one being replaced, at least the minimum height; best resolution first, then seeders, then size) and grabs it. A manual grab ignores Radarr's cutoff, so a film that "already meets its profile" is still replaced. If nothing qualifies, nothing is blocked or grabbed and the page says so; use *Show releases* to look.
+
+**Following a request.** While a request is open (up to a week) SyncHub reads Radarr's download queue every minute and shows the state next to the request on the flagged list and the movie page: Radarr is searching, queued, downloading (with percent and time left), importing, imported, a problem (with Radarr's message), waiting (no download started yet) or nothing found (nothing started in a day). It asks Radarr only while a request is open.
 
 Blocking uses Radarr's "mark as failed" on the grab in the film's history, which puts that release on Radarr's blocklist. If Radarr's history no longer has the grab (an old file, or a manual import), nothing can be blocked; SyncHub says so and goes on. Each request is recorded (`quality_request`) and shown under the file, with who asked, which release was blocked and what Radarr was told.
 

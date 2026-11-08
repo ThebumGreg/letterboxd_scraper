@@ -296,7 +296,7 @@
                 </div>
                 <div class="mb-3">
                     <label for="jellyfin_events_keep_days" class="form-label">Keep Jellyfin events for (days)</label>
-                    <input type="number" class="form-control" id="jellyfin_events_keep_days" name="jellyfin_events_keep_days" value="{{ settings.get('jellyfin_events_keep_days') or 365 }}" min="0" step="1" required>
+                    <input type="number" class="form-control" id="jellyfin_events_keep_days" name="jellyfin_events_keep_days" value="{{ settings.get('jellyfin_events_keep_days') or 7 }}" min="0" step="1" required>
                     <div class="form-text">Everything Jellyfin's Webhook plugin sends is stored so it can be used later. Older events are deleted once a day. 0 keeps them for ever (playback progress is stored at most every 30 seconds per player, so growth is slow).</div>
                 </div>
                 {% set webhook_base = (settings.synchub_url or suggested_synchub_url)|trim('/') %}

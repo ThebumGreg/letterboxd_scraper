@@ -132,7 +132,8 @@ def test_old_events_are_deleted_by_the_retention_setting_and_zero_keeps_everythi
         for days in (100, 400):
             conn.execute("UPDATE jellyfin_event SET received_at = datetime('now', ?) WHERE item_name = ?", (f"-{days} days", str(days)))
         conn.execute("UPDATE jellyfin_event SET received_at = datetime('now', '-1 days') WHERE item_name = '1'")
-    assert settings.get("jellyfin_events_keep_days") == "365" and je.prune() == 1                            # the default keeps a year
+    settings.set_value("jellyfin_events_keep_days", "365")
+    assert je.prune() == 1                                                                                   # a year keeps the 100-day-old one
     assert sorted(e["item_name"] for e in kept(v2)) == ["1", "100"]
     settings.set_value("jellyfin_events_keep_days", "30")
     assert je.prune() == 1 and [e["item_name"] for e in kept(v2)] == ["1"]
@@ -141,7 +142,7 @@ def test_old_events_are_deleted_by_the_retention_setting_and_zero_keeps_everythi
         conn.execute("UPDATE jellyfin_event SET received_at = '2001-01-01 00:00:00'")
     assert je.prune() == 0 and len(kept(v2)) == 1
     settings.set_value("jellyfin_events_keep_days", "garbage")
-    assert je.keep_days() == 365
+    assert je.keep_days() == 7
 
 
 def test_the_retention_setting_is_validated_and_a_daily_job_applies_it(client, v2):

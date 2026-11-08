@@ -4,7 +4,7 @@ from flask import jsonify, redirect, render_template, request, url_for
 from synchub import ai_test, better_copy, db, jobs, quality, settings
 from settings_validation import validate_setting
 
-SETTING_KEYS = ("quality_samples", "quality_slice_seconds", "quality_flag_below", "quality_min_height", "quality_on_download", "quality_scan_library", "quality_scan_order")
+SETTING_KEYS = ("quality_samples", "quality_slice_seconds", "quality_flag_below", "quality_min_height", "quality_on_download", "quality_scan_library", "quality_scan_order", "quality_paused", "quality_damage_pass")
 
 
 def _fail(message, status=400):
@@ -26,7 +26,7 @@ def _file_id(data):
 
 def overview(conn, full=True):
     """What the Library tab (the flagged files) and the Options tab (`full=False`, only the settings) show about quality checks."""
-    values = {k: settings.get(k, conn=conn) for k in SETTING_KEYS}
+    values = {k: (settings.get(k, conn=conn) or settings.DEFAULTS.get(k, "")) for k in SETTING_KEYS}   # a blank saved value must not hide the recommended one
     if not full:
         return {"values": values, "flag_below": quality.flag_below(conn), "version": quality.CHECK_VERSION}
     waiting = [dict(r) for r in conn.execute(
@@ -42,8 +42,8 @@ def overview(conn, full=True):
 def register(app):
     @app.route("/library/quality")
     def library_quality_page():
-        """The flagged files moved into the Library tab; old links and bookmarks land there."""
-        return redirect(url_for("library_page") + "#belowMinimumSection")
+        """The flagged list is opened from the Below minimum quality box on the Library tab; old links and bookmarks land there."""
+        return redirect(url_for("library_page", quality=1) + "#belowMinimumSection")
 
     @app.route("/library/quality/ai")
     def library_ai_fragment():
@@ -71,15 +71,17 @@ def register(app):
 
     @app.route("/api/library/quality/check", methods=["POST"])
     def api_library_quality_check():
-        file_id = _file_id(request.get_json(silent=True) or {})
+        data = request.get_json(silent=True) or {}
+        file_id = _file_id(data)
         if file_id is None:
             return _fail("Choose a file to check.")
+        mode = "damage" if data.get("mode") == "damage" else "quality"
         try:
             with db.connection() as conn:
-                quality.request(conn, file_id, by=_who(conn), source="manual")
+                quality.request(conn, file_id, by=_who(conn), source="manual", mode=mode)
         except (quality.QualityError, jobs.JobError) as exc:
             return _fail(str(exc))
-        return jsonify(ok=True, message="Queued. A worker will check it soon; this page does not need to stay open.")
+        return jsonify(ok=True, message="Queued. A worker will check it soon; this page does not need to stay open." if mode == "quality" else "Queued. A worker will read the whole file looking for decode errors; this can take a while.")
 
     @app.route("/api/library/quality/accept", methods=["POST"])
     def api_library_quality_accept():
@@ -135,13 +137,27 @@ def register(app):
         except better_copy.BetterCopyError as exc:
             return _fail(str(exc))
 
+    @app.route("/api/library/quality/stop-all", methods=["POST"])
+    def api_library_quality_stop_all():
+        with db.connection() as conn:
+            stopped = quality.stop_all(conn, by=_who(conn))
+        return jsonify(ok=True, stopped=stopped, message=f"Told {stopped} check(s) to stop." if stopped else "No check was waiting or running.")
+
+    @app.route("/api/library/quality/clear", methods=["POST"])
+    def api_library_quality_clear():
+        data = request.get_json(silent=True) or {}
+        with db.connection() as conn:
+            removed = quality.clear_results(conn, str(data.get("root") or "") or None)
+        return jsonify(ok=True, removed=removed, message=f"Removed {removed} stored result(s). The Library list was not touched." if removed else "There were no stored results to remove.")
+
     @app.route("/api/library/quality/settings", methods=["POST"])
     def api_library_quality_settings():
         data = request.get_json(silent=True) or {}
         cleaned, errors = {}, []
         for key in SETTING_KEYS:
             if key in data:
-                ok, result = validate_setting(key, str(data[key]))
+                raw = str(data[key]).strip() or settings.DEFAULTS.get(key, "")     # a blank box means the recommended value
+                ok, result = validate_setting(key, raw)
                 (cleaned.__setitem__(key, result) if ok else errors.append(result))
         if errors:
             return _fail(" ".join(errors))
