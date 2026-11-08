@@ -65,7 +65,7 @@ def test_a_scan_queues_one_job_on_the_share_with_the_settings_in_its_plan(lib):
     (job,) = scan.run_jobs(lib.conn, run_id)
     assert job["kind"] == "scan" and (job["source_root"], job["source_rel"]) == ("tfiles", "TV Shows") and job["title"] == "Scan tfiles/TV Shows"
     plan = job["plan"]
-    assert plan["op"] == "scan" and plan["run_id"] == run_id and plan["integrity"] == "tail" and plan["tail_seconds"] == 30 and plan["force"] is False and plan["logic_version"] == v.ANALYSIS_LOGIC_VERSION
+    assert plan["op"] == "scan" and plan["run_id"] == run_id and plan["integrity"] == "metadata" and plan["tail_seconds"] == 30 and plan["force"] is False and plan["logic_version"] == v.ANALYSIS_LOGIC_VERSION
     assert "@eaDir" in plan["exclude"] and ".Trash-*" in plan["exclude"]
 
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from synchub import db, settings, workers
 
 OK, WARN, BAD, OFF = "ok", "warn", "bad", "off"
+DISMISSED_KEY = "failed_jobs_dismissed_at"
 SEVERITY = {OK: 0, OFF: 0, WARN: 1, BAD: 2}
 STALE_SYNC_HOURS = 36                       # the syncs run every few hours; a day and a half without one means something is stuck
 LOW_DISK_GB = 10
@@ -71,11 +72,13 @@ def _worker_items(conn):
 def _queue_items(conn):
     counts = {r["status"]: r["n"] for r in conn.execute("SELECT status, COUNT(*) AS n FROM job GROUP BY status")}
     queued, running, review, failed = (counts.get(k, 0) for k in ("queued", "running", "needs_review", "failed"))
-    recent_failed = conn.execute("SELECT COUNT(*) AS n FROM job WHERE status = 'failed' AND COALESCE(finished_at, created_at) >= datetime('now', '-1 day')").fetchone()["n"] if failed else 0
+    dismissed = settings.get(DISMISSED_KEY, "", conn=conn) or ""
+    recent_failed = conn.execute("SELECT COUNT(*) AS n FROM job WHERE status = 'failed' AND COALESCE(finished_at, created_at) >= datetime('now', '-1 day') AND COALESCE(finished_at, created_at) > ?",
+                                 (dismissed,)).fetchone()["n"] if failed else 0
     out = [{"label": "Work queue", "state": OK, "detail": f"{running} running, {queued} waiting", "href": "/library"}]
     out.append({"label": "Waiting for you", "state": WARN if review else OK, "detail": f"{review} job{' needs' if review == 1 else 's need'} a decision" if review else "Nothing to approve", "href": "/library"})
     if recent_failed:
-        out.append({"label": "Failed jobs", "state": BAD, "detail": f"{recent_failed} failed in the last day", "href": "/library"})
+        out.append({"label": "Failed jobs", "state": BAD, "detail": f"{recent_failed} failed in the last day", "href": "/jobs", "dismiss": "/api/status/dismiss-failed"})
     return out
 
 
@@ -106,3 +109,8 @@ def snapshot(conn, now=None):
     attention = sum(1 for i in items if SEVERITY[i["state"]] > 0)
     summary = "All systems OK" if not attention else f"{attention} thing{' needs' if attention == 1 else 's need'} attention"
     return {"items": items, "state": OK if SEVERITY[worst] == 0 else worst, "attention": attention, "summary": summary}
+
+
+def dismiss_failed(conn):
+    """Stops the Failed jobs row counting the jobs that failed so far. A job that fails later counts again; the jobs themselves stay on the Jobs page."""
+    settings.set_value(DISMISSED_KEY, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), conn=conn)

@@ -1,8 +1,8 @@
 <!-- synchub/web/templates/_quality_flagged.html: files under the minimum resolution or scoring low; in the Library tab -->
 {% from "_quality.html" import size_text %}
-{% set values = qual.values %}{% set flag_below = qual.flag_below %}{% set counts = qual.counts %}{% set low = qual.low %}{% set waiting = qual.waiting %}{% set recent = qual.recent %}{% set version = qual.version %}
+{% set values = qual['values'] %}{% set flag_below = qual.flag_below %}{% set counts = qual.counts %}{% set low = qual.low %}{% set waiting = qual.waiting %}{% set recent = qual.recent %}{% set version = qual.version %}
 <div class="mb-4" id="belowMinimumSection">
-<h5 class="mb-1" id="belowMinimum">Below minimum quality</h5>
+<div class="d-flex justify-content-between align-items-center"><h5 class="mb-1" id="belowMinimum">Below minimum quality</h5><a class="small" href="{{ url_for('library_page') }}">Close list</a></div>
 <p class="text-body-secondary small mb-3">Files smaller than your minimum resolution ({{ values.quality_min_height }}p; 0 means no minimum), and files whose quality check scored under {{ flag_below }} out of 100. A check samples a few short parts of a film and looks for blockiness, blur, interlacing, frozen picture, decode errors and too few bits for the picture. It judges the file on its own; the scores are a guide, not a verdict. Scoring rules version {{ version }}.</p>
 
 <div class="row g-3 mb-3">
@@ -21,10 +21,12 @@
         </div>
         <div class="small text-body-secondary" style="overflow-wrap: anywhere;">{{ f.root_name }}: {{ f.relative_path }}</div>
         <ul class="small mb-1 ps-3">{% for fnd in f.findings %}<li class="{{ 'text-danger' if fnd.severity == 'bad' else 'text-warning' }}">{{ fnd.text }}</li>{% endfor %}</ul>
+        {% if f.request and f.request.status != 'failed' %}<div class="small text-info" data-quality-track="{{ f.id }}">Better copy: {{ f.request.track_label or f.request.status }}{% if f.request.title %} ({{ f.request.title }}){% endif %}</div>{% endif %}
         <button type="button" class="btn btn-sm btn-outline-info py-0" data-quality-better="{{ f.id }}" title="Blocks the release that was grabbed for this film in Radarr and asks Radarr to search again.">Request better copy</button>
         <button type="button" class="btn btn-sm btn-outline-info py-0" data-quality-releases="{{ f.id }}" title="Lists what the indexers have. Changes nothing until you pick one.">Show releases</button>
         <button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-accept="{{ f.id }}">Accept as is</button>
         <button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-check="{{ f.id }}">{{ 'Check again' if f.q_score is not none else 'Check quality' }}</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-check="{{ f.id }}" data-mode="damage" title="Reads the whole file and counts decode errors. Slow, no score.">Damage check</button>
         <div class="small mt-1" data-quality-out="{{ f.id }}" role="status"></div>
     </div>
     {% else %}

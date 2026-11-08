@@ -99,7 +99,7 @@ def keep_days(conn=None):
     try:
         return max(int(settings.get("jellyfin_events_keep_days", conn=conn)), 0)
     except (TypeError, ValueError):
-        return 365
+        return 7
 
 
 def prune(conn=None):

@@ -1,19 +1,29 @@
 <!-- synchub/web/templates/_quality_settings.html: the quality check settings; in the Options tab -->
-{% set values = qual.values %}{% set flag_below = qual.flag_below %}{% set counts = qual.counts %}{% set low = qual.low %}{% set waiting = qual.waiting %}{% set recent = qual.recent %}{% set version = qual.version %}
+{% set values = qual['values'] %}{% set flag_below = qual.flag_below %}{% set counts = qual.counts %}{% set low = qual.low %}{% set waiting = qual.waiting %}{% set recent = qual.recent %}{% set version = qual.version %}
 <div class="panel p-3 p-md-4 mb-4" id="qualitySettings">
     <h5 class="mb-3">Settings</h5>
     <div class="row g-3">
-        <div class="col-md-4"><label class="form-label small" for="qSamples">Parts sampled per film</label><input class="form-control form-control-sm" type="number" min="1" max="24" id="qSamples" value="{{ values.quality_samples }}"></div>
-        <div class="col-md-4"><label class="form-label small" for="qSlice">Seconds in each part</label><input class="form-control form-control-sm" type="number" min="10" max="120" id="qSlice" value="{{ values.quality_slice_seconds }}"></div>
-        <div class="col-md-4"><label class="form-label small" for="qMin">Minimum resolution (height, 0 = none)</label><input class="form-control form-control-sm" type="number" min="0" max="4320" step="1" id="qMin" value="{{ values.quality_min_height }}"></div>
-        <div class="col-md-4"><label class="form-label small" for="qBelow">Flag a file scoring under</label><input class="form-control form-control-sm" type="number" min="1" max="100" id="qBelow" value="{{ values.quality_flag_below }}"></div>
+        <div class="col-md-4"><label class="form-label small" for="qSamples">Parts sampled per film <span class="text-body-secondary">(recommended 10)</span></label><input class="form-control form-control-sm" type="number" min="1" max="24" id="qSamples" data-recommended="10" placeholder="10" value="{{ values.quality_samples }}"></div>
+        <div class="col-md-4"><label class="form-label small" for="qSlice">Seconds in each part <span class="text-body-secondary">(recommended 30)</span></label><input class="form-control form-control-sm" type="number" min="10" max="120" id="qSlice" data-recommended="30" placeholder="30" value="{{ values.quality_slice_seconds }}"></div>
+        <div class="col-md-4"><label class="form-label small" for="qMin">Minimum resolution (height, 0 = none) <span class="text-body-secondary">(recommended 1080)</span></label><input class="form-control form-control-sm" type="number" min="0" max="4320" step="1" id="qMin" data-recommended="1080" placeholder="1080" value="{{ values.quality_min_height }}"></div>
+        <div class="col-md-4"><label class="form-label small" for="qBelow">Flag a file scoring under <span class="text-body-secondary">(recommended 60)</span></label><input class="form-control form-control-sm" type="number" min="1" max="100" id="qBelow" data-recommended="60" placeholder="60" value="{{ values.quality_flag_below }}"></div>
         <div class="col-md-4"><label class="form-label small" for="qDownload">New downloads</label>
             <select class="form-select form-select-sm" id="qDownload"><option value="flag"{% if values.quality_on_download == 'flag' %} selected{% endif %}>Check, and flag low scores</option><option value="off"{% if values.quality_on_download == 'off' %} selected{% endif %}>Do not check</option></select></div>
         <div class="col-md-4"><label class="form-label small" for="qPass">Library pass</label>
             <select class="form-select form-select-sm" id="qPass"><option value="0"{% if values.quality_scan_library != '1' %} selected{% endif %}>Off: only when asked</option><option value="1"{% if values.quality_scan_library == '1' %} selected{% endif %}>Check unchecked films in the background</option></select></div>
         <div class="col-md-4"><label class="form-label small" for="qOrder">Library pass order</label>
             <select class="form-select form-select-sm" id="qOrder"><option value="newest"{% if values.quality_scan_order != 'oldest' %} selected{% endif %}>Newest files first</option><option value="oldest"{% if values.quality_scan_order == 'oldest' %} selected{% endif %}>Oldest files first</option></select></div>
+        <div class="col-md-4"><label class="form-label small" for="qDamage">Damage check pass</label>
+            <select class="form-select form-select-sm" id="qDamage"><option value="0"{% if values.quality_damage_pass != '1' %} selected{% endif %}>Off: only when asked</option><option value="1"{% if values.quality_damage_pass == '1' %} selected{% endif %}>On: read whole files for decode errors, one at a time</option></select></div>
+        <div class="col-md-4"><label class="form-label small" for="qPaused">Automatic checks</label>
+            <select class="form-select form-select-sm" id="qPaused"><option value="0"{% if values.quality_paused != '1' %} selected{% endif %}>Running</option><option value="1"{% if values.quality_paused == '1' %} selected{% endif %}>Paused: new downloads and the Library pass wait</option></select></div>
     </div>
-    <p class="small text-body-secondary mt-2 mb-2">The Library pass queues a few files at a time, never while someone is watching in Jellyfin. A worker reads only the sampled parts of each film.</p>
-    <button type="button" class="btn btn-sm btn-primary" id="qSave">Save</button> <span class="small ms-2" id="qSaved" role="status"></span>
+    <p class="small text-body-secondary mt-2 mb-2">The Library pass queues a few files at a time, never while someone is watching in Jellyfin. A worker reads only the sampled parts of each film. The damage check pass reads every byte of a file with ffmpeg and counts decode errors, so it is slow and heavy on the share; it never runs while someone is watching in Jellyfin.</p>
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+        <button type="button" class="btn btn-sm btn-primary" id="qSave">Save</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="qReset" title="Puts the recommended numbers back in the boxes. Press Save to keep them.">Reset to recommended</button>
+        <button type="button" class="btn btn-sm btn-outline-danger" id="qStopAll" data-confirm="Cancel every quality check that is waiting or running?" title="Cancels every check that is waiting or running.">Stop all checks</button>
+        <button type="button" class="btn btn-sm btn-outline-danger" id="qClear" data-confirm="Remove every stored quality score, flag and Accept as is mark? The Library list is not touched." title="Removes stored scores, flags and Accept-as-is marks. The Library list is not touched.">Clear quality results</button>
+        <span class="small ms-2" id="qSaved" role="status"></span>
+    </div>
 </div>

@@ -223,6 +223,18 @@ def _waiting_for(job, able):
     return None
 
 
+_ROW_RANK = {"running": 0, "needs_review": 1, "queued": 2}
+
+
+def merged_rows(jobs_list, tasks_list):
+    """Jobs and worker tasks as one list for the Jobs page: running first, then waiting, then finished, newest first inside each group."""
+    items = [{"is_task": False, "item": j, "status": j["status"], "stamp": j.get("updated_at") or ""} for j in jobs_list]
+    items += [{"is_task": True, "item": t, "status": t["status"], "stamp": t.get("updated_at") or ""} for t in tasks_list]
+    items.sort(key=lambda r: r["stamp"], reverse=True)
+    items.sort(key=lambda r: _ROW_RANK.get(r["status"], 3))
+    return items
+
+
 def snapshot(conn):
     counts = jobs.counts(conn)
     summary = " \u00b7 ".join(f"{counts[s]} {s.replace('_', ' ')}" for s in ("running", "needs_review", "queued", "done", "failed", "cancelled") if counts.get(s))
@@ -235,7 +247,7 @@ def snapshot(conn):
     for j in listed:
         j["waiting_for"] = _waiting_for(j, able)
     tasks = [describe_task(t) for t in workers.recent_tasks(conn, 30)]
-    return {"workers": [describe_worker(w, root_names, workers.last_update(conn, w["id"]), workers.host_seen(conn, w["id"])) for w in raw], "jobs": listed, "tasks": tasks, "counts": counts, "summary": summary, "root_names": root_names, "app_version": __version__, "app_build": buildinfo.get()}
+    return {"workers": [describe_worker(w, root_names, workers.last_update(conn, w["id"]), workers.host_seen(conn, w["id"])) for w in raw], "jobs": listed, "tasks": tasks, "rows": merged_rows(listed, tasks), "counts": counts, "summary": summary, "root_names": root_names, "app_version": __version__, "app_build": buildinfo.get()}
 
 
 def _setup(conn, name, token=None):

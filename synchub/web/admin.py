@@ -97,6 +97,20 @@ def register(app):
         return jsonify(ok=True, libraries=[{"name": f.get("Name"), "type": f.get("CollectionType"), "paths": f.get("Locations") or []} for f in folders],
                        overlaps=library_paths.find_overlaps(folders))
 
+    @app.route("/api/tools/db-sizes")
+    def api_tools_db_sizes():
+        from synchub import dbinfo
+        return jsonify(ok=True, **dbinfo.sizes())
+
+    @app.route("/api/tools/db-compact", methods=["POST"])
+    def api_tools_db_compact():
+        from synchub import dbinfo
+        try:
+            out = dbinfo.compact()
+        except dbinfo.CompactRefused as exc:
+            return jsonify(ok=False, message=str(exc)), 409
+        return jsonify(ok=True, message=f"Compacted: {out['before_mb']} MB to {out['after_mb']} MB.", **out)
+
     @app.route("/api/tools/live-session")
     def api_tools_live_session():
         """What Jellyfin reports for people watching live TV right now. Only reads; keys, tokens and addresses are left out."""

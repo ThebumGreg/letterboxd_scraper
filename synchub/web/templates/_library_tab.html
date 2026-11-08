@@ -15,7 +15,7 @@
 
 <div id="libraryLive">{% include "_library_live.html" %}</div>
 
-{% if qual %}{% include "_quality_flagged.html" %}{% endif %}
+{% if qual and request.args.get('quality') %}{% include "_quality_flagged.html" %}{% endif %}
 
 <div class="row g-3 mb-5">
     <div class="col-12">

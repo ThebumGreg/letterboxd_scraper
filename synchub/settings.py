@@ -7,7 +7,7 @@ SECRET_FIELDS = ("tmdb_api_key", "jellyfin_api_key", "radarr_api_key", "sonarr_a
 
 DEFAULTS = {
     "scraper_interval_hours": "24", "radarr_interval_hours": "6", "sonarr_interval_hours": "6", "jellyfin_interval_hours": "6",
-    "metadata_refresh_hours": "24", "queue_poll_seconds": "30", "synchub_url": "", "jellyfin_events_keep_days": "365", "ddns_interval_minutes": "1", "access_guest_permissions": "dashboard,tv", "guest_max_rating": "1", "access_session_days": "30", "backup_keep": "7",
+    "metadata_refresh_hours": "24", "queue_poll_seconds": "30", "synchub_url": "", "jellyfin_events_keep_days": "7", "ddns_interval_minutes": "1", "access_guest_permissions": "dashboard,tv", "guest_max_rating": "1", "access_session_days": "30", "backup_keep": "7",
     "request_delay_min": str(DEFAULT_REQUEST_DELAY_RANGE[0]), "request_delay_max": str(DEFAULT_REQUEST_DELAY_RANGE[1]),
     "user_delay_min": str(DEFAULT_USER_DELAY_RANGE[0]), "user_delay_max": str(DEFAULT_USER_DELAY_RANGE[1]),
     "disable_jellyfin_connection": "0", "jellyfin_url": "", "jellyfin_server_id": "", "radarr_url": "", "sonarr_url": "",
@@ -20,7 +20,7 @@ DEFAULTS = {
     "log_service_jellyfin": "0", "log_service_radarr": "0", "log_service_sonarr": "0", "log_service_tmdb": "0", "log_service_dynu": "0",
     # the Library: the one share everything is brought into, how it is laid out, and how scans look at files
     "library_destination_root": "media", "library_tv_folder": "TV Shows", "library_movie_folder": "Movies",
-    "library_integrity_mode": "tail", "library_tail_seconds": "30",
+    "library_integrity_mode": "metadata", "library_tail_seconds": "30",
     # downloads Radarr/Sonarr import: off, review (a person approves each one), auto (high-confidence plans run on their own); the original is kept on the worker this long
     "size_policy": "0", "movie_max_gb": "30", "movie_target_gb": "25", "tv_size_policy": "0", "tv_max_gb_per_hour": "4", "tv_target_gb_per_hour": "2.5", "gpu_encoding": "0", "vmaf_mode": "warn", "size_crf": "22", "size_preset": "medium",
     "dolby_vision_profile_5": "review", "dolby_vision_profile_7_8": "hdr10",
@@ -40,7 +40,7 @@ DEFAULTS = {
     "protect_enabled": "0", "protect_host": "", "protect_verify_tls": "0", "protect_quality": "medium", "protect_relay_worker": "", "protect_relay_host": "", "protect_relay_addr": "", "protect_viewer_app": "org.videolan.vlc", "protect_cameras": "", "protect_stream_type": "mp4",
     # quality checks (docs/QUALITY.md): how many slices of a film a worker samples, how long each is, the score under which a film is flagged, whether new downloads are
     # checked (off or flag) and whether the Library clean-up checks the films it has not looked at yet, newest or oldest first
-    "quality_samples": "10", "quality_slice_seconds": "30", "quality_flag_below": "60", "quality_on_download": "flag", "quality_scan_library": "0", "quality_scan_order": "newest", "quality_min_height": "1080",
+    "quality_samples": "10", "quality_slice_seconds": "30", "quality_flag_below": "60", "quality_on_download": "flag", "quality_scan_library": "0", "quality_scan_order": "newest", "quality_min_height": "1080", "quality_paused": "0", "quality_damage_pass": "0",
     "library_exclude_folders": "@eaDir\n#recycle\n.Recycle.Bin\n$RECYCLE.BIN\nSystem Volume Information\nlost+found\n.Trash-*",
 }
 

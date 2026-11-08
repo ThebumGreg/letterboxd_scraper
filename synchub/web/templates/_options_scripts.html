@@ -67,9 +67,17 @@
     const $ = (id) => document.getElementById(id);
     const value = (id) => $(id).value;
     const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(body) }).then((r) => r.json().catch(() => ({})));
+    const qSay = (data, fallback) => { const out = $('qSaved'); out.className = 'small ms-2 ' + (data.ok ? 'text-success' : 'text-danger'); out.textContent = data.message || (data.ok ? 'Done.' : fallback); };
+    if ($('qReset')) $('qReset').addEventListener('click', () => { for (const id of ['qSamples', 'qSlice', 'qMin', 'qBelow']) $(id).value = $(id).dataset.recommended; $('qSaved').textContent = 'Recommended numbers filled in. Press Save to keep them.'; $('qSaved').className = 'small ms-2 text-body-secondary'; });
+    for (const [id, url] of [['qStopAll', '/api/library/quality/stop-all'], ['qClear', '/api/library/quality/clear']]) {
+        if ($(id)) $(id).addEventListener('click', async () => {
+            if (!confirm($(id).dataset.confirm)) return;
+            try { qSay(await post(url, {}), 'Failed.'); } catch (e) { qSay({ ok: false }, 'Could not reach the server.'); }
+        });
+    }
     if ($('qSave')) $('qSave').addEventListener('click', async () => {
         const out = $('qSaved');
-        const body = { quality_samples: value('qSamples'), quality_slice_seconds: value('qSlice'), quality_flag_below: value('qBelow'), quality_min_height: value('qMin'), quality_on_download: value('qDownload'), quality_scan_library: value('qPass'), quality_scan_order: value('qOrder') };
+        const body = { quality_samples: value('qSamples'), quality_slice_seconds: value('qSlice'), quality_flag_below: value('qBelow'), quality_min_height: value('qMin'), quality_on_download: value('qDownload'), quality_scan_library: value('qPass'), quality_scan_order: value('qOrder'), quality_paused: value('qPaused'), quality_damage_pass: value('qDamage') };
         try {
             const data = await post('/api/library/quality/settings', body);
             out.className = 'small ms-2 ' + (data.ok ? 'text-success' : 'text-danger');

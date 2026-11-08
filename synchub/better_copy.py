@@ -1,8 +1,8 @@
 """Request a better copy of a low quality film from Radarr.
 
 Two ways, both starting from a Library file:
-  * `request_auto`: block the release that was grabbed for the file (Radarr's "mark as failed" puts it on the blocklist) and ask Radarr to search again. Radarr then
-    applies its own quality profile. If the profile says the file already meets its cutoff, Radarr may grab nothing; the message says so.
+  * `request_auto`: block the release that was grabbed for the file (Radarr's "mark as failed" puts it on the blocklist), then pick the best release on offer that meets
+    the minimum resolution and grab it. A manual grab ignores Radarr's cutoff, so a film that "already meets its profile" is still replaced. Nothing qualifying is said plainly.
   * `preview` then `grab`: list what the indexers have (read only, nothing is changed), and grab one release a person chose. This ignores the cutoff.
 A new download is checked by the normal download workflow when Radarr imports it. The old file is never deleted here; Radarr replaces it on import when it treats the new one as
 an upgrade.
@@ -171,16 +171,18 @@ def add_to_radarr(client, file_id, rec, by):
         raise BetterCopyError(str(exc))
     message = (f"“{title}” was not in Radarr. It is added now and Radarr is searching for it. When the new copy is in Jellyfin, delete this old file by hand: "
                "SyncHub does not delete it.")
-    request_id = _record(file_id, rec, {"id": tmdb_id, "title": title}, "auto", None, None, False, "requested", message, by)
+    movie_id = next((m.get("id") for m in client.movies() if str(m.get("tmdbId")) == str(tmdb_id)), None) or tmdb_id       # tracking follows Radarr's own id
+    request_id = _record(file_id, rec, {"id": movie_id, "title": title}, "auto", None, None, False, "requested", message, by)
     logger.info(f"[quality] added to Radarr for {rec['file_name']} by {by}: {message}")
     return {"id": request_id, "status": "requested", "message": message}
 
 
 def request_auto(file_id, by="someone", radarr=None):
-    """Blocks the release that was grabbed for the file and asks Radarr to search again. Returns {'id', 'status', 'message'}.
-    A film Radarr does not have is added to Radarr instead."""
+    """Blocks the release that was grabbed for the file, then grabs the best release on offer that meets the minimum resolution (ignoring Radarr's cutoff).
+    Returns {'id', 'status', 'message'}. A film Radarr does not have is added to Radarr instead."""
     with db.connection() as conn:
         rec, path = target(conn, file_id)
+        wanted = wanted_height(conn, rec)
     try:
         client = _client(radarr)
         try:
@@ -188,18 +190,22 @@ def request_auto(file_id, by="someone", radarr=None):
         except BetterCopyError:
             return add_to_radarr(client, file_id, rec, by)
         history_id, bad = bad_release(client, movie["id"])
+        found = candidates(client.releases(movie["id"]), bad, wanted)
+        if not found:
+            where = f" of at least {wanted}p" if wanted else ""
+            raise BetterCopyError(f"The indexers have no other release{where} right now, so nothing was grabbed and nothing was blocked. Try again later, or use Show releases to look.")
+        top = found[0]
         blocked, problem = _block(client, file_id, history_id)
-        client.search_movie(movie["id"])
+        client.grab_release(top["guid"], top["indexerId"])
     except (ApiError, ConfigError, BetterCopyError) as exc:
         message = str(exc)
         _log_failure(file_id, by, "auto", message)
         raise BetterCopyError(message)
-    parts = [f"Blocked “{bad}”." if blocked and bad else problem, "Radarr is searching for another release. If its quality profile says the file already meets its cutoff it may grab nothing; "
-             "in that case use Show releases and pick one."]
-    message = " ".join(p for p in parts if p)
-    request_id = _record(file_id, rec, movie, "auto", bad, history_id, blocked, "requested", message, by)
-    logger.info(f"[quality] better copy requested for {rec['file_name']} by {by}: {message}")
-    return {"id": request_id, "status": "requested", "message": message}
+    detail = " ".join(x for x in (f"{top['resolution']}p" if top.get("resolution") else "", top.get("quality") or "") if x)
+    message = " ".join(p for p in (f"Blocked “{bad}”." if blocked and bad else problem, f"Grabbed the best release on offer, “{top['title']}”" + (f" ({detail})" if detail else "") + ". The old file is kept; Radarr replaces it on import when the new one is an upgrade.") if p)
+    request_id = _record(file_id, rec, movie, "auto", bad, history_id, blocked, "grabbed", message, by, chosen=top["title"])
+    logger.info(f"[quality] better copy grabbed for {rec['file_name']} by {by}: {message}")
+    return {"id": request_id, "status": "grabbed", "message": message}
 
 
 def grab(file_id, guid, indexer_id, by="someone", radarr=None):
@@ -232,6 +238,77 @@ def _log_failure(file_id, by, mode, message):
             conn.execute("INSERT INTO quality_request (library_file_id, mode, status, message, requested_by) VALUES (?, ?, 'failed', ?, ?)", (file_id, mode, message[:500], by))
     except Exception as exc:                         # the log is a nicety; the person still gets the real message
         logger.debug(f"[quality] could not log the failed request: {exc}")
+
+
+# ---------------------------------------------------------------- following a request through Radarr's queue
+TRACK_DAYS = 7
+SEARCH_MINUTES, GIVE_UP_HOURS = 30, 24
+
+
+def _percent(record):
+    try:
+        size, left = float(record.get("size") or 0), float(record.get("sizeleft") or 0)
+        return max(0, min(100, round(100 * (size - left) / size))) if size else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _queue_state(record):
+    """(state, detail, percent, eta) for one Radarr queue record."""
+    tracked = str(record.get("trackedDownloadState") or "").lower()
+    status = str(record.get("status") or "").lower()
+    problem = str(record.get("errorMessage") or "") or "; ".join(str(m) for sm in (record.get("statusMessages") or []) for m in (sm.get("messages") or []))[:200]
+    if tracked in ("importpending", "importing", "imported") or status == "completed":
+        return ("imported" if tracked == "imported" else "importing"), "", 100, None
+    if tracked in ("downloadfailed", "failedpending", "failed", "ignored") or str(record.get("trackedDownloadStatus") or "").lower() == "error":
+        return "problem", problem or "the download failed", _percent(record), None
+    if status in ("queued", "paused", "delay"):
+        return "queued", "", _percent(record), None
+    timeleft = str(record.get("timeleft") or "")
+    return "downloading", "", _percent(record), (timeleft[:8] if timeleft else None)
+
+
+def refresh_tracking(radarr=None, now=None):
+    """Updates the progress of better-copy requests that are still open (the last week), from Radarr's queue. Asks Radarr only when a request is open.
+    Never raises. Returns how many requests changed."""
+    from datetime import datetime, timezone
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    stamp = now.strftime("%Y-%m-%d %H:%M:%S")
+    with db.connection() as conn:
+        open_rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM quality_request WHERE status IN ('requested', 'grabbed') AND COALESCE(track_state, '') NOT IN ('imported', 'nothing_found') AND service_item_id IS NOT NULL "
+            "AND created_at > datetime(?, ?)", (stamp, f"-{TRACK_DAYS} days"))]
+    if not open_rows:
+        return 0
+    try:
+        queue = _client(radarr).queue()
+    except (ApiError, ConfigError) as exc:
+        logger.info(f"[quality] could not read Radarr's queue to follow better-copy requests: {exc}")
+        return 0
+    by_movie = {}
+    for rec in queue or []:
+        by_movie.setdefault(str(rec.get("movieId")), rec)
+    changed = 0
+    with db.connection() as conn:
+        for row in open_rows:
+            record = by_movie.get(str(row["service_item_id"]))
+            age = now - datetime.strptime(row["created_at"], "%Y-%m-%d %H:%M:%S")
+            if record is not None:
+                state, detail, percent, eta = _queue_state(record)
+                seen = 1
+            elif row["track_seen"]:
+                state, detail, percent, eta, seen = "imported", "", 100, None, 1
+            elif age.total_seconds() < SEARCH_MINUTES * 60:
+                state, detail, percent, eta, seen = ("queued" if row["status"] == "grabbed" else "searching"), "", None, None, 0
+            elif age.total_seconds() < GIVE_UP_HOURS * 3600:
+                state, detail, percent, eta, seen = "waiting", "", None, None, 0
+            else:
+                state, detail, percent, eta, seen = "nothing_found", "no download started in a day. Try Show releases.", None, None, 0
+            if (state, detail, percent, eta, seen) != (row["track_state"], row["track_detail"] or "", row["track_percent"], row["track_eta"], row["track_seen"]):
+                conn.execute("UPDATE quality_request SET track_state = ?, track_detail = ?, track_percent = ?, track_eta = ?, track_seen = ?, tracked_at = ?, updated_at = ? WHERE id = ?",
+                             (state, detail, percent, eta, seen, stamp, stamp, row["id"]))
+                changed += 1
+    return changed
 
 
 def history_for(conn, file_id, limit=5):

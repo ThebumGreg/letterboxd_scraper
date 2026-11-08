@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+**Quality cleanup (migrations 036 and 037).** Update SyncHub first, then the workers (the damage check needs a new worker).
+- **Fixed: the quality settings boxes were blank.** The Options > Quality boxes read a template value that Jinja resolved to the dictionary's own `values` method, so every box (and the selects) showed blank and Save then complained "must be a whole number". The page now reads the real values; a blank stored value falls back to the recommended one (10 parts, 30 s, flag under 60, minimum 1080), each box shows its recommended value, a blank box saves the recommended value, and there is a **Reset to recommended** button.
+- **Below minimum quality is a box** next to Done and Rejected on Media > Library (count, being checked, waiting). **Open list** shows the list.
+- **Request better copy grabs the top pick.** It blocks the old release, then grabs the best release that meets the minimum resolution, ignoring Radarr's cutoff. Nothing qualifying: nothing is blocked or grabbed and the page says so. **Show releases** is unchanged.
+- **Better-copy requests are followed:** searching, queued, downloading with percent, importing, imported, a problem or nothing found, from Radarr's queue (migration 037).
+- **Damage check:** optional whole-file decode-error check (button on a film, optional off-by-default pass, one file at a time). Flags "Damaged: N decode errors" and never hides a scored result.
+- **Pause, Stop all checks, Clear quality results** on Options > Quality. Clear results on the scan form cancels waiting checks first.
+- **Jobs page order:** running first, then waiting, then finished (newest first), with worker updates and benchmarks mixed in by time instead of stuck at the top.
+- **Failed jobs row** opens the Jobs page and has a **Dismiss** button.
+- **Dashboard** counts every show in the shows total ("N shows (N complete)"); movies still count what Jellyfin has.
+- **Database:** Jellyfin events are kept 7 days (a saved 365 becomes 7; older events go on the next nightly prune). Tools has a **Database size** card with a **Compact database** button (refused while a job runs).
+- **Scans look at details only by default.** A file already read more thoroughly (last 30 s) is not looked at again.
+
 **Request better copy for films Radarr does not have.** The button now adds such a film (a loose file in `Old Movies/`, for example) to Radarr and searches, using the TMDB match Jellyfin has for the file. The old file is kept; delete it by hand once the new copy is in Jellyfin.
 
 **AI quality test, worker side (PR 2 of 2).**

@@ -291,6 +291,17 @@ def count_missing(conn):
     return conn.execute(f"SELECT COUNT(*) FROM library_file WHERE missing_since IS NOT NULL AND {_FREE}").fetchone()[0]
 
 
+def _stop_quality_checks(conn, ids):
+    """Cancels the quality checks still waiting for records that are about to go, so no job is left pointing at a check that no longer exists."""
+    from synchub import jobs
+    for file_id in ids:
+        for r in conn.execute("SELECT job_id FROM quality_check WHERE library_file_id = ? AND status IN ('queued', 'running') AND job_id IS NOT NULL", (file_id,)).fetchall():
+            try:
+                jobs.cancel(conn, r["job_id"], by="clear results")
+            except jobs.JobError:
+                pass
+
+
 def forget_missing(conn, record_ids=None):
     """Takes records whose file is gone off the list for good (their history goes with them). Files are never touched, and a record someone is
     working on, or one that was migrated, stays. Returns how many were removed."""
@@ -300,6 +311,7 @@ def forget_missing(conn, record_ids=None):
     if record_ids is not None:
         wanted = {int(i) for i in record_ids}
         ids = [i for i in ids if i in wanted]
+    _stop_quality_checks(conn, ids)
     conn.executemany("DELETE FROM library_file WHERE id = ?", [(i,) for i in ids])
     return len(ids)
 
@@ -308,6 +320,7 @@ def forget_folder(conn, root, folder):
     """Takes every undecided or rejected record under root/folder off the list (see forget_missing). Returns how many."""
     begin(conn)
     ids = [r["id"] for r in conn.execute(f"SELECT id, relative_path FROM library_file WHERE root_name = ? AND {_FREE}", (root,)) if v.under(r["relative_path"], folder)]
+    _stop_quality_checks(conn, ids)
     conn.executemany("DELETE FROM library_file WHERE id = ?", [(i,) for i in ids])
     return len(ids)
 

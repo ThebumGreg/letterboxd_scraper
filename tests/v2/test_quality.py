@@ -262,12 +262,16 @@ def test_the_library_tab_lists_flagged_files_and_options_saves_settings(client, 
     metrics = clean_metrics()
     metrics["slices"][0]["errors"] = 40
     finish_job(conn, quality.request(conn, file_id), metrics)
-    page = client.get("/library").get_data(as_text=True)
+    overview = client.get("/library").get_data(as_text=True)
+    assert 'data-queue="below_minimum"' in overview and 'id="belowMinimumSection"' not in overview            # a box beside Done and Rejected, the list is behind Open list
+    assert "/library?quality=1#belowMinimumSection" in overview
+    assert 'data-queue="below_minimum"' in client.get("/library/fragment").get_data(as_text=True) if client.get("/library/fragment").status_code == 200 else True
+    page = client.get("/library?quality=1").get_data(as_text=True)
     assert "Below minimum quality" in page and "Heat (1995).mkv" in page and "decode errors" in page and "Accept as is" in page
     assert "flagged as low quality" not in client.get("/").get_data(as_text=True)
-    assert client.get("/library/quality").status_code == 302 and "/library" in client.get("/library/quality").headers["Location"]
+    assert client.get("/library/quality").status_code == 302 and "/library?quality=1" in client.get("/library/quality").headers["Location"]
     assert client.post("/api/library/quality/accept", json={"file_id": file_id}).get_json()["ok"]
-    assert "Nothing is flagged" in client.get("/library").get_data(as_text=True)
+    assert "Nothing is flagged" in client.get("/library?quality=1").get_data(as_text=True)
     options = client.get("/library/options").get_data(as_text=True)
     assert 'id="qualitySettings"' in options and 'id="qMin"' in options and 'id="aiTest"' in options
     saved = client.post("/api/library/quality/settings", json={"quality_samples": "6", "quality_scan_library": "1", "quality_on_download": "off"}).get_json()
@@ -397,7 +401,8 @@ def release(title, resolution=1080, guid=None, indexer=3, size=8_000_000_000, re
 
 
 class FakeRadarr:
-    def __init__(self, releases=(), history=None, movies=None, fail_block=False):
+    def __init__(self, releases=(), history=None, movies=None, fail_block=False, queue=()):
+        self.queue_records = list(queue)
         self.movie_list = movies if movies is not None else [{"id": 7, "title": "Heat", "path": "/movies/Heat (1995)"}]
         self.history = history if history is not None else [{"id": 11, "eventType": "grabbed", "sourceTitle": "Heat.1995.DVDRip", "date": "2020-01-01"},
                                                             {"id": 12, "eventType": "downloadFolderImported", "sourceTitle": "Heat.1995.DVDRip", "date": "2020-01-02"}]
@@ -425,43 +430,92 @@ class FakeRadarr:
     def grab_release(self, guid, indexer_id):
         self.calls.append(("grab", guid, indexer_id))
 
+    def queue(self):
+        self.calls.append(("queue",))
+        return self.queue_records
+
 
 def sd_film(conn, radarr_path="/movies"):
     storage.create(conn, {"name": "media", "protocol": "local", "share": "/mnt/media", "mount_point": "/mnt/media", **({"radarr_path": radarr_path} if radarr_path else {})})
     return fixture_file(conn, rel="Heat (1995)/Heat (1995).mkv", kbps=1500, resolution="720x480")
 
 
-def test_auto_request_blocks_the_grabbed_release_then_searches(conn):
+GOOD = [release("Heat.1995.1080p.A", 1080, seeders=5), release("Heat.1995.1080p.B", 1080, seeders=50, guid="gB", indexer=4), release("Heat.1995.720p", 720, guid="g7")]
+
+
+def test_auto_request_blocks_the_old_release_then_grabs_the_top_pick_ignoring_the_cutoff(conn):
     file_id = sd_film(conn)
-    radarr = FakeRadarr()
+    radarr = FakeRadarr(releases=GOOD)
     out = better_copy.request_auto(file_id, by="Greg", radarr=radarr)
-    assert [c[0] for c in radarr.calls] == ["history", "block", "search"] and ("block", 11) in radarr.calls
-    assert out["status"] == "requested" and "Heat.1995.DVDRip" in out["message"] and "cutoff" in out["message"]
+    names = [c[0] for c in radarr.calls]
+    assert names == ["history", "releases", "block", "grab"] and ("block", 11) in radarr.calls and ("grab", "gB", 4) in radarr.calls and "search" not in names
+    assert out["status"] == "grabbed" and "Heat.1995.1080p.B" in out["message"] and "Heat.1995.DVDRip" in out["message"]
     row = conn.execute("SELECT * FROM quality_request").fetchone()
-    assert (row["status"], row["mode"], row["blocklisted"], row["bad_release"], row["service_item_id"], row["requested_by"]) == ("requested", "auto", 1, "Heat.1995.DVDRip", "7", "Greg")
+    assert (row["status"], row["mode"], row["blocklisted"], row["bad_release"], row["service_item_id"], row["chosen_release"], row["requested_by"]) == ("grabbed", "auto", 1, "Heat.1995.DVDRip", "7", "Heat.1995.1080p.B", "Greg")
+
+
+def test_auto_request_with_nothing_good_enough_grabs_and_blocks_nothing(conn):
+    file_id = sd_film(conn)
+    radarr = FakeRadarr(releases=[release("Heat.1995.720p", 720), release("Heat.1995.DVDRip", 480)])
+    with pytest.raises(better_copy.BetterCopyError, match="no other release of at least 1080p"):
+        better_copy.request_auto(file_id, by="Greg", radarr=radarr)
+    assert not any(c[0] in ("block", "grab", "search") for c in radarr.calls)
+    assert conn.execute("SELECT status FROM quality_request").fetchone()[0] == "failed"
 
 
 def test_a_second_request_does_not_block_the_same_release_again(conn):
     file_id = sd_film(conn)
-    radarr = FakeRadarr()
+    radarr = FakeRadarr(releases=GOOD)
     better_copy.request_auto(file_id, radarr=radarr)
     better_copy.request_auto(file_id, radarr=radarr)
-    assert [c for c in radarr.calls if c[0] == "block"] == [("block", 11)] and [c for c in radarr.calls if c[0] == "search"] == [("search", 7)] * 2
+    assert [c for c in radarr.calls if c[0] == "block"] == [("block", 11)] and len([c for c in radarr.calls if c[0] == "grab"]) == 2
 
 
-def test_no_grab_in_the_history_still_searches_and_says_so(conn):
+def test_no_grab_in_the_history_still_grabs_the_top_pick_and_says_so(conn):
     file_id = sd_film(conn)
-    radarr = FakeRadarr(history=[])
+    radarr = FakeRadarr(history=[], releases=GOOD)
     out = better_copy.request_auto(file_id, radarr=radarr)
-    assert ("search", 7) in radarr.calls and not any(c[0] == "block" for c in radarr.calls) and "no grab" in out["message"]
+    assert ("grab", "gB", 4) in radarr.calls and not any(c[0] == "block" for c in radarr.calls) and "no grab" in out["message"]
 
 
-def test_a_failed_block_is_reported_but_the_search_goes_ahead(conn):
+def test_a_failed_block_is_reported_but_the_grab_goes_ahead(conn):
     file_id = sd_film(conn)
-    radarr = FakeRadarr(fail_block=True)
+    radarr = FakeRadarr(fail_block=True, releases=GOOD)
     out = better_copy.request_auto(file_id, radarr=radarr)
-    assert "could not be blocked" in out["message"] and ("search", 7) in radarr.calls
+    assert "could not be blocked" in out["message"] and ("grab", "gB", 4) in radarr.calls
     assert conn.execute("SELECT blocklisted FROM quality_request").fetchone()[0] == 0
+
+
+def _stamp(conn, minutes_ago):
+    conn.execute("UPDATE quality_request SET created_at = datetime('now', ?)", (f"-{minutes_ago} minutes",))
+    conn.commit()
+
+
+def test_a_request_is_followed_through_radarrs_queue_to_the_end(conn):
+    file_id = sd_film(conn)
+    better_copy.request_auto(file_id, radarr=FakeRadarr(releases=GOOD))
+    assert better_copy.refresh_tracking(FakeRadarr()) == 1
+    assert quality.latest_request(conn, file_id)["track_label"] == "Queued in the download client"
+    radarr = FakeRadarr(queue=[{"movieId": 7, "status": "downloading", "trackedDownloadState": "downloading", "size": 1000, "sizeleft": 580, "timeleft": "00:12:00"}])
+    better_copy.refresh_tracking(radarr)
+    assert quality.latest_request(conn, file_id)["track_label"] == "Downloading 42%, 00:12:00 left"
+    better_copy.refresh_tracking(FakeRadarr(queue=[{"movieId": 7, "status": "completed", "trackedDownloadState": "importPending", "size": 1000, "sizeleft": 0}]))
+    assert quality.latest_request(conn, file_id)["track_label"] == "Importing"
+    better_copy.refresh_tracking(FakeRadarr())
+    assert quality.latest_request(conn, file_id)["track_state"] == "imported"
+    idle = FakeRadarr()
+    assert better_copy.refresh_tracking(idle) == 0 and idle.calls == []                 # a finished request is not polled
+
+
+def test_a_download_problem_and_a_search_that_finds_nothing_are_shown(conn):
+    file_id = sd_film(conn)
+    better_copy.request_auto(file_id, radarr=FakeRadarr(releases=GOOD))
+    better_copy.refresh_tracking(FakeRadarr(queue=[{"movieId": 7, "status": "warning", "trackedDownloadState": "downloadFailed", "errorMessage": "Disk full", "size": 10, "sizeleft": 9}]))
+    assert quality.latest_request(conn, file_id)["track_label"] == "Problem: Disk full"
+    conn.execute("UPDATE quality_request SET track_state = NULL, track_seen = 0")
+    _stamp(conn, 25 * 60)
+    better_copy.refresh_tracking(FakeRadarr())
+    assert quality.latest_request(conn, file_id)["track_state"] == "nothing_found"
 
 
 def test_requests_that_cannot_be_made_say_why_and_are_logged(conn):
@@ -524,7 +578,7 @@ def test_the_buttons_reach_radarr_and_the_page_shows_the_request(client, conn, m
     grabbed = client.post("/api/library/quality/grab", json={"file_id": file_id, "guid": "gB", "indexer_id": 4}).get_json()
     assert grabbed["ok"] and ("grab", "gB", 4) in radarr.calls
     assert not client.post("/api/library/quality/grab", json={"file_id": file_id}).get_json()["ok"]
-    page = client.get("/library").get_data(as_text=True)
+    page = client.get("/library?quality=1").get_data(as_text=True)
     assert "Request better copy" in page and "Show releases" in page and "Below your minimum resolution" in page
     assert "Better copy grabbed" in client.get(f"/library/record/{file_id}").get_data(as_text=True)
 
@@ -645,3 +699,115 @@ def test_the_storage_page_saves_and_rejects_the_extra_mounts(client, conn):
     assert "/OldMovie = Old Movies" in page and 'id="shareJellyfinMore"' in page
     bad = client.post(f"/api/storage/{row['id']}/update", json={"jellyfin_extra_paths": "nonsense"})
     assert bad.status_code == 400 and "Line 1" in bad.get_json()["message"]
+
+
+# ---------------------------------------------------------------- the cleanup PR: defaults, pause, stop, clear
+def test_a_blank_saved_setting_shows_and_saves_the_recommended_value(client, conn):
+    for key in ("quality_samples", "quality_slice_seconds", "quality_flag_below", "quality_min_height"):
+        settings.set_value(key, "", conn=conn)
+    conn.commit()
+    options = client.get("/library/options").get_data(as_text=True)
+    assert 'id="qSamples" data-recommended="10" placeholder="10" value="10"' in options and 'id="qMin" data-recommended="1080" placeholder="1080" value="1080"' in options
+    saved = client.post("/api/library/quality/settings", json={"quality_samples": "", "quality_slice_seconds": " ", "quality_flag_below": "", "quality_min_height": ""}).get_json()
+    assert saved["ok"] and (quality.samples(), quality.slice_seconds(), quality.flag_below(), quality.min_height()) == (10, 30, 60, 1080)
+
+
+def test_pausing_stops_automatic_checks_but_not_a_manual_one(conn):
+    file_id = fixture_file(conn)
+    rec = rec_of(conn, file_id)
+    settings.set_value("quality_paused", "1", conn=conn)
+    assert quality.request_for_import(conn, rec) is None
+    settings.set_value("quality_scan_library", "1", conn=conn)
+    conn.commit()
+    assert quality.library_step() == 0
+    assert quality.request(conn, file_id, by="Greg")
+
+
+def test_stop_all_cancels_waiting_checks_and_clear_removes_stored_results(client, conn):
+    first, second = fixture_file(conn), fixture_file(conn, rel="Alien (1979)/Alien (1979).mkv")
+    finish_job(conn, quality.request(conn, first), clean_metrics())
+    waiting = quality.request(conn, second)
+    conn.commit()
+    out = client.post("/api/library/quality/stop-all", json={}).get_json()
+    assert out["ok"] and out["stopped"] == 1 and quality.get(conn, waiting)["status"] == "cancelled"
+    assert client.post("/api/library/quality/accept", json={"file_id": first}).get_json()["ok"]
+    cleared = client.post("/api/library/quality/clear", json={}).get_json()
+    assert cleared["ok"] and cleared["removed"] == 2
+    assert conn.execute("SELECT COUNT(*) FROM quality_check").fetchone()[0] == 0 and conn.execute("SELECT COUNT(*) FROM quality_accept").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM library_file").fetchone()[0] == 2
+
+
+def test_clearing_a_folder_cancels_its_waiting_checks_first(conn):
+    from synchub.library import store
+    file_id = fixture_file(conn, rel="Old Movies/Heat (1995).mkv")
+    check_id = quality.request(conn, file_id)
+    job_id = quality.get(conn, check_id)["job_id"]
+    conn.commit()
+    assert store.forget_folder(conn, "media", "Old Movies") == 1
+    assert jobs.get(conn, job_id)["status"] == "cancelled"
+
+
+# ---------------------------------------------------------------- the damage check (whole file, decode errors only)
+def test_a_damage_check_flags_decode_errors_and_never_hides_a_low_score(conn):
+    file_id = fixture_file(conn)
+    blurry = clean_metrics(blur=18.0)
+    finish_job(conn, quality.request(conn, file_id), blurry)
+    scored = quality.latest(conn, file_id, done_only=True)["score"]
+    check_id = quality.request(conn, file_id, mode="damage")
+    assert jobs.get(conn, quality.get(conn, check_id)["job_id"])["plan"]["needs"] == ["quality", "damage"]
+    finish_job(conn, check_id, {"op": "quality", "mode": "damage", "errors": 0, "sample": []})
+    assert quality.latest(conn, file_id, done_only=True)["score"] == scored                       # a clean damage check leaves the scored one in charge
+    assert quality.get(conn, check_id)["message"] == "Whole file decoded without errors."
+    check_id = quality.request(conn, file_id, mode="damage")
+    finish_job(conn, check_id, {"op": "quality", "mode": "damage", "errors": 3, "sample": ["[h264] error while decoding MB 10 20"]})
+    flagged = [r for r in quality.low_quality(conn) if r["id"] == file_id][0]
+    assert any("Damaged: 3 decode errors" in f["text"] for f in flagged["findings"])
+
+
+def test_a_damage_check_alone_flags_a_file_that_was_never_scored(conn):
+    file_id = fixture_file(conn)
+    assert not [r for r in quality.low_quality(conn) if r["id"] == file_id]
+    finish_job(conn, quality.request(conn, file_id, mode="damage"), {"op": "quality", "mode": "damage", "errors": 1, "sample": ["x"]})
+    assert [r for r in quality.low_quality(conn) if r["id"] == file_id]
+
+
+def test_an_old_worker_that_answers_a_damage_job_with_slices_fails_the_check(conn):
+    file_id = fixture_file(conn)
+    check = finish_job(conn, quality.request(conn, file_id, mode="damage"), clean_metrics())
+    assert check["status"] == "failed" and "too old" in check["message"]
+
+
+def test_the_damage_pass_is_off_by_default_one_at_a_time_and_follows_pause(conn):
+    first, second = fixture_file(conn), fixture_file(conn, rel="Alien (1979)/Alien (1979).mkv")
+    assert quality.library_step() == 0
+    settings.set_value("quality_damage_pass", "1", conn=conn)
+    conn.commit()
+    assert quality.library_step() == 1
+    assert quality.library_step() == 0                                                              # one whole-file read at a time
+    assert conn.execute("SELECT COUNT(*) FROM quality_check WHERE mode = 'damage'").fetchone()[0] == 1
+    settings.set_value("quality_paused", "1", conn=conn)
+    conn.commit()
+    check = finish_job(conn, conn.execute("SELECT id FROM quality_check").fetchone()[0], {"op": "quality", "mode": "damage", "errors": 0, "sample": []})
+    assert quality.library_step() == 0
+
+
+def test_the_worker_counts_only_real_errors_not_progress_lines():
+    lines = ["frame=100\n", "fps=25.0\n", "out_time_us=4000000\n", "progress=continue\n", "[h264 @ 0x1] error while decoding MB 3 4\n", "\n", "[aac @ 0x2] Invalid data found\n", "progress=end\n"]
+    assert agent.parse_damage(lines) == (2, ["[h264 @ 0x1] error while decoding MB 3 4", "[aac @ 0x2] Invalid data found"])
+    assert agent.out_time_seconds("out_time_us=4000000") == 4.0 and agent.out_time_seconds("frame=1") is None
+    assert "-f" in agent.damage_command("ffmpeg", "/m/film.mkv", niceness=False) and agent.damage_command("ffmpeg", "/m/f.mkv", niceness=False)[0] == "ffmpeg"
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_the_whole_file_command_finds_damage_with_real_ffmpeg(tmp_path):
+    good, bad = tmp_path / "good.mp4", tmp_path / "bad.mp4"
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=24:duration=4", "-c:v", "libx264", "-crf", "20", str(good)], check=True)
+    data = bytearray(good.read_bytes())
+    for i in range(len(data) // 3, len(data) // 3 + 600):
+        data[i] ^= 0xFF
+    bad.write_bytes(bytes(data))
+    counts = {}
+    for name, path in (("good", good), ("bad", bad)):
+        run = subprocess.run(agent.damage_command("ffmpeg", str(path), niceness=False), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        counts[name] = agent.parse_damage(run.stdout.splitlines())[0]
+    assert counts["good"] == 0 and counts["bad"] > 0

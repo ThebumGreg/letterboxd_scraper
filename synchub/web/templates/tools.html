@@ -70,6 +70,16 @@
         </div>
     </div>
     <div class="col-md-6">
+        <div class="panel p-3 p-md-4 h-100 d-flex flex-column gap-3" id="dbSize">
+            <div>
+                <h5 class="m-0 text-success">Database size</h5>
+                <p class="text-body-secondary m-0 mt-1">How big SyncHub's database is and which tables take the room. <em>Compact database</em> gives space freed by deleting old events back to the disk. It waits if a job is running.</p>
+            </div>
+            <div class="d-flex flex-wrap gap-2"><button type="button" class="btn btn-secondary btn-sm" id="dbShow">Show sizes</button><button type="button" class="btn btn-outline-warning btn-sm" id="dbCompact" data-confirm="Compact the database now? SyncHub pauses its own writes while it rewrites the file.">Compact database</button></div>
+            <pre id="dbResult" class="small mb-0 text-wrap" style="max-height: 20rem; overflow: auto;"></pre>
+        </div>
+    </div>
+    <div class="col-md-6">
         <div class="panel p-3 p-md-4 h-100 d-flex flex-column justify-content-between gap-3">
             <div>
                 <h5 class="m-0 text-success">Export</h5>
@@ -109,6 +119,25 @@ document.addEventListener("DOMContentLoaded", function() {
             liveOut.textContent = !body.ok ? body.message : (body.sessions.length ? JSON.stringify(body.sessions, null, 2) : 'No one is watching live TV right now. Start a live channel in Jellyfin and press the button again.');
         } catch (e) { liveOut.textContent = e.message; }
         finally { liveBtn.disabled = false; }
+    });
+    const dbOut = document.getElementById('dbResult'), dbToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const dbShow = document.getElementById('dbShow'), dbCompact = document.getElementById('dbCompact');
+    if (dbShow) dbShow.addEventListener('click', async () => {
+        dbShow.disabled = true; dbOut.textContent = 'Reading...';
+        try {
+            const body = await (await fetch('/api/tools/db-sizes', {headers: {Accept: 'application/json'}})).json();
+            dbOut.textContent = `File ${body.file_mb} MB (log ${body.wal_mb} MB). ${body.reclaimable_mb} MB can be given back by compacting.\nBiggest tables (${body.how}):\n` + body.tables.map(t => `${String(t.mb).padStart(8)} MB  ${String(t.rows).padStart(9)} rows  ${t.name}`).join('\n');
+        } catch (e) { dbOut.textContent = e.message; }
+        finally { dbShow.disabled = false; }
+    });
+    if (dbCompact) dbCompact.addEventListener('click', async () => {
+        if (!confirm(dbCompact.dataset.confirm)) return;
+        dbCompact.disabled = true; dbOut.textContent = 'Compacting. This can take a minute...';
+        try {
+            const res = await fetch('/api/tools/db-compact', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRFToken': dbToken}, body: '{}'});
+            dbOut.textContent = (await res.json().catch(() => ({}))).message || 'Done.';
+        } catch (e) { dbOut.textContent = e.message; }
+        finally { dbCompact.disabled = false; }
     });
     document.querySelectorAll('[data-task-last]').forEach(el => {
         const val = el.textContent.trim();

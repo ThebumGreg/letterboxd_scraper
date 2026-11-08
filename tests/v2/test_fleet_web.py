@@ -373,3 +373,38 @@ def test_a_gpu_free_container_explains_why_no_card_is_shown(client, v2):
     worker_id = reporting_worker(v2, host={**HOST, "gpus": [], "render_devices": []})
     pane = status_pane(client.get("/workers").get_data(as_text=True), worker_id)
     assert "No graphics card is visible to the agent" in pane and "docker container" in pane
+
+
+def test_jobs_page_lists_running_then_waiting_then_finished_with_worker_tasks_mixed_in():
+    from synchub.web.fleet import merged_rows
+    jobs = [{"id": 1, "status": "done", "updated_at": "2026-11-07 10:00:00"}, {"id": 2, "status": "queued", "updated_at": "2026-11-07 09:00:00"},
+            {"id": 3, "status": "running", "updated_at": "2026-11-07 08:00:00"}]
+    tasks = [{"id": 10, "status": "done", "updated_at": "2026-11-07 11:00:00"}, {"id": 11, "status": "queued", "updated_at": "2026-11-07 09:30:00"},
+             {"id": 12, "status": "running", "updated_at": "2026-11-07 07:00:00"}]
+    order = [(r["is_task"], r["item"]["id"]) for r in merged_rows(jobs, tasks)]
+    assert order == [(False, 3), (True, 12), (True, 11), (False, 2), (True, 10), (False, 1)]
+
+
+def test_failed_jobs_row_opens_the_jobs_page_and_can_be_dismissed(client, v2):
+    from synchub import status
+    job_id = make_job(v2, title="Broken")
+    with v2.connection() as conn:
+        conn.execute("UPDATE job SET status = 'failed', finished_at = datetime('now', '-1 hour') WHERE id = ?", (job_id,))
+        conn.commit()
+        row = next(i for i in status.snapshot(conn)["items"] if i["label"] == "Failed jobs")
+    assert row["href"] == "/jobs" and row["dismiss"] == "/api/status/dismiss-failed"
+    assert 'data-dismiss="/api/status/dismiss-failed"' in client.get("/system/status").get_data(as_text=True)
+    assert client.post("/api/status/dismiss-failed", json={}).get_json()["ok"]
+    with v2.connection() as conn:
+        assert not [i for i in status.snapshot(conn)["items"] if i["label"] == "Failed jobs"]
+        conn.execute("UPDATE job SET status = 'failed', finished_at = datetime('now', '+1 minute') WHERE id = ?", (job_id,))
+        conn.commit()
+        assert [i for i in status.snapshot(conn)["items"] if i["label"] == "Failed jobs"]
+
+
+def test_dashboard_counts_every_show_not_only_complete_ones(client, v2):
+    with v2.connection() as conn:
+        conn.execute("INSERT INTO media (kind, title, year, tmdb_id) VALUES ('show', 'Requested Only', 2020, '77')")
+        conn.commit()
+    page = client.get("/").get_data(as_text=True)
+    assert "1 shows (0 complete)" in page

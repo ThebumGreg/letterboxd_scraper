@@ -61,7 +61,7 @@ RULES = (
     ("index", "dashboard"), ("movie_details", "dashboard"), ("show_details", "dashboard"), ("api_season", "dashboard"), ("stream_events", "dashboard"),
     ("search_page", "search"), ("api_search_seasons", "search"), ("discover_page", "search"),
     ("watchlist_page", "watchlist"), ("api_watchlist_*", "watchlist"),
-    ("status_page", "logs"), ("sessions_*", "logs"), ("api_sessions", "logs"),
+    ("status_page", "logs"), ("api_status_*", "logs"), ("sessions_*", "logs"), ("api_sessions", "logs"),
     ("notifications_page", "notifications"), ("api_notifications_*", "notifications"), ("profile_page", "notifications"), ("my_profile", "notifications"),
     ("api_search_add_*", "requests"), ("api_request_*", "requests"), ("api_refresh", "requests"),
     ("resolution_center", "resolution"), ("api_resolution_*", "resolution"),
