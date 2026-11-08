@@ -128,6 +128,8 @@
                 </div>
             </div>
 
+            {% include "_dashboard_settings.html" %}
+
             <!-- Notifications -->
             <div class="panel p-3 p-md-4 mb-4" id="notifySettings">
                 <h5 class="text-success mb-3">Notifications</h5>
@@ -420,6 +422,7 @@
 {% endblock %}
 
 {% block scripts %}
+{% include "_dashboard_settings_js.html" %}
 <script>
     // Cameras to serve: tick the ones the relay and the TV pop-up should offer (all when none is ticked).
     (function () {

@@ -1,0 +1,113 @@
+<script>
+    // Morning TV dashboard: days, the people editor (kept as JSON in a hidden field), Show/Close buttons and today's status.
+    (function () {
+        const root = document.getElementById('dashSettings');
+        if (!root) return;
+        const csrf = () => ({ 'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || '' });
+        const json = { Accept: 'application/json', 'Content-Type': 'application/json' };
+        const fire = (el) => el.dispatchEvent(new Event('input', { bubbles: true }));
+        const DAYS = [['mon', 'Mon'], ['tue', 'Tue'], ['wed', 'Wed'], ['thu', 'Thu'], ['fri', 'Fri']];
+        const COLORS = ['#4dabf7', '#f783ac', '#69db7c', '#ffd43b', '#b197fc', '#ff922b', '#3bc9db', '#ff6b6b'];
+
+        const daysBox = document.getElementById('dashDays'), daysField = document.getElementById('dash_days');
+        daysBox.addEventListener('change', () => { daysField.value = [...daysBox.querySelectorAll('input:checked')].map((i) => i.value).join(','); fire(daysField); });
+
+        const field = document.getElementById('dash_people'), list = document.getElementById('dashPeople');
+        let people = [];
+        try { people = JSON.parse(field.value || '[]'); } catch (e) { people = []; }
+        const save = () => { field.value = JSON.stringify(people); fire(field); };
+        const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+        const input = (type, value, placeholder, onInput, cls) => {
+            const i = el('input', cls || 'form-control form-control-sm'); i.type = type; i.value = value || ''; if (placeholder) i.placeholder = placeholder;
+            i.addEventListener('input', () => onInput(i.value)); return i;
+        };
+        const labeled = (text, node, cls) => { const d = el('div', cls || 'col-6 col-md-3'); d.append(el('label', 'form-label small mb-0', text), node); return d; };
+
+        function draw() {
+            list.replaceChildren();
+            people.forEach((p, idx) => {
+                const card = el('div', 'border rounded p-2 mb-2'); card.style.borderLeft = '6px solid ' + (p.color || COLORS[idx % COLORS.length]);
+                const head = el('div', 'row g-2 align-items-end mb-2');
+                head.append(labeled(p.kind === 'school' ? 'Student' : 'Calendar person', input('text', p.name, 'Name', (v) => { p.name = v; save(); }), 'col-8 col-md-4'));
+                const color = input('color', p.color || COLORS[idx % COLORS.length], '', (v) => { p.color = v; card.style.borderLeftColor = v; save(); }, 'form-control form-control-sm form-control-color');
+                head.append(labeled('Color', color, 'col-4 col-md-2'));
+                const rm = el('button', 'btn btn-outline-danger btn-sm', 'Remove'); rm.type = 'button';
+                rm.addEventListener('click', () => { people.splice(idx, 1); save(); draw(); });
+                const rmBox = el('div', 'col-12 col-md-2 ms-md-auto text-md-end'); rmBox.append(rm); head.append(rmBox);
+                card.append(head);
+                if (p.kind === 'school') {
+                    const week = p.week = p.week || {};
+                    const grid = el('div', 'row g-2');
+                    DAYS.forEach(([d, label]) => {
+                        const day = week[d] = week[d] || { leave: '', start: '', end: '' };
+                        const row = el('div', 'col-12 d-flex flex-wrap gap-2 align-items-end');
+                        row.append(el('span', 'small fw-semibold pb-1', label)); row.lastChild.style.width = '2.5rem';
+                        [['leave', 'Leave by'], ['start', 'School starts'], ['end', 'Ends']].forEach(([k, t]) => row.append(labeled(t, input('time', day[k], '', (v) => { day[k] = v; save(); }), 'col-auto')));
+                        grid.append(row);
+                    });
+                    card.append(grid, el('div', 'form-text mb-2', 'Leave a day blank for no school. Add a time for "Leave by" and "School starts" to show the day.'));
+                    const phone = el('div', 'row g-2 align-items-end');
+                    const mac = input('text', p.mac, 'aa:bb:cc:dd:ee:ff', (v) => { p.mac = v; save(); });
+                    phone.append(labeled('Phone Wi-Fi address (optional)', mac, 'col-12 col-md-5'));
+                    const pick = el('button', 'btn btn-outline-secondary btn-sm', 'Pick from UniFi'); pick.type = 'button';
+                    const sel = el('select', 'form-select form-select-sel form-select-sm d-none');
+                    pick.addEventListener('click', async () => {
+                        pick.disabled = true;
+                        try {
+                            const r = await (await fetch('/api/dashboard/clients', { headers: { Accept: 'application/json' } })).json();
+                            if (!r.ok) { alert(r.message); return; }
+                            sel.replaceChildren(new Option('Choose the phone...', ''));
+                            r.clients.filter((c) => !c.wired).forEach((c) => sel.append(new Option((c.name || '(no name)') + '  ' + c.mac + (c.ip ? '  ' + c.ip : ''), c.mac + '|' + (c.name || ''))));
+                            sel.classList.remove('d-none');
+                        } catch (e) { alert('Could not load the devices: ' + e.message); } finally { pick.disabled = false; }
+                    });
+                    sel.addEventListener('change', () => { const [m, n] = sel.value.split('|'); if (m) { p.mac = m; p.phone = n; save(); draw(); } });
+                    const pickBox = el('div', 'col-12 col-md-5'); pickBox.append(pick, sel);
+                    phone.append(pickBox); if (p.phone) phone.append(el('div', 'col-12 small text-body-secondary', 'Phone: ' + p.phone));
+                    card.append(phone);
+                } else {
+                    const row = el('div', 'row g-2 align-items-end');
+                    row.append(labeled('Calendar link (ICS)', input('url', p.ics, 'https://... or webcal://...', (v) => { p.ics = v; save(); }), 'col-12 col-md-8'));
+                    const test = el('button', 'btn btn-outline-info btn-sm', 'Test'); test.type = 'button';
+                    const out = el('span', 'small ms-2');
+                    test.addEventListener('click', async () => {
+                        out.textContent = 'Reading...';
+                        try {
+                            const r = await (await fetch('/api/dashboard/test_calendar', { method: 'POST', headers: { ...json, ...csrf() }, body: JSON.stringify({ url: p.ics || '' }) })).json();
+                            out.textContent = r.message; out.className = 'small ms-2 ' + (r.ok ? 'text-success' : 'text-danger');
+                        } catch (e) { out.textContent = 'Failed: ' + e.message; }
+                    });
+                    const tb = el('div', 'col-12 col-md-4'); tb.append(test, out); row.append(tb);
+                    card.append(row);
+                }
+                list.append(card);
+            });
+            if (!people.length) list.append(el('div', 'small text-body-secondary mb-2', 'Nobody yet.'));
+        }
+        document.getElementById('addCalendarPerson').addEventListener('click', () => { people.push({ name: '', color: COLORS[people.length % COLORS.length], kind: 'calendar', ics: '' }); save(); draw(); });
+        document.getElementById('addStudent').addEventListener('click', () => { people.push({ name: '', color: COLORS[people.length % COLORS.length], kind: 'school', week: {}, mac: '', phone: '' }); save(); draw(); });
+        draw();
+
+        const result = document.getElementById('dashResult'), status = document.getElementById('dashStatus');
+        root.querySelectorAll('[data-dash]').forEach((btn) => btn.addEventListener('click', async () => {
+            result.textContent = 'Working...'; result.className = 'small ms-2';
+            try {
+                const r = await (await fetch('/api/tv/dashboard/' + btn.dataset.dash, { method: 'POST', headers: { Accept: 'application/json', ...csrf() } })).json();
+                result.textContent = r.message; result.className = 'small ms-2 ' + (r.ok ? 'text-success' : 'text-danger');
+            } catch (e) { result.textContent = 'Failed: ' + e.message; result.className = 'small ms-2 text-danger'; }
+            loadStatus();
+        }));
+        async function loadStatus() {
+            try {
+                const r = await (await fetch('/api/dashboard/status', { headers: { Accept: 'application/json' } })).json();
+                const lines = [r.shown ? 'On the TV now.' : 'Not on the TV right now.'];
+                if (r.problem && r.problem.message) lines.push('Last problem (' + r.problem.at + '): ' + r.problem.message);
+                const names = Object.keys(r.presence || {});
+                if (names.length) lines.push('Wi-Fi today: ' + names.map((n) => n + ' ' + r.presence[n]).join(', '));
+                if (r.presence_error) lines.push('Wi-Fi presence: ' + r.presence_error);
+                status.textContent = lines.join(' ');
+            } catch (e) { status.textContent = ''; }
+        }
+        loadStatus();
+    })();
+</script>

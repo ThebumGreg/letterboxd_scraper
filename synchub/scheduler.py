@@ -83,6 +83,16 @@ def _daily_picks():
         logger.info(f"Queued {sent} daily picks notification(s).")
 
 
+def _dashboard_tick():
+    from synchub.dashboard import show
+    show.tick()
+
+
+def _dashboard_presence():
+    from synchub.dashboard import school
+    school.poll()
+
+
 def _scrape_job():
     for step in (tasks.scrape_letterboxd, tasks.scrape_serializd, tasks.resolve_letterboxd_ids, tasks.reconcile):
         step()
@@ -103,6 +113,8 @@ def configure():
         hours = interval_hours(key, default)
         if hours > 0:
             scheduler.add_job(fn, "interval", hours=hours, id=job_id, max_instances=1, coalesce=True)
+    scheduler.add_job(_dashboard_tick, "interval", seconds=60, id="job_dashboard", max_instances=1, coalesce=True)
+    scheduler.add_job(_dashboard_presence, "interval", seconds=60, id="job_dashboard_presence", max_instances=1, coalesce=True)
     scheduler.add_job(_reap_jobs, "interval", seconds=REAPER_SECONDS, id="job_reaper", max_instances=1, coalesce=True)
     scheduler.add_job(_prune_jellyfin_events, "interval", hours=24, id="job_prune_jellyfin_events", max_instances=1, coalesce=True)
     scheduler.add_job(_follow_better_copies, "interval", minutes=1, id="job_better_copy_tracking", max_instances=1, coalesce=True)

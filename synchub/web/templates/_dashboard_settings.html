@@ -1,0 +1,96 @@
+{% from "_macros.html" import secret_field, switch %}
+<!-- UniFi Network (Wi-Fi presence for the TV dashboard) -->
+<div class="panel p-3 p-md-4 mb-4" id="unifiNetSettings">
+    <h5 class="text-success mb-1">UniFi Network (Wi-Fi presence)</h5>
+    <p class="small text-body-secondary">Lets the TV dashboard see that a student's phone has left the home Wi-Fi and show "Left for school". It only asks which devices are connected, never where anyone is. The Network application has its own key (made on its <em>Settings, Control Plane, Integrations</em> page); a Protect key does not work here.</p>
+    <div class="mb-3">
+        <label for="unifi_net_host" class="form-label">Console address</label>
+        <input type="text" class="form-control" id="unifi_net_host" name="unifi_net_host" value="{{ settings.unifi_net_host }}" placeholder="{{ settings.protect_host or '192.168.1.1' }}" autocomplete="off">
+        <div class="form-text">The console's own address, without https://. This is usually the same console as Protect.</div>
+    </div>
+    <div class="mb-3">{{ secret_field('unifi_net_api_key', 'Network API key', settings.unifi_net_api_key, help='Kept here and never shown again.') }}</div>
+    {{ switch('unifi_net_verify_tls', "Check the console's certificate", settings.unifi_net_verify_tls) }}
+    <button type="button" class="btn btn-outline-info btn-sm" data-test-service="unifi_network" data-test-fields="unifi_net_host,unifi_net_api_key,unifi_net_verify_tls">Test connection</button>
+    <span class="small ms-2" data-test-result="unifi_network" role="status"></span>
+</div>
+
+<!-- Morning TV dashboard -->
+<div class="panel p-3 p-md-4 mb-4" id="dashSettings">
+    <h5 class="text-success mb-1">Morning TV dashboard</h5>
+    <p class="small text-body-secondary">At the start of the morning window SyncHub wakes the TV and opens a full-screen page with the time, weather, forecast, a quote, and a column for each person. At the end it closes the page. See <code>docs/TV_DASHBOARD.md</code>.</p>
+    {{ switch('dash_enabled', 'Show the dashboard on the TV in the morning', settings.dash_enabled, dims='#dashFields', dims_when='unchecked') }}
+    <div id="dashFields">
+        <div class="row g-3 mb-3">
+            <div class="col-md-6">
+                <label for="dash_tv" class="form-label">TV</label>
+                <select class="form-select" id="dash_tv" name="dash_tv">
+                    <option value="">Choose a TV</option>
+                    {% for t in dash_tvs %}<option value="{{ t.id }}" {{ 'selected' if settings.dash_tv == t.id }}>{{ t.name }} ({{ t.label }})</option>{% endfor %}
+                </select>
+                <div class="form-text">Add the TV on the TVs page first. It needs ADB on (Google TV or Android TV).</div>
+            </div>
+            <div class="col-md-6">
+                <label for="dash_app" class="form-label">Browser app on the TV</label>
+                <input type="text" class="form-control" id="dash_app" name="dash_app" value="{{ settings.dash_app }}" autocomplete="off">
+                <div class="form-text">Install <strong>TV Bro</strong> (<code>com.phlox.tvwebbrowser</code>) or another TV browser on the TV. It opens the page full screen.</div>
+            </div>
+        </div>
+        <div class="row g-3 mb-3">
+            <div class="col-6 col-md-3"><label for="dash_start" class="form-label">Show from</label><input type="time" class="form-control" id="dash_start" name="dash_start" value="{{ settings.dash_start }}"></div>
+            <div class="col-6 col-md-3"><label for="dash_end" class="form-label">Until</label><input type="time" class="form-control" id="dash_end" name="dash_end" value="{{ settings.dash_end }}"></div>
+            <div class="col-12 col-md-6">
+                <label class="form-label">Days</label>
+                <input type="hidden" id="dash_days" name="dash_days" value="{{ settings.dash_days }}">
+                <div id="dashDays" class="d-flex flex-wrap gap-3">
+                    {% for d, label in (('mon','Mon'),('tue','Tue'),('wed','Wed'),('thu','Thu'),('fri','Fri'),('sat','Sat'),('sun','Sun')) %}
+                    <label class="form-check-label"><input type="checkbox" class="form-check-input me-1" value="{{ d }}" {{ 'checked' if d in settings.dash_days.split(',') }}>{{ label }}</label>
+                    {% endfor %}
+                </div>
+                <div class="form-text">Uses this computer's time zone ({{ now_label }}).</div>
+            </div>
+        </div>
+        {{ switch('dash_skip_busy', 'Leave the TV alone if something is already playing or another app is open', settings.dash_skip_busy) }}
+        {{ switch('dash_sleep_after', 'Put the TV back to sleep afterwards if the dashboard woke it', settings.dash_sleep_after) }}
+        <hr>
+        <h6 class="mb-2">Weather and quote</h6>
+        <div class="row g-3 mb-3">
+            <div class="col-md-5">
+                <label for="dash_zip" class="form-label">ZIP code</label>
+                <input type="text" class="form-control" id="dash_zip" name="dash_zip" value="{{ settings.dash_zip }}" placeholder="10001" autocomplete="off">
+                <div class="form-text">A 5 digit US ZIP code, or latitude and longitude (40.71, -74.00).</div>
+            </div>
+            <div class="col-md-4">
+                <label for="dash_units" class="form-label">Units</label>
+                <select class="form-select" id="dash_units" name="dash_units">
+                    <option value="us" {{ 'selected' if settings.dash_units == 'us' }}>US (°F, mph)</option>
+                    <option value="metric" {{ 'selected' if settings.dash_units == 'metric' }}>Metric (°C, km/h)</option>
+                </select>
+            </div>
+        </div>
+        {{ switch('dash_quote_on', 'Show a quote of the day (needs the internet; a built-in list is used when it is down)', settings.dash_quote_on) }}
+        <button type="button" class="btn btn-outline-info btn-sm" data-test-service="dashboard_weather" data-test-fields="dash_zip,dash_units">Test weather</button>
+        <span class="small ms-2" data-test-result="dashboard_weather" role="status"></span>
+        <hr>
+        <h6 class="mb-2">People</h6>
+        <p class="small text-body-secondary">A <strong>calendar</strong> person shows today's events from their private calendar link (Google: <em>Settings, your calendar, Secret address in iCal format</em>. iCloud: share the calendar publicly and copy the link. Microsoft 365 / Outlook: <em>Settings, Calendar, Shared calendars, Publish a calendar, ICS</em>). A <strong>student</strong> has a weekly school schedule and optionally a phone to watch on the Wi-Fi.</p>
+        <input type="hidden" id="dash_people" name="dash_people" value="{{ settings.dash_people }}">
+        <div id="dashPeople" class="mb-2"></div>
+        <button type="button" class="btn btn-outline-primary btn-sm" id="addCalendarPerson">Add a calendar person</button>
+        <button type="button" class="btn btn-outline-primary btn-sm" id="addStudent">Add a student</button>
+        <hr>
+        <h6 class="mb-2">No school days</h6>
+        <textarea class="form-control font-monospace" id="dash_no_school" name="dash_no_school" rows="3" placeholder="2026-11-26 Thanksgiving&#10;2026-12-21 to 2027-01-03 Winter break">{{ settings.dash_no_school }}</textarea>
+        <div class="form-text">One per line, a date or a range, then a name. Students show the name instead of a school day.</div>
+        <div class="row g-3 mt-1 mb-2">
+            <div class="col-6 col-md-3"><label for="dash_presence_from" class="form-label">Phone can only "leave" after</label><input type="time" class="form-control" id="dash_presence_from" name="dash_presence_from" value="{{ settings.dash_presence_from }}"></div>
+            <div class="col-6 col-md-3"><label for="dash_presence_grace" class="form-label">Away for (minutes)</label><input type="number" min="1" max="30" class="form-control" id="dash_presence_grace" name="dash_presence_grace" value="{{ settings.dash_presence_grace }}"></div>
+            <div class="col-md-6 small text-body-secondary align-self-end">A phone must be seen on the Wi-Fi first, then gone this long, so a sleeping phone does not count as leaving. Once someone has left they stay "left" for the day. Phones use a private Wi-Fi address per network: turn that off for your home Wi-Fi (or pick the address UniFi shows, and keep it).</div>
+        </div>
+        <hr>
+        <div class="small mb-2">TV page: <a href="{{ dash_url }}" target="_blank" rel="noopener" id="dashLink">{{ dash_url }}</a> <span class="text-body-secondary">(a private address: anyone with it can see the screen)</span></div>
+        <button type="button" class="btn btn-outline-primary btn-sm" data-dash="show" title="Wake the TV and open the dashboard now">Show on the TV now</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-dash="hide" title="Close the dashboard on the TV">Close on the TV</button>
+        <span class="small ms-2" id="dashResult" role="status"></span>
+        <div class="small mt-2" id="dashStatus"></div>
+    </div>
+</div>

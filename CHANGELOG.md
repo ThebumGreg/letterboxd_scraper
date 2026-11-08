@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**Morning TV dashboard (no migration).** Update SyncHub only (no worker change). New Python packages `icalendar` and `recurring-ical-events` (rebuild the image).
+- **A morning screen on a TV.** In a window you choose (default 6:30 to 8:30, weekdays) SyncHub wakes a Google TV / Android TV, opens a full-screen page and closes it at the end: time, current weather and five-day forecast (Open-Meteo, ZIP code, US or metric units), a quote of the day (built-in list when offline), and a column per person.
+- **Calendars** for adults through each person's private ICS link (Google, iCloud, Microsoft 365 / Outlook), with repeating events, all-day events and the next day with events when today is over.
+- **School weeks for students:** leave-by, start and end times per weekday, a countdown, and typed no-school days (holidays, breaks).
+- **"Left for school" from the Wi-Fi.** New **UniFi Network** settings block (its own address and API key, Test connection, phone picker) reads connected devices; a phone must be seen at home, gone for 3 minutes and after 6:30 to count, and stays "left" for the day.
+- **Safe on the TV:** left alone if something is playing, a camera is showing or another app is open; Show/Close buttons; asleep TV put back to sleep; the last problem shown on the Settings page. See docs/TV_DASHBOARD.md. Untested on a real TV browser and a real UniFi Network console.
+
 **Simpler conversion and quality settings (migration 039).** Update SyncHub first, then the workers (the bitrate-target encode needs a new worker; an old worker keeps using constant quality).
 - **Compression is decided by video bitrate only.** Per picture size there is now a *re-encode above* number and an *aim for* number: 4K 50 then 35 Mbps, 1080p 25 then 12 Mbps. 720p and smaller are left alone (0 = never). Audio is not counted. The "x ceiling" trigger and the GB limits are gone from the main card (the GB limits live under Advanced and are off, 0). Saved settings are moved to the new defaults by the migration; Space saver keeps its own behaviour (21 and 9 Mbps).
 - **Bitrate-target encode.** New *Encoding* choice: *Aim for the bitrate* (default; an average-bitrate x265 encode at the aim-for number, so the size is predictable) or *Constant quality, never above the bitrate* (the older CRF encode, often smaller). In target mode the CRF is not used. Single pass.
