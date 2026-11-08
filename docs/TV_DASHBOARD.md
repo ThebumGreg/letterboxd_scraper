@@ -73,4 +73,4 @@ Rules, so a sleeping phone is not mistaken for someone leaving:
 | A calendar says "not a calendar (ICS) link" | The link is a web page, not the calendar file. Use the secret/public iCal address. |
 | Wrong times | The SyncHub computer's time zone is wrong. |
 
-> Written without a UniFi console, a TV browser or real calendar links to try. The UniFi Network paths come from UniFi's description of its official API and have a fallback to the older controller path. The first run on your hardware is the real test; the Test buttons and the TV log say which step failed.
+> Written without a UniFi console, a TV browser or real calendar links to try. The UniFi Network calls follow UniFi's published Network API 11.0.97 (`GET /v1/sites`, `GET /v1/sites/{siteId}/clients`, client details for the MAC address when the list leaves it out), with a fallback to the older controller path. The first run on your hardware is the real test; the Test buttons and the TV log say which step failed.

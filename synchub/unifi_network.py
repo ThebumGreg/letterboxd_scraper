@@ -11,6 +11,7 @@ from synchub import http, settings
 
 BASE = "/proxy/network"
 PAGE = 200
+_mac_by_id = {}               # client id -> MAC address ('' when UniFi gives none)
 
 
 class NetworkError(Exception):
@@ -30,11 +31,11 @@ def mac_key(mac):
 def clean_client(raw):
     """One client in the shape the dashboard uses, from either API."""
     mac = mac_key(raw.get("macAddress") or raw.get("mac"))
-    if not mac:
+    if not mac and not raw.get("id"):
         return None
     kind = str(raw.get("type") or "").upper()
     wired = kind == "WIRED" or raw.get("is_wired") is True
-    return {"mac": mac, "name": raw.get("name") or raw.get("hostname") or raw.get("displayName") or "", "ip": raw.get("ipAddress") or raw.get("ip") or "",
+    return {"id": raw.get("id") or "", "mac": mac, "name": raw.get("name") or raw.get("hostname") or raw.get("displayName") or "", "ip": raw.get("ipAddress") or raw.get("ip") or "",
             "wired": wired, "since": raw.get("connectedAt") or raw.get("first_seen") or ""}
 
 
@@ -100,7 +101,22 @@ class NetworkClient:
                 if not chunk or total is None or offset >= total or offset > 5000:
                     break
         out = [c for c in (clean_client(r) for r in raw if isinstance(r, dict)) if c]
+        if found is not None:
+            self._fill_macs(site["id"], out)
+        out = [c for c in out if c["mac"]]
         return sorted(out, key=lambda c: (c["wired"], c["name"].lower() or "~", c["mac"]))
+
+    def _fill_macs(self, site_id, clients):
+        """The official list may leave the MAC address out of a client (UniFi documents it only on the client's details). Ask for the details of those
+        clients once and remember the answer: a client's id does not change."""
+        for c in clients:
+            if c["mac"] or not c["id"]:
+                continue
+            if c["id"] not in _mac_by_id:
+                res = self._get(f"/integration/v1/sites/{site_id}/clients/{c['id']}", "client details")
+                body = res.json() if res.status_code == 200 else {}
+                _mac_by_id[c["id"]] = mac_key((body or {}).get("macAddress") or (body or {}).get("mac"))
+            c["mac"] = _mac_by_id[c["id"]]
 
     def online_macs(self):
         return {c["mac"] for c in self.clients()}
