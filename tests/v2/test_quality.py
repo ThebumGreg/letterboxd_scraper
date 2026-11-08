@@ -803,11 +803,13 @@ def test_the_whole_file_command_finds_damage_with_real_ffmpeg(tmp_path):
     good, bad = tmp_path / "good.mp4", tmp_path / "bad.mp4"
     subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=24:duration=4", "-c:v", "libx264", "-crf", "20", str(good)], check=True)
     data = bytearray(good.read_bytes())
-    for i in range(len(data) // 3, len(data) // 3 + 600):
-        data[i] ^= 0xFF
+    for spot in range(10, 90, 4):                                  # damage many places in the middle of the file, so a different ffmpeg still sees some of it
+        start = len(data) * spot // 100
+        for i in range(start, min(start + 400, len(data))):
+            data[i] ^= 0xFF
     bad.write_bytes(bytes(data))
     counts = {}
     for name, path in (("good", good), ("bad", bad)):
         run = subprocess.run(agent.damage_command("ffmpeg", str(path), niceness=False), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        counts[name] = agent.parse_damage(run.stdout.splitlines())[0]
+        counts[name] = max(agent.parse_damage(run.stdout.splitlines())[0], 1 if run.returncode else 0)      # as the worker counts: a failed exit is at least one error
     assert counts["good"] == 0 and counts["bad"] > 0
