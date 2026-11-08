@@ -62,8 +62,9 @@ def _in_front(dev, package):
 def show(r, dev, camera, url, package):
     """Open a camera full screen on this TV (or switch to another one when a camera is already showing). -> {"ok", "steps", "state"}."""
     if "stream_view" not in dev.capabilities:
-        raise DeviceError(f"{dev.name} cannot show a camera yet. Cameras work on a Google TV or Android TV.")
+        raise DeviceError(f"{dev.name} cannot show a camera yet. Cameras work on a Google TV, an Android TV or a Roku.")
     steps = []
+    package = getattr(dev, "viewer_package", None) or package
 
     def step(message, ok=True):
         steps.append(message)
@@ -104,6 +105,7 @@ def show(r, dev, camera, url, package):
 def close(r, dev, package):
     """Close the camera and carry on with what was playing. -> {"ok", "steps", "state"}."""
     steps = []
+    package = getattr(dev, "viewer_package", None) or package
 
     def step(message, ok=True):
         steps.append(message)

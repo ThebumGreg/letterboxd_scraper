@@ -1,6 +1,6 @@
 # UniFi Protect cameras on the TV remote
 
-The remote's **Cameras** button pauses what the TV is playing in Jellyfin, remembers the title and the place, and shows a camera full screen. A box on the remote switches to another camera, or closes the camera and carries on where you were. For now this works on a **Google TV / Android TV**.
+The remote's **Cameras** button pauses what the TV is playing in Jellyfin, remembers the title and the place, and shows a camera full screen. A box on the remote switches to another camera, or closes the camera and carries on where you were. It works on a **Google TV / Android TV**, and on a **Roku** (see "Roku" below).
 
 > This feature was written without a UniFi console or a Google TV to try it on. The Protect address paths, the way a TV player app takes a stream and go2rtc's `rtspx://` source are taken from their documentation. The first run on your hardware is the real test, so the Test connection button and the TV log (Remote Tools) say exactly which step failed.
 
@@ -22,7 +22,7 @@ The remote's **Cameras** button pauses what the TV is playing in Jellyfin, remem
    - *go2rtc answers on the worker* and *cameras served: N*. The worker reports what go2rtc really serves.
 4. **Test relay** asks the relay from SyncHub itself, the way a TV will reach it. **Send cameras now** asks Protect again and gives go2rtc the cameras again (they are also sent again every 5 minutes, and whenever they change).
 5. The Workers page marks the relay worker with a badge (*Camera relay: 3 camera(s)* or *down*).
-6. Open the **TV remote**. **📹 Cameras** appears on a Google TV once Protect is on.
+6. Open the **TV remote**. **📹 Cameras** appears on a Google TV or Roku once Protect is on.
 
 Other things worth knowing:
 - A worker set up from SyncHub's own setup files (a new worker) already has go2rtc in its `docker-compose.yml`. The helper sees that and does not add the override.
@@ -53,3 +53,12 @@ Choose the cameras under *Cameras to serve* (Settings > Protect, Load cameras fr
 - **"go2rtc is installed" shows a red failure.** The card shows the Docker error (a port already in use is the usual one). `journalctl -t synchub-auto-update` on the PC has the full story.
 - **The TV says nothing happened.** Remote Tools shows the ADB lines: *VLC would not open the stream* means the app is not installed or the stream address is not reaching it. Open `http://<relay>:1984` in a browser: the relay's page lists the streams and plays them.
 - **The picture opens but stays black.** Try *Medium* or *Low* picture quality, or open the stream in the relay's web page to see whether the camera itself is sending video.
+
+## Roku
+
+A Roku shows a camera full screen through its built-in **Play on Roku** channel, using the relay's **HLS** stream (a Roku cannot play RTSP, and no player app has to be installed). The Roku needs *Settings > System > Advanced system settings > Control by mobile apps > Network access* set to Default or Permissive, like the rest of the remote.
+
+- Expect **5 to 15 seconds of delay** and no picture-in-picture. It is for looking at who is at the door, not for watching live movement. A TV with a player PC (see plans/tv-control-nuc-plan.md) will be faster.
+- **Close** presses Home, then SyncHub carries on with the title like on a Google TV (the Jellyfin app is opened again at the saved place).
+- The "Stream the TV opens" and "Video player app" Protect settings do not apply to a Roku; it always uses HLS.
+- Not tried on a real Roku yet. If the picture does not start, the Remote Tools log shows the "play on roku" call.

@@ -737,7 +737,7 @@ def register(app):
         if name not in found:
             raise DeviceError("That camera is not on the list any more.")
         try:
-            url = protect.play_url(name)
+            url = protect.play_url(name, getattr(d, "camera_stream_type", None))
         except ConfigError as e:
             raise DeviceError(str(e))
         result = camera.show(r, d, {"name": name, "title": found[name]["title"]}, url, settings.get("protect_viewer_app"))
