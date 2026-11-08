@@ -335,3 +335,11 @@ def test_the_folder_a_share_is_mounted_at_never_becomes_a_show_name(tmp_path):
     nested.mkdir(parents=True)
     (nested / "S02E03.mkv").write_bytes(os.urandom(300))
     assert analyse(nested / "S02E03.mkv", rel="The Wire/Season 2/S02E03.mkv")["show_title"] == "The Wire"
+
+
+def test_scene_debris_after_year_and_site_tag_removed():
+    from agent import media_analysis as m
+    assert m.clean_filename("2001 A Space Odyssey (1968) REPACK2 UHD DV MA 5 1-CiNEPHiLES.mkv")["name"] == "2001 A Space Odyssey (1968).mkv"
+    n = "[DEVIL-TORRENTS.PL] Scream.7.2026.MULTi.2160p.UHD.BluRay.REMUX.DV.HDR.HEVC.TrueHD.Atmos.7.1-KiT.mkv"
+    assert m.clean_filename(n)["name"] == "Scream 7 (2026).mkv"
+    assert m.clean_filename("Heat (1995) Director's Cut.mkv")["name"] == "Heat (1995) Director's Cut.mkv"
