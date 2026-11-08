@@ -687,3 +687,17 @@ def test_a_player_that_keeps_closing_gives_the_show_back_and_says_what_to_try(ri
 def test_the_stream_type_is_a_setting_with_three_choices():
     assert validate_setting("protect_stream_type", "hls")[0] and not validate_setting("protect_stream_type", "udp")[0]
     assert settings.DEFAULTS["protect_stream_type"] == "mp4"
+
+
+def test_a_roku_shows_a_camera_as_hls_in_play_on_roku_and_goes_home_to_close(monkeypatch):
+    from synchub.tv.devices.roku import RokuDriver, PLAY_ON_ROKU
+    from synchub.tv.logbook import LogBook
+    assert "stream_view" in RokuDriver.capabilities
+    assert RokuDriver.viewer_package == PLAY_ON_ROKU and RokuDriver.camera_stream_type == "hls"
+    d = RokuDriver({"id": "roku", "name": "Roku", "host": "10.0.0.9"}, LogBook())
+    sent = []
+    monkeypatch.setattr(d, "play_url", lambda url, title, fmt="mp4": sent.append((url, title, fmt)) or "sent")
+    monkeypatch.setattr(d, "send_key", lambda key, count=1: sent.append(key))
+    assert d.view_stream("http://relay:1984/api/stream.m3u8?src=door", "ignored") == "sent"
+    assert d.close_stream("ignored") == "pressed Home"
+    assert sent == [("http://relay:1984/api/stream.m3u8?src=door", "Camera", "hls"), "Home"]

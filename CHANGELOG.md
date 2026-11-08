@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+**Cameras on a Roku.** The remote's Cameras button now works on a Roku: the camera opens full screen in Play on Roku from the relay's HLS stream (a few seconds of delay, no picture-in-picture), and Close goes Home and carries on with the title. See docs/CAMERAS.md.
+
 **Hold low quality files (migration 038).**
 - **Held from conversion.** A file below the minimum resolution, scored low or damaged is never converted. It leaves Ready, Suggested, Worth a look, Format conversion and Done and lives on the Below minimum quality page, where **Rename and move only** puts it in the right folder (rename inside its share, or an unchanged copy). **Accept as is** is the only way back to normal conversion. Enforced when approving (single, bulk, review), in the job planner, on the Versions tab and in the download pipeline. A job that already exists keeps running and shows a warning.
 - **Check first, then convert.** Approving a conversion queues a quality check (and a damage check when that pass is on) first; a passing file gets its job, a low or damaged one is held. Option **Before converting** on Options > Quality.

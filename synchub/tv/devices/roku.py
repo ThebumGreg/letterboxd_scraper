@@ -26,7 +26,9 @@ class RokuDriver(Driver):
     type = "roku"
     log_kind = "roku"
     label = "Roku / Roku TV (ECP)"
-    capabilities = frozenset({"keys", "apps", "text", "power_on", "power_off", "launch", "icons", "url_play", "deeplink"})
+    capabilities = frozenset({"keys", "apps", "text", "power_on", "power_off", "launch", "icons", "url_play", "deeplink", "stream_view"})
+    viewer_package = PLAY_ON_ROKU    # a camera opens in the Play on Roku channel, whatever app the Protect settings name for a Google TV
+    camera_stream_type = "hls"        # a Roku plays HLS or MP4 from a URL, never RTSP
     keymap = {
         "home": "Home", "back": "Back",
         "up": "Up", "down": "Down", "left": "Left", "right": "Right", "ok": "Select",
@@ -169,6 +171,15 @@ class RokuDriver(Driver):
             raise DeviceError(f"The Roku refused the stream (HTTP {r.status_code})")
         self._cast_title, self._cast_at = title, time.time()
         return "stream sent to Play on Roku"
+
+    def view_stream(self, url, package):
+        """Shows a camera full screen with the Play on Roku channel (HLS from the go2rtc relay; expect a few seconds of delay)."""
+        return self.play_url(url, "Camera", "hls")
+
+    def close_stream(self, package):
+        """Leaves the camera. Home ends the stream; the camera code then carries on with what was playing."""
+        self.send_key("Home")
+        return "pressed Home"
 
     def detect_mac(self):
         self.status(quiet=True)
