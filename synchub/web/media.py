@@ -22,7 +22,7 @@ TABS = (
 def _data(key, conn):
     if key == "library":
         from synchub.web import library, quality_web
-        return {**library.overview(conn), "qual": quality_web.overview(conn)}
+        return {**library.overview(conn), "qual": quality_web.overview(conn, full=False)}
     if key == "versions":
         from synchub.web import versions
         return versions.overview(conn)

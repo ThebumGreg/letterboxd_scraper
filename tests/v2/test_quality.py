@@ -242,8 +242,9 @@ def test_a_1080p_extra_version_next_to_the_4k_file_is_the_remote_copy(conn):
 
 def test_a_film_that_jellyfin_does_not_know_has_no_copies(conn):
     media_id = film(conn, with_jellyfin=False)
-    fixture_file(conn)
-    assert quality.copies(conn, media_id)["files"] == []
+    file_id = fixture_file(conn)
+    found = quality.copies(conn, media_id)["files"]          # not known to Jellyfin, but its name says Heat (1995): found by name
+    assert [(f["id"], f["found_by"]) for f in found] == [(file_id, "name")]
 
 
 def test_the_movie_page_shows_the_card_and_the_buttons_work(client, conn):
@@ -264,14 +265,13 @@ def test_the_library_tab_lists_flagged_files_and_options_saves_settings(client, 
     finish_job(conn, quality.request(conn, file_id), metrics)
     overview = client.get("/library").get_data(as_text=True)
     assert 'data-queue="below_minimum"' in overview and 'id="belowMinimumSection"' not in overview            # a box beside Done and Rejected, the list is behind Open list
-    assert "/library?quality=1#belowMinimumSection" in overview
+    assert "/library/quality" in overview and "quality=1" not in overview
     assert 'data-queue="below_minimum"' in client.get("/library/fragment").get_data(as_text=True) if client.get("/library/fragment").status_code == 200 else True
-    page = client.get("/library?quality=1").get_data(as_text=True)
-    assert "Below minimum quality" in page and "Heat (1995).mkv" in page and "decode errors" in page and "Accept as is" in page
+    page = client.get("/library/quality").get_data(as_text=True)
+    assert "Below minimum quality" in page and "Heat (1995).mkv" in page and "decode errors" in page and "Accept as is" in page and "Held: low quality" in page
     assert "flagged as low quality" not in client.get("/").get_data(as_text=True)
-    assert client.get("/library/quality").status_code == 302 and "/library?quality=1" in client.get("/library/quality").headers["Location"]
     assert client.post("/api/library/quality/accept", json={"file_id": file_id}).get_json()["ok"]
-    assert "Nothing is flagged" in client.get("/library?quality=1").get_data(as_text=True)
+    assert "Nothing is flagged" in client.get("/library/quality").get_data(as_text=True)
     options = client.get("/library/options").get_data(as_text=True)
     assert 'id="qualitySettings"' in options and 'id="qMin"' in options and 'id="aiTest"' in options
     saved = client.post("/api/library/quality/settings", json={"quality_samples": "6", "quality_scan_library": "1", "quality_on_download": "off"}).get_json()
@@ -578,7 +578,7 @@ def test_the_buttons_reach_radarr_and_the_page_shows_the_request(client, conn, m
     grabbed = client.post("/api/library/quality/grab", json={"file_id": file_id, "guid": "gB", "indexer_id": 4}).get_json()
     assert grabbed["ok"] and ("grab", "gB", 4) in radarr.calls
     assert not client.post("/api/library/quality/grab", json={"file_id": file_id}).get_json()["ok"]
-    page = client.get("/library?quality=1").get_data(as_text=True)
+    page = client.get("/library/quality").get_data(as_text=True)
     assert "Request better copy" in page and "Show releases" in page and "Below your minimum resolution" in page
     assert "Better copy grabbed" in client.get(f"/library/record/{file_id}").get_data(as_text=True)
 

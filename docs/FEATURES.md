@@ -24,6 +24,7 @@ The worker side is a small API (`/api/worker/v1/...`, token per worker, document
 
 - **Look at a share** starts a scan on a worker, so it needs a worker with the share mounted (see Workers and Storage). Files it has already looked at and that have not changed are skipped, so running it again is quick. A scan can be stopped, and one that was interrupted carries on with what is left. Looking at files never changes anything on a share.
 - **The queues** (Ready to approve, Suggested changes, Worth a look, Format conversion, Needs you, Done) show how many files wait with high, medium and low confidence. Open a list to search and filter, or **Review one by one**: it shows the suggestion, the file name (editable), the tracks and why, and has Approve, Reject and Skip (keys `a`, `r`, `s`; `e` edits the name).
+- **Below minimum quality** is a box next to Done and Rejected, with its own page. A file that is too small, scored low or is damaged is **held**: never converted, only renamed and moved (**Rename and move only**), and it leaves the other queues. **Accept as is** returns it to normal. Approving a conversion checks the file's quality first. See docs/QUALITY.md.
 - **Approve together** approves everything in a list that qualifies, after showing what it will approve. Low-confidence files are never included, and duplicates are decided one at a time.
 - **Find duplicates** compares files of the same size across all shares (reading only what it must) and suggests keeping the copy already in place.
 - **Export** gives the same CSV report as the original tool.

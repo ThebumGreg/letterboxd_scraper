@@ -232,6 +232,8 @@ def decide(conn, row, rec, now=None):
         why = rec.get("unreadable_reason") or rec.get("audit_error") or rec.get("integrity_status") or "the analysis did not finish"
         return _set(conn, row["id"], now, record_id=rec["id"], status="blocked", message=f"Could not analyse the file: {why}")
     quality.request_for_import(conn, rec, now)              # a new file is measured whatever happens next; a low score only flags it (docs/QUALITY.md)
+    if quality.is_held(conn, rec["id"]):                    # low quality or damaged: brought in and named, never compressed or converted
+        return _set(conn, row["id"], now, record_id=rec["id"], status="nothing_to_do", message="Held from conversion: low quality or damaged. It stays as it is; ask for a better copy or accept it.", finished_at=now)
     plans, profile, cfg = _plans(conn, rec)
     size = size_policy.decide(rec, plans, cfg)
     if not plans and size.action != size_policy.COMPRESS and size.action != size_policy.REVIEW:
@@ -265,6 +267,8 @@ def queue(conn, intake_id, by, now=None):
         raise ValueError("The file has not been analysed yet.")
     if rec["path_key"] != row["path_key"]:
         raise ValueError("The record no longer matches the file.")
+    if quality.is_held(conn, rec["id"]):
+        raise ValueError("This file is held from conversion (low quality or damaged), so it is not converted. Accept it as is first to convert it.")
     plans, profile, cfg = _plans(conn, rec)
     size = size_policy.decide(rec, plans, cfg)
     if not plans and size.profile is None:

@@ -217,11 +217,14 @@ def dv_entry(rec, cfg):
 
 def recommendations(conn, cfg=None):
     """{'variant': [...], 'dv_remux': [...], 'declined': [...]}: what could be done, what a person declined, and what failed and can be tried again."""
-    taken = _actions(conn)
+    from synchub import quality
+    taken, held = _actions(conn), quality.held_ids(conn)
     cache = {}
     out = {VARIANT: [], DV_REMUX: [], "declined": []}
     for row in conn.execute("SELECT * FROM library_file WHERE analysis_status = 'completed' AND missing_since IS NULL AND unreadable_reason IS NULL ORDER BY recommended_name, file_name"):
         rec = dict(row)
+        if rec["id"] in held:                              # low quality or damaged: never converted, so no extra copy and no remux
+            continue
         rcfg = cfg or load_for(conn, rec, cache)
         for kind, label, make in ((VARIANT, rcfg.label, lambda r: variant_entry(r, rcfg)), (DV_REMUX, "", lambda r: dv_entry(r, rcfg))):
             entry = make(rec)
@@ -299,10 +302,12 @@ def approve(conn, kind, record_id, by, height=None, now=None, with_copy=True):
     """Queues the job for one film. Returns the job id. Raises VersionError with a message for the page."""
     if kind not in KINDS:
         raise VersionError("Unknown kind of action.")
-    from synchub import downloads
+    from synchub import downloads, quality
     rec = store.get_record(conn, record_id)
     if rec is None:
         raise VersionError("That file is not in the Library any more. Scan again.")
+    if quality.is_held(conn, record_id):
+        raise VersionError("This file is held from conversion (low quality or damaged). Accept it as it is first, or get a better copy.")
     cfg = load_for(conn, rec)
     if height is not None and kind == VARIANT:
         try:

@@ -51,7 +51,22 @@ The thresholds are starting points. Tune them after you have looked at a few fil
 
 ## The flag
 
-A file below the minimum resolution, or whose current check scores under *Flag a file scoring under* (default 60), is **Low quality**. The flagged files are listed in the **Below minimum quality** section of the **Library** tab (Media > Library), with the findings and the buttons below. The Library tab shows a **Below minimum quality** box next to Done, Rejected and the other boxes, with the count; **Open list** shows the list. The old address `/library/quality` opens it. The settings (minimum resolution, score limit, parts sampled, new downloads, Library pass) are on **Media > Options > Quality check settings**; they are yours to change, none is fixed. The Dashboard no longer carries a flagged-files line. *Accept as is* stops the flag for that file until the file changes; *Flag it again* undoes it.
+A file below the minimum resolution, or whose current check scores under *Flag a file scoring under* (default 60), is **Low quality**. The flagged files are listed on the **Below minimum quality** page (`/library/quality`), with the findings and the buttons below. The Library tab shows a **Below minimum quality** box next to Done, Rejected and the other boxes, with the count; **Open list** opens the page. The page has a search, a share filter, paging and **Export this list**, like the other Library lists. The settings (minimum resolution, score limit, parts sampled, new downloads, Library pass) are on **Media > Options > Quality check settings**; they are yours to change, none is fixed. The Dashboard no longer carries a flagged-files line. *Accept as is* stops the flag for that file until the file changes; *Flag it again* undoes it.
+
+## Held files: never converted
+
+A flagged file is **held** (below the minimum resolution, a current score under the limit, or decode errors from a damage check, and not accepted). A held file is never converted: no re-encode, remux, audio change, track removal, Dolby Vision remux, extra 1080p copy or compression. It can still be put in the right place.
+
+- **One page.** A held file leaves Ready, Suggested, Worth a look, Format conversion and Done and lives only on the Below minimum quality page. Files already Queued (a job exists), Rejected or Needs you keep their place there, with a badge on this page.
+- **Rename and move only** (button on each row) approves a rename inside the share (a file already on the destination share) or a byte for byte copy to the right folder. The picture, audio and tracks are never touched.
+- **Everything else on a row:** Request better copy, Show releases, Damage check, Check again and **Accept as is**. Accept as is is the only way back to normal conversion; there is no Convert anyway button.
+- **Enforced on the server.** Approving a held file (one, bulk, review one by one) only makes a copy or rename; a request to keep fewer tracks or use a converting profile is refused with a sentence. The Versions tab and the download pipeline skip held files (a held new import is brought in and left as it is).
+- **A job that already exists keeps running.** If its file becomes held afterwards, the Library record shows a warning; cancel the job on the Jobs page if you do not want it.
+- **Unchecked files** are held only for their resolution, since there is no score yet. Run the Library pass (and the damage check pass) before a bulk conversion so score and damage holds exist.
+
+### Check first, then convert
+
+Approving a **conversion** queues a quality check for that file (and a damage check when its pass is on) first. A file that passes gets its conversion job; a low or damaged one is held, goes back to pending and gets no job. A check that fails or is stopped also leaves the file pending (approve it again). Only files you approve are checked. A plain copy or rename never waits. Switch it off with **Before converting** on Options > Quality check settings. A file that already has a current check converts at once.
 
 ## Movie page: Your copies
 
@@ -61,7 +76,7 @@ For a film that Jellyfin knows, the movie page lists every file in the film's fo
 - **Remote copy**: a smaller extra version (for example `Heat (1995) - 1080p.mkv`).
 - **No smaller copy for remote viewing**: the full copy is above 1080p, extra versions are on and none exists. The Versions tab makes one.
 
-The film is matched to its files through the Jellyfin item's path and the share's *Jellyfin path* on the Storage page. A film at the top of a share (not in a folder of its own) is not matched, because its neighbours are other films.
+The film is matched to its files through every Jellyfin item linked to it: the item's path and the share's *Jellyfin path* (and *other mounts*) on the Storage page. Any other Library file whose cleaned name starts with the film's title and year is found too, wherever it sits, and says "found by name". A film at the top of a share matches only itself, because its neighbours are other films. When Jellyfin's path is not covered by any share, the card names it. Two mappings with the same Jellyfin path: the one that names a folder wins, and the Storage page warns when you save.
 
 ## Request a better copy (movies, through Radarr)
 

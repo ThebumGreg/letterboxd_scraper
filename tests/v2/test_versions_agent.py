@@ -70,6 +70,7 @@ def test_a_worker_makes_a_scaled_extra_version_beside_the_original(rig, conn):  
     source = rig.roots["media"] / "Movies/Heat (1995)/Heat (1995) Bluray-2160p.mkv"
     real_film(source)
     settings.set_value("variant_min_gb", "0", conn=conn)
+    settings.set_value("quality_min_height", "0", conn=conn)               # the test clip is tiny; a file under the minimum resolution is held
     settings.set_value("variant_height", "240", conn=conn)
     record_id = film(conn, info={"hdr": "sdr", "bit_depth": 8, "width": 640, "height": 360}, size_gb=0.001, audio=[agent_track(1, "ac3", 6)])
     conn.execute("UPDATE library_file SET size_bytes = ?, mtime = ?, duration_seconds = 3.0 WHERE id = ?", (source.stat().st_size, source.stat().st_mtime, record_id))

@@ -147,12 +147,12 @@ def to_app_path(root, rel, service="jellyfin"):
 
 
 def from_app_path(roots, path, service="jellyfin"):
-    """(share name, path inside the share) for a path as a program sees it, using the longest matching prefix over every share. None when nothing matches."""
+    """(share name, path inside the share) for a path as a program sees it, using the longest matching prefix over every share (two equal prefixes: the one that names a folder wins). None when nothing matches."""
     path = str(path or "").replace("\\", "/")
     best = None
     for root in roots:
         for prefix, folder in app_mappings(root, service):
-            if path.startswith(prefix + "/") and (best is None or len(prefix) > len(best[0])):
+            if path.startswith(prefix + "/") and (best is None or (len(prefix), bool(folder)) > (len(best[0]), bool(best[2]))):      # on a tie the mapping with a folder is the more specific one
                 best = (prefix, root["name"], folder)
     if best is None:
         return None
@@ -184,6 +184,19 @@ def _check_unique(conn, cleaned, root_id=None):
         a, b = cleaned["mount_point"], other["mount_point"]
         if a == b or a.startswith(b + "/") or b.startswith(a + "/"):
             raise StorageError(f"The mount point {a} overlaps {other['name']}'s ({b}). Every share needs its own folder, not one inside another.")
+
+
+def mapping_warning(conn):
+    """A sentence when two Jellyfin mappings use the same path (on one share or two): the one that names a folder wins, which is rarely what was meant when a share's main
+    path is also in its 'other mounts' lines. '' when every path is used once."""
+    seen, notes = {}, []
+    for root in list_all(conn):
+        for prefix, folder in app_mappings(root, "jellyfin"):
+            if prefix in seen:
+                notes.append(f"{prefix} is used twice (by {seen[prefix]} and {root['name']}{' / ' + folder if folder else ''})")
+            else:
+                seen[prefix] = f"{root['name']}{' / ' + folder if folder else ''}"
+    return ("Warning: " + "; ".join(notes) + ". Files are matched to the mapping that names a folder; clear the share's main Jellyfin path if Jellyfin mounts only pieces of it.") if notes else ""
 
 
 def create(conn, data):

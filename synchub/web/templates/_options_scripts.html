@@ -77,7 +77,7 @@
     }
     if ($('qSave')) $('qSave').addEventListener('click', async () => {
         const out = $('qSaved');
-        const body = { quality_samples: value('qSamples'), quality_slice_seconds: value('qSlice'), quality_flag_below: value('qBelow'), quality_min_height: value('qMin'), quality_on_download: value('qDownload'), quality_scan_library: value('qPass'), quality_scan_order: value('qOrder'), quality_paused: value('qPaused'), quality_damage_pass: value('qDamage') };
+        const body = { quality_samples: value('qSamples'), quality_slice_seconds: value('qSlice'), quality_flag_below: value('qBelow'), quality_min_height: value('qMin'), quality_on_download: value('qDownload'), quality_scan_library: value('qPass'), quality_scan_order: value('qOrder'), quality_paused: value('qPaused'), quality_damage_pass: value('qDamage'), quality_check_first: value('qFirst') };
         try {
             const data = await post('/api/library/quality/settings', body);
             out.className = 'small ms-2 ' + (data.ok ? 'text-success' : 'text-danger');

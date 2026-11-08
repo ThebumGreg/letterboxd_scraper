@@ -50,6 +50,8 @@ def library(rig):
 
 
 def test_a_scan_analyses_every_video_file_leaves_out_the_noise_and_fills_the_queues(rig):
+    from synchub import settings
+    settings.set_value("quality_min_height", "0")                      # tiny test clips: a file under the minimum resolution is held from the queues
     library(rig)
     rig.start()
     run = wait_run(rig, start(rig))
@@ -148,6 +150,8 @@ def test_an_agent_without_the_analysis_module_does_not_offer_to_scan(rig, monkey
 
 # ---------------------------------------------------------------- duplicates across both shares
 def test_a_duplicate_search_finds_the_same_file_on_both_shares_and_keeps_the_one_in_the_library(rig):
+    from synchub import settings
+    settings.set_value("quality_min_height", "0")                      # tiny test clips: a file under the minimum resolution is held from the queues
     media, tfiles = rig.roots["media"], rig.roots["tfiles"]
     placed = make_media(media / "Movies" / "Heat (1995)" / "Heat (1995).mkv", seconds=3)
     for where in (tfiles / "Downloads", tfiles / "Old"):

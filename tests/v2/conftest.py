@@ -36,6 +36,13 @@ def strict_network_guard(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def convert_without_check_first(monkeypatch):
+    """An approved conversion waits for the file's quality check; most tests are about the conversion itself. test_quality_hold.py turns the wait on."""
+    from synchub import quality
+    monkeypatch.setattr(quality, "check_first", lambda conn=None: False)
+
+
+@pytest.fixture(autouse=True)
 def no_ddns_watcher(monkeypatch):
     """A real IP change starts a background watcher that asks DNS servers; no test wants that unless it says so."""
     from synchub import ddns
