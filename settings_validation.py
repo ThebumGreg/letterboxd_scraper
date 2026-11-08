@@ -6,7 +6,7 @@ _SWITCH_KEYS = {
     "sonarr_enable_library_sync", "sonarr_enable_queue_addition", "sonarr_dry_run", "enable_notifications",
     "payload_logging_enabled", "dvr_enabled", "dvr_counts_as_library", "versions_on", "variant_stereo", "dv7_remux", "clean_names", "naming_tmdb_ids", "size_policy", "tv_size_policy", "gpu_encoding", "preview_auto", "quality_scan_library", "quality_paused", "quality_damage_pass", "quality_check_first", "log_service_jellyfin", "log_service_radarr", "log_service_sonarr",
     "log_service_tmdb", "log_service_dynu", "protect_enabled", "protect_verify_tls",
-    "dash_enabled", "dash_skip_busy", "dash_sleep_after", "dash_quote_on", "unifi_net_verify_tls",
+    "dash_enabled", "dash_close_when_left", "dash_skip_busy", "dash_sleep_after", "dash_quote_on", "unifi_net_verify_tls",
 }
 _INT_RANGES = {
     "scraper_interval_hours": (0, 8760), "letterboxd_interval_hours": (0, 8760), "serializd_interval_hours": (0, 8760),
@@ -105,6 +105,10 @@ def validate_setting(key, value):
     if key == "dash_no_school":
         from synchub.dashboard import config
         return config.clean_no_school(value)
+
+    if key == "dash_countdowns":
+        from synchub.dashboard import config
+        return config.clean_countdowns(value)
 
     if key in ("dash_start", "dash_end", "dash_presence_from"):
         import re

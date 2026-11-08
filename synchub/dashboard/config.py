@@ -142,5 +142,54 @@ def no_school_on(day, text=None):
     return None
 
 
+_COUNT = re.compile(r"(?:(\d{4})-)?(\d{2})-(\d{2})\s+(.+)")
+
+
+def clean_countdowns(text):
+    """Lines like '2026-12-21 Winter break' (once) or '03-14 Sam's birthday' (every year). -> (True, cleaned text) or (False, message)."""
+    lines = []
+    for line in text.replace("\r", "").split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        found = _COUNT.fullmatch(line)
+        if not found:
+            return False, f'"{line[:40]}" is not a countdown. Write 2026-12-21 Winter break, or 03-14 Sam\'s birthday for every year.'
+        try:
+            date(int(found.group(1) or 2024), int(found.group(2)), int(found.group(3)))      # 2024 is a leap year, so 02-29 is allowed
+        except ValueError:
+            return False, f'"{line[:40]}" has a date that does not exist.'
+        lines.append(f"{found.group(1) + '-' if found.group(1) else ''}{found.group(2)}-{found.group(3)} {found.group(4).strip()[:40]}")
+    return True, "\n".join(lines[:60])
+
+
+def countdowns(today, limit=3, horizon=90):
+    """The next few dates within `horizon` days: [{"label", "date", "days", "yearly"}], today first."""
+    out = []
+    for line in settings.get("dash_countdowns").split("\n"):
+        found = _COUNT.fullmatch(line.strip())
+        if not found:
+            continue
+        month, day, label, year = int(found.group(2)), int(found.group(3)), found.group(4).strip(), found.group(1)
+        try:
+            if year:
+                when = date(int(year), month, day)
+            else:
+                when = next(d for d in (_safe_date(today.year, month, day), _safe_date(today.year + 1, month, day)) if d and d >= today)
+        except (ValueError, StopIteration):
+            continue
+        gap = (when - today).days
+        if 0 <= gap <= horizon:
+            out.append({"label": label, "date": when.isoformat(), "days": gap, "yearly": not year})
+    return sorted(out, key=lambda c: (c["days"], c["label"]))[:limit]
+
+
+def _safe_date(year, month, day):
+    try:
+        return date(year, month, day)
+    except ValueError:                     # 29 February in a year that has none
+        return None
+
+
 def now():
     return datetime.now().astimezone()

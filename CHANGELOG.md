@@ -4,6 +4,8 @@
 
 **Faster TV dashboard setup.** On each school day of a student there is a **Copy to...** box (all other weekdays, or one day); each person has a **Duplicate** button (a student's copy keeps the school week but not the phone); and a student can **Copy the week from** another student. Everything stays editable afterwards.
 
+**Dashboard extras.** Active US National Weather Service alerts (moderate or worse) show as a banner, with a one-line hint (take an umbrella, take a jacket, snow, hot). New **Countdowns and birthdays** list (a full date counts down once, `MM-DD` repeats yearly) shows the next three within 90 days. When every student with a watched phone has left, the screen says **Everyone has left for school**; the new option *Close the dashboard early once every student with a watched phone has left* then closes it for the morning.
+
 **Per-student school days.** Each student can have their own **No school days** list and an optional **school calendar link**: all-day *No school*, *Holiday* or *Break* events close that student's day, and *Minimum day* or *Early release* events show as a note. The list under the people stays for everyone. The Ponderosa 2026-27 dates are in the project files (`school/ponderosa-no-school-2026-27.txt`).
 
 **Cleaner movie names (no migration).** Update SyncHub, then workers. Movie names drop release debris after the year (REPACK, UHD, DV, MA, 5.1, group) and leading site tags like [DEVIL-TORRENTS.PL]. The analysis version is bumped, so run a scan again: every file, including ones already moved into the destination share, gets a new suggested name, and the Library page offers "Rename in place" (folder and file) for those whose name changed.

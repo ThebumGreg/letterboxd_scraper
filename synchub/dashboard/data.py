@@ -28,4 +28,6 @@ def build(now=None):
     return {"now": now.isoformat(), "metric": config.metric(), "window": {"start": start, "end": end},
             "weather": weather.get(),
             "quote": quote.today(now.date()) if settings.get("dash_quote_on") == "1" else None,
+            "countdowns": config.countdowns(now.date()),
+            "all_left": school.all_left(now),
             "people": [person(p, now) for p in config.people()]}

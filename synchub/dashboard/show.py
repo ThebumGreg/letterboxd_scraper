@@ -8,7 +8,7 @@ import logging
 import time
 
 from synchub import settings
-from synchub.dashboard import config
+from synchub.dashboard import config, school
 from synchub.tv import orchestrator
 from synchub.tv.devices import DeviceError
 
@@ -150,6 +150,13 @@ def tick(now=None):
     state = _state(now.date())
     try:
         if in_window(now):
+            if state["shown"] and settings.get("dash_close_when_left") == "1" and school.all_left(now):
+                logger.info("[dashboard] everyone has left for school: closing the morning dashboard")
+                stop(now=now)
+                state = _state(now.date())
+                state["hidden"] = True                    # and it stays closed for the rest of the morning
+                _save(state)
+                return
             if state["shown"] or state["hidden"] or state["tries"] >= MAX_TRIES or time.time() - _last_try[0] < RETRY_SECONDS:
                 return
             _last_try[0] = time.time()

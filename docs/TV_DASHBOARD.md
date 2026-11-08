@@ -50,6 +50,12 @@ Rules, so a sleeping phone is not mistaken for someone leaving:
 - Phones use a **private Wi-Fi address** per network by default, so UniFi may show a different address from the phone's own. For your home Wi-Fi either turn private addresses off on the phone, or pick the address UniFi shows and leave it.
 - If UniFi cannot be reached the dashboard keeps working without presence and the Settings page shows the reason.
 
+## Alerts, hints, countdowns
+
+- **Weather alerts:** active US National Weather Service alerts of moderate or worse severity for your ZIP code show as a banner (nothing shows outside the US). A line such as *Take an umbrella* or *Cold this morning: take a jacket* appears under the forecast.
+- **Countdowns and birthdays:** one per line in Settings, `2026-12-21 Winter break` (once) or `03-14 Sam's birthday` (every year). The next three within 90 days are shown at the bottom.
+- **Everyone has left for school** shows once every student with a watched phone has left. The option *Close the dashboard early...* then closes the screen for the morning.
+
 ## What happens at the start and the end
 
 - At the start SyncHub checks the TV. If a **Jellyfin title is playing**, a **camera is showing**, or **another app is open** (and *Leave the TV alone* is ticked, the default) it does nothing and does not try again that morning. Otherwise it wakes the TV and opens the page. It tries three times, 90 seconds apart, and the last problem is shown on the Settings page.

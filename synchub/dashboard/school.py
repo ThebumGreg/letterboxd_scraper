@@ -118,6 +118,13 @@ def poll(now=None, client=None):
     return state
 
 
+def all_left(now):
+    """True when every student who is at school today and has a phone to watch has left (and there is at least one)."""
+    state = load_state(now.date())
+    watched = [k for k in tracked() if day_plan(k, now)["state"] == "school"]
+    return bool(watched) and all((state["kids"].get(k["name"]) or {}).get("state") == "left" for k in watched)
+
+
 def for_page(kid, now):
     """What the dashboard shows for one student."""
     plan = day_plan(kid, now)

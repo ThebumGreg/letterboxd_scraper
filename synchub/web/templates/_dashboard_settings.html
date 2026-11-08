@@ -50,6 +50,7 @@
             </div>
         </div>
         {{ switch('dash_skip_busy', 'Leave the TV alone if something is already playing or another app is open', settings.dash_skip_busy) }}
+        {{ switch('dash_close_when_left', 'Close the dashboard early once every student with a watched phone has left for school', settings.dash_close_when_left) }}
         {{ switch('dash_sleep_after', 'Put the TV back to sleep afterwards if the dashboard woke it', settings.dash_sleep_after) }}
         <hr>
         <h6 class="mb-2">Weather and quote</h6>
@@ -67,6 +68,9 @@
                 </select>
             </div>
         </div>
+        <label for="dash_countdowns" class="form-label mt-2">Countdowns and birthdays</label>
+        <textarea class="form-control font-monospace mb-1" id="dash_countdowns" name="dash_countdowns" rows="3" placeholder="2026-12-21 Winter break&#10;03-14 Sam's birthday">{{ settings.dash_countdowns }}</textarea>
+        <div class="form-text mb-3">One per line. A full date counts down once; <code>MM-DD</code> repeats every year. The next three within 90 days are shown at the bottom. Weather alerts (US National Weather Service) and a "take an umbrella or jacket" line appear by themselves.</div>
         {{ switch('dash_quote_on', 'Show a quote of the day (needs the internet; a built-in list is used when it is down)', settings.dash_quote_on) }}
         <button type="button" class="btn btn-outline-info btn-sm" data-test-service="dashboard_weather" data-test-fields="dash_zip,dash_units">Test weather</button>
         <span class="small ms-2" data-test-result="dashboard_weather" role="status"></span>
