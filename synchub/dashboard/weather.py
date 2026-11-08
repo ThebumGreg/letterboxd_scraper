@@ -55,6 +55,38 @@ def locate(place):
     return found
 
 
+SEVERE = {"Moderate", "Severe", "Extreme"}
+
+
+def alerts(where):
+    """Active US National Weather Service alerts of moderate or higher severity for this spot: [{"event", "severity", "headline"}]. Never raises (outside the US it just has none)."""
+    try:
+        res = http.request("weather", "alerts", "GET", "https://api.weather.gov/alerts/active", params={"point": f'{where["lat"]:.4f},{where["lon"]:.4f}'},
+                           headers={"User-Agent": "SyncHub family dashboard", "Accept": "application/geo+json"}, timeout=8)
+        if res.status_code != 200:
+            return []
+        found = [f.get("properties") or {} for f in (res.json().get("features") or [])]
+    except Exception:
+        return []
+    order = {"Extreme": 0, "Severe": 1, "Moderate": 2}
+    keep = sorted((a for a in found if a.get("severity") in SEVERE), key=lambda a: order[a["severity"]])
+    return [{"event": a.get("event") or "Weather alert", "severity": a["severity"], "headline": (a.get("headline") or "")[:160]} for a in keep[:2]]
+
+
+def hint(now_temp, rain_chances, today_code, metric):
+    """One short line of advice, or ''."""
+    snow = today_code in (71, 73, 75, 77, 85, 86)
+    if snow:
+        return "Snow today: bundle up"
+    if max(rain_chances or [0]) >= 50:
+        return "Take an umbrella"
+    if now_temp <= (7 if metric else 45):
+        return "Cold this morning: take a jacket"
+    if now_temp >= (32 if metric else 90):
+        return "Hot today: bring water"
+    return ""
+
+
 def fetch(place, metric):
     where = locate(place)
     params = {"latitude": where["lat"], "longitude": where["lon"], "timezone": "auto", "forecast_days": 5,
@@ -83,7 +115,9 @@ def fetch(place, metric):
     for i in range(start, min(start + 12, len(times)), 2):
         w, s = describe(hourly["weather_code"][i])
         hours.append({"time": times[i], "temp": round(hourly["temperature_2m"][i]), "rain": hourly["precipitation_probability"][i], "symbol": s})
-    return {"place": where.get("name") or "", "unit": "°C" if metric else "°F", "speed": "km/h" if metric else "mph",
+    rain = [h["rain"] for h in hours if h["rain"] is not None] + [d["rain"] for d in days[:1] if d["rain"] is not None]
+    return {"alerts": alerts(where), "hint": hint(round(cur["temperature_2m"]), rain, (daily.get("weather_code") or [None])[0], metric),
+            "place": where.get("name") or "", "unit": "°C" if metric else "°F", "speed": "km/h" if metric else "mph",
             "now": {"temp": round(cur["temperature_2m"]), "feels": round(cur["apparent_temperature"]), "words": words, "symbol": symbol, "wind": round(cur["wind_speed_10m"])},
             "days": days, "hours": hours, "sunrise": (daily.get("sunrise") or [""])[0], "sunset": (daily.get("sunset") or [""])[0]}
 

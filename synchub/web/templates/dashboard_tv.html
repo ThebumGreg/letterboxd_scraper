@@ -9,7 +9,7 @@
   :root { --bg:#0b0e14; --card:#141a24; --line:#232c3b; --text:#eef2f8; --dim:#93a1b8; --accent:#4dabf7; }
   * { box-sizing:border-box; }
   html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden; cursor:none; }
-  #wrap { height:100vh; padding:2.2vh 2.4vw; display:grid; grid-template-rows:auto 1fr auto; gap:2vh; transition:transform 60s linear; }
+  #wrap { height:100vh; padding:2.2vh 2.4vw; display:grid; grid-template-rows:auto auto 1fr auto; gap:2vh; transition:transform 60s linear; }
   header { display:grid; grid-template-columns:1.1fr 1fr; gap:2.4vw; align-items:start; }
   #clock { font-size:min(15vh,11vw); font-weight:200; letter-spacing:-.02em; line-height:1; font-variant-numeric:tabular-nums; }
   #clock small { font-size:.28em; font-weight:300; color:var(--dim); margin-left:.2em; }
@@ -30,6 +30,11 @@
   .ev:last-child { border-bottom:0; } .ev .t { color:var(--c); min-width:6.2em; font-variant-numeric:tabular-nums; } .ev .w { color:var(--dim); font-size:2.1vh; display:block; }
   .none, .err { color:var(--dim); font-size:2.6vh; } .err { color:#ffa94d; }
   .big { font-size:4.4vh; font-weight:500; } .good { color:#69db7c; } .warn { color:#ffd43b; } .left { color:#69db7c; }
+  #alerts .al { background:#3b2a12; border:1px solid #ff922b; color:#ffd8a8; border-radius:1.4vh; padding:.8vh 1vw; font-size:2.6vh; margin-bottom:1vh; }
+  #alerts .al.hi { background:#3b1414; border-color:#ff6b6b; color:#ffc9c9; }
+  #hint { font-size:2.8vh; color:#ffd43b; margin-top:1vh; }
+  #left { background:#10301c; border:1px solid #2f9e44; color:#b2f2bb; border-radius:1.4vh; padding:.8vh 1vw; font-size:3vh; text-align:center; }
+  #counts { font-style:normal; text-align:center; font-size:2.8vh; color:var(--dim); } #counts b { color:var(--text); font-weight:500; margin:0 .4em 0 1.4em; } #counts b:first-child { margin-left:0; }
   footer { text-align:center; font-size:3.2vh; color:var(--dim); font-style:italic; min-height:4.6vh; }
   footer b { color:var(--text); font-weight:400; } footer span { font-style:normal; font-size:.75em; margin-left:.6em; }
 </style>
@@ -40,8 +45,9 @@
     <div><div id="clock">--:--</div><div id="date"></div></div>
     <div id="weather"><div class="none">Loading the weather...</div></div>
   </header>
+  <div id="alerts"></div>
   <main id="people"></main>
-  <footer id="quote"></footer>
+  <footer><div id="counts"></div><div id="quote"></div></footer>
 </div>
 <script>
 (function () {
@@ -68,7 +74,20 @@
       html += '<div class="day"><b>' + (i === 0 ? "Today" : DOW[dt.getDay()].slice(0, 3)) + '</b><span class="sym">' + d.symbol + "</span>" + d.high + "° <span class=\"lo\">" + d.low + "°</span>" +
         (d.rain != null && d.rain >= 20 ? '<div class="rain">' + d.rain + "% rain</div>" : "") + "</div>";
     }
-    box.innerHTML = html + "</div>";
+    box.innerHTML = html + "</div>" + (w.hint ? '<div id="hint">' + esc(w.hint) + "</div>" : "");
+  }
+
+  function drawAlerts() {
+    var out = "", a = (data.weather && data.weather.alerts) || [], i;
+    for (i = 0; i < a.length; i++) { out += '<div class="al' + (a[i].severity === "Moderate" ? "" : " hi") + '"><b>' + esc(a[i].event) + "</b>" + (a[i].headline ? " · " + esc(a[i].headline) : "") + "</div>"; }
+    if (data.all_left) { out += '<div id="left">Everyone has left for school</div>'; }
+    $("alerts").innerHTML = out;
+  }
+
+  function drawCounts() {
+    var c = data.countdowns || [], out = "", i;
+    for (i = 0; i < c.length; i++) { out += "<b>" + esc(c[i].label) + "</b>" + (c[i].days === 0 ? "today!" : c[i].days === 1 ? "tomorrow" : "in " + c[i].days + " days"); }
+    $("counts").innerHTML = out;
   }
 
   function drawEvents(p) {
@@ -102,6 +121,7 @@
       html += '<div class="big ' + (mins < 0 ? "warn" : "") + '">' + (mins > 0 ? "Leave in " + (mins >= 60 ? Math.floor(mins / 60) + " h " + (mins % 60) + " min" : mins + " min") : mins >= -5 ? "Time to go!" : "Running late") + "</div>";
       html += '<div class="none">Leave by ' + hm(leave) + "</div>";
     }
+    if (s.note) { html += '<div class="big warn" style="font-size:3vh">' + esc(s.note) + "</div>"; }
     html += '<div class="none">School starts ' + hm(start) + (s.end ? ", ends " + hm(new Date(s.end)) : "") + "</div>";
     if (s.presence === "home") { html += '<div class="none">Phone is home</div>'; }
     return html;
@@ -114,6 +134,7 @@
 
   function draw() {
     drawWeather(data.weather);
+    drawAlerts(); drawCounts();
     var html = "";
     for (var i = 0; i < data.people.length; i++) {
       var p = data.people[i];

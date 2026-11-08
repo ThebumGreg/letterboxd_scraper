@@ -33,7 +33,14 @@
                 head.append(labeled('Color', color, 'col-4 col-md-2'));
                 const rm = el('button', 'btn btn-outline-danger btn-sm', 'Remove'); rm.type = 'button';
                 rm.addEventListener('click', () => { people.splice(idx, 1); save(); draw(); });
-                const rmBox = el('div', 'col-12 col-md-2 ms-md-auto text-md-end'); rmBox.append(rm); head.append(rmBox);
+                const dup = el('button', 'btn btn-outline-secondary btn-sm me-1', 'Duplicate'); dup.type = 'button';
+                dup.title = p.kind === 'school' ? 'A new student with the same school week (not the phone), to edit' : 'A new person with the same calendar link, to edit';
+                dup.addEventListener('click', () => {
+                    const c = JSON.parse(JSON.stringify(p)); c.name = (p.name || 'Student') + ' copy'; c.color = COLORS[people.length % COLORS.length];
+                    if (c.kind === 'school') { c.mac = ''; c.phone = ''; }
+                    people.splice(idx + 1, 0, c); save(); draw();
+                });
+                const rmBox = el('div', 'col-12 col-md-4 ms-md-auto text-md-end'); rmBox.append(dup, rm); head.append(rmBox);
                 card.append(head);
                 if (p.kind === 'school') {
                     const week = p.week = p.week || {};
@@ -43,9 +50,48 @@
                         const row = el('div', 'col-12 d-flex flex-wrap gap-2 align-items-end');
                         row.append(el('span', 'small fw-semibold pb-1', label)); row.lastChild.style.width = '2.5rem';
                         [['leave', 'Leave by'], ['start', 'School starts'], ['end', 'Ends']].forEach(([k, t]) => row.append(labeled(t, input('time', day[k], '', (v) => { day[k] = v; save(); }), 'col-auto')));
+                        const copy = el('select', 'form-select form-select-sm w-auto'); copy.title = 'Copy these times to other days (you can edit them afterwards)';
+                        copy.append(new Option('Copy to...', ''), new Option('All other weekdays', '*'));
+                        DAYS.filter(([o]) => o !== d).forEach(([o, l]) => copy.append(new Option(l, o)));
+                        copy.addEventListener('change', () => {
+                            if (!copy.value) return;
+                            DAYS.forEach(([o]) => { if (o !== d && (copy.value === '*' || copy.value === o)) week[o] = { leave: day.leave, start: day.start, end: day.end }; });
+                            save(); draw();
+                        });
+                        row.append(copy);
                         grid.append(row);
                     });
+                    const others = people.filter((o, j) => j !== idx && o.kind === 'school');
+                    if (others.length) {
+                        const from = el('select', 'form-select form-select-sm w-auto mb-2'); from.title = 'Replace this week with another student\'s (you can edit it afterwards)';
+                        from.append(new Option('Copy the week from...', ''), ...others.map((o) => new Option(o.name || '(no name)', String(people.indexOf(o)))));
+                        from.addEventListener('change', () => {
+                            if (from.value === '') return;
+                            const used = DAYS.some(([d]) => (week[d] || {}).leave);
+                            if (used && !confirm('Replace the school week of ' + (p.name || 'this student') + '?')) { from.value = ''; return; }
+                            p.week = JSON.parse(JSON.stringify(people[+from.value].week || {})); save(); draw();
+                        });
+                        card.append(from);
+                    }
                     card.append(grid, el('div', 'form-text mb-2', 'Leave a day blank for no school. Add a time for "Leave by" and "School starts" to show the day.'));
+                    const extra = el('div', 'row g-2 mb-2');
+                    const cal = input('url', p.ics, 'https://... or webcal:// (the school\'s calendar, optional)', (v) => { p.ics = v; save(); });
+                    const calTest = el('button', 'btn btn-outline-info btn-sm', 'Test'); calTest.type = 'button';
+                    const calOut = el('span', 'small ms-2');
+                    calTest.addEventListener('click', async () => {
+                        calOut.textContent = 'Reading...';
+                        try {
+                            const r = await (await fetch('/api/dashboard/test_calendar', { method: 'POST', headers: { ...json, ...csrf() }, body: JSON.stringify({ url: p.ics || '' }) })).json();
+                            calOut.textContent = r.message; calOut.className = 'small ms-2 ' + (r.ok ? 'text-success' : 'text-danger');
+                        } catch (e) { calOut.textContent = 'Failed: ' + e.message; }
+                    });
+                    const calBox = labeled('School calendar link (optional): all-day "No school", "Holiday" or "Break" events close the day; "Minimum day" or "Early release" events show as a note', cal, 'col-12 col-md-8');
+                    const calBtn = el('div', 'col-12 col-md-4 align-self-end'); calBtn.append(calTest, calOut);
+                    const ns = el('textarea', 'form-control form-control-sm font-monospace'); ns.rows = 3; ns.value = p.no_school || '';
+                    ns.placeholder = '2026-11-26 to 2026-11-27 Thanksgiving break';
+                    ns.addEventListener('input', () => { p.no_school = ns.value; save(); });
+                    extra.append(calBox, calBtn, labeled('No school days for this student (one per line: a date or range, then a name). Added to the list for everyone below.', ns, 'col-12'));
+                    card.append(extra);
                     const phone = el('div', 'row g-2 align-items-end');
                     const mac = input('text', p.mac, 'aa:bb:cc:dd:ee:ff', (v) => { p.mac = v; save(); });
                     phone.append(labeled('Phone Wi-Fi address (optional)', mac, 'col-12 col-md-5'));

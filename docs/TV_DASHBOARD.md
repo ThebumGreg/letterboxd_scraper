@@ -29,8 +29,9 @@ All of it is in **Settings, Connections, Morning TV dashboard** (and **UniFi Net
    - iCloud: in Calendar, share the calendar as a **public calendar** and copy the link (webcal://...).
    - Microsoft 365 / Outlook: *Settings, Calendar, Shared calendars, Publish a calendar*, choose *Can view all details*, copy the **ICS** link.
    - Add a *student* for each child at school: the leave-by, school start and end times for each school day (leave a day blank for no school).
+   To save typing: fill in one day and use **Copy to...** on that row (all other weekdays, or one day); **Duplicate** makes a new person with the same school week (not the phone) to edit; **Copy the week from** copies another student's week. All of it stays editable.
    Anyone with a calendar link can read that calendar, so treat the link like a password. If your account cannot publish an ICS link (some work accounts), that person cannot be added yet.
-4. **No school days**: one line per date or range, with a name (`2026-11-26 Thanksgiving`, `2026-12-21 to 2027-01-03 Winter break`). Students then show the name instead of a school day.
+4. **No school days**: each student has their own list and an optional **school calendar link** (an ICS address from the school or district website: all-day events named *No school*, *Holiday*, *Break*, *Staff development* and the like close that student's day, and *Minimum day* or *Early release* events show as a note on the screen). A school that only publishes a PDF calendar needs its dates typed in once a year. The list under **No school days for everyone** applies to all students. One line per date or range, with a name (`2026-11-26 Thanksgiving`, `2026-12-21 to 2027-01-03 Winter break`). Students then show the name instead of a school day.
 5. Press **Save** (the *Save* button of the Connections tab), then **Show on the TV now** to try it. **Close on the TV** takes it off. The link under the settings opens the same page in your browser, so you can see it on a phone or computer first.
 
 ### Wi-Fi presence ("Left for school")
@@ -48,6 +49,12 @@ Rules, so a sleeping phone is not mistaken for someone leaving:
 - Only home Wi-Fi present or not is used. Nothing tracks where anyone is.
 - Phones use a **private Wi-Fi address** per network by default, so UniFi may show a different address from the phone's own. For your home Wi-Fi either turn private addresses off on the phone, or pick the address UniFi shows and leave it.
 - If UniFi cannot be reached the dashboard keeps working without presence and the Settings page shows the reason.
+
+## Alerts, hints, countdowns
+
+- **Weather alerts:** active US National Weather Service alerts of moderate or worse severity for your ZIP code show as a banner (nothing shows outside the US). A line such as *Take an umbrella* or *Cold this morning: take a jacket* appears under the forecast.
+- **Countdowns and birthdays:** one per line in Settings, `2026-12-21 Winter break` (once) or `03-14 Sam's birthday` (every year). The next three within 90 days are shown at the bottom.
+- **Everyone has left for school** shows once every student with a watched phone has left. The option *Close the dashboard early...* then closes the screen for the morning.
 
 ## What happens at the start and the end
 

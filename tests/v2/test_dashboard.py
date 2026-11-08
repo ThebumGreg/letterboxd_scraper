@@ -97,7 +97,7 @@ def test_weather_looks_up_the_zip_once_and_caches(v2, monkeypatch):
     assert got["days"][0]["high"] == 44 and got["days"][0]["rain"] == 70 and got["days"][1]["words"] == "Clear"
     assert len(got["hours"]) == 6
     weather.get()
-    assert len(calls) == 2                                # one ZIP lookup and one forecast; the second get() came from the cache
+    assert len(calls) == 3 and "api.weather.gov" in calls[2]    # a ZIP lookup, the forecast and the alerts; the second get() came from the cache
 
 
 def test_weather_failure_gives_a_message_or_the_last_good_answer(v2, monkeypatch):
@@ -527,3 +527,117 @@ def test_test_buttons(client, v2, monkeypatch):
     settings.set_value("unifi_net_host", "10.0.0.1")
     settings.set_value("unifi_net_api_key", "k")
     assert "Network application" in client.get("/api/dashboard/clients").get_json()["message"]
+
+
+# ------------------------------------------------------------------ per-student no-school days and school calendars
+SCHOOL_ICS = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//t//EN
+BEGIN:VEVENT
+UID:a
+DTSTART;VALUE=DATE:20261109
+DTEND;VALUE=DATE:20261110
+SUMMARY:Student Holiday - No School
+END:VEVENT
+BEGIN:VEVENT
+UID:b
+DTSTART;VALUE=DATE:20261116
+DTEND;VALUE=DATE:20261117
+SUMMARY:Minimum Day
+END:VEVENT
+BEGIN:VEVENT
+UID:c
+DTSTART:20261117T150000Z
+DTEND:20261117T160000Z
+SUMMARY:Lunch break with the principal
+END:VEVENT
+END:VCALENDAR
+"""
+
+
+def test_a_students_own_no_school_days_do_not_close_the_others(v2):
+    sam = {**KID, "no_school": "2026-11-09 Ponderosa day"}
+    alex = {"name": "Alex", "kind": "school", "week": KID["week"]}
+    assert school.day_plan(sam, at(2026, 11, 9)) == {"state": "holiday", "label": "Ponderosa day"}
+    assert school.day_plan(alex, at(2026, 11, 9))["state"] == "school"
+    settings.set_value("dash_no_school", "2026-11-09 Everyone")
+    assert school.day_plan(alex, at(2026, 11, 9))["label"] == "Everyone"
+
+
+def test_a_school_calendar_can_close_a_day_or_add_a_note(v2, monkeypatch):
+    monkeypatch.setattr(calendars, "download", lambda url: (SCHOOL_ICS, False))
+    kid = {**KID, "ics": "https://school/cal.ics", "week": {"mon": KID["week"]["mon"]}}
+    assert school.day_plan(kid, at(2026, 11, 9)) == {"state": "holiday", "label": "Student Holiday - No School"}
+    note = school.day_plan(kid, at(2026, 11, 16))
+    assert note["state"] == "school" and note["note"] == "Minimum Day"
+    assert school.day_plan(kid, at(2026, 11, 23))["note"] == ""
+    monkeypatch.setattr(calendars, "download", lambda url: 1 / 0)
+    assert school.day_plan(kid, at(2026, 11, 9))["state"] == "school"          # an unreadable calendar changes nothing
+
+
+def test_a_timed_event_with_break_in_its_name_does_not_close_the_school(v2, monkeypatch):
+    monkeypatch.setattr(calendars, "download", lambda url: (SCHOOL_ICS, False))
+    kid = {**KID, "ics": "https://school/cal.ics", "week": {"tue": KID["week"]["mon"]}}
+    assert school.day_plan(kid, at(2026, 11, 17))["state"] == "school"
+
+
+def test_student_calendar_and_no_school_list_are_validated():
+    ok, text = config.clean_people(json.dumps([{"name": "Sam", "kind": "school", "ics": "webcal://s.example/c.ics", "no_school": "2026-11-26 to 2026-11-27 Thanksgiving break"}]))
+    assert ok and json.loads(text)[0]["ics"] == "https://s.example/c.ics" and json.loads(text)[0]["no_school"].startswith("2026-11-26 to")
+    assert not config.clean_people(json.dumps([{"name": "Sam", "kind": "school", "no_school": "someday"}]))[0]
+    assert not config.clean_people(json.dumps([{"name": "Sam", "kind": "school", "ics": "ftp://x"}]))[0]
+
+
+# ------------------------------------------------------------------ extras: alerts, hints, countdowns, everyone left
+def test_hint_and_alerts(v2, monkeypatch):
+    assert weather.hint(38, [10], 3, False) == "Cold this morning: take a jacket"
+    assert weather.hint(60, [10, 70], 3, False) == "Take an umbrella"
+    assert weather.hint(20, [0], 73, False) == "Snow today: bundle up"
+    assert weather.hint(95, [0], 0, False) == "Hot today: bring water"
+    assert weather.hint(65, [10], 0, False) == "" and weather.hint(5, [], 0, True) == "Cold this morning: take a jacket"
+    feats = {"features": [{"properties": {"event": "Wind Advisory", "severity": "Minor", "headline": "x"}},
+                          {"properties": {"event": "Flood Warning", "severity": "Severe", "headline": "River flooding"}},
+                          {"properties": {"event": "Red Flag Warning", "severity": "Moderate", "headline": "Fire weather"}}]}
+    monkeypatch.setattr(weather.http, "request", lambda *a, **k: Answer(feats))
+    got = weather.alerts({"lat": 33.8, "lon": -117.9})
+    assert [a["event"] for a in got] == ["Flood Warning", "Red Flag Warning"]
+    monkeypatch.setattr(weather.http, "request", lambda *a, **k: 1 / 0)
+    assert weather.alerts({"lat": 1, "lon": 2}) == []
+
+
+def test_countdowns(v2):
+    ok, text = config.clean_countdowns("2026-12-21 Winter break\n03-14 Sam's birthday\n02-29 Leap day")
+    assert ok and text.splitlines()[1] == "03-14 Sam's birthday"
+    assert not config.clean_countdowns("sometime Soon")[0] and not config.clean_countdowns("13-45 Nope")[0]
+    settings.set_value("dash_countdowns", "2026-11-12 Field trip\n11-09 Birthday\n2026-10-01 Past\n2027-03-01 Far away\n11-08 Today thing")
+    got = config.countdowns(date(2026, 11, 8))
+    assert [(c["label"], c["days"]) for c in got] == [("Today thing", 0), ("Birthday", 1), ("Field trip", 4)]
+    settings.set_value("dash_countdowns", "02-29 Leap day")
+    assert config.countdowns(date(2027, 12, 20), horizon=120)[0]["date"] == "2028-02-29"         # a yearly 29 February shows in leap years
+    assert config.countdowns(date(2026, 12, 20), horizon=120) == []                                # and nothing breaks in the others
+
+
+def test_everyone_left_and_closing_early(tv, monkeypatch):
+    settings.set_value("dash_people", json.dumps([KID, {**KID, "name": "Alex", "mac": "aa:bb:cc:dd:ee:01"}]))
+    morning = at(2026, 11, 9, 7, 0)
+    school.save_state({"day": "2026-11-09", "kids": {"Sam": {"state": "left"}, "Alex": {"state": "home"}}, "error": ""})
+    assert not school.all_left(morning)
+    show.tick(at(2026, 11, 9, 6, 31))
+    settings.set_value("dash_close_when_left", "1")
+    show.tick(at(2026, 11, 9, 7, 0))
+    assert tv.closed == []                                                          # Alex is still home
+    school.save_state({"day": "2026-11-09", "kids": {"Sam": {"state": "left"}, "Alex": {"state": "left"}}, "error": ""})
+    assert school.all_left(morning)
+    show.tick(at(2026, 11, 9, 7, 5))
+    assert tv.closed == ["com.phlox.tvwebbrowser"] and len(tv.opened) == 1
+    show.tick(at(2026, 11, 9, 7, 10))
+    assert len(tv.opened) == 1                                                      # not opened again this morning
+    assert data.build(morning)["all_left"] is True
+
+
+def test_the_tv_page_carries_the_new_pieces(client, v2, monkeypatch):
+    monkeypatch.setattr(weather.http, "request", lambda *a, **k: Answer(forecast_body()))
+    settings.set_value("dash_zip", "40.71, -74.00")
+    settings.set_value("dash_countdowns", "11-09 Birthday")
+    body = client.get(f"/dash/{config.token()}/data").get_json()
+    assert "alerts" in body["weather"] and "hint" in body["weather"] and "countdowns" in body and "all_left" in body

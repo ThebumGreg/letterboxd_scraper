@@ -42,6 +42,7 @@ DEFAULTS = {
     # the morning TV dashboard (docs/TV_DASHBOARD.md) and the UniFi Network connection it uses to see a phone leave the Wi-Fi
     "dash_enabled": "0", "dash_tv": "", "dash_app": "com.phlox.tvwebbrowser", "dash_start": "06:30", "dash_end": "08:30", "dash_days": "mon,tue,wed,thu,fri", "dash_skip_busy": "1", "dash_sleep_after": "1",
     "dash_zip": "", "dash_units": "us", "dash_quote_on": "1", "dash_people": "[]", "dash_no_school": "", "dash_presence_from": "06:30", "dash_presence_grace": "3",
+    "dash_countdowns": "", "dash_close_when_left": "0",
     "unifi_net_host": "", "unifi_net_verify_tls": "0",
     # quality checks (docs/QUALITY.md): how many slices of a film a worker samples, how long each is, the score under which a film is flagged, whether new downloads are
     # checked (off or flag) and whether the Library clean-up checks the films it has not looked at yet, newest or oldest first

@@ -88,6 +88,14 @@ def clean_people(text):
             mac = re.sub(r"[^0-9a-f]", "", str(p.get("mac") or "").lower())
             if mac and len(mac) != 12:
                 return False, f"{name}: the phone's Wi-Fi address (MAC) should look like aa:bb:cc:dd:ee:ff."
+            ics = re.sub(r"^webcal://", "https://", str(p.get("ics") or "").strip(), flags=re.I)
+            if ics and not re.match(r"^https?://\S{4,2000}$", ics):
+                return False, f"{name}: the school calendar link must be an address that starts with https:// (or webcal://)."
+            entry["ics"] = ics
+            ok, lines = clean_no_school(str(p.get("no_school") or ""))
+            if not ok:
+                return False, f"{name}: {lines}"
+            entry["no_school"] = lines
             entry["mac"] = ":".join(mac[i:i + 2] for i in range(0, 12, 2)) if mac else ""
             entry["phone"] = str(p.get("phone") or "").strip()[:60]
         out.append(entry)
@@ -123,15 +131,64 @@ def clean_no_school(text):
     return True, "\n".join(lines[:200])
 
 
-def no_school_on(day):
-    """The label of the no-school entry that covers this date ('No school' when it has none), else None."""
-    for line in settings.get("dash_no_school").split("\n"):
+def no_school_on(day, text=None):
+    """The label of the no-school entry that covers this date ('No school' when it has none), else None. `text` is one student's own list; by default the one for everybody."""
+    for line in (settings.get("dash_no_school") if text is None else text).split("\n"):
         found = re.fullmatch(r"(\d{4}-\d{2}-\d{2})(?: to (\d{4}-\d{2}-\d{2}))?\s*(.*)", line.strip())
         if found:
             first, last = date.fromisoformat(found.group(1)), date.fromisoformat(found.group(2) or found.group(1))
             if first <= day <= last:
                 return found.group(3).strip() or "No school"
     return None
+
+
+_COUNT = re.compile(r"(?:(\d{4})-)?(\d{2})-(\d{2})\s+(.+)")
+
+
+def clean_countdowns(text):
+    """Lines like '2026-12-21 Winter break' (once) or '03-14 Sam's birthday' (every year). -> (True, cleaned text) or (False, message)."""
+    lines = []
+    for line in text.replace("\r", "").split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        found = _COUNT.fullmatch(line)
+        if not found:
+            return False, f'"{line[:40]}" is not a countdown. Write 2026-12-21 Winter break, or 03-14 Sam\'s birthday for every year.'
+        try:
+            date(int(found.group(1) or 2024), int(found.group(2)), int(found.group(3)))      # 2024 is a leap year, so 02-29 is allowed
+        except ValueError:
+            return False, f'"{line[:40]}" has a date that does not exist.'
+        lines.append(f"{found.group(1) + '-' if found.group(1) else ''}{found.group(2)}-{found.group(3)} {found.group(4).strip()[:40]}")
+    return True, "\n".join(lines[:60])
+
+
+def countdowns(today, limit=3, horizon=90):
+    """The next few dates within `horizon` days: [{"label", "date", "days", "yearly"}], today first."""
+    out = []
+    for line in settings.get("dash_countdowns").split("\n"):
+        found = _COUNT.fullmatch(line.strip())
+        if not found:
+            continue
+        month, day, label, year = int(found.group(2)), int(found.group(3)), found.group(4).strip(), found.group(1)
+        try:
+            if year:
+                when = date(int(year), month, day)
+            else:
+                when = next(d for d in (_safe_date(today.year, month, day), _safe_date(today.year + 1, month, day)) if d and d >= today)
+        except (ValueError, StopIteration):
+            continue
+        gap = (when - today).days
+        if 0 <= gap <= horizon:
+            out.append({"label": label, "date": when.isoformat(), "days": gap, "yearly": not year})
+    return sorted(out, key=lambda c: (c["days"], c["label"]))[:limit]
+
+
+def _safe_date(year, month, day):
+    try:
+        return date(year, month, day)
+    except ValueError:                     # 29 February in a year that has none
+        return None
 
 
 def now():
