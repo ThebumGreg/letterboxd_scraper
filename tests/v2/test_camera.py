@@ -701,3 +701,22 @@ def test_a_roku_shows_a_camera_as_hls_in_play_on_roku_and_goes_home_to_close(mon
     assert d.view_stream("http://relay:1984/api/stream.m3u8?src=door", "ignored") == "sent"
     assert d.close_stream("ignored") == "pressed Home"
     assert sent == [("http://relay:1984/api/stream.m3u8?src=door", "Camera", "hls"), "Home"]
+
+
+def test_a_roku_that_answers_404_for_play_on_roku_is_tried_with_the_media_player_it_lists(monkeypatch):
+    from synchub.tv.devices import roku as rk
+    from synchub.tv.logbook import LogBook
+    d = rk.RokuDriver({"id": "roku", "name": "Roku", "host": "10.0.0.9"}, LogBook())
+    posts = []
+
+    class Resp:
+        def __init__(self, code):
+            self.status_code, self.ok, self.text = code, code < 400, ""
+
+    monkeypatch.setattr(rk.requests, "post", lambda url, timeout=0: posts.append(url) or Resp(200 if "/input/2213?" in url else 404))
+    monkeypatch.setattr(d, "apps", lambda: [{"id": "12", "name": "Netflix", "type": "appl"}, {"id": "2213", "name": "Roku Media Player", "type": "appl"}])
+    assert d.play_url("http://relay/x.m3u8", "Camera", "hls") == "stream sent to channel 2213"
+    assert [u.split("/input/")[1].split("?")[0] for u in posts] == ["15985", "2213"]
+    monkeypatch.setattr(d, "apps", lambda: [])
+    with pytest.raises(DeviceError, match="404"):
+        d.play_url("http://relay/x.m3u8", "Camera", "hls")

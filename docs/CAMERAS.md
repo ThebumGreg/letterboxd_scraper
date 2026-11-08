@@ -61,4 +61,4 @@ A Roku shows a camera full screen through its built-in **Play on Roku** channel,
 - Expect **5 to 15 seconds of delay** and no picture-in-picture. It is for looking at who is at the door, not for watching live movement. A TV with a player PC (see plans/tv-control-nuc-plan.md) will be faster.
 - **Close** presses Home, then SyncHub carries on with the title like on a Google TV (the Jellyfin app is opened again at the saved place).
 - The "Stream the TV opens" and "Video player app" Protect settings do not apply to a Roku; it always uses HLS.
-- Not tried on a real Roku yet. If the picture does not start, the Remote Tools log shows the "play on roku" call.
+- A Roku that answers 404 for Play on Roku (channel 15985) is tried with any "Play on Roku" or "Media Player" channel it lists. If none works the error says so. The Remote Tools log shows each "play on roku" call.

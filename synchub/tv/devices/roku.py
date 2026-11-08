@@ -28,6 +28,7 @@ class RokuDriver(Driver):
     label = "Roku / Roku TV (ECP)"
     capabilities = frozenset({"keys", "apps", "text", "power_on", "power_off", "launch", "icons", "url_play", "deeplink", "stream_view"})
     viewer_package = PLAY_ON_ROKU    # a camera opens in the Play on Roku channel, whatever app the Protect settings name for a Google TV
+    viewer_check = False              # which channel is in front is not checked (a fallback channel may play the stream)
     camera_stream_type = "hls"        # a Roku plays HLS or MP4 from a URL, never RTSP
     keymap = {
         "home": "Home", "back": "Back",
@@ -155,22 +156,42 @@ class RokuDriver(Driver):
         time.sleep(1)   # let the home screen settle before launching
         self.log("home", "", None, True, (time.perf_counter() - t0) * 1000, "went Home before opening the new item")
 
-    def play_url(self, url, title, fmt="mp4"):
-        """Start a video from a URL with the "Play on Roku" channel (no Jellyfin app or session needed)."""
-        query = f"t=v&u={quote(url, safe='')}&k=(null)&videoName={quote(title or 'Video', safe='')}&videoFormat={fmt}"
-        shown = f"POST /input/{PLAY_ON_ROKU}?" + SECRET.sub(r"\1***", query)   # the API key must never reach the log
-        t0 = time.perf_counter()
+    def _player_ids(self):
+        """Channel ids to try for playing a URL: the usual Play on Roku id first, then whatever this Roku lists under a matching name."""
+        ids = [PLAY_ON_ROKU]
         try:
-            r = requests.post(f"{self.base}/input/{PLAY_ON_ROKU}?{query}", timeout=25)
-        except requests.RequestException as e:
-            self.log("play on roku", shown, 0, False, (time.perf_counter() - t0) * 1000, SECRET.sub(r"\1***", str(e)))
-            raise DeviceError(f"Roku unreachable: {SECRET.sub(r'api_key=***', str(e))}")
-        ok = r.ok
-        self.log("play on roku", shown, r.status_code, ok, (time.perf_counter() - t0) * 1000, r.text[:300])
-        if not ok:
-            raise DeviceError(f"The Roku refused the stream (HTTP {r.status_code})")
-        self._cast_title, self._cast_at = title, time.time()
-        return "stream sent to Play on Roku"
+            for a in self.apps():
+                if re.search(r"play on roku|media player", a["name"], re.I) and a["id"] not in ids:
+                    ids.append(a["id"])
+        except DeviceError:
+            pass
+        return ids
+
+    def play_url(self, url, title, fmt="mp4"):
+        """Start a video from a URL with the "Play on Roku" channel (no Jellyfin app or session needed). A Roku that answers 404 for the usual
+        channel id gets the ids of the media player channels it lists tried instead."""
+        query = f"t=v&u={quote(url, safe='')}&k=(null)&videoName={quote(title or 'Video', safe='')}&videoFormat={fmt}"
+        candidates, tried = [PLAY_ON_ROKU], []
+        while candidates:
+            app = candidates.pop(0)
+            tried.append(app)
+            shown = f"POST /input/{app}?" + SECRET.sub(r"\1***", query)   # the API key must never reach the log
+            t0 = time.perf_counter()
+            try:
+                r = requests.post(f"{self.base}/input/{app}?{query}", timeout=25)
+            except requests.RequestException as e:
+                self.log("play on roku", shown, 0, False, (time.perf_counter() - t0) * 1000, SECRET.sub(r"\1***", str(e)))
+                raise DeviceError(f"Roku unreachable: {SECRET.sub(r'api_key=***', str(e))}")
+            self.log("play on roku", shown, r.status_code, r.ok, (time.perf_counter() - t0) * 1000, r.text[:300])
+            if r.ok:
+                self._cast_title, self._cast_at = title, time.time()
+                return f"stream sent to channel {app}"
+            if r.status_code != 404:
+                raise DeviceError(f"The Roku refused the stream (HTTP {r.status_code})")
+            if len(tried) == 1:
+                candidates = [i for i in self._player_ids() if i not in tried]
+        raise DeviceError("The Roku answered 404 for every media player channel it has (tried " + ", ".join(tried) + "). It has no channel that plays a "
+                          "video from an address, so cameras cannot be shown on it this way.")
 
     def view_stream(self, url, package):
         """Shows a camera full screen with the Play on Roku channel (HLS from the go2rtc relay; expect a few seconds of delay)."""

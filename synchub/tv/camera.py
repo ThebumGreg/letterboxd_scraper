@@ -52,6 +52,8 @@ PLAYER_LOOK = 4                # seconds after opening that the player must stil
 
 def _in_front(dev, package):
     """True when the player is the app on screen (or the TV cannot say)."""
+    if getattr(dev, "viewer_check", True) is False:      # a Roku may play the stream in any of several channels
+        return True
     try:
         app = (dev.status(quiet=True) or {}).get("app")
     except DeviceError:
