@@ -317,6 +317,23 @@ def test_clients_through_the_integration_api_with_paging(monkeypatch, v2):
     assert all(s[2] == "key" for s in seen)
 
 
+def test_a_list_without_mac_addresses_is_completed_from_the_client_details(monkeypatch, v2):
+    unifi_network._mac_by_id.clear()
+    asked = []
+
+    def routes(path, params):
+        if path == "/integration/v1/sites":
+            return Answer({"data": [{"id": "site1"}]})
+        if path.endswith("/clients"):
+            return Answer({"data": [{"id": "c1", "name": "Sam's iPhone", "type": "WIRELESS"}, {"id": "c2", "name": "Switch", "type": "WIRED", "macAddress": "aa:bb:cc:00:00:09"}], "totalCount": 2})
+        asked.append(path)
+        return Answer({"id": "c1", "type": "WIRELESS", "macAddress": "AA:BB:CC:00:00:07"})
+    client, _ = make_client(monkeypatch, routes)
+    assert client.online_macs() == {"aa:bb:cc:00:00:07", "aa:bb:cc:00:00:09"}
+    client.online_macs()
+    assert asked == ["/integration/v1/sites/site1/clients/c1"]                    # remembered, not asked again
+
+
 def test_clients_fall_back_to_the_older_api(monkeypatch, v2):
     def routes(path, params):
         if path.startswith("/integration"):
