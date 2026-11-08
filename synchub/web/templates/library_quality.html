@@ -1,0 +1,102 @@
+<!-- synchub/web/templates/library_quality.html: Below minimum quality, its own page like the Library queues -->
+{% extends "base.html" %}
+{% from "_quality.html" import size_text, quality_detail, quality_script with context %}
+{% block title %}Library: Below minimum quality{% endblock %}
+
+{% block content %}
+{% set act = true %}
+<nav aria-label="Queues" class="mb-3"><ul class="nav nav-pills flex-wrap gap-1">
+    <li class="nav-item"><a class="nav-link" href="{{ url_for('library_page') }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> Library</a></li>
+</ul></nav>
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div><h2 class="mb-1">Below minimum quality</h2>
+    <p class="text-body-secondary mb-0">Files smaller than your minimum resolution ({{ values.quality_min_height }}p; 0 means no minimum), files whose quality check scored under {{ flag_below }} out of 100, and damaged files (decode errors). A check samples a few short parts of a film and looks for blockiness, blur, interlacing, frozen picture, decode errors and too few bits for the picture; the scores are a guide, not a verdict. Scoring rules version {{ version }}.</p>
+    <p class="small mb-0 mt-2"><strong>These files are held from conversion.</strong> Nothing in them is changed: no re-encode, remux or track removal. <em>Rename and move only</em> still puts one in the right folder. Ask for a better copy, or <em>Accept as is</em> to send the file back to its normal queue.</p></div>
+    <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-outline-secondary" href="{{ url_for('library_quality_export', q=f.q, root=f.root) }}"><i class="bi bi-download" aria-hidden="true"></i> Export this list</a>
+        <button type="button" class="btn btn-outline-secondary" id="qStopAll">Stop all checks</button>
+        <button type="button" class="btn btn-outline-secondary" id="qClearAll" title="Removes stored scores, flags and Accept as is marks. The Library list is not touched.">Clear quality results</button>
+    </div>
+</div>
+<div id="qpMessage" class="alert d-none" role="status"></div>
+
+<div class="row g-3 mb-3">
+    <div class="col-6 col-md-3"><div class="panel p-3"><div class="fs-4">{{ counts.low }}</div><div class="small text-body-secondary">flagged</div></div></div>
+    <div class="col-6 col-md-3"><div class="panel p-3"><div class="fs-4">{{ counts.waiting }}</div><div class="small text-body-secondary">waiting for a worker</div></div></div>
+    <div class="col-6 col-md-3"><div class="panel p-3"><div class="fs-4">{{ counts.running }}</div><div class="small text-body-secondary">being checked</div></div></div>
+</div>
+
+<form class="row g-2 mb-3" method="get" action="{{ url_for('library_quality_page') }}">
+    <div class="col-md-6"><label for="fq" class="visually-hidden">Search</label><input class="form-control" id="fq" name="q" value="{{ f.q }}" placeholder="Search a name or a path"></div>
+    <div class="col-md-3"><label for="froot" class="visually-hidden">Share</label>
+        <select class="form-select" id="froot" name="root"><option value="">Every share</option>{% for r in roots %}<option value="{{ r }}"{% if r == f.root %} selected{% endif %}>{{ r }}</option>{% endfor %}</select></div>
+    <div class="col-md-3 d-flex gap-2"><button class="btn btn-outline-info" type="submit">Filter</button>{% if f.q or f.root %}<a class="btn btn-outline-secondary" href="{{ url_for('library_quality_page') }}">Clear</a>{% endif %}</div>
+</form>
+
+<div class="panel p-3 p-md-4 mb-4">
+    {% for d in rows %}
+    {% set r = d.r %}
+    <div class="{% if not loop.first %}border-top pt-2 mt-2{% endif %}" data-record="{{ d.id }}">
+        <div class="d-flex flex-wrap justify-content-between gap-2">
+            <strong style="overflow-wrap: anywhere;"><a class="text-decoration-none" href="{{ url_for('library_record', record_id=d.id) }}">{{ d.approved_name or d.recommended_name or d.file_name }}</a>
+                <span class="badge bg-danger ms-1">Held: low quality</span>
+                {% if d.where != 'held' %}<span class="badge bg-secondary ms-1" title="This file is on another Library page because of its decision or state.">{{ titles.get(d.where, d.where) }}</span>{% endif %}</strong>
+            <span class="text-body-secondary small">{{ d.resolution or '' }} · {{ size_text(d.size_bytes) }}{% if d.q_score is not none and d.sort_score == d.q_score %} · score {{ d.q_score|round|int }}{% endif %}</span>
+        </div>
+        <div class="small text-body-secondary" style="overflow-wrap: anywhere;">{{ d.root_name }}: {{ d.relative_path }}</div>
+        <div class="small mt-1"><i class="bi bi-folder2-open" aria-hidden="true"></i> {{ r.headline }}{% if r.steps %}<span class="text-body-secondary"> — {{ r.steps[0] }}</span>{% endif %}
+            {% if r.can_approve %}<button type="button" class="btn btn-sm btn-success py-0 ms-1" data-organize="{{ d.id }}" title="Renames inside its share or copies it unchanged to the right folder. The picture, audio and tracks are never touched.">Rename and move only</button>{% endif %}</div>
+        {{ quality_detail(d.id, d.quality_state, act) }}
+    </div>
+    {% else %}
+    <p class="small text-body-secondary mb-0">Nothing is flagged{% if f.q or f.root %} with this filter{% endif %}. {% if not counts.waiting and not counts.running and not recent %}No file has been checked yet: press <em>Check quality</em> on a film's page, or turn on the Library pass on the Options tab.{% endif %}</p>
+    {% endfor %}
+</div>
+
+{% if pages > 1 %}
+<nav aria-label="Pages"><ul class="pagination justify-content-center">
+    {% for n in range(1, pages + 1) %}<li class="page-item{% if n == page %} active{% endif %}"><a class="page-link" href="{{ url_for('library_quality_page', page=n, q=f.q, root=f.root) }}">{{ n }}</a></li>{% endfor %}
+</ul></nav>
+<p class="text-center small text-body-secondary">{{ total }} files in this list</p>
+{% endif %}
+
+{% if waiting %}
+<div class="panel p-3 mb-4"><h6>Waiting or running</h6>
+    {% for w in waiting %}<div class="small"><a href="{{ url_for('library_record', record_id=w.file_id) }}" class="text-decoration-none">{{ w.file_name }}</a> · {{ w.status }} · {{ w.source }}{% if w.message %} · {{ w.message }}{% endif %}</div>{% endfor %}
+</div>
+{% endif %}
+{% if recent %}
+<div class="panel p-3 mb-4"><h6>Latest results</h6>
+    {% for r in recent %}<div class="small"><a href="{{ url_for('library_record', record_id=r.file_id) }}" class="text-decoration-none">{{ r.file_name }}</a> · {{ r.message }}</div>{% endfor %}
+</div>
+{% endif %}
+
+<p class="small text-body-secondary mb-4">Change the minimum resolution and the score limit on the <a href="{{ url_for('library_options_page') }}#qualitySettings">Options</a> tab.</p>
+
+{{ quality_script() }}
+<script>
+(() => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const box = document.getElementById('qpMessage');
+    function say(text, ok) { box.textContent = text; box.className = 'alert ' + (ok ? 'alert-success' : 'alert-danger'); }
+    async function post(url, body) {
+        const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(body || {}) });
+        return res.json().catch(() => ({ ok: false, message: 'The server gave no answer.' }));
+    }
+    document.addEventListener('click', async (e) => {
+        const organize = e.target.closest('[data-organize]');
+        if (organize) {
+            organize.disabled = true;
+            const data = await post('/api/library/record/' + organize.dataset.organize + '/approve');
+            say(data.message || (data.ok ? 'Done.' : 'Failed.'), !!data.ok);
+            if (data.ok) setTimeout(() => location.reload(), 900); else organize.disabled = false;
+        }
+        if (e.target.closest('#qStopAll')) { const data = await post('/api/library/quality/stop-all'); say(data.message || 'Done.', !!data.ok); }
+        if (e.target.closest('#qClearAll') && confirm('Remove every stored quality result and Accept as is mark?')) {
+            const data = await post('/api/library/quality/clear'); say(data.message || 'Done.', !!data.ok); if (data.ok) setTimeout(() => location.reload(), 900);
+        }
+    });
+})();
+</script>
+{% endblock %}

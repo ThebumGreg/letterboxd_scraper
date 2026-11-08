@@ -15,6 +15,8 @@
             <select class="form-select form-select-sm" id="qOrder"><option value="newest"{% if values.quality_scan_order != 'oldest' %} selected{% endif %}>Newest files first</option><option value="oldest"{% if values.quality_scan_order == 'oldest' %} selected{% endif %}>Oldest files first</option></select></div>
         <div class="col-md-4"><label class="form-label small" for="qDamage">Damage check pass</label>
             <select class="form-select form-select-sm" id="qDamage"><option value="0"{% if values.quality_damage_pass != '1' %} selected{% endif %}>Off: only when asked</option><option value="1"{% if values.quality_damage_pass == '1' %} selected{% endif %}>On: read whole files for decode errors, one at a time</option></select></div>
+        <div class="col-md-4"><label class="form-label small" for="qFirst">Before converting</label>
+            <select class="form-select form-select-sm" id="qFirst"><option value="1"{% if values.quality_check_first != '0' %} selected{% endif %}>Check the file first; low quality or damaged files are held</option><option value="0"{% if values.quality_check_first == '0' %} selected{% endif %}>Convert without checking first</option></select></div>
         <div class="col-md-4"><label class="form-label small" for="qPaused">Automatic checks</label>
             <select class="form-select form-select-sm" id="qPaused"><option value="0"{% if values.quality_paused != '1' %} selected{% endif %}>Running</option><option value="1"{% if values.quality_paused == '1' %} selected{% endif %}>Paused: new downloads and the Library pass wait</option></select></div>
     </div>

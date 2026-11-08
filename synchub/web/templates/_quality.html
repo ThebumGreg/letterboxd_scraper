@@ -95,6 +95,7 @@
     <h5 class="mb-3">Your copies</h5>
     {% if not copies.files %}
     <p class="small text-body-secondary mb-0">No file of this film is in the Library yet. Scan its folder on the Library page, and check that the share's Jellyfin path (or its other Jellyfin mounts) is set on the Storage page.</p>
+    {% if copies.unmapped %}<p class="small text-warning mt-2 mb-0">Jellyfin has this film at {% for p in copies.unmapped %}<code>{{ p }}</code>{% if not loop.last %}, {% endif %}{% endfor %}, but no share on the Storage page covers that path. Add it under “Jellyfin: other mounts of this share”.</p>{% endif %}
     {% else %}
     <div class="d-flex flex-wrap gap-2 mb-3">
         <span class="badge bg-success"><i class="bi bi-film" aria-hidden="true"></i> Full quality copy: {{ copies.full_label }}</span>
@@ -107,7 +108,7 @@
     <div class="border-top pt-2 mt-2">
         <div class="d-flex flex-wrap justify-content-between gap-2">
             <strong style="overflow-wrap: anywhere;">{{ f.name }}</strong>
-            <span class="text-body-secondary small">{% if f.is_extra %}extra version{% elif f is sameas copies.main %}full copy{% endif %}</span>
+            <span class="text-body-secondary small">{% if f.is_extra %}extra version{% elif f is sameas copies.main %}full copy{% endif %}{% if f.found_by == 'name' %} · found by name{% endif %}</span>
         </div>
         <dl class="sd-facts small mb-1">
             <div><dt>Picture</dt><dd>{% if f.width and f.height %}{{ f.width }}×{{ f.height }}{% else %}unknown size{% endif %} · {{ f.picture }}{% if f.bit_depth %} · {{ f.bit_depth }}-bit{% endif %}</dd></div>

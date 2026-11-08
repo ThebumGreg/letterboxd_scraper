@@ -32,9 +32,10 @@ def register(app):
         try:
             with db.connection() as conn:
                 storage.create(conn, request.get_json(silent=True) or {})
+                warning = storage.mapping_warning(conn)
         except storage.StorageError as exc:
             return _fail(str(exc))
-        return jsonify(ok=True, message="Share added.")
+        return jsonify(ok=True, message=("Share added. " + warning).strip())
 
     @app.route("/api/storage/smb_login", methods=["POST"])
     def api_storage_smb_login():
@@ -57,9 +58,10 @@ def register(app):
         try:
             with db.connection() as conn:
                 storage.update(conn, root_id, request.get_json(silent=True) or {})
+                warning = storage.mapping_warning(conn)
         except storage.StorageError as exc:
             return _fail(str(exc))
-        return jsonify(ok=True, message="Saved. Generate the worker's setup files again if the address or mount point changed.")
+        return jsonify(ok=True, message="Saved. Generate the worker's setup files again if the address or mount point changed. " + warning, warning=warning)
 
     @app.route("/api/storage/<int:root_id>/delete", methods=["POST"])
     def api_storage_delete(root_id):

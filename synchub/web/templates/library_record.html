@@ -19,7 +19,7 @@
     <div class="col-lg-7">
         <div class="panel p-3 p-md-4 mb-3" id="recommendation">
             <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
-                <h4 class="mb-0">{{ r.headline }}</h4>{{ badge(r.confidence) }}
+                <h4 class="mb-0">{{ r.headline }}</h4><span>{% if r.held %}<span class="badge bg-danger me-1" title="Never converted. It may be renamed and moved.">Held: low quality</span>{% endif %}{{ badge(r.confidence) }}</span>
             </div>
             {% if rec.approval_status == 'approved' %}<div class="alert alert-success py-2 small mb-2">Approved by {{ rec.approval_decided_by }} on {{ rec.approval_decided_at[:10] }}{% if rec.approval_note %}: {{ rec.approval_note }}{% endif %}.</div>
             {% elif rec.approval_status == 'rejected' %}<div class="alert alert-secondary py-2 small mb-2">Rejected by {{ rec.approval_decided_by }} on {{ rec.approval_decided_at[:10] }}{% if rec.approval_note %}: {{ rec.approval_note }}{% endif %}.</div>{% endif %}
@@ -29,7 +29,7 @@
             {% elif r.path %}<p class="small mb-0">It will be placed at <code>{{ r.path }}</code> in the destination share.</p>{% endif %}
         </div>
 
-        <div class="panel p-3 mb-3" id="qualityPanel"><h6 class="mb-2">Picture quality</h6>{{ quality_detail(rec.id, quality_state, can('library')) }}</div>
+        <div class="panel p-3 mb-3" id="qualityPanel"><h6 class="mb-2">Picture quality{% if r.held %} <a class="small fw-normal ms-2" href="{{ url_for('library_quality_page') }}">All files below minimum quality</a>{% endif %}</h6>{{ quality_detail(rec.id, quality_state, can('library')) }}</div>
 
         {% if (r.can_approve or r.needs_name) and r.kind not in ('skip_duplicate',) and not decided %}
         <div class="panel p-3 p-md-4 mb-3" id="handling">

@@ -24,9 +24,9 @@ CHECK_VERSION = 2
 GRADES = (("good", 80), ("ok", 65), ("poor", 45), ("bad", 0))
 LIVE = ("queued", "running")
 JOB_STATUS = {"queued": "queued", "running": "running", "done": "done", "failed": "failed", "needs_review": "failed", "cancelled": "cancelled"}
-SOURCES = ("manual", "download", "cleanup")
+SOURCES = ("manual", "download", "cleanup", "convert")
 MODES = ("quality", "damage")
-PRIORITY = {"manual": 70, "download": 110, "cleanup": 5}
+PRIORITY = {"manual": 70, "download": 110, "cleanup": 5, "convert": 90}
 DAMAGE_IN_FLIGHT = 1                  # whole-file reads are heavy: one at a time
 CLEANUP_IN_FLIGHT = 3                 # the background pass never has more than this many checks waiting or running
 
@@ -407,6 +407,7 @@ def clear_results(conn, root=None):
 def sync_active(conn):
     for r in conn.execute("SELECT job_id FROM quality_check WHERE status IN ('queued', 'running') AND job_id IS NOT NULL").fetchall():
         sync(conn, r["job_id"])
+    release_waiting(conn)
 
 
 def accept(conn, file_id, by="someone"):
@@ -478,9 +479,87 @@ def _pass(mode, client=None):
     return queued
 
 
+# ---------------------------------------------------------------- check first, then convert
+def check_first(conn=None):
+    """Does an approved conversion wait for the file's quality check? On unless switched off in Options."""
+    return settings.get("quality_check_first", conn=conn) != "0"
+
+
+def wait_for_check(conn, file_id, by="someone"):
+    """Asks for the checks a conversion waits for and records the wait. Returns True when the conversion must wait, False when the file is already checked (or cannot be)."""
+    rec = _record(conn, file_id)
+    if rec is None or not check_first(conn):
+        return False
+    if conn.execute("SELECT 1 FROM convert_wait WHERE library_file_id = ?", (file_id,)).fetchone():
+        return True
+    need_quality = not is_current(latest(conn, file_id, done_only=True), rec)
+    need_damage = damage_pass(conn) and not is_current(latest(conn, file_id, done_only=True, mode="damage"), rec)
+    if not (need_quality or need_damage):
+        return False
+    try:
+        q = request(conn, file_id, by=by, source="convert") if need_quality else None
+        d = request(conn, file_id, by=by, source="convert", mode="damage") if need_damage else None
+    except (QualityError, jobs.JobError) as exc:
+        logger.info(f"[quality] no check before converting file {file_id}: {exc}")
+        return False
+    conn.execute("INSERT INTO convert_wait (library_file_id, created_at, requested_by, quality_check_id, damage_check_id) VALUES (?, ?, ?, ?, ?)", (file_id, db.now(), by, q, d))
+    return True
+
+
+def waiting_to_convert(conn, file_id):
+    return conn.execute("SELECT * FROM convert_wait WHERE library_file_id = ?", (file_id,)).fetchone() is not None
+
+
+def release_waiting(conn, cfg=None):
+    """Gives a conversion job to every waiting file whose checks are done and passed; holds the low quality and damaged ones; sends back the ones whose check
+    did not finish. Returns (queued, held)."""
+    from synchub.library import migrate, scan, store
+    cfg = cfg or scan.config(conn)
+    queued = held = 0
+    for w in conn.execute("SELECT * FROM convert_wait").fetchall():
+        fid, ids = w["library_file_id"], [i for i in (w["quality_check_id"], w["damage_check_id"]) if i]
+        rows = [get(conn, i) for i in ids]
+        if any(r and r["status"] in LIVE for r in rows):
+            continue
+        conn.execute("DELETE FROM convert_wait WHERE library_file_id = ?", (fid,))
+        rec = _record(conn, fid)
+        if rec is None or rec["approval_status"] != v.APPROVAL_APPROVED or rec["migration_status"] != v.MIGRATION_PENDING:
+            continue
+        if any(r and r["status"] != "done" for r in rows):
+            store.set_approval(conn, fid, v.APPROVAL_PENDING, "quality check", note="The quality check did not finish, so the file was not converted. Approve it again.")
+        elif is_held(conn, fid):
+            store.set_approval(conn, fid, v.APPROVAL_PENDING, "quality check", note="Held from conversion: low quality or damaged. It can still be renamed and moved.")
+            held += 1
+        else:
+            try:
+                queued += 1 if migrate.queue(conn, fid, cfg, w["requested_by"] or "quality check", checked=True) is not None else 0
+            except ValueError as exc:
+                logger.info(f"[quality] file {fid} not queued after its check: {exc}")
+    return queued, held
+
+
 # ---------------------------------------------------------------- lists and the movie page
-def low_quality(conn, limit=50):
-    """Files flagged low quality, worst first: under the minimum resolution, or a current check below the flag threshold, and not accepted. Each row carries `findings`."""
+def low_quality(conn, limit=50, match=None, root=None, offset=0):
+    """Files flagged low quality, worst first: under the minimum resolution, or a current check below the flag threshold, and not accepted. Each row carries `findings`.
+    `match` (text in the path) and `root` (a share) narrow the list; `offset` pages through it."""
+    out = _flagged(conn, match, root)
+    out = out[int(offset):int(offset) + int(limit)]
+    for d in out:
+        d["request"] = latest_request(conn, d["id"])
+    return out
+
+
+def is_held(conn, file_id):
+    """Is this one file held from conversion (flagged low quality or damaged, and not accepted)?"""
+    return bool(_flagged(conn, file_id=file_id))
+
+
+def held_ids(conn):
+    """The ids of the files held from conversion: flagged low quality (or damaged) and not accepted. Such a file may still be renamed and moved, never converted."""
+    return {d["id"] for d in _flagged(conn)}
+
+
+def _flagged(conn, match=None, root=None, file_id=None):
     below, wanted = flag_below(conn), min_height(conn)
     rows = conn.execute("""
         SELECT f.*, q.id AS check_id, q.score AS q_score, q.findings_json AS q_findings, q.finished_at AS q_finished, q.check_version AS q_version, q.size_bytes AS q_size, q.mtime AS q_mtime,
@@ -489,10 +568,15 @@ def low_quality(conn, limit=50):
                 ORDER BY z.id DESC LIMIT 1) AS damage_findings
         FROM library_file f
         LEFT JOIN quality_check q ON q.id = (SELECT MAX(id) FROM quality_check WHERE library_file_id = f.id AND mode = 'quality' AND status = 'done')
-        WHERE f.missing_since IS NULL AND f.analysis_status = 'completed'""").fetchall()
-    out = []
+        WHERE f.missing_since IS NULL AND f.analysis_status = 'completed'""" + (" AND f.id = ?" if file_id is not None else ""),
+        (file_id,) if file_id is not None else ()).fetchall()
+    out, needle = [], (match or "").lower()
     for r in rows:
         d = dict(r)
+        if root and d.get("root_name") != root:
+            continue
+        if needle and needle not in (d["source_path"] + " " + d["file_name"]).lower():
+            continue
         if d.pop("accepted"):
             continue
         findings = _json(d.pop("q_findings"), [])
@@ -506,9 +590,6 @@ def low_quality(conn, limit=50):
         d["sort_score"] = d["q_score"] if current and d["q_score"] is not None else (0 if small or damaged else 100)
         out.append(d)
     out.sort(key=lambda d: (d["sort_score"], d["id"]))
-    out = out[:int(limit)]
-    for d in out:
-        d["request"] = latest_request(conn, d["id"])
     return out
 
 
@@ -540,7 +621,7 @@ def latest_request(conn, file_id):
 
 
 def low_count(conn):
-    return len(low_quality(conn, limit=100000))
+    return len(_flagged(conn))
 
 
 def counts(conn):
@@ -561,30 +642,45 @@ def _title_key(text):
 
 
 def files_for_movie(conn, media_id):
-    """The Library files of a film. The film's Jellyfin item gives the main file's path; SyncHub turns it into a share and a path with the share's Jellyfin mappings
-    (storage page). Its other files are the ones in the same folder named after it (`Heat (1995) - 1080p.mkv` beside `Heat (1995).mkv`), or every file in the folder
-    when the folder is the film's own (its name starts with the film's title). A loose file in a shared folder like `Old Movies/` matches only itself.
-    [] when the film is not in Jellyfin or no mapping covers its path."""
-    item = conn.execute("""SELECT t.path, m.title FROM link l JOIN src_jellyfin_item t ON t.item_id = l.source_key JOIN media m ON m.id = l.entity_id
-                           WHERE l.source = 'jellyfin' AND l.entity_type = 'media' AND l.entity_id = ? AND t.removed_at IS NULL AND t.path IS NOT NULL
-                           ORDER BY t.item_id LIMIT 1""", (media_id,)).fetchone()
-    if not item:
-        return []
+    """The Library files of a film (see `find_movie_files`)."""
+    return find_movie_files(conn, media_id)[0]
+
+
+def find_movie_files(conn, media_id):
+    """([Library files of a film], [Jellyfin paths no storage mapping covers]). Every Jellyfin item linked to the film gives a main file's path; SyncHub turns each into
+    a share and a path with the share's Jellyfin mappings (storage page). Its other files are the ones in the same folder named after it (`Heat (1995) - 1080p.mkv`
+    beside `Heat (1995).mkv`), or every file in the folder when the folder is the film's own (its name starts with the film's title). A loose file in a shared
+    folder like `Old Movies/` matches only itself. Any other Library file whose cleaned name starts with the film's title and year is found by name too
+    (`found_by` is 'name' on those rows), wherever it sits."""
     from synchub import storage
-    found = storage.from_app_path(storage.list_all(conn), item["path"], "jellyfin")
-    if found is None:
-        return []
-    root, rel = found
-    folder, stem = folder_of(rel), _stem(rel)
-    rows = [dict(r) for r in conn.execute("SELECT * FROM library_file WHERE root_name = ? AND missing_since IS NULL ORDER BY size_bytes DESC", (root,))]
-    same_folder = [r for r in rows if folder_of(r["relative_path"]) == folder]
-    own_folder = bool(folder) and os.path.basename(folder) != "" and _title_key(item["title"]) and _title_key(os.path.basename(folder)).startswith(_title_key(item["title"]))
-    keep = []
-    for r in same_folder:
-        name = _stem(r["relative_path"])
-        if v.clean_relative(r["relative_path"]).casefold() == v.clean_relative(rel).casefold() or name == stem or name.startswith(stem + " - ") or own_folder:
-            keep.append(r)
-    return keep
+    items = conn.execute("""SELECT t.path, m.title, m.year FROM link l JOIN src_jellyfin_item t ON t.item_id = l.source_key JOIN media m ON m.id = l.entity_id
+                            WHERE l.source = 'jellyfin' AND l.entity_type = 'media' AND l.entity_id = ? AND t.removed_at IS NULL AND t.path IS NOT NULL
+                            ORDER BY t.item_id""", (media_id,)).fetchall()
+    roots, cache, found, unmapped = storage.list_all(conn), {}, {}, []
+    for item in items:
+        mapped = storage.from_app_path(roots, item["path"], "jellyfin")
+        if mapped is None:
+            unmapped.append(item["path"])
+            continue
+        root, rel = mapped
+        if root not in cache:
+            cache[root] = [dict(r) for r in conn.execute("SELECT * FROM library_file WHERE root_name = ? AND missing_since IS NULL ORDER BY size_bytes DESC", (root,))]
+        folder, stem = folder_of(rel), _stem(rel)
+        own_folder = bool(folder) and _title_key(item["title"]) and _title_key(os.path.basename(folder)).startswith(_title_key(item["title"]))
+        for r in cache[root]:
+            if folder_of(r["relative_path"]) != folder:
+                continue
+            name = _stem(r["relative_path"])
+            if v.clean_relative(r["relative_path"]).casefold() == v.clean_relative(rel).casefold() or name == stem or name.startswith(stem + " - ") or own_folder:
+                found.setdefault(r["id"], r)
+    media = conn.execute("SELECT title, year FROM media WHERE id = ?", (media_id,)).fetchone()
+    wanted = _title_key(media["title"]) + str(media["year"] or "") if media and media["year"] else ""
+    if wanted:
+        for row in conn.execute("SELECT * FROM library_file WHERE missing_since IS NULL AND media_type LIKE 'Movie%' ORDER BY size_bytes DESC"):
+            r = dict(row)
+            if r["id"] not in found and _title_key(_stem(r["relative_path"])).startswith(wanted):
+                found[r["id"]] = dict(r, found_by="name")
+    return sorted(found.values(), key=lambda r: -(r["size_bytes"] or 0)), unmapped
 
 
 def describe_file(conn, rec):
@@ -594,18 +690,19 @@ def describe_file(conn, rec):
     return {"id": rec["id"], "name": rec["file_name"], "size_bytes": rec["size_bytes"], "container": rec.get("container"), "codec": codec or None, "width": width, "height": height,
             "fps": fps, "video_kbps": kbps, "bits_per_pixel": bits_per_pixel(rec), "bit_depth": info.get("bit_depth"), "picture": extra_versions.picture_label(rec),
             "audio": rec.get("audio_codecs"), "audio_languages": rec.get("audio_languages"), "subtitles": rec.get("subtitle_languages"), "integrity": rec.get("integrity_status"),
-            "is_extra": extra_versions.is_version_file(rec["file_name"]), "analysed": rec["analysis_status"] == v.ANALYSIS_COMPLETED, "quality": state_for(conn, rec)}
+            "is_extra": extra_versions.is_version_file(rec["file_name"]), "found_by": rec.get("found_by"), "root": rec.get("root_name"), "path": rec.get("relative_path"), "analysed": rec["analysis_status"] == v.ANALYSIS_COMPLETED, "quality": state_for(conn, rec)}
 
 
 def copies(conn, media_id):
     """For the movie page: every file of the film, the full quality copy (the best file) and any smaller remote copies. `missing_remote` is true when the full copy is above
     1080p, extra versions are switched on and no smaller copy exists."""
-    files = [describe_file(conn, r) for r in files_for_movie(conn, media_id)]
+    found, unmapped = find_movie_files(conn, media_id)
+    files = [describe_file(conn, r) for r in found]
     if not files:
-        return {"files": [], "main": None, "remote": [], "missing_remote": False, "full_label": None}
+        return {"files": [], "main": None, "remote": [], "missing_remote": False, "full_label": None, "unmapped": unmapped}
     ranked = sorted(files, key=lambda f: ((f["height"] or 0), f["size_bytes"] or 0), reverse=True)
     main = next((f for f in ranked if not f["is_extra"]), ranked[0])
     remote = [f for f in ranked if f is not main and (f["is_extra"] or (f["height"] or 0) <= 1080) and (f["size_bytes"] or 0) < (main["size_bytes"] or 0)]
     missing = bool((main["height"] or 0) > 1080 and not remote and extra_versions.load(conn).on)
     label = f"{main['height']}p {main['picture']}" if main["height"] else main["picture"]
-    return {"files": ranked, "main": main, "remote": remote, "missing_remote": missing, "full_label": label}
+    return {"files": ranked, "main": main, "remote": remote, "missing_remote": missing, "full_label": label, "unmapped": unmapped}

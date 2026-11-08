@@ -183,7 +183,9 @@ def register(app):
             if rec is None:
                 return redirect(url_for("library_page"))
             cfg = rc.cfg_for(conn, rec, cfg, {})
-            rcm = rc.recommend(rec, cfg, lambda plans: rule_steps.for_record(conn, rec, plans))
+            rcm = rc.recommend(rec, cfg, lambda plans: rule_steps.for_record(conn, rec, plans), held=quality.is_held(conn, rec['id']))
+            if quality.waiting_to_convert(conn, rec["id"]):
+                rcm.notes = rcm.notes + ["Waiting for its quality check before the conversion job is made. A file that passes is converted; a low quality or damaged one is held."]
             events = store.events_for(conn, record_id)
             siblings = []
             if rec.get("duplicate_group"):
@@ -214,6 +216,8 @@ def register(app):
                     outcome = rc.apply_recommendation(conn, record_id, by, name=data.get("name"), keep_streams=keep or None, note=data.get("note"), cfg=cfg,
                                                       mode=data.get("mode") or None, profile_id=profile_id)
                     message = {"approved": "Approved.", "rejected": "Skipped: that copy will not be migrated."}.get(outcome, outcome[:1].upper() + outcome[1:] + ".")
+                    if outcome == "approved" and quality.waiting_to_convert(conn, record_id):
+                        message = "Approved. A quality check runs first; a file that passes is converted, a low quality or damaged one is held."
                 elif action == "tested":
                     rc.approve_after_testing(conn, record_id, by, data.get("note"), cfg=cfg)
                     message = "Approved, with your note."

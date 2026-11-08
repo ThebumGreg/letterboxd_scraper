@@ -38,9 +38,9 @@
                 {% if quality_box.running %}<span class="badge bg-primary">{{ quality_box.running }} being checked</span>{% endif %}
                 {% if quality_box.waiting %}<span class="badge bg-secondary">{{ quality_box.waiting }} waiting for a worker</span>{% endif %}
             </div>
-            <p class="small text-body-secondary flex-grow-1">Files under your minimum resolution or that scored low in a quality check. Ask for a better copy, check again or accept them as they are.</p>
+            <p class="small text-body-secondary flex-grow-1">Too small, scored low or damaged. These files are held: never converted, but they can still be renamed and moved. Ask for a better copy or accept them as they are.</p>
             <div class="d-flex gap-2 flex-wrap">
-                <a class="btn btn-sm btn-outline-secondary{% if not quality_box.low %} disabled{% endif %}" href="{{ url_for('library_page', quality=1) }}#belowMinimumSection"{% if not quality_box.low %} aria-disabled="true" tabindex="-1"{% endif %}>Open list</a>
+                <a class="btn btn-sm btn-outline-secondary{% if not quality_box.low %} disabled{% endif %}" href="{{ url_for('library_quality_page') }}"{% if not quality_box.low %} aria-disabled="true" tabindex="-1"{% endif %}>Open list</a>
             </div>
         </div>
     </div>

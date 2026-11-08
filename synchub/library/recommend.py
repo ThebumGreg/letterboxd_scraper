@@ -25,7 +25,7 @@ import os
 from typing import List, Optional
 
 from synchub import settings
-from synchub.library import findings, layout as media_layout, migrate, rule_steps, store
+from synchub.library import findings, layout as media_layout, migrate, profiles, rule_steps, store
 from synchub.library import vocab as db
 from synchub.library.vocab import LibraryConfig
 
@@ -35,6 +35,7 @@ _RANK = {HIGH: 3, MEDIUM: 2, LOW: 1}
 G_READY, G_SUGGESTED, G_CHECK = "ready", "suggested", "check"
 G_CONVERT, G_NEEDS, G_DONE = "convert", "needs_you", "done"
 G_REJECTED = "rejected"                # a person said no: not migrated, kept here so Done only means finished
+G_HELD = "held"                        # low quality or damaged: not converted, may be renamed and moved; shown only on the Below minimum quality page
 G_QUEUED = "queued"                    # approved and waiting for, or being worked on by, a worker: not done until the job finishes
 GROUP_ORDER = (G_READY, G_SUGGESTED, G_CHECK, G_CONVERT, G_NEEDS, G_QUEUED, G_DONE, G_REJECTED)
 
@@ -42,7 +43,7 @@ GROUP_ORDER = (G_READY, G_SUGGESTED, G_CHECK, G_CONVERT, G_NEEDS, G_QUEUED, G_DO
 TRANSCODE_SPEED = 1.5
 GROUP_TITLES = {
     G_READY: "Ready to approve", G_SUGGESTED: "Suggested changes", G_CHECK: "Worth a look",
-    G_CONVERT: "Format conversion", G_NEEDS: "Needs you", G_QUEUED: "Approved and queued", G_DONE: "Done", G_REJECTED: "Rejected",
+    G_HELD: "Below minimum quality", G_CONVERT: "Format conversion", G_NEEDS: "Needs you", G_QUEUED: "Approved and queued", G_DONE: "Done", G_REJECTED: "Rejected",
 }
 GROUP_HINTS = {
     G_READY: "Nothing unusual found. Approve and they are copied as they are.",
@@ -50,6 +51,7 @@ GROUP_HINTS = {
     G_CHECK: "A flag, such as no English audio. We suggest copying unchanged; look and approve.",
     G_CONVERT: "Older formats Jellyfin may have to transcode. We convert the copy to MKV/H.264: a lossless remux where possible, a re-encode (slower) where needed.",
     G_NEEDS: "These cannot be approved yet (unreadable files, incomplete scans, integrity problems), or an approved job failed or stopped and needs a person.",
+    G_HELD: "Too small, scored low or damaged. Never converted; they can still be renamed and moved. Ask for a better copy, or accept one as it is.",
     G_QUEUED: "Approved. A worker is, or soon will be, doing the move or conversion.",
     G_DONE: "Finished: migrated, already in place, or another version of a film.",
     G_REJECTED: "You said no to these. They are not migrated. Open one to undo the rejection.",
@@ -90,6 +92,7 @@ class Recommendation:
     override_allowed: bool = False  # "I tested it" override (integrity only)
     badges: list = dataclasses.field(default_factory=list)
     removals: list = dataclasses.field(default_factory=list)   # [{index,kind,language}] for the track editor
+    held: bool = False              # low quality or damaged: never converted, only renamed and moved
 
 
 def categories(rec):
@@ -158,8 +161,8 @@ def estimate_text(rec, mode):
     return f"Rough time: reads the whole file once ({size:.1f} GB), a few minutes on a fast connection."
 
 
-def recommend(rec, cfg=None, rule_steps=None) -> Recommendation:
-    """The suggestion for one record (a dict from the library_file table). `rule_steps` is a function giving what the profile's rules add (see rule_steps.py); it is only called when the plan is built."""
+def recommend(rec, cfg=None, rule_steps=None, held=False) -> Recommendation:
+    """The suggestion for one record (a dict from the library_file table). `rule_steps` is a function giving what the profile's rules add (see rule_steps.py); it is only called when the plan is built. `held`: the file is low quality or damaged (quality.held_ids): it is never converted and lives on the Below minimum quality page."""
     cfg = cfg or LibraryConfig()
     cats = categories(rec)
     path, path_error = _relative_path(rec, cfg)
@@ -173,11 +176,18 @@ def recommend(rec, cfg=None, rule_steps=None) -> Recommendation:
                  "manual_review": "Migration needs a person"}[rec["migration_status"]]
         notes = [rec["migration_last_error"]] if rec.get("migration_last_error") else []
         group = {"completed": G_DONE, "in_progress": G_QUEUED}.get(rec["migration_status"], G_NEEDS)       # a failed or stopped job needs a person, it is not done
-        return Recommendation(group, "done", "none", label, [], notes, HIGH, False, **base)
+        if held and group == G_DONE:
+            group, notes = G_HELD, notes + ["Low quality: already in the library. Ask for a better copy, or accept it as it is."]
+        elif held and group == G_QUEUED:
+            notes = notes + ["Held from conversion since this job was queued. The job keeps running; cancel it on the Jobs page if you do not want this file converted."]
+        return Recommendation(group, "done", "none", label, [], notes, HIGH, False, held=held, **base)
     if rec["approval_status"] == db.APPROVAL_APPROVED:
+        waiting = []
+        if held:
+            waiting = ["Held from conversion since it was approved. If a conversion job exists it keeps running; cancel it on the Jobs page if you do not want this file converted."]
         steps = (["Will be renamed inside its share. Nothing is copied and nothing in the file changes."] if rec.get("approved_mode") == "rename_only"
                  else ["Will be copied" + (" with the approved track changes" if rec.get("approved_track_changes_json") else " unchanged") + ", using the conversion profile"])
-        return Recommendation(G_QUEUED, "done", "none", "Approved for migration", steps, [], HIGH, False, **base)
+        return Recommendation(G_QUEUED, "done", "none", "Approved for migration", steps, waiting, HIGH, False, held=held, **base)
     if rec["approval_status"] == db.APPROVAL_REJECTED:
         return Recommendation(G_REJECTED, "done", "none", "Rejected: will not be migrated", [], [], HIGH, False, **base)
     from synchub import versions                       # imported here: versions uses the Library, not the other way round
@@ -209,6 +219,8 @@ def recommend(rec, cfg=None, rule_steps=None) -> Recommendation:
                               ["Reject it, or fix the file name at the source and scan again"],
                               [path_error], LOW, False, **base)
 
+    if held:
+        return _held(rec, cfg, base, path, path_error)
     if findings.in_place(rec, cfg):
         return Recommendation(G_DONE, "in_place", "none", "Already in the library, in the right place", [], [], HIGH, False, **base)
 
@@ -317,6 +329,25 @@ def recommend(rec, cfg=None, rule_steps=None) -> Recommendation:
                           removals=removals, **base)
 
 
+def _held(rec, cfg, base, path, path_error):
+    """A low quality or damaged file: no conversion step of any kind. What is left is putting it in the right place (a rename inside its share, or an unchanged copy)."""
+    notes = ["Held from conversion: low quality or damaged. Nothing in the file is changed. Ask for a better copy, or Accept as is to convert it normally."]
+    if path_error:
+        return Recommendation(G_HELD, "held", "none", "Cannot work out its place", ["Enter a valid name to organize it"], [f"No valid destination yet: {path_error}."] + notes,
+                              LOW, False, action=db.ACTION_COPY_RENAME, needs_name=True, held=True, **base)
+    name = media_layout.file_name(rec, cfg)
+    if findings.in_place(rec, cfg):
+        return Recommendation(G_HELD, "held", "none", "Already in the right place", [], notes, HIGH, False, held=True, **base)
+    if rec["root_name"] == cfg.destination_root and rename_path(rec, cfg) is not None:
+        return Recommendation(G_HELD, "held", "approve", f"Rename in place to “{name}”",
+                              [f"Move it inside {rec['root_name']} to {path}. Nothing is copied and nothing in the file changes."], notes, HIGH, True,
+                              action=db.ACTION_COPY_RENAME, mode="rename_only", held=True, **base)
+    if rec["root_name"] == cfg.destination_root:
+        return Recommendation(G_HELD, "held", "none", "Already in the right place", [], notes, HIGH, False, held=True, **base)
+    return Recommendation(G_HELD, "held", "approve", "Copy unchanged to the right folder", [f"Copy it byte for byte to {path}. Nothing in the file changes."], notes, HIGH, True,
+                          action=db.ACTION_COPY_RENAME, held=True, **base)
+
+
 # ---------------------------------------------------------------------------------------- queues
 
 def _sort_key(rec):
@@ -359,19 +390,20 @@ def cfg_for(conn, rec, cfg, cache):
 def classify(conn, cfg=None, match=None, root=None):
     """[(record, Recommendation)] for every record (optionally filtered), in display order."""
     cfg = cfg or LibraryConfig()
-    rows, cache, rules_cache = [], {}, {}
+    from synchub import quality
+    held, rows, cache, rules_cache = quality.held_ids(conn), [], {}, {}
     for rec in sorted(all_records(conn), key=_sort_key):
         if match and match.lower() not in (rec["source_path"] + " " + rec["file_name"]).lower():
             continue
         if root and rec.get("root_name") != root:
             continue
-        rows.append((rec, recommend(rec, cfg_for(conn, rec, cfg, cache), lambda plans, rec=rec: rule_steps.for_record(conn, rec, plans, rules_cache))))
+        rows.append((rec, recommend(rec, cfg_for(conn, rec, cfg, cache), lambda plans, rec=rec: rule_steps.for_record(conn, rec, plans, rules_cache), held=rec["id"] in held)))
     return rows
 
 
 def counts(conn, cfg=None, rows=None):
     """{group: {'total': n, 'high': n, 'medium': n, 'low': n}} for the overview."""
-    table = {g: {"total": 0, HIGH: 0, MEDIUM: 0, LOW: 0} for g in GROUP_ORDER}
+    table = {g: {"total": 0, HIGH: 0, MEDIUM: 0, LOW: 0} for g in GROUP_ORDER + (G_HELD,)}
     for _, r in (rows if rows is not None else classify(conn, cfg)):
         table[r.group]["total"] += 1
         table[r.group][r.confidence] += 1
@@ -406,7 +438,17 @@ def apply_recommendation(conn, record_id, by, name=None, keep_streams=None, note
     if rec is None:
         raise ValueError(f"no record {record_id}")
     cfg = cfg_for(conn, dict(rec, approved_profile_id=profile_id or rec.get("approved_profile_id")), cfg, {})        # the naming rule of the profile it is approved with
-    r = recommend(rec, cfg)
+    from synchub import quality
+    held = quality.is_held(conn, record_id)
+    r = recommend(rec, cfg, held=held)
+    if held:
+        if keep_streams:
+            raise ValueError("This file is held from conversion (low quality or damaged), so its tracks cannot be changed.")
+        if profile_id is not None:
+            chosen = profiles.get(conn, profile_id)
+            if chosen is not None and not chosen["move_only"] and chosen["video_codec"] != "keep":
+                raise ValueError("This file is held from conversion (low quality or damaged): it can only be renamed and moved, not re-encoded. Choose Accept as is first to convert it.")
+            profile_id = None
     if r.needs_name:
         if not name:
             raise ValueError("this file needs a valid name before it can be approved")

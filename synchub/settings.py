@@ -40,7 +40,7 @@ DEFAULTS = {
     "protect_enabled": "0", "protect_host": "", "protect_verify_tls": "0", "protect_quality": "medium", "protect_relay_worker": "", "protect_relay_host": "", "protect_relay_addr": "", "protect_viewer_app": "org.videolan.vlc", "protect_cameras": "", "protect_stream_type": "mp4",
     # quality checks (docs/QUALITY.md): how many slices of a film a worker samples, how long each is, the score under which a film is flagged, whether new downloads are
     # checked (off or flag) and whether the Library clean-up checks the films it has not looked at yet, newest or oldest first
-    "quality_samples": "10", "quality_slice_seconds": "30", "quality_flag_below": "60", "quality_on_download": "flag", "quality_scan_library": "0", "quality_scan_order": "newest", "quality_min_height": "1080", "quality_paused": "0", "quality_damage_pass": "0",
+    "quality_samples": "10", "quality_slice_seconds": "30", "quality_flag_below": "60", "quality_on_download": "flag", "quality_scan_library": "0", "quality_scan_order": "newest", "quality_min_height": "1080", "quality_paused": "0", "quality_damage_pass": "0", "quality_check_first": "1",
     "library_exclude_folders": "@eaDir\n#recycle\n.Recycle.Bin\n$RECYCLE.BIN\nSystem Volume Information\nlost+found\n.Trash-*",
 }
 

@@ -65,11 +65,11 @@ def _is_video(codec, wanted):
     return codec.startswith("hevc") or codec.startswith("h265") if wanted == "hevc" else codec.startswith("h264") or codec.startswith("avc")
 
 
-def plan_for(rec, cfg, profile=None, mode=None, size=None, rules=None):
+def plan_for(rec, cfg, profile=None, mode=None, size=None, rules=None, held=False):
     """(destination root, destination relative path, plan) for an approved record. Raises layout.LayoutError.
 
     `mode` 'rename_only' renames the file inside its own share and touches nothing else. Otherwise the profile decides: a move-only profile copies
-    the file exactly; the others apply their subtitle policy to the approved track changes and may re-encode the video."""
+    the file exactly (and so does every profile for a `held` file: low quality or damaged files are never converted); the others apply their subtitle policy to the approved track changes and may re-encode the video."""
     dest_rel = layout.relative_display(rec, cfg)
     source_ext = os.path.splitext(rec["relative_path"])[1]
     mode = mode if mode is not None else rec.get("approved_mode")
@@ -78,7 +78,7 @@ def plan_for(rec, cfg, profile=None, mode=None, size=None, rules=None):
         dest_rel = os.path.splitext(dest_rel)[0] + source_ext
         plan.update(op="rename", source_size=rec.get("size_bytes"), source_mtime=rec.get("mtime"))
         return rec["root_name"], dest_rel, plan
-    if profile and profile["move_only"]:
+    if held or (profile and profile["move_only"]):
         plan["op"] = "copy"
         return cfg.destination_root, os.path.splitext(dest_rel)[0] + source_ext, plan
     changes = [p for p in _json_list(rec.get("approved_track_changes_json")) if isinstance(p, dict) and p.get("op") in ("keep_tracks", "convert")]
@@ -131,7 +131,7 @@ def profile_for(conn, rec):
 TITLES = {"copy": "Copy", "convert": "Convert", "rename": "Rename"}
 
 
-def queue(conn, record_id, cfg, by="someone", force=False):
+def queue(conn, record_id, cfg, by="someone", force=False, checked=False):
     """Queues the processing job for an approved record. Returns the job id, or None when there is nothing to queue (not approved, already
     migrated at this revision, cancelled and not yet approved or queued again (`force`), or a job is already waiting)."""
     rec = store.get_record(conn, record_id)
@@ -143,15 +143,19 @@ def queue(conn, record_id, cfg, by="someone", force=False):
         return None
     if active_job(conn, record_id) is not None:
         return None
-    from synchub import downloads
+    from synchub import downloads, quality
     if downloads.busy(conn, rec):                                # the download pipeline is replacing this very file in place
         return None
     try:
         profile = profile_for(conn, rec)
         rules = profiles.rules(conn, profile)
-        dest_root, dest_rel, plan = plan_for(rec, dataclasses.replace(cfg, clean_names=bool(rules["clean_names"])), profile, size=size_policy.load(conn, profile), rules=rules)
+        held = quality.is_held(conn, record_id)                  # low quality or damaged: copied or renamed as it is, never converted
+        dest_root, dest_rel, plan = plan_for(rec, dataclasses.replace(cfg, clean_names=bool(rules["clean_names"])), profile, size=size_policy.load(conn, profile), rules=rules, held=held)
     except layout.LayoutError as exc:
         raise ValueError(f"cannot plan the destination: {exc}")
+    if plan["op"] == "convert" and not checked and quality.wait_for_check(conn, record_id, by):
+        store.event(conn, record_id, "user", "waiting_for_check", None, {"by": by})        # the conversion job comes when the quality check says the file is good enough
+        return None
     need = 0 if plan["op"] == "rename" else (rec["size_bytes"] or 0) * (2 if plan["op"] == "convert" else 1) + WORK_MARGIN_BYTES
     job_id = jobs.create(conn, "library", title=f"{TITLES[plan['op']]}: {v.final_name(rec)}", ref=(REF, record_id),
                          source=(rec["root_name"], rec["relative_path"]), dest=(dest_root, dest_rel), plan=plan, need_bytes=need)

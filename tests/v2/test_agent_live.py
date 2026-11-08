@@ -747,6 +747,7 @@ def test_a_radarr_import_is_scanned_converted_in_place_and_radarr_is_asked_to_re
     monkeypatch.setattr(arr, "RadarrClient", type("R", (), {"rescan_movie": lambda self, movie_id: rescans.append(movie_id)}))
     conn.execute("UPDATE storage_root SET radarr_path = '/movies' WHERE name = 'media'")
     settings.set_value("download_pipeline", "review", conn=conn)
+    settings.set_value("quality_min_height", "0", conn=conn)               # the test clip is tiny; a file under the minimum resolution is held and never converted
     conn.commit()
     make_avi(rig.roots["media"] / "Heat (1995)/Heat.1995.mkv")
     payload = {"eventType": "Download", "movie": {"id": 9, "title": "Heat", "folderPath": "/movies/Heat (1995)"},
