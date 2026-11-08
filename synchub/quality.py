@@ -267,7 +267,7 @@ def state_for(conn, rec, check=None):
     elif accepted and (scored_low or small):
         label = "Accepted as is"
     elif small:
-        label = "Low quality"
+        label = "Too small, needs a bigger copy"
     elif done is None:
         label = "Not checked"
     elif done["score"] is None:
@@ -291,6 +291,8 @@ def request(conn, file_id, by="someone", source="manual", now=None, mode="qualit
         mode = "quality"
     if rec.get("missing_since"):
         raise QualityError("This file is missing from its share, so it cannot be checked.")
+    if source in ("download", "cleanup") and below_minimum(rec, min_height(conn)):
+        raise QualityError("Too small: the picture is under your minimum resolution, so it is not checked automatically. It needs a bigger copy. Press Check quality to check it anyway.")
     if rec["analysis_status"] != v.ANALYSIS_COMPLETED or not rec.get("duration_seconds"):
         raise QualityError("The file has not been analysed yet. Scan its folder first.")
     waiting = conn.execute("SELECT id FROM quality_check WHERE library_file_id = ? AND mode = ? AND status IN ('queued', 'running') ORDER BY id DESC LIMIT 1", (file_id, mode)).fetchone()
@@ -426,14 +428,23 @@ def unaccept(conn, file_id):
 def due_files(conn, limit, mode="quality"):
     """Files with no current check of this kind and none waiting, in the order the setting gives."""
     order = "DESC" if newest_first(conn) else "ASC"
+    wanted, floor = int(limit), min_height(conn)
     rows = conn.execute(f"""
         SELECT f.* FROM library_file f
         WHERE f.missing_since IS NULL AND f.analysis_status = 'completed' AND f.duration_seconds > 0 AND f.video_codec IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM quality_check q WHERE q.library_file_id = f.id AND q.mode = :mode AND q.status IN ('queued', 'running'))
           AND NOT EXISTS (SELECT 1 FROM quality_check q WHERE q.library_file_id = f.id AND q.mode = :mode AND q.status = 'done' AND q.size_bytes = f.size_bytes AND q.mtime = f.mtime AND q.check_version = :version)
           AND NOT EXISTS (SELECT 1 FROM quality_check q WHERE q.library_file_id = f.id AND q.mode = :mode AND q.status = 'failed' AND q.size_bytes = f.size_bytes AND q.mtime = f.mtime AND q.created_at > datetime('now', '-3 days'))
-        ORDER BY f.first_seen_at {order}, f.id {order} LIMIT :limit""", {"mode": mode, "version": CHECK_VERSION, "limit": int(limit)}).fetchall()
-    return [dict(r) for r in rows]
+        ORDER BY f.first_seen_at {order}, f.id {order}""", {"mode": mode, "version": CHECK_VERSION}).fetchall()
+    out = []
+    for r in rows:                                   # files under the minimum resolution are not checked by the background passes: they need a bigger copy, not a score
+        rec = dict(r)
+        if mode == "quality" and below_minimum(rec, floor):
+            continue
+        out.append(rec)
+        if len(out) >= wanted:
+            break
+    return out
 
 
 def waiting_cleanup(conn, mode="quality"):

@@ -51,6 +51,8 @@ class Settings:
     tv_cap_share: float = 0.5              # an episode's ceiling as a share of a film's
     trigger_factor: float = 1.5            # compress only when the video bitrate is this many times over the ceiling
     safety_gb: dict = dataclasses.field(default_factory=lambda: {"2160": 45.0, "1080": 15.0})       # a film this big is compressed whatever its bitrate (0 = never)
+    trigger_mbps: Optional[dict] = None    # compress only above this video bitrate (Mbps) per picture class, 0 = never; None = ceiling x trigger_factor (the older rule)
+    rate_mode: str = "quality"             # target: an average-bitrate encode aimed at the ceiling | quality: a constant-quality (CRF) encode that the ceiling only caps
 
 
 @dataclasses.dataclass
@@ -82,11 +84,13 @@ def load(conn=None, profile=None):
     r = profile_rules.resolve(conn, profile)
     if settings.get("size_mode", conn=conn) == "size":            # the older rule: limits in GB (a hidden setting, kept so the old numbers still work)
         return dataclasses.replace(load_legacy(conn), on=r["size_policy"], tv_on=r["tv_size_policy"], crf=r["crf"], preset=r["preset"], gpu=r["gpu"], vmaf_mode=r["vmaf_mode"],
-                                   dv_profile_5=r["dv_profile_5"], dv_profile_7_8=r["dv_profile_7_8"])
+                                   dv_profile_5=r["dv_profile_5"], dv_profile_7_8=r["dv_profile_7_8"],
+                                   trigger_mbps={"2160": r["trigger_2160"], "1080": r["trigger_1080"], "720": r["trigger_720"], "sd": r["trigger_sd"]}, rate_mode=r["rate_mode"])
     return Settings(on=r["size_policy"], tv_on=r["tv_size_policy"], crf=r["crf"], preset=r["preset"], gpu=r["gpu"], vmaf_mode=r["vmaf_mode"],
                     dv_profile_5=r["dv_profile_5"], dv_profile_7_8=r["dv_profile_7_8"], mode="bitrate",
                     caps_mbps={"2160": r["cap_2160"], "1080": r["cap_1080"], "720": r["cap_720"], "sd": r["cap_sd"]}, tv_cap_share=r["tv_cap_share"],
-                    trigger_factor=r["trigger_factor"], safety_gb={"2160": r["safety_gb_2160"], "1080": r["safety_gb_1080"]})
+                    trigger_factor=r["trigger_factor"], safety_gb={"2160": r["safety_gb_2160"], "1080": r["safety_gb_1080"]},
+                    trigger_mbps={"2160": r["trigger_2160"], "1080": r["trigger_1080"], "720": r["trigger_720"], "sd": r["trigger_sd"]}, rate_mode=r["rate_mode"])
 
 
 def load_legacy(conn=None):
@@ -129,6 +133,14 @@ def picture_class(width, height):
     if width >= 1800 or height >= 1000:
         return "1080"
     return "720" if width >= 1200 or height >= 700 else "sd"
+
+
+def trigger_kbps(cfg, klass, movie=True):
+    """The video bitrate (kbps) above which a picture of this class is compressed; 0 means never. An episode's share of a film's applies to it as well."""
+    share = 1 if movie else cfg.tv_cap_share
+    if cfg.trigger_mbps is None:
+        return cfg.caps_mbps[klass] * 1000 * share * cfg.trigger_factor
+    return float(cfg.trigger_mbps.get(klass) or 0) * 1000 * share
 
 
 def _height_floor(height):
@@ -194,11 +206,13 @@ def decide(rec, plans=(), cfg=None):
         height_class = picture_class(width, height)
         cap_kbps = cfg.caps_mbps[height_class] * 1000 * (1 if movie else cfg.tv_cap_share)
         safety = (cfg.safety_gb.get(height_class) or 0) if movie else 0
-        over_bitrate = source_kbps > cap_kbps * cfg.trigger_factor
+        trigger = trigger_kbps(cfg, height_class, movie)
+        over_bitrate = trigger > 0 and source_kbps > trigger
         over_size = bool(safety) and after > safety * GIB
         if not (over_bitrate or over_size):
-            return Decision(NONE, notes=[f"The video runs at about {source_kbps / 1000:.1f} Mbps; the ceiling for this picture is {cap_kbps / 1000:g} Mbps and it is only touched above "
-                                         f"{cap_kbps * cfg.trigger_factor / 1000:.1f} Mbps."])
+            if trigger <= 0:
+                return Decision(NONE, notes=["Pictures of this size are not compressed (the re-encode limit is off)."])
+            return Decision(NONE, notes=[f"The video runs at about {source_kbps / 1000:.1f} Mbps; it is only compressed above {trigger / 1000:g} Mbps (and then aimed at {cap_kbps / 1000:g} Mbps)."])
         target_kbps_plan = min(cap_kbps, source_kbps * SOURCE_SHARE)
         if target_gb:
             target_kbps_plan = max(1.0, (target_gb * GIB * BUDGET_SHARE - kept_bytes) * 8 / duration / 1000)
@@ -255,6 +269,8 @@ def decide(rec, plans=(), cfg=None):
     profile = {"video_codec": "hevc", "crf": cfg.crf, "preset": cfg.preset, "ten_bit": True if keep_hdr or bit_depth >= 10 else True, "audio_kbps": None,
                "maxrate_kbps": maxrate, "bufsize_kbps": maxrate * 2, "max_bytes": int(ceiling * GIB), "target_bytes": int(target_bytes), "size_policy": True,
                "deinterlace": bool(info.get("interlaced")), "gpu": cfg.gpu, "vmaf_mode": cfg.vmaf_mode}
+    if bitrate_mode and cfg.rate_mode == "target":
+        profile["rate_mode"] = "target"                      # the encoder aims at the bitrate (maxrate / headroom) instead of a constant quality
     if keep_hdr:
         profile["hdr"] = {"kind": keep_hdr, **{k: info.get(k) for k in ("transfer", "primaries", "matrix", "master_display", "max_cll") if info.get(k)}}
     return Decision(REVIEW if reasons else COMPRESS, reasons, notes, profile, numbers)
@@ -290,7 +306,7 @@ def apply(plan, decision, dest_rel=None):
         change["target_extension"] = ".mkv"
         dest_rel = dest_rel.rsplit(".", 1)[0] + ".mkv" if "." in dest_rel.rsplit("/", 1)[-1] else dest_rel + ".mkv"
     chosen = out.get("profile") if isinstance(out.get("profile"), dict) and out["profile"].get("video_codec") == "hevc" else None
-    cap = {k: v for k, v in decision.profile.items() if k in ("maxrate_kbps", "bufsize_kbps", "max_bytes", "target_bytes", "size_policy", "deinterlace", "hdr", "gpu", "vmaf_mode")}
+    cap = {k: v for k, v in decision.profile.items() if k in ("maxrate_kbps", "bufsize_kbps", "max_bytes", "target_bytes", "size_policy", "deinterlace", "hdr", "gpu", "vmaf_mode", "rate_mode")}
     profile = {**chosen, **cap} if chosen else dict(decision.profile)
     needs = list(out.get("needs") or [])
     if "profiles" not in needs:

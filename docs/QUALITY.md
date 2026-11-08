@@ -104,7 +104,7 @@ Not run against a live Radarr from here: the calls are Radarr v3's documented on
 
 ## Quality test: standard or AI (Media > Options)
 
-A test card to compare today's check with an AI model on one file. Type part of a file name, choose **Standard**, **AI** or **Both**, press *Run test*, and the table below shows both results side by side, with the worker's own row on the Jobs tab (`AI quality test: <file>`).
+**The AI test is an experiment.** It stays off by default, never flags a file, never asks Radarr for a better copy and never changes a score; only the standard check above is used. The card is kept for trying models later. A test card to compare today's check with an AI model on one file. Type part of a file name, choose **Standard**, **AI** or **Both**, press *Run test*, and the table below shows both results side by side, with the worker's own row on the Jobs tab (`AI quality test: <file>`).
 
 - **Standard** is the usual ffmpeg check above.
 - **AI** is a `quality_ai` job that only a worker reporting the `quality_ai` feature takes. It takes 3 frames from each sampled part of the film (HDR is tone-mapped to SDR first, and anything wider than 1920 pixels is scaled down), and scores every frame with three models from the `pyiqa` library: **MUSIQ**, **TOPIQ** (no-reference) and **CLIP-IQA**. Each reports a 0 to 100 mean (higher is better). **AI** and **Both** stay greyed out until an online worker has the feature.
@@ -120,3 +120,8 @@ The AI layer is PyTorch (CPU build) and the three models, about 1 GB, built into
 - **Weights** are downloaded at build time, so the running worker needs no internet. If a download fails the image still builds without the layer and the build output says so; the Workers page then shows no AI feature. The choice is a file, `AI_QUALITY`, in the worker's build folder; `update-worker.sh --ai-status` prints `on` or `off`, and `--ai-quality on|off` changes it.
 - **GPU:** the default build is CPU only. An NVIDIA card needs the CUDA build (`AI_TORCH_INDEX=https://download.pytorch.org/whl/cu124` as a build arg) and the GPU given to the container; set `SYNCHUB_AI_DEVICE` to force `cpu`, `cuda` or `xpu`.
 - **Licence:** `pyiqa` is PolyForm Noncommercial. Fine for a home server; check it before using SyncHub commercially.
+
+
+## Files under the minimum resolution
+
+A file whose picture is smaller than your minimum resolution (Settings, *Minimum resolution*) is not checked by the background passes (new downloads and the Library pass). It shows **Too small, needs a bigger copy** instead of a score, because the standard score judges how clean the encode is, not how big the picture is, and a clean 640x352 file would otherwise look "good". Press *Check quality* on the file to check it anyway.

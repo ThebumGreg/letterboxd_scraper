@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+**Simpler conversion and quality settings (migration 039).** Update SyncHub first, then the workers (the bitrate-target encode needs a new worker; an old worker keeps using constant quality).
+- **Compression is decided by video bitrate only.** Per picture size there is now a *re-encode above* number and an *aim for* number: 4K 50 then 35 Mbps, 1080p 25 then 12 Mbps. 720p and smaller are left alone (0 = never). Audio is not counted. The "x ceiling" trigger and the GB limits are gone from the main card (the GB limits live under Advanced and are off, 0). Saved settings are moved to the new defaults by the migration; Space saver keeps its own behaviour (21 and 9 Mbps).
+- **Bitrate-target encode.** New *Encoding* choice: *Aim for the bitrate* (default; an average-bitrate x265 encode at the aim-for number, so the size is predictable) or *Constant quality, never above the bitrate* (the older CRF encode, often smaller). In target mode the CRF is not used. Single pass.
+- **The extra 1080p copy is offered for every 4K film** (the "for films over (GB)" box is 0 by default; a number still limits it). It stays a recommendation you approve.
+- **Dolby Vision profile 7 is converted to 8.1 by default** (no re-encode, so the file is not also compressed; profile 8 is still compressed as HDR10 unless you choose Leave it).
+- **TV episodes follow the same bitrate rules** (scaled by the episode share) and stay off by default.
+- **Clearer Options page.** The compress card is split into *When to compress* and *How to compress* with a one-line "Right now" summary; default profile, delete-source and Radarr/Sonarr come first; the profile list shows each profile's description and badges for what it changes; profile rule boxes show what the Options page says now in grey.
+- **Quality checks skip files under the minimum resolution.** New downloads and the Library pass no longer check them; they show **Too small, needs a bigger copy** instead of a score. *Check quality* on a file still runs. The AI test stays an off-by-default experiment (docs say so). The seconds-per-part box says 10 is faster but less accurate.
+
 **Cameras on a Roku.** The remote's Cameras button now works on a Roku: the camera opens full screen in Play on Roku from the relay's HLS stream (a few seconds of delay, no picture-in-picture), and Close goes Home and carries on with the title. See docs/CAMERAS.md.
 
 **Hold low quality files (migration 038).**

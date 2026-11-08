@@ -16,10 +16,18 @@ def film(size_gb=60, width=3840, height=2160, video_kbps=60000, duration=7200, s
             "frame_rate": 24.0, "streams_json": json.dumps(streams or []), "video_codec": "hevc", **extra}
 
 
+def OLD_NUMBERS(conn):
+    """The numbers these tests were written with (18/8 Mbps ceilings, a trigger of 1.5 x, safety sizes of 45 and 15 GB, constant quality); the defaults have moved on."""
+    for key, value in {"cap_mbps_2160": "18", "cap_mbps_1080": "8", "trigger_mbps_2160": "27", "trigger_mbps_1080": "12", "trigger_mbps_720": "6", "trigger_mbps_sd": "3",
+                       "safety_gb_2160": "45", "safety_gb_1080": "15", "rate_mode": "quality"}.items():
+        settings.set_value(key, value, conn=conn)
+
+
 @pytest.fixture
 def bitrate(conn):
     settings.set_value("size_mode", "bitrate", conn=conn)
     settings.set_value("size_policy", "1", conn=conn)
+    OLD_NUMBERS(conn)
     conn.commit()
     return conn
 
@@ -293,6 +301,7 @@ def test_the_record_page_shows_the_bitrate_against_the_ceiling_and_the_vmaf_of_a
     from .library_helpers import add
     settings.set_value("size_mode", "bitrate", conn=conn)
     settings.set_value("size_policy", "1", conn=conn)
+    OLD_NUMBERS(conn)
     conn.commit()
     rec_id = add(conn, rel="Heat (1995)/Heat (1995).mkv", name="Heat (1995).mkv", size=int(60 * GIB), media_type="Movie/Unknown")
     info = {"hdr": "sdr", "bit_depth": 10, "width": 3840, "height": 2160, "video_kbps": 60000}

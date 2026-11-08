@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from flask import Response, jsonify, redirect, render_template, request, send_file, url_for
 
 from synchub import db, downloads, jobs, previews, quality, settings, storage, versions
-from synchub.library import cleanup, findings, migrate, profiles, recommend as rc, report, rule_steps, scan, size_policy, store
+from synchub.library import cleanup, findings, migrate, profiles, recommend as rc, rules as profile_rules, report, rule_steps, scan, size_policy, store
 from synchub.library import vocab as v
 from settings_validation import validate_setting
 
@@ -88,7 +88,7 @@ def overview(conn):
             "downloads": _with_previews(conn, downloads.recent(conn, 15)), "preview_summary": previews.summary(conn), "review_first": previews.review_first(conn), "trust_after": previews.trust_after(conn),
             "preview_seconds": previews.clip_seconds(conn), "preview_keep_days": previews.keep_days(conn), "preview_auto": previews.auto_make(conn), "download_summary": downloads.summary(conn), "originals_days": downloads.retention_days(conn), "size": size_policy.load(conn), "lookups": {"confidence": CONFIDENCE_FLOORS},
             "profiles": profiles.all_profiles(conn), "default_profile_id": profiles.default(conn)["id"], "cleanup": cleanup.summary(conn), "attention": migrate.attention(conn), "missing_count": store.count_missing(conn),
-            "versions_config": dataclasses.asdict(versions.load(conn)), "heights": (480, 720, 1080, 1440),
+            "rule_defaults": profile_rules.defaults(conn), "versions_config": dataclasses.asdict(versions.load(conn)), "heights": (480, 720, 1080, 1440),
             "profile_options": {"codecs": profiles.VIDEO_CODECS, "presets": profiles.PRESETS, "subtitles": profiles.SUBTITLE_LABELS}}
 
 
@@ -395,7 +395,7 @@ def register(app):
     def api_library_settings():
         data = request.get_json(silent=True) or {}
         keys = ("library_destination_root", "library_tv_folder", "library_movie_folder", "library_integrity_mode", "library_tail_seconds", "library_exclude_folders", "download_pipeline", "originals_retention_days",
-                "size_policy", "size_mode", "cap_mbps_2160", "cap_mbps_1080", "cap_mbps_720", "cap_mbps_sd", "size_trigger_factor", "safety_gb_2160", "safety_gb_1080", "tv_cap_share",
+                "size_policy", "size_mode", "cap_mbps_2160", "cap_mbps_1080", "cap_mbps_720", "cap_mbps_sd", "size_trigger_factor", "trigger_mbps_2160", "trigger_mbps_1080", "trigger_mbps_720", "trigger_mbps_sd", "rate_mode", "safety_gb_2160", "safety_gb_1080", "tv_cap_share",
                 "naming_style", "audio_mode", "clean_names", "naming_tmdb_ids", "versions_on", "variant_min_gb", "variant_height", "variant_label", "variant_crf", "variant_maxrate_kbps", "variant_audio_kbps", "variant_stereo", "dv7_remux", "size_crf", "tv_size_policy", "gpu_encoding", "vmaf_mode", "dolby_vision_profile_5", "dolby_vision_profile_7_8",
                 "review_first", "trust_after", "preview_seconds", "preview_keep_days", "preview_auto",
                 "library_default_profile", "source_delete_after_days", "arr_after_migration", "arr_apply_when")
@@ -422,14 +422,15 @@ def register(app):
         """How many scanned files the size rules would compress with the values on the form (nothing is saved or queued)."""
         data = request.get_json(silent=True) or {}
         values = {}
-        for key in ("cap_mbps_2160", "cap_mbps_1080", "cap_mbps_720", "cap_mbps_sd", "size_trigger_factor", "safety_gb_2160", "safety_gb_1080", "tv_cap_share"):
+        for key in ("cap_mbps_2160", "cap_mbps_1080", "cap_mbps_720", "cap_mbps_sd", "trigger_mbps_2160", "trigger_mbps_1080", "trigger_mbps_720", "trigger_mbps_sd", "safety_gb_2160", "safety_gb_1080", "tv_cap_share"):
             ok, result = validate_setting(key, str(data.get(key, "")))
             if not ok:
                 return jsonify(ok=False, error=result), 400
             values[key] = float(result)
         with db.connection() as conn:
             base = size_policy.load(conn)
-            cfg = dataclasses.replace(base, on=True, tv_on=data.get("tv_size_policy") == "1", mode="bitrate", tv_cap_share=values["tv_cap_share"], trigger_factor=values["size_trigger_factor"],
+            cfg = dataclasses.replace(base, on=True, tv_on=data.get("tv_size_policy") == "1", mode="bitrate", tv_cap_share=values["tv_cap_share"],
+                                      trigger_mbps={"2160": values["trigger_mbps_2160"], "1080": values["trigger_mbps_1080"], "720": values["trigger_mbps_720"], "sd": values["trigger_mbps_sd"]},
                                       caps_mbps={"2160": values["cap_mbps_2160"], "1080": values["cap_mbps_1080"], "720": values["cap_mbps_720"], "sd": values["cap_mbps_sd"]},
                                       safety_gb={"2160": values["safety_gb_2160"], "1080": values["safety_gb_1080"]})
             count = {"movies": [0, 0], "episodes": [0, 0]}

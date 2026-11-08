@@ -689,6 +689,8 @@ def clean_size_cap(profile):
     maxrate = _positive_int(profile.get("maxrate_kbps"), 400_000)
     if maxrate:
         out.update(maxrate_kbps=maxrate, bufsize_kbps=_positive_int(profile.get("bufsize_kbps"), 800_000) or maxrate * 2)
+    if profile.get("rate_mode") == "target" and maxrate:
+        out["rate_mode"] = "target"                      # aim at the bitrate (an average-bitrate encode) instead of a constant quality
     if _positive_int(profile.get("max_bytes"), 1 << 50):
         out["max_bytes"] = int(profile["max_bytes"])
     if profile.get("deinterlace"):
@@ -737,7 +739,9 @@ def video_arguments(video, profile):
         params, extra = hevc_extra_args(profile or {})
         filters = (["yadif"] if (profile or {}).get("deinterlace") else []) + ([scale_filter(profile)] if scale_filter(profile) else [])
         yadif = ["-vf", ",".join(filters)] if filters else []
-        return yadif + ["-c:v", "libx265", "-crf", str((profile or {}).get("crf") or 23), "-preset", (profile or {}).get("preset") or "medium", "-pix_fmt", pix, "-tag:v", "hvc1", "-x265-params", params] + extra
+        rate = ["-b:v", f"{int(profile['maxrate_kbps'] / MAXRATE_HEADROOM)}k"] if (profile or {}).get("rate_mode") == "target" and (profile or {}).get("maxrate_kbps") else \
+            ["-crf", str((profile or {}).get("crf") or 23)]
+        return yadif + ["-c:v", "libx265"] + rate + ["-preset", (profile or {}).get("preset") or "medium", "-pix_fmt", pix, "-tag:v", "hvc1", "-x265-params", params] + extra
     return ["-c:v", "libx264", "-crf", str((profile or {}).get("crf") or 20), "-preset", (profile or {}).get("preset") or "medium", "-pix_fmt", "yuv420p"]
 
 

@@ -206,7 +206,7 @@ def test_the_settings_can_be_saved_from_the_library_page_and_are_validated(app, 
     assert client.post("/api/library/settings", json={"size_crf": "5"}).get_json()["ok"] is False
     assert client.post("/api/library/settings", json={"dolby_vision_profile_5": "yes"}).get_json()["ok"] is False
     page = client.get("/library").get_data(as_text=True)
-    assert "Compress films that run well over" in page and 'id="setCap2160" value="20"' in page
+    assert "Compress films with a very high bitrate" in page and 'id="setCap2160" value="20"' in page
 
 
 def test_a_download_of_a_big_film_is_compressed_automatically_when_the_policy_and_the_pipeline_are_on(conn):
