@@ -3,7 +3,7 @@ from config import DEFAULT_REQUEST_DELAY_RANGE, DEFAULT_USER_DELAY_RANGE
 from settings_validation import validate_setting
 from synchub import db
 
-SECRET_FIELDS = ("tmdb_api_key", "jellyfin_api_key", "radarr_api_key", "sonarr_api_key", "apprise_urls", "dynu_api_key", "pushover_app_token", "protect_api_key")
+SECRET_FIELDS = ("tmdb_api_key", "jellyfin_api_key", "radarr_api_key", "sonarr_api_key", "apprise_urls", "dynu_api_key", "pushover_app_token", "protect_api_key", "unifi_net_api_key")
 
 DEFAULTS = {
     "scraper_interval_hours": "24", "radarr_interval_hours": "6", "sonarr_interval_hours": "6", "jellyfin_interval_hours": "6",
@@ -39,6 +39,10 @@ DEFAULTS = {
     "library_default_profile": "1", "source_delete_after_days": "0", "arr_after_migration": "none", "arr_apply_when": "after_copy",
     # UniFi Protect cameras on the TV remote: the console, the worker that runs the go2rtc relay and the app that shows a camera full screen (docs/CAMERAS.md)
     "protect_enabled": "0", "protect_host": "", "protect_verify_tls": "0", "protect_quality": "medium", "protect_relay_worker": "", "protect_relay_host": "", "protect_relay_addr": "", "protect_viewer_app": "org.videolan.vlc", "protect_cameras": "", "protect_stream_type": "mp4",
+    # the morning TV dashboard (docs/TV_DASHBOARD.md) and the UniFi Network connection it uses to see a phone leave the Wi-Fi
+    "dash_enabled": "0", "dash_tv": "", "dash_app": "com.phlox.tvwebbrowser", "dash_start": "06:30", "dash_end": "08:30", "dash_days": "mon,tue,wed,thu,fri", "dash_skip_busy": "1", "dash_sleep_after": "1",
+    "dash_zip": "", "dash_units": "us", "dash_quote_on": "1", "dash_people": "[]", "dash_no_school": "", "dash_presence_from": "06:30", "dash_presence_grace": "3",
+    "unifi_net_host": "", "unifi_net_verify_tls": "0",
     # quality checks (docs/QUALITY.md): how many slices of a film a worker samples, how long each is, the score under which a film is flagged, whether new downloads are
     # checked (off or flag) and whether the Library clean-up checks the films it has not looked at yet, newest or oldest first
     "quality_samples": "10", "quality_slice_seconds": "30", "quality_flag_below": "60", "quality_on_download": "flag", "quality_scan_library": "0", "quality_scan_order": "newest", "quality_min_height": "1080", "quality_paused": "0", "quality_damage_pass": "0", "quality_check_first": "1",

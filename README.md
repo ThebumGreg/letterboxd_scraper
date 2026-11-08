@@ -12,6 +12,7 @@
 | Update SyncHub and see per-release notes | [docs/UPGRADE.md](docs/UPGRADE.md) and [CHANGELOG.md](CHANGELOG.md) |
 | Learn what each part of the app does | [docs/FEATURES.md](docs/FEATURES.md) |
 | Use or extend the TV remote, or add camera feeds | [docs/TV_REMOTE.md](docs/TV_REMOTE.md), [docs/CAMERAS.md](docs/CAMERAS.md) |
+| Show a morning screen (time, weather, calendars, school) on a TV | [docs/TV_DASHBOARD.md](docs/TV_DASHBOARD.md) |
 | Publish a release | [docs/RELEASING.md](docs/RELEASING.md) |
 | Understand the design | [docs/DESIGN_V2.md](docs/DESIGN_V2.md) (data model), [docs/DESIGN_ENCODING.md](docs/DESIGN_ENCODING.md) (workers, Library, conversions, worker API), [docs/DESIGN_NOTIFICATIONS.md](docs/DESIGN_NOTIFICATIONS.md) |
 | What the worker program does | [agent/README.md](agent/README.md) |

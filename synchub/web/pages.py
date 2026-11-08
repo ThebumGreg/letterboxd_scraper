@@ -269,9 +269,17 @@ def register(app):
             profile_list = profiles.list_all(conn)
             worker_list = [{"id": w["id"], "name": w["name"]} for w in workers.list_all(conn) if not w["revoked"]]
         values = {**settings.DEFAULTS, **settings.get_all()}
+        from synchub.dashboard import config as dash_config
+        dash_tvs = []
+        try:
+            from synchub.tv import runtime
+            dash_tvs = [{"id": d.id, "name": d.name, "label": d.label} for d in runtime.get().devices.values() if "stream_view" in d.capabilities and d.type != "roku"]
+        except Exception:
+            pass                                                # the TV part is optional; the page works without it
         in_docker = os.getenv("SYNCHUB_IN_DOCKER") == "1"
         return render_template("settings.html", settings=values, profiles=profile_list, relay_workers=worker_list, webhook_status=webhooks.status_for_all(), suggested_synchub_url=request.host_url.rstrip("/"),
-                               local_addresses=backup.addresses_on_this_machine(values) if in_docker else [], last_backup=backup.latest(), notify=dispatch.state())
+                               local_addresses=backup.addresses_on_this_machine(values) if in_docker else [], last_backup=backup.latest(), notify=dispatch.state(),
+                               dash_tvs=dash_tvs, dash_url=f"/dash/{dash_config.token()}", now_label=dash_config.now().tzname() or "server time")
 
     @app.route("/payloads")
     def payloads_page():

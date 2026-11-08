@@ -470,6 +470,19 @@ def register(app):
                 cams = client.cameras()
                 on = [c for c in cams if c["state"] == "CONNECTED"]
                 return jsonify(ok=True, message=f"Connected to UniFi Protect {version}".strip() + f". {len(on)} of {len(cams)} camera(s) are connected: {', '.join(c['name'] for c in on[:6])}{'...' if len(on) > 6 else ''}.")
+            if service == "unifi_network":
+                from synchub.unifi_network import NetworkClient
+                host, key = typed("unifi_net_host") or settings.get("unifi_net_host"), typed("unifi_net_api_key") or settings.get("unifi_net_api_key")
+                if host != settings.get("unifi_net_host") and not typed("unifi_net_api_key"):
+                    return jsonify(ok=False, message="Enter the API key too when testing a different address.")
+                found = NetworkClient(host, key, verify=(fields.get("unifi_net_verify_tls", settings.get("unifi_net_verify_tls")) == "1")).clients()
+                wifi = [c for c in found if not c["wired"]]
+                return jsonify(ok=True, message=f"Connected to UniFi Network. {len(wifi)} Wi-Fi device(s) and {len(found) - len(wifi)} wired device(s) are listed: {', '.join(c['name'] or c['mac'] for c in wifi[:5])}{'...' if len(wifi) > 5 else ''}.")
+            if service == "dashboard_weather":
+                from synchub.dashboard import weather
+                where = weather.locate(typed("dash_zip"))
+                got = weather.fetch(typed("dash_zip"), typed("dash_units") == "metric")
+                return jsonify(ok=True, message=f"{where.get('name') or typed('dash_zip')}: {got['now']['temp']}{got['unit']}, {got['now']['words'].lower()}.")
             if service == "pushover":
                 from synchub.notifications import dispatch
                 from synchub.notifications.providers import pushover
@@ -493,6 +506,8 @@ def register(app):
         except ApiError as exc:
             return jsonify(ok=False, message=str(exc))
         except Exception as exc:
+            if exc.__class__.__name__ in ("NetworkError", "WeatherError"):
+                return jsonify(ok=False, message=str(exc))          # these messages are written for the person
             return jsonify(ok=False, message=f"Could not connect: {exc.__class__.__name__}")
         return jsonify(ok=False, message="Unknown service."), 404
 

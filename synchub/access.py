@@ -47,7 +47,7 @@ SESSION_DAYS_DEFAULT = 30
 PROOF_SALT = "synchub-pin"
 TOKEN_SALT = "synchub-token"
 TOKEN_ENV = "SYNCHUB_ACCESS_TOKEN"
-TOKEN_EXEMPT = ("static", "healthz", "api_webhook", "worker_api_*", "login", "logout")      # these keep their own ways in: assets, the health check, Jellyfin/Radarr/Sonarr callbacks, workers
+TOKEN_EXEMPT = ("static", "healthz", "api_webhook", "worker_api_*", "dash_*", "login", "logout")      # these keep their own ways in: assets, the health check, Jellyfin/Radarr/Sonarr callbacks, workers
 LOGIN_FAILURES, LOGIN_WINDOW = 10, 300                                                      # this many wrong tries from one address, within this many seconds, and it waits
 _login_failures = {}
 
@@ -56,7 +56,7 @@ PUBLIC, OPEN = "public", "open"                       # no profile needed / any 
 # Which permission each endpoint needs, first match wins. A trailing * matches a prefix. A new endpoint that matches nothing is refused
 # until it is listed here (a test lists every endpoint of the app to make sure none is forgotten).
 RULES = (
-    ("who", PUBLIC), ("login", PUBLIC), ("logout", PUBLIC), ("static", PUBLIC), ("poster", PUBLIC), ("healthz", PUBLIC), ("api_webhook", PUBLIC), ("worker_api_*", PUBLIC),     # webhooks and workers have their own ways in
+    ("who", PUBLIC), ("login", PUBLIC), ("logout", PUBLIC), ("static", PUBLIC), ("poster", PUBLIC), ("healthz", PUBLIC), ("api_webhook", PUBLIC), ("worker_api_*", PUBLIC), ("dash_*", PUBLIC),     # webhooks and workers have their own ways in
     ("api_tasks", OPEN),
     ("index", "dashboard"), ("movie_details", "dashboard"), ("show_details", "dashboard"), ("api_season", "dashboard"), ("stream_events", "dashboard"),
     ("search_page", "search"), ("api_search_seasons", "search"), ("discover_page", "search"),
@@ -74,7 +74,7 @@ RULES = (
     ("activity_page", "logs"), ("diagnostics_page", "logs"), ("api_activity", "logs"),
     ("logs_page", "logs"), ("api_logs", "logs"), ("jellyfin_event*", "logs"),
     ("payloads_page", "payloads"), ("api_payload_logs", "payloads"), ("api_clear_payload_logs", "payloads"),
-    ("settings_page", "settings"), ("update_settings", "settings"), ("api_test_connection", "settings"), ("api_protect*", "settings"), ("api_quality_profiles", "settings"),
+    ("settings_page", "settings"), ("update_settings", "settings"), ("api_test_connection", "settings"), ("api_protect*", "settings"), ("api_dashboard_*", "settings"), ("api_quality_profiles", "settings"),
     ("api_root_folders", "settings"), ("api_webhook_setup", "settings"),
     ("save_profile", "access"), ("delete_profile", "access"), ("api_toggle_profile", "access"), ("api_jellyfin_users", "access"), ("people_page", "access"), ("access_page", "access"), ("api_access_*", "access"),
 )

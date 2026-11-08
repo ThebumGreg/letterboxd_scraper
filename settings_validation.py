@@ -6,6 +6,7 @@ _SWITCH_KEYS = {
     "sonarr_enable_library_sync", "sonarr_enable_queue_addition", "sonarr_dry_run", "enable_notifications",
     "payload_logging_enabled", "dvr_enabled", "dvr_counts_as_library", "versions_on", "variant_stereo", "dv7_remux", "clean_names", "naming_tmdb_ids", "size_policy", "tv_size_policy", "gpu_encoding", "preview_auto", "quality_scan_library", "quality_paused", "quality_damage_pass", "quality_check_first", "log_service_jellyfin", "log_service_radarr", "log_service_sonarr",
     "log_service_tmdb", "log_service_dynu", "protect_enabled", "protect_verify_tls",
+    "dash_enabled", "dash_skip_busy", "dash_sleep_after", "dash_quote_on", "unifi_net_verify_tls",
 }
 _INT_RANGES = {
     "scraper_interval_hours": (0, 8760), "letterboxd_interval_hours": (0, 8760), "serializd_interval_hours": (0, 8760),
@@ -14,12 +15,12 @@ _INT_RANGES = {
     "radarr_quality_profile_id": (1, 1_000_000), "sonarr_quality_profile_id": (1, 1_000_000),
     "payload_retention_limit": (1, 100_000), "metadata_refresh_hours": (1, 8760), "queue_poll_seconds": (0, 3600), "dvr_poll_seconds": (0, 86400),
     "library_tail_seconds": (5, 600), "jellyfin_events_keep_days": (0, 36500), "notify_history_keep_days": (0, 36500), "ddns_interval_minutes": (1, 60), "access_session_days": (1, 365), "backup_keep": (0, 365), "size_crf": (14, 35), "trust_after": (1, 50), "preview_seconds": (30, 60), "preview_keep_days": (1, 365), "originals_retention_days": (0, 3650), "variant_height": (240, 2160), "variant_crf": (14, 35), "variant_maxrate_kbps": (500, 100000), "variant_audio_kbps": (64, 640),
-    "library_default_profile": (1, 1_000_000), "quality_samples": (1, 24), "quality_slice_seconds": (10, 120), "quality_flag_below": (1, 100), "quality_min_height": (0, 4320),
+    "library_default_profile": (1, 1_000_000), "quality_samples": (1, 24), "quality_slice_seconds": (10, 120), "quality_flag_below": (1, 100), "quality_min_height": (0, 4320), "dash_presence_grace": (1, 30),
 }
 _FLOAT_KEYS = {"cap_mbps_2160", "cap_mbps_1080", "cap_mbps_720", "cap_mbps_sd", "tv_cap_share", "size_trigger_factor", "trigger_mbps_2160", "trigger_mbps_1080", "trigger_mbps_720", "trigger_mbps_sd", "safety_gb_2160", "safety_gb_1080", "variant_min_gb", "request_delay_min", "request_delay_max", "user_delay_min", "user_delay_max", "movie_max_gb", "movie_target_gb", "tv_max_gb_per_hour", "tv_target_gb_per_hour"}
 _URL_KEYS = {"jellyfin_url", "radarr_url", "sonarr_url", "synchub_url"}
 _PATH_KEYS = {"radarr_root_folder", "sonarr_root_folder"}
-_CHOICES = {"size_mode": {"bitrate", "size"}, "rate_mode": {"target", "quality"}, "audio_mode": {"keep", "add_compatible", "compatible_only"}, "naming_style": {"jellyfin", "current"}, "tv_metadata_provider": {"tmdb", "sonarr"}, "library_integrity_mode": {"metadata", "tail", "full"}, "download_pipeline": {"off", "review", "auto"}, "vmaf_mode": {"off", "warn", "hold"}, "quality_on_download": {"off", "flag"}, "quality_scan_order": {"newest", "oldest"}, "protect_quality": {"high", "medium", "low"}, "protect_stream_type": {"mp4", "rtsp", "hls"}, "size_preset": {"fast", "medium", "slow", "slower"}, "review_first": {"always", "until_trusted", "low_confidence_only", "never"}, "dolby_vision_profile_5": {"review", "hdr10"}, "dolby_vision_profile_7_8": {"review", "hdr10", "remux", "leave"},
+_CHOICES = {"size_mode": {"bitrate", "size"}, "rate_mode": {"target", "quality"}, "audio_mode": {"keep", "add_compatible", "compatible_only"}, "naming_style": {"jellyfin", "current"}, "tv_metadata_provider": {"tmdb", "sonarr"}, "library_integrity_mode": {"metadata", "tail", "full"}, "download_pipeline": {"off", "review", "auto"}, "vmaf_mode": {"off", "warn", "hold"}, "quality_on_download": {"off", "flag"}, "quality_scan_order": {"newest", "oldest"}, "protect_quality": {"high", "medium", "low"}, "protect_stream_type": {"mp4", "rtsp", "hls"}, "dash_units": {"us", "metric"}, "size_preset": {"fast", "medium", "slow", "slower"}, "review_first": {"always", "until_trusted", "low_confidence_only", "never"}, "dolby_vision_profile_5": {"review", "hdr10"}, "dolby_vision_profile_7_8": {"review", "hdr10", "remux", "leave"},
             "source_delete_after_days": {"0", "7", "14", "30"}, "arr_after_migration": {"none", "update_location", "unmonitor", "remove"}, "arr_apply_when": {"after_copy", "with_source_delete"}}
 _FOLDER_NAME_KEYS = {"library_tv_folder", "library_movie_folder"}
 
@@ -97,7 +98,35 @@ def validate_setting(key, value):
             return False, "dvr_path_prefixes must be folder paths as Jellyfin sees them, starting with /, separated by commas."
         return True, ",".join(parts)
 
-    if key in ("protect_host", "protect_relay_host"):
+    if key == "dash_people":
+        from synchub.dashboard import config
+        return config.clean_people(value)
+
+    if key == "dash_no_school":
+        from synchub.dashboard import config
+        return config.clean_no_school(value)
+
+    if key in ("dash_start", "dash_end", "dash_presence_from"):
+        import re
+        return (True, value) if re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", value) else (False, f"{key} is a time like 06:30.")
+
+    if key == "dash_days":
+        days = [d for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun") if d in value.split(",")]
+        return True, ",".join(days)
+
+    if key == "dash_zip":
+        import re
+        return (True, value) if not value or re.fullmatch(r"\d{5}|-?\d{1,2}(\.\d+)?\s*,\s*-?\d{1,3}(\.\d+)?", value) else (False, "Enter a 5 digit US ZIP code, or latitude and longitude like 40.71, -74.00.")
+
+    if key == "dash_tv":
+        import re
+        return (True, value) if re.fullmatch(r"[A-Za-z0-9_.-]{0,60}", value) else (False, "Choose a TV from the list.")
+
+    if key == "dash_app":
+        import re
+        return (True, value) if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+", value) else (False, "The browser app is an Android package name such as com.phlox.tvwebbrowser.")
+
+    if key in ("protect_host", "protect_relay_host", "unifi_net_host"):
         import re
         host = re.sub(r"^[a-z]+://", "", value, flags=re.I).split("/")[0].strip()
         return (True, host) if re.fullmatch(r"[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:\d{1,5})?", host) or not host else (False, f"{key} is an address such as 192.168.1.1, without http:// or a path.")

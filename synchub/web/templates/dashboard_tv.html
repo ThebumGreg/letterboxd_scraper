@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Morning</title>
+<style>
+  :root { --bg:#0b0e14; --card:#141a24; --line:#232c3b; --text:#eef2f8; --dim:#93a1b8; --accent:#4dabf7; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden; cursor:none; }
+  #wrap { height:100vh; padding:2.2vh 2.4vw; display:grid; grid-template-rows:auto 1fr auto; gap:2vh; transition:transform 60s linear; }
+  header { display:grid; grid-template-columns:1.1fr 1fr; gap:2.4vw; align-items:start; }
+  #clock { font-size:min(15vh,11vw); font-weight:200; letter-spacing:-.02em; line-height:1; font-variant-numeric:tabular-nums; }
+  #clock small { font-size:.28em; font-weight:300; color:var(--dim); margin-left:.2em; }
+  #date { font-size:3.6vh; color:var(--dim); margin-top:1vh; }
+  #weather { background:var(--card); border:1px solid var(--line); border-radius:2vh; padding:2vh 1.6vw; }
+  #wnow { display:flex; align-items:center; gap:1.4vw; }
+  #wnow .sym { font-size:9vh; line-height:1; }
+  #wnow .temp { font-size:9vh; font-weight:300; line-height:1; }
+  #wnow .what { font-size:3vh; color:var(--dim); }
+  #days { display:grid; grid-template-columns:repeat(5,1fr); gap:.8vw; margin-top:1.6vh; }
+  .day { text-align:center; border-top:1px solid var(--line); padding-top:1vh; font-size:2.4vh; }
+  .day b { display:block; font-weight:500; } .day .sym { font-size:4vh; display:block; } .day .lo { color:var(--dim); } .day .rain { color:var(--accent); font-size:2vh; }
+  #people { display:grid; gap:1.2vw; grid-auto-flow:column; grid-auto-columns:1fr; min-height:0; }
+  .person { background:var(--card); border:1px solid var(--line); border-top:.6vh solid var(--c); border-radius:2vh; padding:1.8vh 1.4vw; overflow:hidden; display:flex; flex-direction:column; gap:1vh; }
+  .person h2 { margin:0; font-size:3.6vh; font-weight:600; display:flex; justify-content:space-between; align-items:baseline; gap:1vw; }
+  .person h2 span { font-size:2.2vh; font-weight:400; color:var(--dim); }
+  .ev { display:flex; gap:1vw; font-size:2.8vh; line-height:1.2; padding:.7vh 0; border-bottom:1px solid var(--line); }
+  .ev:last-child { border-bottom:0; } .ev .t { color:var(--c); min-width:6.2em; font-variant-numeric:tabular-nums; } .ev .w { color:var(--dim); font-size:2.1vh; display:block; }
+  .none, .err { color:var(--dim); font-size:2.6vh; } .err { color:#ffa94d; }
+  .big { font-size:4.4vh; font-weight:500; } .good { color:#69db7c; } .warn { color:#ffd43b; } .left { color:#69db7c; }
+  footer { text-align:center; font-size:3.2vh; color:var(--dim); font-style:italic; min-height:4.6vh; }
+  footer b { color:var(--text); font-weight:400; } footer span { font-style:normal; font-size:.75em; margin-left:.6em; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <div><div id="clock">--:--</div><div id="date"></div></div>
+    <div id="weather"><div class="none">Loading the weather...</div></div>
+  </header>
+  <main id="people"></main>
+  <footer id="quote"></footer>
+</div>
+<script>
+(function () {
+  var DATA_URL = "/dash/{{ token }}/data", data = null, big = true;
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
+  function hm(d) { var h = d.getHours() % 12 || 12, m = d.getMinutes(); return h + ":" + (m < 10 ? "0" : "") + m + " " + (d.getHours() < 12 ? "AM" : "PM"); }
+  var DOW = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"], MON = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+  function tick() {
+    var n = new Date(), h = n.getHours() % 12 || 12, m = n.getMinutes();
+    $("clock").innerHTML = h + ":" + (m < 10 ? "0" : "") + m + "<small>" + (n.getHours() < 12 ? "AM" : "PM") + "</small>";
+    $("date").textContent = DOW[n.getDay()] + ", " + MON[n.getMonth()] + " " + n.getDate();
+    if (data) { drawSchool(); }
+  }
+
+  function drawWeather(w) {
+    var box = $("weather");
+    if (!w || w.error) { box.innerHTML = '<div class="err">' + esc(w ? w.error : "No weather") + "</div>"; return; }
+    var u = w.unit, html = '<div id="wnow"><span class="sym">' + w.now.symbol + '</span><span class="temp">' + w.now.temp + u + '</span><div><div class="what">' + esc(w.now.words) +
+      ", feels like " + w.now.feels + u + "</div><div class=\"what\">Wind " + w.now.wind + " " + w.speed + (w.place ? " · " + esc(w.place) : "") + (w.stale ? " · old data" : "") + "</div></div></div><div id=\"days\">";
+    for (var i = 0; i < w.days.length && i < 5; i++) {
+      var d = w.days[i], dt = new Date(d.date + "T12:00:00");
+      html += '<div class="day"><b>' + (i === 0 ? "Today" : DOW[dt.getDay()].slice(0, 3)) + '</b><span class="sym">' + d.symbol + "</span>" + d.high + "° <span class=\"lo\">" + d.low + "°</span>" +
+        (d.rain != null && d.rain >= 20 ? '<div class="rain">' + d.rain + "% rain</div>" : "") + "</div>";
+    }
+    box.innerHTML = html + "</div>";
+  }
+
+  function drawEvents(p) {
+    if (p.error) { return '<div class="err">' + esc(p.error) + "</div>"; }
+    var out = "", list = p.today || [], i, e;
+    for (i = 0; i < list.length; i++) {
+      e = list[i];
+      out += '<div class="ev"><span class="t">' + (e.all_day ? "All day" : hm(new Date(e.start))) + "</span><span>" + esc(e.title) + (e.where ? '<span class="w">' + esc(e.where) + "</span>" : "") + "</span></div>";
+    }
+    if (!out) { out = '<div class="none">Nothing on today.</div>'; }
+    if (p.next && !(list.some(function (x) { return !x.all_day; }))) {
+      var nd = new Date(p.next.date + "T12:00:00");
+      out += '<div class="none" style="margin-top:1vh">Next: ' + DOW[nd.getDay()] + "</div>";
+      for (i = 0; i < p.next.events.length && i < 3; i++) {
+        e = p.next.events[i];
+        out += '<div class="ev"><span class="t">' + (e.all_day ? "All day" : hm(new Date(e.start))) + "</span><span>" + esc(e.title) + "</span></div>";
+      }
+    }
+    return out + (p.stale ? '<div class="none">Showing the last calendar that was read.</div>' : "");
+  }
+
+  function schoolHtml(p) {
+    var s = p.school, now = new Date();
+    if (s.state === "holiday") { return '<div class="big good">' + esc(s.label) + "</div>"; }
+    if (s.state === "none") { return '<div class="big good">No school today</div>'; }
+    var leave = new Date(s.leave), start = new Date(s.start), html = "";
+    if (s.presence === "left") {
+      html += '<div class="big left">Left for school' + (s.left_at ? " at " + hm(new Date(s.left_at)) : "") + "</div>";
+    } else {
+      var mins = Math.round((leave - now) / 60000);
+      html += '<div class="big ' + (mins < 0 ? "warn" : "") + '">' + (mins > 0 ? "Leave in " + (mins >= 60 ? Math.floor(mins / 60) + " h " + (mins % 60) + " min" : mins + " min") : mins >= -5 ? "Time to go!" : "Running late") + "</div>";
+      html += '<div class="none">Leave by ' + hm(leave) + "</div>";
+    }
+    html += '<div class="none">School starts ' + hm(start) + (s.end ? ", ends " + hm(new Date(s.end)) : "") + "</div>";
+    if (s.presence === "home") { html += '<div class="none">Phone is home</div>'; }
+    return html;
+  }
+
+  function drawSchool() {
+    var nodes = document.querySelectorAll("[data-school]");
+    for (var i = 0; i < nodes.length; i++) { nodes[i].innerHTML = schoolHtml(data.people[+nodes[i].getAttribute("data-school")]); }
+  }
+
+  function draw() {
+    drawWeather(data.weather);
+    var html = "";
+    for (var i = 0; i < data.people.length; i++) {
+      var p = data.people[i];
+      html += '<section class="person" style="--c:' + esc(p.color) + '"><h2>' + esc(p.name) + (p.kind === "school" ? "<span>School</span>" : "") + "</h2>" +
+        (p.kind === "school" ? '<div data-school="' + i + '"></div>' : drawEvents(p)) + "</section>";
+    }
+    $("people").innerHTML = html || '<div class="none">Add people in Settings, TV dashboard.</div>';
+    var q = data.quote;
+    $("quote").innerHTML = q ? "“" + esc(q.text) + "”" + (q.author ? "<span>— " + esc(q.author) + "</span>" : "") : "";
+    drawSchool();
+  }
+
+  function load() {
+    var x = new XMLHttpRequest();
+    x.open("GET", DATA_URL + "?t=" + Date.now());
+    x.timeout = 25000;
+    x.onload = function () { if (x.status === 200) { try { data = JSON.parse(x.responseText); draw(); } catch (e) {} } };
+    x.send();
+  }
+
+  // a slow drift every few minutes keeps a static picture from burning into the panel
+  function drift() { var w = $("wrap"); big = !big; w.style.transform = "translate(" + (big ? 0 : 6) + "px," + (big ? 0 : 4) + "px)"; }
+  tick(); load();
+  setInterval(tick, 1000); setInterval(load, 120000); setInterval(drift, 300000);
+})();
+</script>
+</body>
+</html>
