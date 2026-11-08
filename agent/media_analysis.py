@@ -17,7 +17,7 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-LOGIC_VERSION = 2            # bump when anything below changes what a file's analysis says: SyncHub then asks for every file to be analysed again
+LOGIC_VERSION = 3            # bump when anything below changes what a file's analysis says: SyncHub then asks for every file to be analysed again
 
 ACTION_COPY_RENAME, ACTION_REMUX_COPY, ACTION_TRANSCODE_COPY, ACTION_MANUAL_REVIEW = "copy_rename", "remux_copy", "transcode_copy", "manual_review"
 CONVERT_VIDEO, CONVERT_AUDIO = "h264", "aac"
@@ -99,8 +99,9 @@ _JUNK_TOKENS = (
     r"blu[\s._-]?ray|brrip|bdrip|web[\s._-]?dl|web[\s._-]?rip|hdtv|pdtv|dvdrip|remux|"
     r"x264|avc|x265|hevc|av1|xvid|divx|"
     r"aac|ac3|eac3|dts(?:[\s._-]?hd)?|truehd|atmos|flac|mp3|"
-    r"hdr10\+?|hdr|dolby[\s._-]?vision|proper|repack|limited|internal|"
-    r"10bit|8bit|yify|yts|amzn|nflx|dsnp|hmax|atvp|pcok"
+    r"hdr10\+?|hdr|multi|dolby[\s._-]?vision|proper|repack|limited|internal|"
+    r"10bit|8bit|yify|yts|amzn|nflx|dsnp|hmax|atvp|pcok|"
+    r"uhd|dv|hlg|sdr|repack\d*|rerip|ma|bd25|bd50|remastered\s+cut"
 )
 if EXTRA_JUNK_TOKENS:
     _JUNK_TOKENS += "|" + "|".join(EXTRA_JUNK_TOKENS)
@@ -120,6 +121,8 @@ SITE_PATTERNS = [
     re.compile(r"(?i)[\[\(\{]\s*(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\."
                + _TLDS_LOOSE + r"\s*[\]\)\}]"),
     re.compile(r"(?i)https?://\S+"),
+    # leading release-site tag such as "[DEVIL-TORRENTS.PL] " (needs a dot, hyphen or "torrent" so titles like "[REC]" survive)
+    re.compile(r"(?i)^\s*\[(?=[^\]]*(?:[.\-]|torrent))[^\]]{3,40}\]\s*"),
     re.compile(r"(?i)(?<![a-z0-9])www\.[a-z0-9-]+\." + _TLDS_LOOSE
                + r"(?:\.(?:uk|au|nz|za|in|ca))?(?![a-z0-9])"),
     re.compile(r"(?i)^\s*[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\."
@@ -413,6 +416,10 @@ def clean_filename(filename, source_path=None):
         match = years[-1]
         before = cleaned[:match.start()].rstrip()
         after = cleaned[match.end():].strip()
+        if after and junk_count:
+            # Scene-style name: whatever follows the year is release debris (REPACK2 UHD DV MA 5 1-GRP), not part of the title.
+            flags.append("Release details after the year removed")
+            after = ""
         if NAMING_RULES["movie_year_in_parentheses"]:
             cleaned = f"{before} ({match.group(1)})" + (f" {after}" if after else "")
         if after:
