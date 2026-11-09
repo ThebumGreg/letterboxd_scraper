@@ -376,3 +376,4 @@ def test_a_list_can_be_filtered_by_type_and_where_the_film_sits_and_shows_the_qu
     page = client.get("/library/queue/ready").get_data(as_text=True)
     assert "Quality check" in page and "Not checked" in row_for(page, alone) and "loose" in row_for(page, loose_a) and "loose" not in row_for(page, alone).replace("Loose", "")
     assert "TV episode" in row_for(page, show) and "Loose films" in client.get("/library/fragment").get_data(as_text=True)
+    assert "what=loose" in client.get("/library/fragment").get_data(as_text=True)         # the box links to the list each loose film is in

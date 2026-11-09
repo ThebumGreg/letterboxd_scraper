@@ -8,6 +8,8 @@
 - **Each conversion profile is read once** while the recommendations are worked out, not once per file (about 9,000 queries for 2,700 files).
 - Measured on a 2,700-file test library: /library 2.2 s and 24,266 queries before; first visit 0.6 s and 159 queries, then 26 ms. The refresh went from about 0.9 s to 20 ms. Greg's real library is slower per file, so compare with Tools > Page timings.
 
+**Loose films box opens the right lists (no migration).** The box used to open only *Suggested*, which was empty when the loose films were in another list. It now shows one button per list that holds loose films, with the count (done and rejected files are not counted).
+
 **Page timing tools (no migration, no setting).** Update SyncHub; workers are not involved. The first step of making slow pages faster: measure them.
 - Every page request is timed (not static files, posters, or the workers' and players' own polling). The browser's developer tools show it in the `Server-Timing` header (total, database time, number of queries); a request over one second is written to the log as `Slow page: ...`.
 - **Tools & Operations > Page timings** lists, per page, how often it ran, average, 95th percentile and slowest time, queries and size, plus the slowest single requests (last 300, memory only, cleared on restart). Open the slow pages (Library, Dashboard, Jobs, ...) and press *Show timings*.
