@@ -5,6 +5,7 @@ from synchub import dvr, jobs, settings, workers
 from synchub.clients.jellyfin import JellyfinClient
 from synchub.library import recommend as rc
 from synchub.sessions import describe, live
+from tests.v2.media_helpers import all_tabs
 from tests.v2.test_access import menu
 
 
@@ -14,10 +15,10 @@ def text(response):
 
 # ---------------------------------------------------------------- Options and Jobs tabs
 def test_the_options_tab_holds_the_settings_and_profiles_and_the_library_tab_does_not(client, v2):
-    page = text(client.get("/library/options"))
+    page = all_tabs(client, "/library/options")
     for marker in ('id="librarySettingsForm"', 'id="profileForm"', 'id="optMessage"'):
         assert page.count(marker) == 1
-    library_pane = page.split('id="media-pane-library"')[1].split('id="media-pane-')[0]
+    library_pane = client.get("/media/pane/library").get_json()["tab"]
     assert 'id="scanForm"' in library_pane and 'id="librarySettingsForm"' not in library_pane and 'id="profileForm"' not in library_pane
     assert re.search(r'class="nav-link active" id="media-tab-options"', page)
 

@@ -10,6 +10,7 @@ from synchub.library import size_policy
 from synchub.library import vocab as v
 
 from .library_helpers import add
+from tests.v2.media_helpers import all_tabs
 
 GIB = 1024 ** 3
 API = "/api/worker/v1"
@@ -277,7 +278,7 @@ def test_the_worker_uploads_clips_over_http_and_completing_makes_the_preview_rea
 def test_the_pages_and_buttons_work(pipe, client):
     made, record_id = big_download(pipe)
     preview = previews.latest_for(pipe, "download_import", made)
-    library = client.get("/library").get_data(as_text=True)
+    library = all_tabs(client, "/library")
     assert f"/library/previews/{preview['id']}" in library
     assert "Preview clips before compressing" in library and 'id="setReviewFirst"' in library
     saved = client.post("/api/library/settings", json={"review_first": "until_trusted", "trust_after": "5", "preview_seconds": "40", "preview_auto": "0"}).get_json()

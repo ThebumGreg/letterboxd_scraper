@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**Faster Library and Media pages (migration 041).** Update SyncHub; workers are not involved. From Greg's own timings (/library about 8 s and 6,900 queries, the refresh 4 s and 2,800 queries, with only 0.8 s of that in the database), the time went into working out every file's recommendation again and again.
+- **Only the open tab is built.** The Media page used to build all eight tabs on every visit, so opening any tab cost as much as all of them. Now the open tab is built with the page and each other tab is fetched the first time you click it (a "Loading..." line for a moment). Tabs, addresses and permissions are unchanged; the new `/media/pane/<tab>` address serves the tab content.
+- **Recommendations are kept in memory** until something they depend on changes: a counter (`change_counter`, set by database triggers on files, quality checks and accepts, profiles, settings and shows) goes up on any such change. The Library overview, the queue pages (which worked everything out twice), the Quality page and the Versions list reuse the result. The background refresh may show a result up to 10 seconds old while a scan keeps changing files; a button press and every page visit read it exactly.
+- **Each conversion profile is read once** while the recommendations are worked out, not once per file (about 9,000 queries for 2,700 files).
+- Measured on a 2,700-file test library: /library 2.2 s and 24,266 queries before; first visit 0.6 s and 159 queries, then 26 ms. The refresh went from about 0.9 s to 20 ms. Greg's real library is slower per file, so compare with Tools > Page timings.
+
 **Page timing tools (no migration, no setting).** Update SyncHub; workers are not involved. The first step of making slow pages faster: measure them.
 - Every page request is timed (not static files, posters, or the workers' and players' own polling). The browser's developer tools show it in the `Server-Timing` header (total, database time, number of queries); a request over one second is written to the log as `Slow page: ...`.
 - **Tools & Operations > Page timings** lists, per page, how often it ran, average, 95th percentile and slowest time, queries and size, plus the slowest single requests (last 300, memory only, cleared on restart). Open the slow pages (Library, Dashboard, Jobs, ...) and press *Show timings*.

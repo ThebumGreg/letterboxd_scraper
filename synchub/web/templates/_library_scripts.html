@@ -19,9 +19,9 @@
         if (expanded.has(key)) expanded.delete(key); else expanded.add(key);
         applyMore();
     });
-    async function refresh() {
+    async function refresh(poll) {
         try {
-            const res = await fetch('/library/fragment');
+            const res = await fetch(poll === true ? '/library/fragment?poll=1' : '/library/fragment');
             if (res.ok && !document.querySelector('.modal.show') && document.getElementById('media-pane-library')?.classList.contains('active')) { live.innerHTML = await res.text(); applyMore(); }
         } catch (e) { /* next time */ }
         schedule();
@@ -29,7 +29,7 @@
     function schedule() {
         clearTimeout(timer);
         const active = live.querySelector('#libraryActive')?.dataset.active === '1';
-        timer = setTimeout(refresh, active ? 4000 : 30000);
+        timer = setTimeout(() => refresh(true), active ? 4000 : 30000);
     }
     schedule();
 

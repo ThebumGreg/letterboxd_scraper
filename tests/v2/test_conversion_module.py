@@ -12,6 +12,7 @@ from .library_helpers import CFG, add, plan
 from .test_agent_live import make_avi, needs_ffmpeg, probe, rig, sha, wait          # noqa: F401  (rig is a fixture)
 from .test_library_findings import rec_of
 from .test_library_migrate import approve, job_of
+from tests.v2.media_helpers import all_tabs
 
 KEEP_ALL = {"op": "keep_tracks", "container": "matroska"}
 
@@ -620,7 +621,7 @@ def test_the_library_page_lists_profiles_settings_and_files_that_stopped(client,
     jobs.cancel(conn, job_id, "Greg")
     migrate.sync(conn, job_id)
     conn.commit()
-    page = client.get("/library").get_data(as_text=True)
+    page = all_tabs(client, "/library")
     assert "Conversion profiles" in page and "HEVC balanced" in page and "built in" in page and 'id="setSourceDelete"' in page and 'id="setArr"' in page
     assert "1 cancelled" in page and f'data-requeue="{record_id}"' in page
     r = post(client, f"/api/library/record/{record_id}/requeue")
@@ -648,7 +649,7 @@ def test_the_jobs_list_shows_the_lifecycle_label_not_the_raw_status(client, conn
     job_id = jobs.create(conn, "library", title="Convert: Heat", plan={"op": "convert"})
     conn.execute("UPDATE job SET status = 'running', stage = 'encode', progress = 0.4 WHERE id = ?", (job_id,))
     conn.commit()
-    page = client.get("/workers").get_data(as_text=True)
+    page = all_tabs(client, "/workers")
     assert "Converting" in page
 
 

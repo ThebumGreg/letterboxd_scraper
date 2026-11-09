@@ -16,6 +16,7 @@ from synchub.library import vocab as v
 from settings_validation import validate_setting
 
 PAGE_SIZE = 100
+POLL_MAX_AGE = 10
 CONFIDENCE_FLOORS = {"high": rc.HIGH, "medium": rc.MEDIUM}
 FILTER_KEYS = ("q", "root", "conf", "what", "type", "quality")
 
@@ -72,9 +73,10 @@ def shares_summary(conn, cfg):
     return out
 
 
-def overview(conn):
+def overview(conn, max_age=0):
+    """`max_age`: the background refresh may show recommendations worked out up to that many seconds ago (see library/cache.py)."""
     cfg = scan.config(conn)
-    rows = rc.classify(conn, cfg)
+    rows = rc.classify(conn, cfg, max_age=max_age)
     table = rc.counts(conn, cfg, rows)
     groups = [{"key": g, "title": rc.GROUP_TITLES[g], "hint": rc.GROUP_HINTS[g], **table[g]} for g in rc.GROUP_ORDER]
     runs = scan.list_runs(conn, 12)
@@ -137,7 +139,11 @@ def _quality_matches(state, wanted):
 
 
 def queue_rows(conn, cfg, group, f):
-    rows = [(rec, r) for rec, r in rc.classify(conn, cfg, f["q"] or None, f["root"] or None) if r.group == group]
+    return rows_in_queue(conn, rc.classify(conn, cfg, f["q"] or None, f["root"] or None), group, f)
+
+
+def rows_in_queue(conn, classified, group, f):
+    rows = [(rec, r) for rec, r in classified if r.group == group]
     floor = CONFIDENCE_FLOORS.get(f["conf"])
     if floor:
         rows = [(rec, r) for rec, r in rows if r.confidence == floor]
@@ -165,7 +171,7 @@ def register(app):
     @app.route("/library/fragment")
     def library_fragment():
         with db.connection() as conn:
-            data = overview(conn)
+            data = overview(conn, max_age=POLL_MAX_AGE if request.args.get("poll") else 0)       # the timer may use a result a few seconds old; a button press never does
         return render_template("_library_live.html", **data)
 
     # ---- the queues
@@ -177,9 +183,9 @@ def register(app):
         page = max(int(request.args.get("page") or 1), 1) if (request.args.get("page") or "1").isdigit() else 1
         with db.connection() as conn:
             cfg = scan.config(conn)
-            all_rows = queue_rows(conn, cfg, group, f)
             everything = rc.classify(conn, cfg, f["q"] or None, f["root"] or None)
-            table = rc.counts(conn, cfg, [(rec, r) for rec, r in everything])
+            all_rows = rows_in_queue(conn, everything, group, f)
+            table = rc.counts(conn, cfg, everything)
             candidates = [(rec, r) for rec, r in all_rows if r.can_approve and not r.needs_name and r.confidence in (rc.HIGH, rc.MEDIUM) and r.kind not in ("keep_duplicate", "skip_duplicate")]
             roots = [r["name"] for r in storage.list_all(conn)]
         shown = all_rows[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]

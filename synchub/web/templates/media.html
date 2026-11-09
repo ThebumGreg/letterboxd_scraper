@@ -13,19 +13,46 @@
 <div class="tab-content">
     {% for key, label, endpoint, help in tabs %}
     <div class="tab-pane fade{% if key == active %} show active{% endif %}" id="media-pane-{{ key }}" role="tabpanel" aria-labelledby="media-tab-{{ key }}" tabindex="0">
-        {{ panes[key].tab|safe }}
+        {% if key in panes %}{{ panes[key].tab|safe }}{% else %}<div class="text-body-secondary py-4" data-lazy-pane="{{ key }}" data-lazy-url="{{ url_for('media_pane', key=key) }}">Loading...</div>{% endif %}
     </div>
     {% endfor %}
 </div>
 {% endblock %}
 
 {% block scripts %}
-{% for key, label, endpoint, help in tabs %}{{ panes[key].scripts|safe }}{% endfor %}
+{% for key, label, endpoint, help in tabs if key in panes %}{{ panes[key].scripts|safe }}{% endfor %}
 <script>
 (() => {
     // On a phone the tab row scrolls sideways: bring the open tab into view.
     const open = document.querySelector('#mediaTabs .nav-link.active');
     if (open && open.scrollIntoView) open.scrollIntoView({ block: 'nearest', inline: 'center' });
+    // A tab that was not built with the page is fetched the first time it is opened; its scripts run once its content is in place.
+    const run = async (scripts) => {
+        const holder = document.createElement('div');
+        holder.innerHTML = scripts;
+        for (const old of holder.querySelectorAll('script')) {
+            const fresh = document.createElement('script');
+            if (old.src) { await new Promise((done) => { fresh.onload = fresh.onerror = done; fresh.src = old.src; document.body.appendChild(fresh); }); }
+            else { fresh.textContent = old.textContent; document.body.appendChild(fresh); }
+        }
+    };
+    document.querySelectorAll('#mediaTabs [data-bs-toggle="tab"]').forEach((el) => {
+        el.addEventListener('show.bs.tab', async () => {
+            const holder = document.querySelector(el.dataset.bsTarget + ' [data-lazy-pane]');
+            if (!holder || holder.dataset.loading) return;
+            holder.dataset.loading = '1';
+            try {
+                const res = await fetch(holder.dataset.lazyUrl, { headers: { Accept: 'application/json' } });
+                const data = await res.json();
+                if (!res.ok || !data.ok) throw new Error(data.message || 'Could not load this tab.');
+                holder.parentElement.innerHTML = data.tab;
+                await run(data.scripts);
+            } catch (e) {
+                holder.textContent = `${e.message} Reload the page to try again.`;
+                delete holder.dataset.loading;
+            }
+        });
+    });
     // The address follows the tab, so a reload or a shared link opens the same one. Pollers on a hidden tab stand down.
     document.querySelectorAll('#mediaTabs [data-bs-toggle="tab"]').forEach((el) => {
         el.addEventListener('shown.bs.tab', () => { try { history.replaceState(null, '', el.dataset.mediaUrl + location.search.replace(/[?&]done=[^&]*/, '')); } catch (e) { /* the tab still works */ } });

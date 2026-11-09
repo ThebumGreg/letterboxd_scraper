@@ -10,6 +10,7 @@ from synchub.library import vocab as v
 
 from .agent_module import agent
 from .library_helpers import CFG, add, plan, track
+from tests.v2.media_helpers import all_tabs
 
 GIB = 1024 ** 3
 media_analysis = sys.modules[agent.media_analysis.__name__] if getattr(agent, "media_analysis", None) else None
@@ -205,7 +206,7 @@ def test_the_settings_can_be_saved_from_the_library_page_and_are_validated(app, 
     assert (loaded.on, loaded.mode, loaded.caps_mbps["2160"], loaded.safety_gb["2160"], loaded.crf, loaded.dv_profile_5, loaded.dv_profile_7_8) == (True, "bitrate", 20.0, 40.0, 20, "hdr10", "review")
     assert client.post("/api/library/settings", json={"size_crf": "5"}).get_json()["ok"] is False
     assert client.post("/api/library/settings", json={"dolby_vision_profile_5": "yes"}).get_json()["ok"] is False
-    page = client.get("/library").get_data(as_text=True)
+    page = all_tabs(client, "/library")
     assert "Compress films with a very high bitrate" in page and 'id="setCap2160" value="20"' in page
 
 

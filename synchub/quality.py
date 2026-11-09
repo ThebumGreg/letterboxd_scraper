@@ -567,10 +567,22 @@ def is_held(conn, file_id):
 
 def held_ids(conn):
     """The ids of the files held from conversion: flagged low quality (or damaged) and not accepted. Such a file may still be renamed and moved, never converted."""
-    return {d["id"] for d in _flagged(conn)}
+    from synchub.library import cache
+    return cache.get(conn, "held_ids", lambda: frozenset(d["id"] for d in _flagged(conn)))
 
 
 def _flagged(conn, match=None, root=None, file_id=None):
+    """The flagged files, narrowed by `match` and `root`. The whole list is worked out once and kept until a file, a check, an accept or a setting changes."""
+    if file_id is not None:
+        return _flagged_rows(conn, file_id=file_id)
+    from synchub.library import cache
+    needle = (match or "").lower()
+    everything = cache.get(conn, "flagged", lambda: _flagged_rows(conn))
+    return [dict(d) for d in everything
+            if not (root and d.get("root_name") != root) and not (needle and needle not in (d["source_path"] + " " + d["file_name"]).lower())]
+
+
+def _flagged_rows(conn, file_id=None):
     below, wanted = flag_below(conn), min_height(conn)
     rows = conn.execute("""
         SELECT f.*, q.id AS check_id, q.score AS q_score, q.findings_json AS q_findings, q.finished_at AS q_finished, q.check_version AS q_version, q.size_bytes AS q_size, q.mtime AS q_mtime,
@@ -581,13 +593,9 @@ def _flagged(conn, match=None, root=None, file_id=None):
         LEFT JOIN quality_check q ON q.id = (SELECT MAX(id) FROM quality_check WHERE library_file_id = f.id AND mode = 'quality' AND status = 'done')
         WHERE f.missing_since IS NULL AND f.analysis_status = 'completed'""" + (" AND f.id = ?" if file_id is not None else ""),
         (file_id,) if file_id is not None else ()).fetchall()
-    out, needle = [], (match or "").lower()
+    out = []
     for r in rows:
         d = dict(r)
-        if root and d.get("root_name") != root:
-            continue
-        if needle and needle not in (d["source_path"] + " " + d["file_name"]).lower():
-            continue
         if d.pop("accepted"):
             continue
         findings = _json(d.pop("q_findings"), [])
@@ -632,7 +640,7 @@ def latest_request(conn, file_id):
 
 
 def low_count(conn):
-    return len(_flagged(conn))
+    return len(held_ids(conn))
 
 
 def counts(conn):
