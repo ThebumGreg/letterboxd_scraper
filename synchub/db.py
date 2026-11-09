@@ -52,6 +52,14 @@ class TrackedConnection(sqlite3.Connection):
         with _registry_lock:
             _registry[id(self)] = (weakref.ref(self), self._info)
 
+    def execute(self, *args, **kwargs):
+        started = time.perf_counter()
+        try:
+            return super().execute(*args, **kwargs)
+        finally:
+            from synchub import timing
+            timing.note_query(time.perf_counter() - started)
+
     def close(self):
         with _registry_lock:
             _registry.pop(id(self), None)

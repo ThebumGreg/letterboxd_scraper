@@ -79,6 +79,16 @@
             <pre id="dbResult" class="small mb-0 text-wrap" style="max-height: 20rem; overflow: auto;"></pre>
         </div>
     </div>
+    <div class="col-12">
+        <div class="panel p-3 p-md-4 h-100 d-flex flex-column gap-3" id="pageTimings">
+            <div>
+                <h5 class="m-0 text-success">Page timings</h5>
+                <p class="text-body-secondary m-0 mt-1">How long each page took to build since SyncHub started (last 300 requests, kept in memory only). Open the slow pages, then press <em>Show timings</em>. Requests over one second are also written to the log. "Queries" counts database calls; "DB ms" is time inside them, a lower bound.</p>
+            </div>
+            <div class="d-flex flex-wrap gap-2"><button type="button" class="btn btn-secondary btn-sm" id="timingsShow">Show timings</button><button type="button" class="btn btn-outline-secondary btn-sm" id="timingsReset">Clear</button></div>
+            <pre id="timingsResult" class="small mb-0 text-wrap" style="max-height: 28rem; overflow: auto;"></pre>
+        </div>
+    </div>
     <div class="col-md-6">
         <div class="panel p-3 p-md-4 h-100 d-flex flex-column justify-content-between gap-3">
             <div>
@@ -119,6 +129,23 @@ document.addEventListener("DOMContentLoaded", function() {
             liveOut.textContent = !body.ok ? body.message : (body.sessions.length ? JSON.stringify(body.sessions, null, 2) : 'No one is watching live TV right now. Start a live channel in Jellyfin and press the button again.');
         } catch (e) { liveOut.textContent = e.message; }
         finally { liveBtn.disabled = false; }
+    });
+    const tOut = document.getElementById('timingsResult'), tShow = document.getElementById('timingsShow'), tReset = document.getElementById('timingsReset');
+    const col = (v, n) => String(v).padStart(n);
+    if (tShow) tShow.addEventListener('click', async () => {
+        tShow.disabled = true; tOut.textContent = 'Reading...';
+        try {
+            const b = await (await fetch('/api/tools/timings', {headers: {Accept: 'application/json'}})).json();
+            if (!b.count) { tOut.textContent = 'Nothing timed yet. Open some pages, then press the button again.'; return; }
+            tOut.textContent = `${b.count} requests. Slowest page first.\n\n` + 'Page'.padEnd(34) + col('n', 5) + col('avg ms', 9) + col('p95 ms', 9) + col('max ms', 9) + col('queries', 9) + col('KB', 8) + '\n' +
+                b.pages.map(p => (p.path || p.endpoint).slice(0, 33).padEnd(34) + col(p.count, 5) + col(p.avg_ms, 9) + col(p.p95_ms, 9) + col(p.max_ms, 9) + col(p.avg_queries, 9) + col(p.avg_kb, 8)).join('\n') +
+                '\n\nSlowest single requests\n' + b.slowest.map(r => `${r.at}  ${col(r.ms, 8)} ms  ${col(r.db_ms, 7)} DB ms  ${col(r.queries, 4)} q  ${r.status}  ${r.method} ${r.path}`).join('\n');
+        } catch (e) { tOut.textContent = e.message; }
+        finally { tShow.disabled = false; }
+    });
+    if (tReset) tReset.addEventListener('click', async () => {
+        await fetch('/api/tools/timings/reset', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || ''}, body: '{}'});
+        tOut.textContent = 'Cleared.';
     });
     const dbOut = document.getElementById('dbResult'), dbToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
     const dbShow = document.getElementById('dbShow'), dbCompact = document.getElementById('dbCompact');
