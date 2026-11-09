@@ -86,6 +86,8 @@ def test_weather_looks_up_the_zip_once_and_caches(v2, monkeypatch):
         calls.append(url)
         if "zippopotam" in url:
             return Answer({"places": [{"latitude": "40.75", "longitude": "-73.99", "place name": "New York", "state abbreviation": "NY"}]})
+        if "air-quality" in url:
+            return Answer({"current": {"us_aqi": 42}})
         assert kw["params"]["temperature_unit"] == "fahrenheit" and kw["params"]["wind_speed_unit"] == "mph"
         return Answer(forecast_body())
     monkeypatch.setattr(weather.http, "request", fake)
@@ -97,7 +99,7 @@ def test_weather_looks_up_the_zip_once_and_caches(v2, monkeypatch):
     assert got["days"][0]["high"] == 44 and got["days"][0]["rain"] == 70 and got["days"][1]["words"] == "Clear"
     assert len(got["hours"]) == 6
     weather.get()
-    assert len(calls) == 3 and "api.weather.gov" in calls[2]    # a ZIP lookup, the forecast and the alerts; the second get() came from the cache
+    assert len(calls) == 4 and "air-quality" in calls[2] and "api.weather.gov" in calls[3] and got["aqi"] == 42    # a ZIP lookup, the forecast, the air quality and the alerts; the second get() came from the cache
 
 
 def test_weather_failure_gives_a_message_or_the_last_good_answer(v2, monkeypatch):
@@ -412,7 +414,7 @@ def tv(v2, monkeypatch):
     for key, value in {"dash_enabled": "1", "dash_tv": "front", "synchub_url": "http://synchub:5000/", "dash_app": "com.phlox.tvwebbrowser", "dash_days": "mon,tue,wed,thu,fri"}.items():
         settings.set_value(key, value)
     monkeypatch.setattr(show, "RETRY_SECONDS", 0)
-    show._last_try[0] = 0
+    show._last_try["morning"] = 0
     return dev
 
 
@@ -503,15 +505,17 @@ def test_data_survives_a_broken_calendar_and_weather(v2, monkeypatch):
 
 def test_settings_page_and_saving(client, v2):
     page = client.get("/settings")
-    assert page.status_code == 200 and b"Morning TV dashboard" in page.data and b"UniFi Network (Wi-Fi presence)" in page.data
+    assert page.status_code == 200 and b'id="pane-dashboard"' in page.data and b"Welcome home" in page.data and b"UniFi Network (Wi-Fi presence)" in page.data
+    assert page.data.index(b"unifiNetSettings") < page.data.index(b'id="pane-automation"') < page.data.index(b'id="pane-dashboard"') < page.data.index(b"dashSettings")    # UniFi stays in Connections
     people = json.dumps([{"name": "Sam", "kind": "school", "week": {"mon": {"leave": "07:20", "start": "08:00", "end": ""}}, "mac": "aa:bb:cc:dd:ee:ff"}])
-    saved = client.post("/tools/update-settings", data={"tab": "connections", "dash_zip": "10001", "dash_units": "metric", "dash_people": people, "dash_start": "06:45", "unifi_net_api_key": "secret-key"}, follow_redirects=True)
-    assert saved.status_code == 200
+    saved = client.post("/tools/update-settings", data={"tab": "dashboard", "dash_zip": "10001", "dash_units": "metric", "dash_people": people, "dash_start": "06:45"}, follow_redirects=True)
+    assert saved.status_code == 200 and b'id="tab-dashboard"' in saved.data
+    client.post("/tools/update-settings", data={"tab": "connections", "unifi_net_api_key": "secret-key"})
     assert settings.get("dash_zip") == "10001" and settings.get("dash_units") == "metric" and settings.get("dash_start") == "06:45"
     assert json.loads(settings.get("dash_people"))[0]["week"]["mon"]["leave"] == "07:20"
     assert settings.get("unifi_net_api_key") == "secret-key"
     assert b"secret-key" not in client.get("/settings").data
-    client.post("/tools/update-settings", data={"tab": "connections", "dash_people": "[{\"name\": \"\"}]"}, follow_redirects=True)
+    client.post("/tools/update-settings", data={"tab": "dashboard", "dash_people": "[{\"name\": \"\"}]"}, follow_redirects=True)
     assert json.loads(settings.get("dash_people"))[0]["name"] == "Sam"          # a bad list is refused and the old one kept
 
 
@@ -641,3 +645,234 @@ def test_the_tv_page_carries_the_new_pieces(client, v2, monkeypatch):
     settings.set_value("dash_countdowns", "11-09 Birthday")
     body = client.get(f"/dash/{config.token()}/data").get_json()
     assert "alerts" in body["weather"] and "hint" in body["weather"] and "countdowns" in body and "all_left" in body
+
+
+# ------------------------------------------------------------------ phase 2: people with phones, Welcome home, the evening screen, extras
+from synchub.dashboard import home, welcome          # noqa: E402
+
+ADULT = {"name": "Alex", "kind": "calendar", "ics": "", "color": "#f783ac", "mac": "aa:bb:cc:dd:ee:02", "welcome": True, "welcome_text": "Dinner at 6"}
+
+
+def test_people_get_a_phone_and_a_welcome_switch():
+    ok, text = config.clean_people(json.dumps([{"name": "Alex", "kind": "calendar", "mac": "AA-BB-CC-DD-EE-02", "welcome_text": " Dinner at 6 "}, {"name": "Jo", "kind": "calendar", "welcome": False}]))
+    saved = json.loads(text)
+    assert ok and saved[0]["mac"] == "aa:bb:cc:dd:ee:02" and saved[0]["welcome"] is True and saved[0]["welcome_text"] == "Dinner at 6"
+    assert saved[1]["welcome"] is False and saved[1]["mac"] == ""
+    assert not config.clean_people(json.dumps([{"name": "Alex", "kind": "calendar", "mac": "12:34"}]))[0]
+
+
+def test_quiet_hours_may_run_past_midnight(v2):
+    assert config.quiet(at(2026, 11, 9, 23, 0)) and config.quiet(at(2026, 11, 9, 5, 59)) and not config.quiet(at(2026, 11, 9, 6, 0)) and not config.quiet(at(2026, 11, 9, 15, 0))
+    settings.set_value("dash_welcome_quiet_on", "0")
+    assert not config.quiet(at(2026, 11, 9, 23, 0))
+
+
+def test_birthdays_come_from_the_countdowns(v2):
+    settings.set_value("dash_countdowns", "11-09 Sam's birthday\n11-10 Alex's birthday\n11-09 Field trip")
+    assert config.birthdays(date(2026, 11, 9)) == ["Sam"]
+
+
+def test_arrival_needs_the_phone_to_have_been_away_long_enough():
+    now = at(2026, 11, 9, 15, 0)
+    rec, came = welcome.step(None, True, now, 15)
+    assert rec["home"] is True and not came                                       # first sight: no welcome
+    rec, came = welcome.step(rec, False, at(2026, 11, 9, 15, 5), 15)
+    assert rec["home"] is False and rec["away_since"] and not came
+    _, came = welcome.step(rec, True, at(2026, 11, 9, 15, 12), 15)
+    assert not came                                                               # a nap of 7 minutes
+    rec, came = welcome.step(rec, True, at(2026, 11, 9, 15, 21), 15)
+    assert came and rec["away_since"] is None
+    assert welcome.step({}, False, now, 15)[0].get("home") is None                # never seen: stays unknown
+
+
+@pytest.fixture
+def arrival(tv):
+    """A TV in standby, UniFi set up, Alex with a phone, Welcome home on."""
+    for key, value in {"dash_welcome_on": "1", "unifi_net_host": "10.0.0.1", "unifi_net_api_key": "k", "dash_people": json.dumps([ADULT]), "dash_zip": ""}.items():
+        settings.set_value(key, value)
+    return FakeNetwork({ADULT["mac"]}), FakeNetwork(set())
+
+
+def arrive(tv_dev, here, away, leave=(8, 0), back=(16, 0)):
+    welcome.poll(at(2026, 11, 9, 7, 30), here)
+    welcome.poll(at(2026, 11, 9, *leave), away)
+    return welcome.poll(at(2026, 11, 9, *back), here)
+
+
+def test_coming_home_wakes_an_idle_tv_and_shows_the_welcome_then_puts_it_back(arrival, tv):
+    here, away = arrival
+    state = arrive(tv, FakeNetwork({"aa:bb:cc:dd:ee:02"}), away)
+    assert len(tv.opened) == 1 and tv.opened[0][0] == f"http://synchub:5000/dash/{config.token()}"
+    assert "Welcome home shown for Alex" in state["log"][0]["message"]
+    page = welcome.page(at(2026, 11, 9, 16, 0, ), None)
+    assert page["title"] == "Welcome home, Alex!" and page["people"][0]["lines"] == ["Dinner at 6"] and not page["birthday"]
+    assert data.build(at(2026, 11, 9, 16, 0))["welcome"]["title"] == "Welcome home, Alex!"
+    welcome.tick(at(2026, 11, 9, 16, 1))
+    assert tv.closed == []                                                        # 2 minutes by default
+    welcome.tick(at(2026, 11, 9, 16, 2, ))
+    assert tv.closed == ["com.phlox.tvwebbrowser"] and tv.slept == [False] and welcome.current(at(2026, 11, 9, 16, 3)) is None
+    assert data.build(at(2026, 11, 9, 16, 3))["welcome"] is None
+
+
+def test_a_phone_that_never_left_does_not_trigger_a_welcome(arrival, tv):
+    here, _ = arrival
+    on = FakeNetwork({"aa:bb:cc:dd:ee:02"})
+    for minute in (0, 5, 10):
+        welcome.poll(at(2026, 11, 9, 16, minute), on)
+    assert tv.opened == []
+
+
+def test_welcome_respects_quiet_hours_the_gap_the_person_and_the_switch(arrival, tv):
+    on, away = FakeNetwork({"aa:bb:cc:dd:ee:02"}), FakeNetwork(set())
+    state = arrive(tv, on, away, leave=(20, 0), back=(23, 0))
+    assert tv.opened == [] and "quiet hours" in state["log"][0]["message"]
+    state = arrive(tv, on, away, leave=(10, 0), back=(10, 30))                    # shown at 10:30
+    assert len(tv.opened) == 1
+    welcome.tick(at(2026, 11, 9, 10, 33))
+    welcome.poll(at(2026, 11, 9, 10, 35), away)
+    state = welcome.poll(at(2026, 11, 9, 10, 55), on)                             # away 20 minutes, but shown 25 minutes ago
+    assert len(tv.opened) == 1 and "less than 60 minutes ago" in state["log"][0]["message"]
+    settings.set_value("dash_people", json.dumps([{**ADULT, "welcome": False}]))
+    assert welcome.poll(at(2026, 11, 9, 13, 0), away) is None and welcome.poll(at(2026, 11, 9, 14, 0), on) is None      # not watched at all
+
+
+def test_welcome_leaves_a_busy_tv_alone_and_can_be_told_not_to_wake_it(arrival, tv, monkeypatch):
+    on, away = FakeNetwork({"aa:bb:cc:dd:ee:02"}), FakeNetwork(set())
+    settings.set_value("dash_welcome_wake", "0")
+    state = arrive(tv, on, away)
+    assert tv.opened == [] and "waking it is switched off" in state["log"][0]["message"]
+    settings.set_value("dash_welcome_wake", "1")
+    monkeypatch.setattr(show, "busy", lambda r, d, p: '"Cars" is playing')
+    welcome.poll(at(2026, 11, 9, 18, 0), away)
+    state = welcome.poll(at(2026, 11, 9, 19, 0), on)
+    assert tv.opened == [] and 'the TV is busy: "Cars" is playing' in state["log"][0]["message"]
+
+
+def test_two_people_arriving_get_one_page_and_a_birthday_says_so(arrival, tv):
+    sam = {**KID, "welcome": True, "week": {"mon": {"leave": "07:20", "start": "08:00", "end": ""}, "tue": {"leave": "07:20", "start": "08:00", "end": ""}}}
+    settings.set_value("dash_people", json.dumps([ADULT, sam]))
+    settings.set_value("dash_countdowns", "11-09 Sam's birthday")
+    both = FakeNetwork({"aa:bb:cc:dd:ee:02", sam["mac"]})
+    welcome.poll(at(2026, 11, 9, 7, 30), both)
+    welcome.poll(at(2026, 11, 9, 8, 0), FakeNetwork(set()))
+    welcome.poll(at(2026, 11, 9, 16, 0), both)
+    assert len(tv.opened) == 1
+    page = welcome.page(at(2026, 11, 9, 16, 0), None)
+    assert page["title"] == "Welcome home, Alex and Sam!" and page["birthday"]
+    assert page["people"][1]["lines"][0] == "Happy birthday, Sam!" and any("Tomorrow: leave by 7:20 AM" in line for line in page["people"][1]["lines"])
+    assert data.build(at(2026, 11, 9, 16, 0))["birthdays"] == ["Sam"]
+
+
+def test_a_welcome_on_top_of_the_morning_screen_leaves_the_screen_alone(arrival, tv):
+    show.tick(at(2026, 11, 9, 6, 31))
+    assert len(tv.opened) == 1
+    settings.set_value("dash_welcome_quiet_on", "0")
+    state = arrive(tv, FakeNetwork({"aa:bb:cc:dd:ee:02"}), FakeNetwork(set()), leave=(7, 0), back=(7, 30))
+    assert len(tv.opened) == 1 and "Welcome home shown" in state["log"][0]["message"]
+    welcome.tick(at(2026, 11, 9, 7, 33))
+    assert tv.closed == []                                                        # the morning screen has its own end
+
+
+def test_one_unifi_call_serves_both_the_school_rules_and_the_welcome(arrival, tv):
+    calls = []
+
+    class Counting:
+        def online_macs(self):
+            calls.append(1)
+            return set()
+    settings.set_value("dash_people", json.dumps([ADULT, KID]))
+    home.poll(at(2026, 11, 9, 7, 0), Counting())
+    assert len(calls) == 1
+
+
+def test_welcome_test_button_and_status(client, arrival, tv):
+    reply = client.post("/api/tv/dashboard/welcome_test").get_json()
+    assert reply["ok"] and len(tv.opened) == 1
+    status = client.get("/api/dashboard/status").get_json()
+    assert status["shown"] is False and status["welcome_now"] == ["Alex"]
+    assert client.post("/api/tv/dashboard/hide").get_json()["ok"]
+    assert client.get("/api/dashboard/status").get_json()["welcome_now"] == []
+
+
+# ------------------------------------------------------------------ the evening screen
+def test_the_evening_screen_opens_in_its_own_window_and_is_separate_from_the_morning(tv):
+    settings.set_value("dash_eve_on", "1")
+    show.tick(at(2026, 11, 9, 19, 59))
+    assert tv.opened == []
+    show.tick(at(2026, 11, 9, 20, 1))
+    assert len(tv.opened) == 1 and tv.opened[0][0].endswith("?mode=evening")
+    assert show.current_mode(at(2026, 11, 9, 21, 0)) == "evening" and show.current_mode(at(2026, 11, 9, 7, 0)) == "morning"
+    show.tick(at(2026, 11, 9, 21, 0))
+    assert len(tv.opened) == 1
+    show.tick(at(2026, 11, 9, 22, 1))
+    assert tv.closed == ["com.phlox.tvwebbrowser"]
+    tv.opened.clear()
+    show.tick(at(2026, 11, 14, 20, 30))                                           # a Saturday: not an evening day
+    assert tv.opened == []
+    settings.set_value("dash_eve_on", "0")
+    show.tick(at(2026, 11, 10, 20, 30))
+    assert tv.opened == []
+
+
+def test_the_evening_data_is_about_tomorrow(v2, monkeypatch):
+    sam = {**KID, "week": {"mon": {"leave": "07:20", "start": "08:00", "end": ""}, "tue": {"leave": "07:00", "start": "07:45", "end": "14:30"}}}
+    settings.set_value("dash_people", json.dumps([sam, {"name": "Greg", "kind": "calendar", "ics": "https://x/c.ics", "color": "#4dabf7"}]))
+    settings.set_value("dash_zip", "40.71, -74.00")
+    settings.set_value("dash_quote_on", "0")
+    settings.set_value("dash_eve_on", "1")
+    ics = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//t//EN\nBEGIN:VEVENT\nUID:a\nDTSTART:20261110T150000Z\nDTEND:20261110T160000Z\nSUMMARY:Dentist\nEND:VEVENT\nEND:VCALENDAR\n"
+    monkeypatch.setattr(calendars, "download", lambda url: (ics, False))
+    body = forecast_body()
+    body["daily"]["precipitation_probability_max"] = [70, 80]
+    monkeypatch.setattr(weather.http, "request", lambda *a, **k: Answer(body))
+    monkeypatch.setitem(weather._cache, "key", None)
+    built = data.build(at(2026, 11, 9, 20, 30))
+    assert built["mode"] == "evening"
+    assert built["people"][0]["school"]["leave"].startswith("2026-11-10T07:00") and built["people"][0]["school"]["presence"] == ""
+    assert [e["title"] for e in built["people"][1]["tomorrow"]] == ["Dentist"]
+    assert built["weather"]["tomorrow_hint"] == "Rain tomorrow: pack umbrellas" and built["weather"]["moon"]["name"]
+    assert data.build(at(2026, 11, 9, 20, 30), mode="morning")["mode"] == "morning" and data.build(at(2026, 11, 9, 7, 0))["mode"] == "morning"
+
+
+# ------------------------------------------------------------------ weather extras and the quote source
+def test_moon_uv_and_air_quality_words():
+    assert weather.moon(date(2000, 1, 6))["name"] == "New moon" and weather.moon(date(2000, 1, 21))["name"] == "Full moon"
+    assert weather.moon(date(2026, 11, 9))["symbol"]
+    assert weather.uv_note(7) == "UV high: sunscreen" and "very high" in weather.uv_note(9) and weather.uv_note(3) == "" and weather.uv_note(None) == ""
+    assert weather.aqi_label(42) == "Good" and weather.aqi_label(120) == "Unhealthy for sensitive groups" and weather.aqi_label(None) == ""
+    day = {"high": 60, "low": 40, "rain": 10, "code": 1}
+    assert weather.tomorrow_hint(day, False) == "Cold tomorrow morning: jackets" and weather.tomorrow_hint({**day, "low": 50}, False) == "" and weather.tomorrow_hint(None, False) == ""
+    assert weather.tomorrow_hint({**day, "code": 73}, False).startswith("Snow")
+
+
+def test_the_line_at_the_bottom_can_be_a_joke_a_fact_history_or_a_rotation(v2, monkeypatch):
+    day = date(2026, 11, 9)
+    monkeypatch.setattr(quote.http, "request", lambda *a, **k: 1 / 0)
+    for source in ("joke", "fact", "history"):
+        got = quote.today(day, source)
+        assert got["kind"] == source and got["source"] == "built-in" and got["label"]
+    assert quote.today(day, "quote")["label"] == ""
+    assert [quote.kind_for(date(2026, 11, d), "rotate") for d in (9, 10, 11, 12)].count("quote") == 1 and quote.kind_for(day, "bogus") == "quote"
+    monkeypatch.setattr(quote.http, "request", lambda s, e, m, url, **k: Answer({"joke": "Why did the chicken cross?"}) if "dadjoke" in url else Answer({}, 500))
+    assert quote.today(date(2026, 11, 10), "joke")["text"] == "Why did the chicken cross?"
+    monkeypatch.setattr(quote.http, "request", lambda s, e, m, url, **k: Answer({"data": {"Events": [{"year": "1969", "text": "Apollo 11 landed."}]}}))
+    assert quote.today(date(2026, 11, 11), "history")["text"] == "1969: Apollo 11 landed."
+    settings.set_value("dash_quote_source", "fact")
+    assert quote.today(date(2026, 11, 11))["kind"] == "fact"                      # the choice changed: not the saved joke
+
+
+def test_the_new_settings_are_checked():
+    assert validate_setting("dash_welcome_seconds", "120") == (True, "120") and not validate_setting("dash_welcome_seconds", "5")[0]
+    assert not validate_setting("dash_welcome_away", "0")[0] and validate_setting("dash_welcome_gap", "0")[0]
+    assert validate_setting("dash_eve_start", "20:00")[0] and not validate_setting("dash_eve_end", "9pm")[0] and not validate_setting("dash_welcome_quiet_from", "25:00")[0]
+    assert validate_setting("dash_eve_days", "thu,sun,xyz") == (True, "thu,sun".replace("thu,sun", "thu,sun"))
+    assert validate_setting("dash_quote_source", "rotate")[0] and not validate_setting("dash_quote_source", "news")[0]
+
+
+def test_the_tab_saves_on_its_own_and_unifi_stays_with_connections(client, v2):
+    page = client.get("/settings?tab=dashboard").data
+    assert b'class="nav-link active" id="tab-dashboard"' in page and b"TV dashboard" in page
+    client.post("/tools/update-settings", data={"tab": "dashboard", "dash_welcome_on": "1", "dash_welcome_seconds": "90", "dash_eve_on": "1", "dash_quote_source": "joke"})
+    assert settings.get("dash_welcome_seconds") == "90" and settings.get("dash_welcome_on") == "1" and settings.get("dash_eve_on") == "1" and settings.get("dash_quote_source") == "joke"
+    client.post("/tools/update-settings", data={"tab": "connections", "unifi_net_host": "10.0.0.5"})
+    assert settings.get("dash_welcome_seconds") == "90"                           # the other tab's save did not touch it

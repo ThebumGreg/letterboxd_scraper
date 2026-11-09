@@ -35,8 +35,17 @@
   #hint { font-size:2.8vh; color:#ffd43b; margin-top:1vh; }
   #left { background:#10301c; border:1px solid #2f9e44; color:#b2f2bb; border-radius:1.4vh; padding:.8vh 1vw; font-size:3vh; text-align:center; }
   #counts { font-style:normal; text-align:center; font-size:2.8vh; color:var(--dim); } #counts b { color:var(--text); font-weight:500; margin:0 .4em 0 1.4em; } #counts b:first-child { margin-left:0; }
+  #tbar { font-size:3.4vh; color:var(--accent); letter-spacing:.04em; text-transform:uppercase; margin-bottom:1vh; }
+  .bday { background:#33204a; border:1px solid #b197fc; color:#e5dbff; border-radius:1.4vh; padding:.8vh 1vw; font-size:3.2vh; text-align:center; margin-bottom:1vh; }
+  #extras { color:var(--dim); font-size:2.2vh; margin-top:1.2vh; } #extras span { margin-right:1.4vw; white-space:nowrap; }
+  #welcome { display:none; position:fixed; inset:0; z-index:10; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:4vh 6vw; background:radial-gradient(ellipse at 50% 35%, color-mix(in srgb, var(--c) 38%, #0b0e14) 0%, #0b0e14 72%); }
+  #welcome.on { display:flex; }
+  #welcome .party { font-size:9vh; margin-bottom:2vh; } #welcome .sub { font-size:4.4vh; color:var(--dim); margin-bottom:1vh; }
+  #welcome h1 { margin:0; font-size:min(15vh,9vw); font-weight:300; line-height:1.05; }
+  #welcome .pl { margin-top:4vh; font-size:4vh; line-height:1.35; } #welcome .pl b { color:var(--c); font-weight:600; margin-right:.5em; }
+  #welcome .pl div { margin:.4vh 0; } #welcome .common { margin-top:3vh; font-size:3.6vh; color:#ffd43b; }
   footer { text-align:center; font-size:3.2vh; color:var(--dim); font-style:italic; min-height:4.6vh; }
-  footer b { color:var(--text); font-weight:400; } footer span { font-style:normal; font-size:.75em; margin-left:.6em; }
+  footer b { color:var(--text); font-weight:400; } footer small { font-style:normal; font-size:.7em; color:var(--accent); text-transform:uppercase; letter-spacing:.06em; margin-right:.6em; } footer span { font-style:normal; font-size:.75em; margin-left:.6em; }
 </style>
 </head>
 <body>
@@ -49,9 +58,10 @@
   <main id="people"></main>
   <footer><div id="counts"></div><div id="quote"></div></footer>
 </div>
+<div id="welcome"></div>
 <script>
 (function () {
-  var DATA_URL = "/dash/{{ token }}/data", data = null, big = true;
+  var DATA_URL = "/dash/{{ token }}/data", data = null, big = true, MODE = (location.search.match(/[?&]mode=(\w+)/) || [])[1] || "", welcomeKey = "";
   function $(id) { return document.getElementById(id); }
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
   function hm(d) { var h = d.getHours() % 12 || 12, m = d.getMinutes(); return h + ":" + (m < 10 ? "0" : "") + m + " " + (d.getHours() < 12 ? "AM" : "PM"); }
@@ -61,25 +71,46 @@
     var n = new Date(), h = n.getHours() % 12 || 12, m = n.getMinutes();
     $("clock").innerHTML = h + ":" + (m < 10 ? "0" : "") + m + "<small>" + (n.getHours() < 12 ? "AM" : "PM") + "</small>";
     $("date").textContent = DOW[n.getDay()] + ", " + MON[n.getMonth()] + " " + n.getDate();
-    if (data) { drawSchool(); }
+    if (data) { drawSchool(); if (data.welcome && new Date(data.welcome.until) <= n) { data.welcome = null; drawWelcome(); } }
   }
+  function hmIso(t) { var m = /T(\d\d):(\d\d)/.exec(t || ""); if (!m) { return ""; } var h = +m[1]; return (h % 12 || 12) + ":" + m[2] + " " + (h < 12 ? "AM" : "PM"); }
+  function evening() { return data && data.mode === "evening"; }
 
   function drawWeather(w) {
     var box = $("weather");
     if (!w || w.error) { box.innerHTML = '<div class="err">' + esc(w ? w.error : "No weather") + "</div>"; return; }
-    var u = w.unit, html = '<div id="wnow"><span class="sym">' + w.now.symbol + '</span><span class="temp">' + w.now.temp + u + '</span><div><div class="what">' + esc(w.now.words) +
-      ", feels like " + w.now.feels + u + "</div><div class=\"what\">Wind " + w.now.wind + " " + w.speed + (w.place ? " · " + esc(w.place) : "") + (w.stale ? " · old data" : "") + "</div></div></div><div id=\"days\">";
-    for (var i = 0; i < w.days.length && i < 5; i++) {
+    var u = w.unit, ev = evening() && w.days.length > 1, first = ev ? 1 : 0, html, hints = [];
+    if (ev) {
+      var t = w.days[1];
+      html = '<div id="wnow"><span class="sym">' + t.symbol + '</span><span class="temp">' + t.high + u + '</span><div><div class="what">Tomorrow: ' + esc(t.words) + ", low " + t.low + u + "</div><div class=\"what\">" +
+        (t.rain != null ? t.rain + "% chance of rain" : "") + (w.place ? " · " + esc(w.place) : "") + (w.stale ? " · old data" : "") + "</div></div></div><div id=\"days\">";
+      if (w.tomorrow_hint) { hints.push(w.tomorrow_hint); }
+    } else {
+      html = '<div id="wnow"><span class="sym">' + w.now.symbol + '</span><span class="temp">' + w.now.temp + u + '</span><div><div class="what">' + esc(w.now.words) +
+        ", feels like " + w.now.feels + u + "</div><div class=\"what\">Wind " + w.now.wind + " " + w.speed + (w.place ? " · " + esc(w.place) : "") + (w.stale ? " · old data" : "") + "</div></div></div><div id=\"days\">";
+      if (w.hint) { hints.push(w.hint); }
+    }
+    for (var i = first + (ev ? 1 : 0); i < w.days.length && i < first + 5; i++) {
       var d = w.days[i], dt = new Date(d.date + "T12:00:00");
       html += '<div class="day"><b>' + (i === 0 ? "Today" : DOW[dt.getDay()].slice(0, 3)) + '</b><span class="sym">' + d.symbol + "</span>" + d.high + "° <span class=\"lo\">" + d.low + "°</span>" +
         (d.rain != null && d.rain >= 20 ? '<div class="rain">' + d.rain + "% rain</div>" : "") + "</div>";
     }
-    box.innerHTML = html + "</div>" + (w.hint ? '<div id="hint">' + esc(w.hint) + "</div>" : "");
+    var ex = "";
+    if (w.sun && w.sun.rise) { ex += "<span>🌅 " + hmIso(w.sun.rise) + "</span><span>🌇 " + hmIso(w.sun.set) + "</span>"; }
+    if (w.moon) { ex += "<span>" + w.moon.symbol + " " + esc(w.moon.name) + "</span>"; }
+    if (w.uv != null) { ex += "<span>UV " + w.uv + "</span>"; }
+    if (w.aqi != null) { ex += "<span>Air " + w.aqi + " · " + esc(w.aqi_words) + "</span>"; }
+    hints = hints.concat(w.notes || []);
+    box.innerHTML = html + "</div>" + (ex ? '<div id="extras">' + ex + "</div>" : "") + (hints.length ? '<div id="hint">' + esc(hints.join(" · ")) + "</div>" : "");
+    var grid = $("days"); if (grid) { grid.style.gridTemplateColumns = "repeat(" + Math.max(1, grid.children.length) + ",1fr)"; }
   }
 
   function drawAlerts() {
     var out = "", a = (data.weather && data.weather.alerts) || [], i;
     for (i = 0; i < a.length; i++) { out += '<div class="al' + (a[i].severity === "Moderate" ? "" : " hi") + '"><b>' + esc(a[i].event) + "</b>" + (a[i].headline ? " · " + esc(a[i].headline) : "") + "</div>"; }
+    var b = data.birthdays || [];
+    for (i = 0; i < b.length; i++) { out += '<div class="bday">🎂 Happy birthday, ' + esc(b[i]) + "! 🎉</div>"; }
+    if (evening()) { var tm = new Date(new Date(data.now).getTime() + 86400000); out += '<div id="tbar">Tomorrow · ' + DOW[tm.getDay()] + ", " + MON[tm.getMonth()] + " " + tm.getDate() + "</div>"; }
     if (data.all_left) { out += '<div id="left">Everyone has left for school</div>'; }
     $("alerts").innerHTML = out;
   }
@@ -92,13 +123,13 @@
 
   function drawEvents(p) {
     if (p.error) { return '<div class="err">' + esc(p.error) + "</div>"; }
-    var out = "", list = p.today || [], i, e;
+    var out = "", list = (evening() ? p.tomorrow : p.today) || [], i, e;
     for (i = 0; i < list.length; i++) {
       e = list[i];
       out += '<div class="ev"><span class="t">' + (e.all_day ? "All day" : hm(new Date(e.start))) + "</span><span>" + esc(e.title) + (e.where ? '<span class="w">' + esc(e.where) + "</span>" : "") + "</span></div>";
     }
-    if (!out) { out = '<div class="none">Nothing on today.</div>'; }
-    if (p.next && !(list.some(function (x) { return !x.all_day; }))) {
+    if (!out) { out = '<div class="none">Nothing on ' + (evening() ? "tomorrow" : "today") + ".</div>"; }
+    if (!evening() && p.next && !(list.some(function (x) { return !x.all_day; }))) {
       var nd = new Date(p.next.date + "T12:00:00");
       out += '<div class="none" style="margin-top:1vh">Next: ' + DOW[nd.getDay()] + "</div>";
       for (i = 0; i < p.next.events.length && i < 3; i++) {
@@ -112,7 +143,12 @@
   function schoolHtml(p) {
     var s = p.school, now = new Date();
     if (s.state === "holiday") { return '<div class="big good">' + esc(s.label) + "</div>"; }
-    if (s.state === "none") { return '<div class="big good">No school today</div>'; }
+    if (s.state === "none") { return '<div class="big good">No school ' + (evening() ? "tomorrow" : "today") + "</div>"; }
+    if (evening()) {
+      var ev = '<div class="big">Leave by ' + hm(new Date(s.leave)) + "</div>";
+      if (s.note) { ev += '<div class="big warn" style="font-size:3vh">' + esc(s.note) + "</div>"; }
+      return ev + '<div class="none">School starts ' + hm(new Date(s.start)) + (s.end ? ", ends " + hm(new Date(s.end)) : "") + "</div>";
+    }
     var leave = new Date(s.leave), start = new Date(s.start), html = "";
     if (s.presence === "left") {
       html += '<div class="big left">Left for school' + (s.left_at ? " at " + hm(new Date(s.left_at)) : "") + "</div>";
@@ -143,13 +179,30 @@
     }
     $("people").innerHTML = html || '<div class="none">Add people in Settings, TV dashboard.</div>';
     var q = data.quote;
-    $("quote").innerHTML = q ? "“" + esc(q.text) + "”" + (q.author ? "<span>— " + esc(q.author) + "</span>" : "") : "";
-    drawSchool();
+    $("quote").innerHTML = q ? (q.label ? "<small>" + esc(q.label) + "</small>" : "") + "“" + esc(q.text) + "”" + (q.author ? "<span>— " + esc(q.author) + "</span>" : "") : "";
+    drawSchool(); drawWelcome();
+  }
+
+  function drawWelcome() {
+    var w = data && data.welcome, box = $("welcome");
+    if (!w || new Date(w.until) <= new Date()) { box.className = ""; welcomeKey = ""; return; }
+    var key = JSON.stringify([w.title, w.people, w.common]);
+    if (key !== welcomeKey) {
+      welcomeKey = key;
+      var html = (w.birthday ? '<div class="party">🎉🎂🎈</div>' : "") + (w.sub ? '<div class="sub">' + esc(w.sub) + "</div>" : "") + "<h1>" + esc(w.title) + "</h1>", lines = "", i, j;
+      for (i = 0; i < w.people.length; i++) {
+        for (j = 0; j < w.people[i].lines.length; j++) { lines += "<div>" + (w.people.length > 1 && j === 0 ? "<b style=\"color:" + esc(w.people[i].color) + "\">" + esc(w.people[i].name) + "</b>" : "") + esc(w.people[i].lines[j]) + "</div>"; }
+      }
+      html += lines ? '<div class="pl">' + lines + "</div>" : "";
+      for (i = 0; i < w.common.length; i++) { html += '<div class="common">' + esc(w.common[i]) + "</div>"; }
+      box.innerHTML = html; box.style.setProperty("--c", w.color || "#4dabf7");
+    }
+    box.className = "on";
   }
 
   function load() {
     var x = new XMLHttpRequest();
-    x.open("GET", DATA_URL + "?t=" + Date.now());
+    x.open("GET", DATA_URL + "?t=" + Date.now() + (MODE ? "&mode=" + MODE : ""));
     x.timeout = 25000;
     x.onload = function () { if (x.status === 200) { try { data = JSON.parse(x.responseText); draw(); } catch (e) {} } };
     x.send();
@@ -158,7 +211,7 @@
   // a slow drift every few minutes keeps a static picture from burning into the panel
   function drift() { var w = $("wrap"); big = !big; w.style.transform = "translate(" + (big ? 0 : 6) + "px," + (big ? 0 : 4) + "px)"; }
   tick(); load();
-  setInterval(tick, 1000); setInterval(load, 120000); setInterval(drift, 300000);
+  setInterval(tick, 1000); setInterval(load, 30000); setInterval(drift, 300000);
 })();
 </script>
 </body>

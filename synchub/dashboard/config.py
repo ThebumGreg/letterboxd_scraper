@@ -41,6 +41,35 @@ def window():
     return minutes(settings.get("dash_start"), 390), minutes(settings.get("dash_end"), 510)
 
 
+def eve_window():
+    """The evening (tomorrow) screen's (start, end) in minutes after midnight."""
+    return minutes(settings.get("dash_eve_start"), 1200), minutes(settings.get("dash_eve_end"), 1320)
+
+
+def eve_days():
+    return [d for d in settings.get("dash_eve_days").split(",") if d in DAYS]
+
+
+def welcome_on():
+    return settings.get("dash_welcome_on") == "1"
+
+
+def quiet(now):
+    """True during the Welcome home quiet hours (which may run past midnight)."""
+    if settings.get("dash_welcome_quiet_on") != "1":
+        return False
+    start, end = minutes(settings.get("dash_welcome_quiet_from"), 1320), minutes(settings.get("dash_welcome_quiet_to"), 360)
+    minute = now.hour * 60 + now.minute
+    return start <= minute < end if start < end else (minute >= start or minute < end)
+
+
+def number(key, default, low, high):
+    try:
+        return min(high, max(low, int(settings.get(key))))
+    except (TypeError, ValueError):
+        return default
+
+
 def metric():
     return settings.get("dash_units") == "metric"
 
@@ -85,9 +114,6 @@ def clean_people(text):
                         return False, f"{name}, {DAY_LABELS[d]}: give both the leave-by time and the school start time, or clear both."
                     week[d] = {"leave": leave, "start": start, "end": end}
             entry["week"] = week
-            mac = re.sub(r"[^0-9a-f]", "", str(p.get("mac") or "").lower())
-            if mac and len(mac) != 12:
-                return False, f"{name}: the phone's Wi-Fi address (MAC) should look like aa:bb:cc:dd:ee:ff."
             ics = re.sub(r"^webcal://", "https://", str(p.get("ics") or "").strip(), flags=re.I)
             if ics and not re.match(r"^https?://\S{4,2000}$", ics):
                 return False, f"{name}: the school calendar link must be an address that starts with https:// (or webcal://)."
@@ -96,8 +122,13 @@ def clean_people(text):
             if not ok:
                 return False, f"{name}: {lines}"
             entry["no_school"] = lines
-            entry["mac"] = ":".join(mac[i:i + 2] for i in range(0, 12, 2)) if mac else ""
-            entry["phone"] = str(p.get("phone") or "").strip()[:60]
+        mac = re.sub(r"[^0-9a-f]", "", str(p.get("mac") or "").lower())
+        if mac and len(mac) != 12:
+            return False, f"{name}: the phone's Wi-Fi address (MAC) should look like aa:bb:cc:dd:ee:ff."
+        entry["mac"] = ":".join(mac[i:i + 2] for i in range(0, 12, 2)) if mac else ""
+        entry["phone"] = str(p.get("phone") or "").strip()[:60]
+        entry["welcome"] = p.get("welcome") is not False                  # the Welcome home page, on unless switched off for this person
+        entry["welcome_text"] = str(p.get("welcome_text") or "").strip()[:80]
         out.append(entry)
     return True, json.dumps(out, separators=(",", ":"))
 
@@ -182,6 +213,16 @@ def countdowns(today, limit=3, horizon=90):
         if 0 <= gap <= horizon:
             out.append({"label": label, "date": when.isoformat(), "days": gap, "yearly": not year})
     return sorted(out, key=lambda c: (c["days"], c["label"]))[:limit]
+
+
+def birthdays(today):
+    """Names (or labels) of the countdowns that are a birthday today: ["Sam"]. 'Sam's birthday' gives Sam."""
+    out = []
+    for c in countdowns(today, limit=100, horizon=0):
+        if c["days"] == 0 and "birthday" in c["label"].lower():
+            label = re.sub(r"[’']s\s+birthday.*$|\s+birthday.*$", "", c["label"], flags=re.I).strip()
+            out.append(label or c["label"])
+    return out
 
 
 def _safe_date(year, month, day):

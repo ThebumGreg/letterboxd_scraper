@@ -125,6 +125,11 @@ def all_left(now):
     return bool(watched) and all((state["kids"].get(k["name"]) or {}).get("state") == "left" for k in watched)
 
 
+def for_day(kid, when):
+    """A student's plan for another day (`when` is a datetime on that day): the evening screen's tomorrow. No presence."""
+    return {**day_plan(kid, when), "tracked": False, "presence": "", "left_at": ""}
+
+
 def for_page(kid, now):
     """What the dashboard shows for one student."""
     plan = day_plan(kid, now)

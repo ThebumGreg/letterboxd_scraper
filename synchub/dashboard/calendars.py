@@ -89,3 +89,10 @@ def for_person(url, now):
                 upcoming = {"date": d.isoformat(), "events": found[:4]}
                 break
     return {"today": today[:8], "next": upcoming, "stale": stale}
+
+
+def for_day(url, day, tz):
+    """-> {"events": [...], "stale": bool} for one whole calendar day (the evening screen's tomorrow)."""
+    text, stale = download(url)
+    start, end = day_range(day, tz)
+    return {"events": events_between(text, start, end)[:8], "stale": stale}

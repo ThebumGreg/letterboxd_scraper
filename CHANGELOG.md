@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**TV dashboard phase 2: its own Settings tab, Welcome home, an evening screen (no migration, no new packages).** Update SyncHub only.
+- **Settings, TV dashboard** is a new fourth tab. The dashboard moved out of Connections (UniFi Network stays there, it is an integration). A status bar shows whether it is on the TV, the last problem and whose phone is home, with Show / Show tomorrow / Close buttons. Sections fold open and shut, and each person is a collapsed card with a one-line summary. Saved settings keep their names, so nothing is lost.
+- **Welcome home:** when a phone joins the home Wi-Fi after being away 15 minutes or more, the TV shows "Welcome home, Sam!" for 2 minutes (setting), waking the TV from standby (setting) and putting it back to sleep after. Per-person switch and custom line, any person (adults now get a phone field too), quiet hours, a once-an-hour limit, never over a film, camera or another app, one page for two arrivals, "Happy birthday" on a birthday. The Wi-Fi is checked about once a minute all day, one UniFi call shared with the "Left for school" check. The Settings page lists what happened lately.
+- **Evening screen** (8 to 10 pm, Sunday to Thursday, off by default): tomorrow's weather and hint, each student's leave-by time or no school, and each calendar person's events.
+- **Extras:** sunrise and sunset, moon phase, UV index and air quality, birthday banner, and a choice for the bottom line (quote, dad joke, fun fact, this day in history, or rotate), each with a built-in fallback. New jokes/facts/history sources and the air quality service are untested from here; if one fails the built-in list or nothing is shown.
+- The TV page refreshes every 30 seconds now (it was 2 minutes) so a welcome appears promptly.
+
 **Page timing tools (no migration, no setting).** Update SyncHub; workers are not involved. The first step of making slow pages faster: measure them.
 - Every page request is timed (not static files, posters, or the workers' and players' own polling). The browser's developer tools show it in the `Server-Timing` header (total, database time, number of queries); a request over one second is written to the log as `Slow page: ...`.
 - **Tools & Operations > Page timings** lists, per page, how often it ran, average, 95th percentile and slowest time, queries and size, plus the slowest single requests (last 300, memory only, cleared on restart). Open the slow pages (Library, Dashboard, Jobs, ...) and press *Show timings*.
