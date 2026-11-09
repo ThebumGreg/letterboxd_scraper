@@ -4,6 +4,7 @@ import re
 import pytest
 
 from synchub import jobs, workers
+from tests.v2.media_helpers import all_tabs
 
 
 def make_worker(v2, name="encoder-1", **kw):
@@ -24,7 +25,7 @@ def row_for(page, worker_id):
 def test_workers_page_lists_workers_and_jobs_and_is_in_the_nav(client, v2):
     worker_id, _ = make_worker(v2, tags=["gpu"], slots=2)
     make_job(v2, title="Heat", kind="library")
-    page = client.get("/workers").get_data(as_text=True)
+    page = all_tabs(client, "/workers")
     assert 'href="/workers"' in page and 'id="fleet"' in page and "Add worker" in page
     row = row_for(page, worker_id)
     assert "encoder-1" in row and ">gpu<" in row and "0 / 2" in row and "Offline" in row and "never" in row
@@ -34,7 +35,7 @@ def test_workers_page_lists_workers_and_jobs_and_is_in_the_nav(client, v2):
 
 
 def test_an_empty_fleet_says_what_to_do(client, v2):
-    page = client.get("/workers").get_data(as_text=True)
+    page = all_tabs(client, "/workers")
     assert "No workers yet. Add one" in page and "No jobs yet" in page
 
 
@@ -45,18 +46,18 @@ def test_a_worker_shows_its_state_and_its_own_report(client, v2):
         workers.register(conn, worker_id, {"protocol": workers.PROTOCOL, "version": "1.2", "os": "Ubuntu 24.04", "hostname": "enc1", "slots": 2,
                                            "capabilities": {"encoders": ["libx265", "libx264"]}})
         workers.touch(conn, worker_id, status)
-    row = row_for(client.get("/workers").get_data(as_text=True), worker_id)
+    row = row_for(all_tabs(client, "/workers"), worker_id)
     assert "Online" in row and "enc1" in row and "Ubuntu 24.04" in row and "1.2" in row and "libx265, libx264" in row
     assert "120.0 GB free" in row and "3 held, 40.0 GB" in row and "just now" in row
     for flag, label in (("paused", "Paused"), ("draining", "Draining"), ("enabled", "Disabled")):
         with v2.connection() as conn:
             workers.set_flag(conn, worker_id, flag, flag != "enabled")
-        assert label in row_for(client.get("/workers").get_data(as_text=True), worker_id)
+        assert label in row_for(all_tabs(client, "/workers"), worker_id)
         with v2.connection() as conn:
             workers.set_flag(conn, worker_id, flag, flag == "enabled")
     with v2.connection() as conn:
         workers.revoke(conn, worker_id)
-    assert "Revoked" in row_for(client.get("/workers").get_data(as_text=True), worker_id)
+    assert "Revoked" in row_for(all_tabs(client, "/workers"), worker_id)
 
 
 def test_names_titles_and_reasons_are_escaped(client, v2):
@@ -64,7 +65,7 @@ def test_names_titles_and_reasons_are_escaped(client, v2):
     job_id = make_job(v2, title="<script>alert(1)</script>")
     with v2.connection() as conn:
         conn.execute("UPDATE job SET status = 'needs_review', review_reason = ? WHERE id = ?", ("<img src=x onerror=alert(1)>", job_id))
-    page = client.get("/workers").get_data(as_text=True)
+    page = all_tabs(client, "/workers")
     assert "<script>alert(1)</script>" not in page and "<b>bold</b>" not in page and "<img src=x" not in page
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page and "&lt;img src=x onerror=alert(1)&gt;" in page
 
@@ -75,7 +76,7 @@ def test_a_running_job_shows_stage_percent_and_eta(client, v2):
     with v2.connection() as conn:
         jobs.claim(conn, workers.get(conn, worker_id), 1)
         jobs.progress(conn, job_id, worker_id, stage="encode", progress=0.42, eta_seconds=5400)
-    page = client.get("/workers").get_data(as_text=True)
+    page = all_tabs(client, "/workers")
     row = re.search(r'<tr data-job="%d">.*?</tr>' % job_id, page, re.S).group(0)
     assert "encode 42%" in row and "1 h 30 min left" in row and 'style="width: 42%"' in row and "encoder-1" in row and "1/3" in row
 
@@ -90,9 +91,9 @@ def test_adding_a_worker_shows_its_token_once_and_the_token_works(client, v2, ap
     assert (worker["tags"], worker["slots"]) == (["gpu", "fast"], 2)
     api = app.test_client()
     assert api.post("/api/worker/v1/poll", json={"free_slots": 1}, headers={"Authorization": f"Bearer {r['token']}"}).status_code == 200
-    for text in (client.get("/workers").get_data(as_text=True), json.dumps(client.get("/api/workers").get_json())):
+    for text in (all_tabs(client, "/workers"), json.dumps(client.get("/api/workers").get_json())):
         assert r["token"] not in text                                                  # never shown again, in any view
-    assert "...%s" % r["token"][-4:] in client.get("/workers").get_data(as_text=True)    # only the last characters, to tell tokens apart
+    assert "...%s" % r["token"][-4:] in all_tabs(client, "/workers")    # only the last characters, to tell tokens apart
 
 
 @pytest.mark.parametrize("body,message", [
@@ -152,7 +153,7 @@ def test_a_worker_with_a_running_job_cannot_be_removed(client, v2):
         jobs.cancel(conn, job_id)
         jobs.fail(conn, job_id, worker_id, "cancelled", "stopped")
     assert client.post(f"/api/workers/{worker_id}/delete").get_json()["ok"]
-    assert "No workers yet" in client.get("/workers").get_data(as_text=True) and "#1 A job" in client.get("/workers").get_data(as_text=True)
+    assert "No workers yet" in all_tabs(client, "/workers") and "#1 A job" in all_tabs(client, "/workers")
 
 
 # ---------------------------------------------------------------- jobs
@@ -167,7 +168,7 @@ def test_job_buttons_follow_the_jobs_state(client, v2):
     assert "stops at its next report" in client.post(f"/api/jobs/{queued}/cancel").get_json()["message"]
     assert client.post("/api/jobs/999/cancel").status_code == 400
     assert client.post(f"/api/jobs/{queued}/bogus").status_code == 404
-    page = client.get("/workers").get_data(as_text=True)
+    page = all_tabs(client, "/workers")
     assert 'data-job-action="cancel"' in page
 
 
@@ -185,7 +186,7 @@ def test_review_decisions_from_the_page_record_who_decided(client, v2):
     with v2.connection() as conn:
         alice = conn.execute("INSERT INTO profile (name) VALUES ('Alice')").lastrowid
     approve, retry, skip, reject = waiting = [waiting_job(v2, worker_id) for _ in range(4)]
-    page = client.get("/workers").get_data(as_text=True)
+    page = all_tabs(client, "/workers")
     assert page.count('data-review-job=') == 4 and 'data-reason="low confidence"' in page
     client.set_cookie("synchub_profile", str(alice))
     assert client.post(f"/api/jobs/{approve}/approve", json={"note": "looks fine"}).get_json()["message"] == "Approved: it carries on."
@@ -232,11 +233,11 @@ def test_the_json_listing_has_workers_jobs_and_counts(client, v2):
 # ---------------------------------------------------------------- the worker's own log
 def test_the_workers_page_has_a_logs_button_and_a_viewer(client, v2):
     worker_id, _ = make_worker(v2)
-    page = client.get("/workers").get_data(as_text=True)
+    page = all_tabs(client, "/workers")
     assert f'data-worker-logs="{worker_id}"' in row_for(page, worker_id) and 'id="workerLogModal"' in page and 'id="wlRefresh"' in page
     with v2.connection() as conn:
         workers.revoke(conn, worker_id)
-    assert "data-worker-logs" not in row_for(client.get("/workers").get_data(as_text=True), worker_id)              # a revoked worker cannot answer
+    assert "data-worker-logs" not in row_for(all_tabs(client, "/workers"), worker_id)              # a revoked worker cannot answer
 
 
 def test_asking_for_the_log_marks_the_request_and_says_whether_the_worker_is_there(client, v2):
@@ -312,7 +313,7 @@ def reporting_worker(v2, name="encoder-1", host=HOST, **status):
 
 def test_the_status_tab_is_one_of_the_tabs_and_shows_the_hardware(client, v2):
     worker_id = reporting_worker(v2)
-    page = client.get("/workers").get_data(as_text=True)
+    page = all_tabs(client, "/workers")
     assert 'data-pane="status"' not in page and "<h4 class=\"mb-3\">Machines" in page      # the hardware sits under the workers list, not in a tab of its own
     pane = status_pane(page, worker_id)
     for text in ("Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz", "6 cores, 12 threads", "4.30 GHz", "x86_64", "12%", "0.50 0.40 0.30", ">avx2<", "32.0 GB", "(20.0 GB free)", "500.0 GB free",
@@ -323,7 +324,7 @@ def test_the_status_tab_is_one_of_the_tabs_and_shows_the_hardware(client, v2):
 
 def test_each_encoder_says_whether_it_works_failed_or_was_not_tested(client, v2):
     worker_id = reporting_worker(v2)
-    pane = status_pane(client.get("/workers").get_data(as_text=True), worker_id)
+    pane = status_pane(all_tabs(client, "/workers"), worker_id)
     row = lambda name: re.search(r"<tr><td><code>%s</code>.*?</tr>" % re.escape(name), pane, re.S).group(0)
     assert "works" in row("libx264") and "H.264" in row("libx264") and "Software (CPU)" in row("libx264")
     assert "built in, but failed" in row("hevc_nvenc") and "NVIDIA NVENC" in row("hevc_nvenc") and "GPU" in row("hevc_nvenc")        # built into ffmpeg, but the test frame failed
@@ -336,27 +337,27 @@ def test_an_older_agent_is_told_to_update_and_still_shows_its_encoders(client, v
     worker_id, _ = make_worker(v2)
     with v2.connection() as conn:
         workers.register(conn, worker_id, {"protocol": workers.PROTOCOL, "version": "0.3.0", "slots": 1, "capabilities": {"encoders": ["libx264"]}})
-    pane = status_pane(client.get("/workers").get_data(as_text=True), worker_id)
+    pane = status_pane(all_tabs(client, "/workers"), worker_id)
     assert "has not reported its hardware" in pane and "setup-worker.sh" in pane and "Encoders that work: libx264" in pane
 
 
 def test_a_worker_that_never_connected_says_so(client, v2):
     worker_id, _ = make_worker(v2)
-    assert "has not connected yet" in status_pane(client.get("/workers").get_data(as_text=True), worker_id)
+    assert "has not connected yet" in status_pane(all_tabs(client, "/workers"), worker_id)
 
 
 def test_an_offline_worker_keeps_its_last_known_figures_marked_as_old(client, v2):
     worker_id = reporting_worker(v2)
     with v2.connection() as conn:
         conn.execute("UPDATE worker SET last_seen = '2020-01-01 00:00:00' WHERE id = ?", (worker_id,))
-    pane = status_pane(client.get("/workers").get_data(as_text=True), worker_id)
+    pane = status_pane(all_tabs(client, "/workers"), worker_id)
     assert "Offline" in pane and "the figures below are from then" in pane and "Intel(R) Core" in pane and "opacity-75" in pane
 
 
 def test_host_text_from_a_worker_is_escaped(client, v2):
     host = {**HOST, "cpu": {**HOST["cpu"], "model": "<script>alert(1)</script>"}, "gpus": [{"name": "<img src=x onerror=alert(1)>"}]}
     worker_id = reporting_worker(v2, host=host)
-    page = client.get("/workers").get_data(as_text=True)
+    page = all_tabs(client, "/workers")
     assert "<script>alert(1)</script>" not in page and "&lt;script&gt;alert(1)&lt;/script&gt;" in page and "<img src=x" not in page
 
 
@@ -371,7 +372,7 @@ def test_nonsense_in_the_report_does_not_break_the_page(client, v2):
 
 def test_a_gpu_free_container_explains_why_no_card_is_shown(client, v2):
     worker_id = reporting_worker(v2, host={**HOST, "gpus": [], "render_devices": []})
-    pane = status_pane(client.get("/workers").get_data(as_text=True), worker_id)
+    pane = status_pane(all_tabs(client, "/workers"), worker_id)
     assert "No graphics card is visible to the agent" in pane and "docker container" in pane
 
 

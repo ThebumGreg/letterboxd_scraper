@@ -3,6 +3,7 @@ import re
 import pytest
 
 from synchub import jobs, storage, workers
+from tests.v2.media_helpers import all_tabs
 
 SMB = {"name": "media", "protocol": "smb", "host": "192.168.1.10", "share": "Media", "mount_point": "/mnt/tower/Media"}
 NFS = {"name": "tfiles", "protocol": "nfs", "host": "tower", "share": "/mnt/user/TFiles", "mount_point": "/mnt/tower/TFiles"}
@@ -49,7 +50,7 @@ def test_what_a_worker_reports_for_a_share_is_shown_with_its_reason(client, v2):
     page = client.get("/storage").get_data(as_text=True)
     assert re.search(r'badge bg-success"[^>]*>ready</span> encoder-1 <span class="text-body-secondary">&middot; 2,048.0 GB free', page)
     assert re.search(r'badge bg-danger" title="Nothing is mounted there">not mounted</span> encoder-1', page)
-    row = re.search(r'<tr data-worker="%d">.*?</tr>' % worker_id, client.get("/workers").get_data(as_text=True), re.S).group(0)
+    row = re.search(r'<tr data-worker="%d">.*?</tr>' % worker_id, all_tabs(client, "/workers"), re.S).group(0)
     assert "ready</span> media" in row and "not mounted</span> tfiles" in row and "Nothing is mounted there" in row
 
 
@@ -119,7 +120,7 @@ def test_a_new_token_comes_with_fresh_setup_files(client, v2):
 def test_the_workers_page_offers_the_setup_files_and_a_test_copy(client, v2):
     with v2.connection() as conn:
         worker_id, _ = workers.create(conn, "encoder-1")
-    page = client.get("/workers").get_data(as_text=True)
+    page = all_tabs(client, "/workers")
     assert f'data-setup-worker="{worker_id}"' in page and 'id="testCopyBtn"' in page and 'id="copyModal"' in page and 'id="setupModal"' in page
 
 
@@ -133,7 +134,7 @@ def test_a_test_copy_is_queued_from_the_page_and_shows_in_the_job_list(client, v
     with v2.connection() as conn:
         job = jobs.get(conn, r["id"])
     assert job["plan"] == {"op": "copy"} and job["pinned_worker_id"] == worker_id
-    assert "Test copy: Heat.mkv" in client.get("/workers").get_data(as_text=True)
+    assert "Test copy: Heat.mkv" in all_tabs(client, "/workers")
 
 
 def test_a_test_copy_for_any_worker_leaves_the_worker_open(client, v2):
@@ -163,16 +164,16 @@ def test_the_job_list_says_when_no_worker_has_the_share_a_job_needs(client, v2):
         workers.register(conn, worker_id, {"protocol": workers.PROTOCOL})
         jobs.create(conn, "library", title="Wants tfiles", source=("media", "a.mkv"), dest=("tfiles", "a.mkv"))
     report(v2, worker_id, {"roots": {"media": {"ok": True}, "tfiles": {"ok": False, "state": "not_mounted"}}})
-    assert "No online worker has tfiles mounted and ready." in client.get("/workers").get_data(as_text=True)
+    assert "No online worker has tfiles mounted and ready." in all_tabs(client, "/workers")
     report(v2, worker_id, {"roots": {"media": {"ok": True}, "tfiles": {"ok": True}}})
-    assert "mounted and ready" not in client.get("/workers").get_data(as_text=True)
+    assert "mounted and ready" not in all_tabs(client, "/workers")
 
 
 def test_no_hint_while_no_worker_is_online_because_that_is_a_different_problem(client, v2):
     add_shares(v2, SMB)
     with v2.connection() as conn:
         jobs.create(conn, "library", title="Waiting", source=("media", "a.mkv"), dest=("media", "b.mkv"))
-    assert "mounted and ready" not in client.get("/workers").get_data(as_text=True)
+    assert "mounted and ready" not in all_tabs(client, "/workers")
 
 
 # ---------------------------------------------------------------- the full log

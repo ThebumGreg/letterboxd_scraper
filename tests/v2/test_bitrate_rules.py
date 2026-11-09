@@ -6,6 +6,7 @@ from synchub.library import profiles, rules, size_policy as sp
 
 from .agent_module import agent
 from .test_size_policy import movie
+from tests.v2.media_helpers import all_tabs
 
 
 def cfg(**kw):
@@ -77,5 +78,5 @@ def test_the_settings_page_saves_the_new_fields(app, client):
     loaded = sp.load()
     assert (loaded.trigger_mbps["2160"], loaded.caps_mbps["2160"], loaded.rate_mode) == (55.0, 36.0, "quality")
     assert client.post("/api/library/settings", json={"rate_mode": "fast"}).get_json()["ok"] is False
-    page = client.get("/library").get_data(as_text=True)
+    page = all_tabs(client, "/library")
     assert 'id="setTrig2160" value="55"' in page and "When to compress" in page and "How to compress" in page
