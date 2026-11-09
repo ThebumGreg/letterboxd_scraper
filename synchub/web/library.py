@@ -77,13 +77,16 @@ def overview(conn):
     rows = rc.classify(conn, cfg)
     table = rc.counts(conn, cfg, rows)
     groups = [{"key": g, "title": rc.GROUP_TITLES[g], "hint": rc.GROUP_HINTS[g], **table[g]} for g in rc.GROUP_ORDER]
+    loose_ids = loose.loose_ids(conn)                      # loose films by the list they are in (done and rejected ones need nothing)
+    per_group = {g: sum(1 for rec, r in rows if r.group == g and rec["id"] in loose_ids) for g in rc.GROUP_ORDER if g not in (rc.G_DONE, rc.G_REJECTED)}
+    loose_by_group = [(g, rc.GROUP_TITLES[g], n) for g, n in per_group.items() if n]
     runs = scan.list_runs(conn, 12)
     for run in runs:
         run["percent"] = None if run["progress"] is None else round(run["progress"] * 100)
         run["when"] = (run["created_at"] or "")[:16]
     options = scan_options_for_page(conn)
     migration = migrate.queue_summary(conn)
-    return {"quality_box": quality.counts(conn), "loose_count": len(loose.loose_ids(conn)), "cfg": cfg, "groups": groups, "total": len(rows), "shares": shares_summary(conn, cfg), "runs": runs, "active": any(r["active"] for r in runs) or bool(migration["queued"] or migration["running"]) or bool(downloads.summary(conn)["working"]), "options": options,
+    return {"quality_box": quality.counts(conn), "loose_by_group": loose_by_group, "loose_count": sum(n for _, _, n in loose_by_group), "cfg": cfg, "groups": groups, "total": len(rows), "shares": shares_summary(conn, cfg), "runs": runs, "active": any(r["active"] for r in runs) or bool(migration["queued"] or migration["running"]) or bool(downloads.summary(conn)["working"]), "options": options,
             "roots": [r["name"] for r in storage.list_all(conn)], "migration": migration,
             "downloads": _with_previews(conn, downloads.recent(conn, 15)), "preview_summary": previews.summary(conn), "review_first": previews.review_first(conn), "trust_after": previews.trust_after(conn),
             "preview_seconds": previews.clip_seconds(conn), "preview_keep_days": previews.keep_days(conn), "preview_auto": previews.auto_make(conn), "download_summary": downloads.summary(conn), "originals_days": downloads.retention_days(conn), "size": size_policy.load(conn), "lookups": {"confidence": CONFIDENCE_FLOORS},
