@@ -321,7 +321,7 @@ def recommend(rec, cfg=None, rule_steps=None, held=False) -> Recommendation:
     if (rec["root_name"] == cfg.destination_root and path and kind in ("plain", "naming") and not plans and action == db.ACTION_COPY_RENAME and not needs_name):
         # already on the destination share, just not at the right path: moving it inside the share beats copying it next to itself
         return Recommendation(G_SUGGESTED, "rename", "approve", f"Rename in place to “{media_layout.file_name(rec, cfg)}”",
-                              [f"Move it inside {rec['root_name']} to {path}. Nothing is copied and nothing in the file changes."], notes, confidence, True,
+                              [f"Move it inside {rec['root_name']} to {path}, with its poster, subtitle and info files. Nothing is copied, nothing is deleted and nothing in the file changes."], notes, confidence, True,
                               action=action, mode="rename_only", **base)
     can_approve = action in db.MIGRATABLE_ACTIONS and not (needs_name)
     return Recommendation(group, kind, "approve", headline, steps, notes, confidence, can_approve,
@@ -340,7 +340,7 @@ def _held(rec, cfg, base, path, path_error):
         return Recommendation(G_HELD, "held", "none", "Already in the right place", [], notes, HIGH, False, held=True, **base)
     if rec["root_name"] == cfg.destination_root and rename_path(rec, cfg) is not None:
         return Recommendation(G_HELD, "held", "approve", f"Rename in place to “{name}”",
-                              [f"Move it inside {rec['root_name']} to {path}. Nothing is copied and nothing in the file changes."], notes, HIGH, True,
+                              [f"Move it inside {rec['root_name']} to {path}, with its poster, subtitle and info files. Nothing is copied, nothing is deleted and nothing in the file changes."], notes, HIGH, True,
                               action=db.ACTION_COPY_RENAME, mode="rename_only", held=True, **base)
     if rec["root_name"] == cfg.destination_root:
         return Recommendation(G_HELD, "held", "none", "Already in the right place", [], notes, HIGH, False, held=True, **base)
