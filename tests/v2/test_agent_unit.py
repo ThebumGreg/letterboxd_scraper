@@ -673,3 +673,32 @@ def test_the_gpu_is_not_given_more_encodes_than_the_limit():
     assert a.gpu_take() is True and a.gpu_take() is False
     a.gpu_give(); a.gpu_give(); a.gpu_give(); a.gpu_give()                                                        # never goes below zero
     assert a.gpu_busy == 0
+
+
+# ---------------------------------------------------------------- moving a loose film into its own folder takes its artwork along
+def _touch(path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "w").close()
+
+
+def _sidecars(src, dst):
+    cls = next(c for c in vars(agent).values() if isinstance(c, type) and hasattr(c, "sidecars") and hasattr(c, "ARTWORK"))
+    return {(os.path.basename(a), os.path.relpath(b, os.path.dirname(os.path.dirname(dst)))) for a, b in cls.sidecars(cls, src, dst)}
+
+
+def test_loose_film_takes_its_named_artwork_and_subtitles(tmp_path):
+    movies = str(tmp_path / "Movies")
+    for name in ("Heat (1995).mkv", "Heat (1995)-poster.jpg", "Heat (1995).jpg", "Heat (1995).en.srt", "Heat (1995).nfo", "Alien (1979).mkv", "Alien (1979)-poster.jpg", "poster.jpg"):
+        _touch(os.path.join(movies, name))
+    found = _sidecars(os.path.join(movies, "Heat (1995).mkv"), os.path.join(movies, "Heat (1995)", "Heat (1995).mkv"))
+    assert found == {("Heat (1995)-poster.jpg", "Heat (1995)/Heat (1995)-poster.jpg"), ("Heat (1995).jpg", "Heat (1995)/Heat (1995).jpg"),
+                     ("Heat (1995).en.srt", "Heat (1995)/Heat (1995).en.srt"), ("Heat (1995).nfo", "Heat (1995)/Heat (1995).nfo")}     # not Alien's, and not the shared poster.jpg
+
+
+def test_a_lone_films_folder_poster_goes_with_it_but_only_into_a_new_folder(tmp_path):
+    folder = str(tmp_path / "Movies" / "Heat.1995.1080p")
+    for name in ("Heat.1995.mkv", "poster.jpg", "fanart.jpg", "sample.txt"):
+        _touch(os.path.join(folder, name))
+    moved = _sidecars(os.path.join(folder, "Heat.1995.mkv"), str(tmp_path / "Movies" / "Heat (1995)" / "Heat (1995).mkv"))
+    assert moved == {("poster.jpg", "Heat (1995)/poster.jpg"), ("fanart.jpg", "Heat (1995)/fanart.jpg")}
+    assert _sidecars(os.path.join(folder, "Heat.1995.mkv"), os.path.join(folder, "Heat (1995).mkv")) == set()        # renamed in the same folder: leave the folder's artwork alone

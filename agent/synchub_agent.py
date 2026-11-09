@@ -48,6 +48,7 @@ __version__ = "1.4.0"      # kept equal to SyncHub's version (synchub/__init__.p
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
 IGNORE_FILE = ".ignore"           # an empty file with this name makes Jellyfin skip the folder
+GENERIC_ARTWORK = re.compile(r"^(poster|folder|cover|fanart|backdrop|banner|landscape|thumb|clearlogo|clearart|logo|disc)\.(jpg|jpeg|png|webp|tbn)$", re.I)
 VIDEO_EXTENSIONS = (".mkv", ".mp4", ".m4v", ".avi", ".mov", ".ts", ".m2ts", ".wmv", ".iso")
 OPS = ["copy", "rename", "delete_source", "hide_source", "unhide_source", "originals"]     # the operations (plan.op) every agent can do; scan, hash and convert are added when the analysis module and ffmpeg are there
 FEATURES = ["profiles", "scale", "audio_add", "benchmark", "two_outputs"]   # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run). "dovi" is added when dovi_tool and mkvmerge work
@@ -1883,21 +1884,28 @@ class JobRunner(threading.Thread):
         return result
 
     # ---- rename: move a file to its proper place inside one share. No copy, nothing in the file changes.
+    ARTWORK = r"(-(poster|fanart|banner|landscape|thumb|clearlogo|clearart|logo|disc|backdrop))?\.(jpg|jpeg|png|webp|tbn)"
     SIDECAR = r"(\.[A-Za-z]{2,3}(-[A-Za-z]{2,4})?)?(\.(forced|sdh|hi|cc|default))*\.(srt|ass|ssa|sub|idx|vtt|nfo)"
 
     def sidecars(self, src, dst):
         """[(from, to)] for the subtitle and info files that sit next to the video and carry its name (Heat.mkv, Heat.en.srt, Heat.nfo)."""
         folder, stem = os.path.dirname(src), os.path.splitext(os.path.basename(src))[0]
         pattern = re.compile("^" + re.escape(stem) + "(" + self.SIDECAR + ")$", re.I)
+        art = re.compile("^" + re.escape(stem) + "(" + self.ARTWORK + ")$", re.I)
         new_stem, found = os.path.splitext(os.path.basename(dst))[0], []
         try:
             names = sorted(os.listdir(folder))
         except OSError:
             return found
+        videos = [n for n in names if n.lower().endswith(VIDEO_EXTENSIONS)]
+        own_folder = os.path.dirname(src) != os.path.dirname(dst) and len(videos) <= 1       # only film in its folder: the folder's own poster.jpg etc. belong to it
         for name in names:
-            match = pattern.match(name)
-            if match and os.path.isfile(os.path.join(folder, name)):
-                found.append((os.path.join(folder, name), os.path.join(os.path.dirname(dst), new_stem + match.group(1))))
+            path = os.path.join(folder, name)
+            match = pattern.match(name) or art.match(name)
+            if match and os.path.isfile(path):
+                found.append((path, os.path.join(os.path.dirname(dst), new_stem + match.group(1))))
+            elif own_folder and GENERIC_ARTWORK.match(name) and os.path.isfile(path):
+                found.append((path, os.path.join(os.path.dirname(dst), name)))
         return found
 
     def prune_empty(self, folder, root_path):
@@ -1950,7 +1958,7 @@ class JobRunner(threading.Thread):
             raise
         self.prune_empty(os.path.dirname(src), self.agent.roots.path(source["root"]))
         self.report_progress("publish", 1.0, "Renamed", force=True)
-        self.log.info(f"Renamed {source['rel']} to {dest['rel']}" + (f" with {moved} subtitle/info file(s)" if moved else ""))
+        self.log.info(f"Renamed {source['rel']} to {dest['rel']}" + (f" with {moved} poster/subtitle/info file(s)" if moved else ""))
         return {"op": "rename", "bytes": stat.st_size, "verified": "size", "sidecars": moved}
 
     # ---- delete the source of a file that was copied into the library, after checking the library copy is still whole

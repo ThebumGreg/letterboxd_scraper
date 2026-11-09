@@ -11,13 +11,13 @@ from datetime import datetime, timezone
 from flask import Response, jsonify, redirect, render_template, request, send_file, url_for
 
 from synchub import db, downloads, jobs, previews, quality, settings, storage, versions
-from synchub.library import cleanup, findings, hide, migrate, profiles, recommend as rc, rules as profile_rules, report, rule_steps, scan, size_policy, store
+from synchub.library import cleanup, findings, hide, loose, migrate, profiles, recommend as rc, rules as profile_rules, report, rule_steps, scan, size_policy, store
 from synchub.library import vocab as v
 from settings_validation import validate_setting
 
 PAGE_SIZE = 100
 CONFIDENCE_FLOORS = {"high": rc.HIGH, "medium": rc.MEDIUM}
-FILTER_KEYS = ("q", "root", "conf")
+FILTER_KEYS = ("q", "root", "conf", "what", "type", "quality")
 
 
 def _who(conn):
@@ -83,7 +83,7 @@ def overview(conn):
         run["when"] = (run["created_at"] or "")[:16]
     options = scan_options_for_page(conn)
     migration = migrate.queue_summary(conn)
-    return {"quality_box": quality.counts(conn), "cfg": cfg, "groups": groups, "total": len(rows), "shares": shares_summary(conn, cfg), "runs": runs, "active": any(r["active"] for r in runs) or bool(migration["queued"] or migration["running"]) or bool(downloads.summary(conn)["working"]), "options": options,
+    return {"quality_box": quality.counts(conn), "loose_count": len(loose.loose_ids(conn)), "cfg": cfg, "groups": groups, "total": len(rows), "shares": shares_summary(conn, cfg), "runs": runs, "active": any(r["active"] for r in runs) or bool(migration["queued"] or migration["running"]) or bool(downloads.summary(conn)["working"]), "options": options,
             "roots": [r["name"] for r in storage.list_all(conn)], "migration": migration,
             "downloads": _with_previews(conn, downloads.recent(conn, 15)), "preview_summary": previews.summary(conn), "review_first": previews.review_first(conn), "trust_after": previews.trust_after(conn),
             "preview_seconds": previews.clip_seconds(conn), "preview_keep_days": previews.keep_days(conn), "preview_auto": previews.auto_make(conn), "download_summary": downloads.summary(conn), "originals_days": downloads.retention_days(conn), "size": size_policy.load(conn), "lookups": {"confidence": CONFIDENCE_FLOORS},
@@ -118,11 +118,36 @@ def describe_record(rec, rcm, cfg, profile=None, quality=None):
             "quality": quality, "final_name": v.final_name(rec), "in_place": findings.in_place(rec, cfg), "missing": bool(rec.get("missing_since"))}
 
 
+QUALITY_FILTERS = ("waiting", "unchecked", "good", "poor", "small")
+
+
+def _quality_matches(state, wanted):
+    check, result = state["check"], state["result"]
+    live = bool(check and check["status"] in quality.LIVE)
+    grade = (result or {}).get("grade") if state["current"] else None
+    if wanted == "waiting":
+        return live
+    if wanted == "unchecked":
+        return not live and result is None and not state["small"]
+    if wanted == "small":
+        return state["small"]
+    if wanted == "good":
+        return grade in ("good", "ok") and not state["low"]
+    return (state["low"] and not state["small"]) or grade in ("poor", "bad")
+
+
 def queue_rows(conn, cfg, group, f):
     rows = [(rec, r) for rec, r in rc.classify(conn, cfg, f["q"] or None, f["root"] or None) if r.group == group]
     floor = CONFIDENCE_FLOORS.get(f["conf"])
     if floor:
         rows = [(rec, r) for rec, r in rows if r.confidence == floor]
+    rows = loose.narrow(conn, rows, f["what"])
+    if f["type"] == "movies":
+        rows = [(rec, r) for rec, r in rows if str(rec.get("media_type") or "").startswith("Movie")]
+    elif f["type"] == "tv":
+        rows = [(rec, r) for rec, r in rows if rec.get("media_type") == "TV Episode"]
+    if f["quality"] in QUALITY_FILTERS:
+        rows = [(rec, r) for rec, r in rows if _quality_matches(quality.state_for(conn, rec), f["quality"])]
     return rows
 
 
@@ -158,7 +183,11 @@ def register(app):
             candidates = [(rec, r) for rec, r in all_rows if r.can_approve and not r.needs_name and r.confidence in (rc.HIGH, rc.MEDIUM) and r.kind not in ("keep_duplicate", "skip_duplicate")]
             roots = [r["name"] for r in storage.list_all(conn)]
         shown = all_rows[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
-        rows = [{"rec": rec, "r": r, "size": _size(rec["size_bytes"]) if not rec.get("unreadable_reason") else None} for rec, r in shown]
+        with db.connection() as conn:
+            loose_set = loose.loose_ids(conn)
+            quality_state = {rec["id"]: quality.state_for(conn, rec) for rec, _ in shown if str(rec.get("media_type") or "").startswith("Movie")}
+        rows = [{"rec": rec, "r": r, "size": _size(rec["size_bytes"]) if not rec.get("unreadable_reason") else None, "loose": rec["id"] in loose_set,
+                 "quality": quality_state.get(rec["id"])} for rec, r in shown]
         return render_template("library_queue.html", group=group, title=rc.GROUP_TITLES[group], hint=rc.GROUP_HINTS[group], rows=rows, total=len(all_rows), page=page,
                                pages=max((len(all_rows) + PAGE_SIZE - 1) // PAGE_SIZE, 1), f=f, counts=table[group], groups=rc.GROUP_ORDER, titles=rc.GROUP_TITLES, table=table,
                                high=sum(1 for _, r in candidates if r.confidence == rc.HIGH), high_medium=len(candidates), roots=roots)
@@ -289,7 +318,7 @@ def register(app):
         floor = CONFIDENCE_FLOORS.get(f["conf"], rc.MEDIUM)
         with db.connection() as conn:
             cfg = scan.config(conn)
-            candidates = [(rec, r) for rec, r in rc.bulk_candidates(conn, group, floor, f["q"] or None, f["root"] or None, cfg) if r.kind not in ("keep_duplicate", "skip_duplicate")]
+            candidates = [(rec, r) for rec, r in rc.bulk_candidates(conn, group, floor, f["q"] or None, f["root"] or None, cfg, f["what"] or None) if r.kind not in ("keep_duplicate", "skip_duplicate")]
         sample = [{"rec": rec, "r": r} for rec, r in candidates[:25]]
         size = sum(rec["size_bytes"] or 0 for rec, _ in candidates)
         with db.connection() as conn:
@@ -308,7 +337,7 @@ def register(app):
         floor = CONFIDENCE_FLOORS.get(str(data.get("conf") or ""), rc.MEDIUM)
         try:
             with db.connection() as conn:
-                done, skipped = rc.bulk_approve(conn, group, _who(conn), floor, (data.get("q") or None), (data.get("root") or None), scan.config(conn), data.get("profile_id") or None)
+                done, skipped = rc.bulk_approve(conn, group, _who(conn), floor, (data.get("q") or None), (data.get("root") or None), scan.config(conn), data.get("profile_id") or None, data.get("what") or None)
         except (ValueError, v.LibraryError) as exc:
             return _fail(str(exc))
         left = f" {len(skipped)} left for you: {skipped[0][1]}." if skipped else ""

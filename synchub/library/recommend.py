@@ -139,6 +139,18 @@ def _relative_path(rec, cfg):
         return None, str(exc)
 
 
+def _subtitle_summary(tracks):
+    """'Remove 23 subtitles (English x3, French x2, +4 more languages)': counts instead of a line per track; the record page still lists every track."""
+    counts = {}
+    for t in tracks:
+        name = language_name(t["language"])
+        counts[name] = counts.get(name, 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    shown = ", ".join(f"{name} \u00d7{n}" if n > 1 else name for name, n in ranked[:3])
+    more = len(ranked) - 3
+    return f"Remove {len(tracks)} subtitles ({shown}{f', +{more} more language' + ('s' if more > 1 else '') if more > 0 else ''})"
+
+
 def _confidence_from_naming(rec):
     label = (rec.get("naming_confidence") or "").lower()
     if "collision" in (rec.get("naming_flags") or "").lower():
@@ -268,7 +280,7 @@ def recommend(rec, cfg=None, rule_steps=None, held=False) -> Recommendation:
         if gone_audio:
             steps.append("Remove audio: " + ", ".join(f"#{t['index']} {language_name(t['language'])}" for t in gone_audio))
         if wanted_gone:
-            steps.append("Remove subtitles: " + ", ".join(f"#{t['index']} {language_name(t['language'])}" for t in wanted_gone))
+            steps.append("Remove subtitles: " + ", ".join(f"#{t['index']} {language_name(t['language'])}" for t in wanted_gone) if len(wanted_gone) <= 3 else _subtitle_summary(wanted_gone))
         if forced_gone:
             steps.append("Drop subtitles MKV cannot hold: " + ", ".join(f"#{t['index']}" for t in forced_gone))
         if plan.get("default_audio") is not None:
@@ -321,7 +333,7 @@ def recommend(rec, cfg=None, rule_steps=None, held=False) -> Recommendation:
     if (rec["root_name"] == cfg.destination_root and path and kind in ("plain", "naming") and not plans and action == db.ACTION_COPY_RENAME and not needs_name):
         # already on the destination share, just not at the right path: moving it inside the share beats copying it next to itself
         return Recommendation(G_SUGGESTED, "rename", "approve", f"Rename in place to “{media_layout.file_name(rec, cfg)}”",
-                              [f"Move it inside {rec['root_name']} to {path}. Nothing is copied and nothing in the file changes."], notes, confidence, True,
+                              [f"Move it inside {rec['root_name']} to {path}, with its poster, subtitle and info files. Nothing is copied, nothing is deleted and nothing in the file changes."], notes, confidence, True,
                               action=action, mode="rename_only", **base)
     can_approve = action in db.MIGRATABLE_ACTIONS and not (needs_name)
     return Recommendation(group, kind, "approve", headline, steps, notes, confidence, can_approve,
@@ -340,7 +352,7 @@ def _held(rec, cfg, base, path, path_error):
         return Recommendation(G_HELD, "held", "none", "Already in the right place", [], notes, HIGH, False, held=True, **base)
     if rec["root_name"] == cfg.destination_root and rename_path(rec, cfg) is not None:
         return Recommendation(G_HELD, "held", "approve", f"Rename in place to “{name}”",
-                              [f"Move it inside {rec['root_name']} to {path}. Nothing is copied and nothing in the file changes."], notes, HIGH, True,
+                              [f"Move it inside {rec['root_name']} to {path}, with its poster, subtitle and info files. Nothing is copied, nothing is deleted and nothing in the file changes."], notes, HIGH, True,
                               action=db.ACTION_COPY_RENAME, mode="rename_only", held=True, **base)
     if rec["root_name"] == cfg.destination_root:
         return Recommendation(G_HELD, "held", "none", "Already in the right place", [], notes, HIGH, False, held=True, **base)
@@ -523,19 +535,21 @@ def undo(conn, record_id, by):
     store.set_approval(conn, record_id, db.APPROVAL_PENDING, by, note="decision undone on the Library page")
 
 
-def bulk_candidates(conn, group, min_confidence=MEDIUM, match=None, root=None, cfg=None):
+def bulk_candidates(conn, group, min_confidence=MEDIUM, match=None, root=None, cfg=None, what=None):
     """Records in `group` that can safely be approved together: one-click approvable and at
     least `min_confidence`. Low-confidence records are never included."""
     floor = max(_RANK[min_confidence], _RANK[MEDIUM])        # low confidence is never bulk-approved, whatever is asked for
-    return [(rec, r) for rec, r in classify(conn, cfg, match, root)
+    rows = [(rec, r) for rec, r in classify(conn, cfg, match, root)
             if r.group == group and r.can_approve and not r.needs_name and _RANK[r.confidence] >= floor]
+    from synchub.library import loose
+    return loose.narrow(conn, rows, what)
 
 
-def bulk_approve(conn, group, by, min_confidence=MEDIUM, match=None, root=None, cfg=None, profile_id=None):
+def bulk_approve(conn, group, by, min_confidence=MEDIUM, match=None, root=None, cfg=None, profile_id=None, what=None):
     """Apply the recommendation to every candidate. Returns (done, [(id, why)]).
     Duplicate groups are skipped: they need a person to choose which copy to keep."""
     done, skipped = 0, []
-    for rec, r in bulk_candidates(conn, group, min_confidence, match, root, cfg):
+    for rec, r in bulk_candidates(conn, group, min_confidence, match, root, cfg, what):
         if r.kind in ("keep_duplicate", "skip_duplicate"):
             skipped.append((rec["id"], "duplicates are decided one at a time"))
             continue

@@ -40,6 +40,15 @@ def file_name(record, cfg):
     return jellyfin_tv_name(name) if name and cfg.naming_style == "jellyfin" and record.get("media_type") == "TV Episode" else name
 
 
+def _movie_folder(record, cfg):
+    """The folder a movie goes under: the configured movie folder, except that a film already in the library share and already in another top-level folder
+    (Old Movies, Kids Movies: separate Jellyfin libraries) stays in that folder, so tidying it into its own folder never changes its library."""
+    parts = [p for p in str(record.get("relative_path") or "").replace("\\", "/").split("/") if p]
+    if str(record.get("root_name") or "").casefold() == str(cfg.destination_root).casefold() and len(parts) >= 2 and parts[0].casefold() != cfg.movie_folder.casefold():
+        return parts[0]
+    return cfg.movie_folder
+
+
 def relative_parts(record, cfg=None):
     """The path components below the destination share. Raises LayoutError."""
     cfg = cfg or v.LibraryConfig()
@@ -57,7 +66,7 @@ def relative_parts(record, cfg=None):
     else:
         folder = os.path.splitext(name)[0]
         problems += _problems("movie folder", folder)
-        parts = [cfg.movie_folder, folder, name]
+        parts = [_movie_folder(record, cfg), folder, name]
     if problems:
         raise LayoutError("; ".join(problems))
     return parts
