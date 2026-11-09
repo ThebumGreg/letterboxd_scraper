@@ -102,6 +102,17 @@ def register(app):
         from synchub import dbinfo
         return jsonify(ok=True, **dbinfo.sizes())
 
+    @app.route("/api/tools/timings")
+    def api_tools_timings():
+        from synchub import timing
+        return jsonify(ok=True, **timing.report())
+
+    @app.route("/api/tools/timings/reset", methods=["POST"])
+    def api_tools_timings_reset():
+        from synchub import timing
+        timing.reset()
+        return jsonify(ok=True)
+
     @app.route("/api/tools/db-compact", methods=["POST"])
     def api_tools_db_compact():
         from synchub import dbinfo

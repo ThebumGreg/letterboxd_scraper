@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**Page timing tools (no migration, no setting).** Update SyncHub; workers are not involved. The first step of making slow pages faster: measure them.
+- Every page request is timed (not static files, posters, or the workers' and players' own polling). The browser's developer tools show it in the `Server-Timing` header (total, database time, number of queries); a request over one second is written to the log as `Slow page: ...`.
+- **Tools & Operations > Page timings** lists, per page, how often it ran, average, 95th percentile and slowest time, queries and size, plus the slowest single requests (last 300, memory only, cleared on restart). Open the slow pages (Library, Dashboard, Jobs, ...) and press *Show timings*.
+- `tools/benchmark_pages.py` (in the image as `/app/tools/benchmark_pages.py`) times every page against a *copy* of a database and each heavy step behind the Library page: `docker exec synchub python /app/tools/benchmark_pages.py /data/synchub.db`. Save the output to compare before and after a fix.
+
 **Library lists: loose films, quality check, type, shorter suggestions (no migration).** Update SyncHub, then the workers (only the poster move needs a worker).
 - **Loose films.** A film is loose when its folder holds other films, or it sits directly in a library folder (`Old Movies/Alien.mkv`). The Library overview has a **Loose films** box with the count, and every list has a **Where it sits** filter (loose / in its own folder) and a *loose* badge. Approve (one by one, or together: the bulk button follows the filter) puts the film in its own `Title (Year)` folder.
 - **Behaviour change:** a film that is already in the library share but in another top-level folder (Old Movies, Kids Movies) is now tidied *inside that folder* (`Old Movies/Alien (1979)/Alien (1979).mkv`) instead of being moved into `Movies/`, so it stays in its own Jellyfin library. Files on other shares are still copied into the movie folder as before.

@@ -112,6 +112,16 @@ def create_app(start_scheduler=False, csrf=True):
     tasks.reset_stale()
 
     @app.before_request
+    def start_timer():
+        from synchub import timing
+        timing.begin(request.endpoint, request.method, request.full_path.rstrip("?"))
+
+    @app.after_request
+    def stop_timer(response):
+        from synchub import timing
+        return timing.finish(response)
+
+    @app.before_request
     def identify():
         """Works out who is using the app from the cookies, sends a browser that has not chosen (or has not entered its PIN) to the chooser,
         and refuses what the person's permissions do not allow."""
