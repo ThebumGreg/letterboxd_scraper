@@ -36,7 +36,7 @@ DEFAULTS = {
     "download_pipeline": "off", "originals_retention_days": "30",
     # conversion profile used when none is chosen for a file; the source file is deleted this many days after a verified migration (0 = never);
     # what Radarr/Sonarr are told about the move (none, update_location, unmonitor, remove) and when (right after the copy, or only when the source is deleted)
-    "library_default_profile": "1", "source_delete_after_days": "0", "arr_after_migration": "none", "arr_apply_when": "after_copy",
+    "library_default_profile": "1", "source_delete_after_days": "0", "hide_source": "1", "arr_after_migration": "none", "arr_apply_when": "after_copy",
     # UniFi Protect cameras on the TV remote: the console, the worker that runs the go2rtc relay and the app that shows a camera full screen (docs/CAMERAS.md)
     "protect_enabled": "0", "protect_host": "", "protect_verify_tls": "0", "protect_quality": "medium", "protect_relay_worker": "", "protect_relay_host": "", "protect_relay_addr": "", "protect_viewer_app": "org.videolan.vlc", "protect_cameras": "", "protect_stream_type": "mp4",
     # the morning TV dashboard (docs/TV_DASHBOARD.md) and the UniFi Network connection it uses to see a phone leave the Wi-Fi

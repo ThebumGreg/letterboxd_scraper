@@ -108,7 +108,11 @@
     <div class="border-top pt-2 mt-2">
         <div class="d-flex flex-wrap justify-content-between gap-2">
             <strong style="overflow-wrap: anywhere;">{{ f.name }}</strong>
-            <span class="text-body-secondary small">{% if f.is_extra %}extra version{% elif f is sameas copies.main %}full copy{% endif %}{% if f.found_by == 'name' %} · found by name{% endif %}</span>
+            <span class="text-body-secondary small">
+                {% if f.role == 'original' %}<span class="badge bg-secondary">Original{% if f.hidden %} · hidden from Jellyfin{% else %} · visible in Jellyfin{% endif %}</span>
+                {% elif f.role == 'converted' %}<span class="badge bg-success">Converted copy</span>
+                {% elif f.role == 'remote' or f.is_extra %}<span class="badge bg-info text-dark">1080p remote copy</span>
+                {% elif f is sameas copies.main %}full copy{% endif %}{% if f.found_by == 'name' %} · found by name{% endif %}</span>
         </div>
         <dl class="sd-facts small mb-1">
             <div><dt>Picture</dt><dd>{% if f.width and f.height %}{{ f.width }}×{{ f.height }}{% else %}unknown size{% endif %} · {{ f.picture }}{% if f.bit_depth %} · {{ f.bit_depth }}-bit{% endif %}</dd></div>
@@ -117,9 +121,41 @@
             <div><dt>Audio</dt><dd>{{ f.audio or 'unknown' }}{% if f.audio_languages %} ({{ f.audio_languages }}){% endif %}</dd></div>
             {% if f.subtitles %}<div><dt>Subtitles</dt><dd>{{ f.subtitles }}</dd></div>{% endif %}
         </dl>
+        {% if f.hide_message and f.role == 'original' %}<div class="small text-body-secondary">{{ f.hide_message }}</div>{% endif %}
+        <div class="d-flex flex-wrap gap-2 mt-1">
+            {% if f.windows_path %}<button type="button" class="btn btn-outline-secondary btn-sm" data-copy-path="{{ f.windows_path }}" title="Paste it into the Windows Explorer address bar">Copy Windows folder path</button>
+            {% elif f.unix_path %}<button type="button" class="btn btn-outline-secondary btn-sm" data-copy-path="{{ f.unix_path }}" title="This share is not SMB, so there is no Windows path; this is its name and folder">Copy folder path</button>{% endif %}
+            {% if f.can_hide and not f.hidden %}<button type="button" class="btn btn-outline-secondary btn-sm" data-hide-source="hide-source" data-record="{{ f.id }}">Hide from Jellyfin</button>{% endif %}
+            {% if f.can_hide and f.hidden %}<button type="button" class="btn btn-outline-secondary btn-sm" data-hide-source="show-source" data-record="{{ f.id }}">Show in Jellyfin again</button>{% endif %}
+        </div>
         {{ quality_detail(f.id, f.quality, act) }}
     </div>
     {% endfor %}
     {% endif %}
+    <script>
+    (() => {
+        const card = document.getElementById('yourCopies');
+        if (!card || card.dataset.wired) return;
+        card.dataset.wired = '1';
+        card.addEventListener('click', async (ev) => {
+            const copy = ev.target.closest('[data-copy-path]');
+            if (copy) {
+                const text = copy.dataset.copyPath;
+                try { await navigator.clipboard.writeText(text); copy.textContent = 'Copied'; }
+                catch (e) { window.prompt('Copy this path:', text); }
+                return;
+            }
+            const hide = ev.target.closest('[data-hide-source]');
+            if (hide) {
+                hide.disabled = true;
+                try {
+                    const r = await fetch('/api/library/record/' + hide.dataset.record + '/' + hide.dataset.hideSource, { method: 'POST' });
+                    const d = await r.json();
+                    hide.textContent = d.message || d.error || 'Done';
+                } catch (e) { hide.textContent = 'Could not reach SyncHub'; }
+            }
+        });
+    })();
+    </script>
 </div>
 {% endmacro %}

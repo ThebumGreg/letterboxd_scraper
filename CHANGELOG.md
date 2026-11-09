@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**Hide the original from Jellyfin, labelled copies, folder path (migration 040).** Update SyncHub first, then the workers (the new `hide_source` operation needs a new worker; an old worker simply never takes those jobs).
+- After a verified copy or conversion of a film into another share, a worker puts an empty `.ignore` file in the original's folder, so Jellyfin lists only the new copy (and the Dashboard stops counting the original as an extra version). Nothing is deleted. It is on by default (Library settings, *Hide the original from Jellyfin*); a folder that holds another video file is never hidden. Deleting the source later removes the `.ignore` file with it.
+- **Your copies** now marks each file: Original (hidden or visible in Jellyfin), Converted copy, or 1080p remote copy, puts the converted copy first, and has **Hide from Jellyfin** / **Show in Jellyfin again** and **Copy Windows folder path** (built from the share's SMB address and name, e.g. `\\192.168.128.245\TFiles\Movies\Scream (1996)`) so you can open the folder in Explorer and delete by hand.
+- Library settings has **Hide the originals of films already copied** for earlier conversions.
+- Radarr, Sonarr and Jellyfin paths on the Storage page now match whatever the upper/lower case, and the "No share has a Radarr/Sonarr path that covers ..." message lists the paths that are set.
+
 **Faster TV dashboard setup.** On each school day of a student there is a **Copy to...** box (all other weekdays, or one day); each person has a **Duplicate** button (a student's copy keeps the school week but not the phone); and a student can **Copy the week from** another student. Everything stays editable afterwards.
 
 **Dashboard extras.** Active US National Weather Service alerts (moderate or worse) show as a banner, with a one-line hint (take an umbrella, take a jacket, snow, hot). New **Countdowns and birthdays** list (a full date counts down once, `MM-DD` repeats yearly) shows the next three within 90 days. When every student with a watched phone has left, the screen says **Everyone has left for school**; the new option *Close the dashboard early once every student with a watched phone has left* then closes it for the morning.

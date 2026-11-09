@@ -9,7 +9,7 @@ from functools import wraps
 from flask import Response, g, jsonify, request
 
 from synchub import downloads, db, jobs, pipeline_events, previews, protect, quality, states, storage, tasks, versions, workers
-from synchub.library import cleanup, migrate, scan
+from synchub.library import cleanup, hide, migrate, scan
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +201,7 @@ def register(app):
             previews.sync(conn, job_id)
             quality.sync(conn, job_id)
             cleanup.sync(conn, job_id)
+            hidden = hide.sync(conn, job_id)
             updates = migrate.jellyfin_updates(conn, job_id) if arrived else None
         logger.info(f"[jobs] job {job_id} completed by {g.worker['name']}")
         _dashboard([job_id])
@@ -208,6 +209,8 @@ def register(app):
         cleanup.arr_due()
         if arrived:
             migrate.tell_jellyfin(updates=updates)
+        if hidden:
+            migrate.tell_jellyfin()                                   # the original dropped out of (or came back into) Jellyfin: a library scan
         return jsonify(ok=True)
 
     @route("/jobs/<int:job_id>/fail", "fail")
@@ -224,6 +227,7 @@ def register(app):
             previews.sync(conn, job_id)
             quality.sync(conn, job_id)
             cleanup.sync(conn, job_id)
+            hide.sync(conn, job_id)
         _dashboard([job_id])
         logger.warning(f"[jobs] job {job_id} failed on {g.worker['name']} ({data.get('error_class')}): {_text(data.get('message'), 300)} -> {outcome}")
         return jsonify(ok=True, outcome=outcome)
@@ -240,6 +244,7 @@ def register(app):
             previews.sync(conn, job_id)
             quality.sync(conn, job_id)
             cleanup.sync(conn, job_id)
+            hide.sync(conn, job_id)
         _dashboard([job_id])
         logger.info(f"[jobs] job {job_id} is waiting for review: {_text(data.get('reason'), 200)}")
         return jsonify(ok=True)
