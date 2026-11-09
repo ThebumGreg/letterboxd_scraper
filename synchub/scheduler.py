@@ -89,8 +89,13 @@ def _dashboard_tick():
 
 
 def _dashboard_presence():
-    from synchub.dashboard import school
-    school.poll()
+    from synchub.dashboard import home
+    home.poll()
+
+
+def _dashboard_welcome_close():
+    from synchub.dashboard import welcome
+    welcome.tick()
 
 
 def _scrape_job():
@@ -115,6 +120,7 @@ def configure():
             scheduler.add_job(fn, "interval", hours=hours, id=job_id, max_instances=1, coalesce=True)
     scheduler.add_job(_dashboard_tick, "interval", seconds=60, id="job_dashboard", max_instances=1, coalesce=True)
     scheduler.add_job(_dashboard_presence, "interval", seconds=60, id="job_dashboard_presence", max_instances=1, coalesce=True)
+    scheduler.add_job(_dashboard_welcome_close, "interval", seconds=15, id="job_dashboard_welcome_close", max_instances=1, coalesce=True)
     scheduler.add_job(_reap_jobs, "interval", seconds=REAPER_SECONDS, id="job_reaper", max_instances=1, coalesce=True)
     scheduler.add_job(_prune_jellyfin_events, "interval", hours=24, id="job_prune_jellyfin_events", max_instances=1, coalesce=True)
     scheduler.add_job(_follow_better_copies, "interval", minutes=1, id="job_better_copy_tracking", max_instances=1, coalesce=True)

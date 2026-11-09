@@ -15,30 +15,34 @@ from synchub.tv.devices import DeviceError
 logger = logging.getLogger(__name__)
 MAX_TRIES = 3
 RETRY_SECONDS = 90
-_last_try = [0.0]
 
 
 class ShowError(Exception):
     pass
 
 
-def _state(day):
+MODES = ("morning", "evening")
+_KEYS = {"morning": "dash_state", "evening": "dash_state_evening"}
+_last_try = {"morning": 0.0, "evening": 0.0}
+
+
+def _state(day, mode="morning"):
     try:
-        state = json.loads(settings.get("dash_state") or "{}")
+        state = json.loads(settings.get(_KEYS[mode]) or "{}")
     except ValueError:
         state = {}
     return state if state.get("day") == day.isoformat() else {"day": day.isoformat(), "shown": False, "hidden": False, "tries": 0, "was_standby": False}
 
 
-def _save(state):
-    settings.set_value("dash_state", json.dumps(state))
+def _save(state, mode="morning"):
+    settings.set_value(_KEYS[mode], json.dumps(state))
 
 
-def page_url():
+def page_url(mode="morning"):
     base = settings.get("synchub_url").strip().rstrip("/")
     if not base:
         raise ShowError("Set the SyncHub address (Settings, Connections) so the TV knows where to open the page.")
-    return f"{base}/dash/{config.token()}"
+    return f"{base}/dash/{config.token()}" + ("?mode=evening" if mode == "evening" else "")
 
 
 def _runtime_device():
@@ -76,11 +80,11 @@ def busy(r, dev, package):
     return ""
 
 
-def start(manual=False, now=None):
-    """Wakes the TV if needed and opens the page. -> a list of steps taken. Raises ShowError when it cannot."""
+def start(manual=False, now=None, mode="morning"):
+    """Wakes the TV if needed and opens the page (the `mode` screen: morning, or the evening one that shows tomorrow). -> a list of steps taken. Raises ShowError when it cannot."""
     r, dev = _runtime_device()
     package = settings.get("dash_app")
-    url = page_url()
+    url = page_url(mode)
     steps = []
 
     def step(message, ok=True):
@@ -93,26 +97,26 @@ def start(manual=False, now=None):
         why = busy(r, dev, package)
         if why:
             step(f"Left {dev.name} alone: {why}")
-            state = _state((now or config.now()).date())
-            state["hidden"] = True                    # not shown later in the morning either: the person chose something else
-            _save(state)
+            state = _state((now or config.now()).date(), mode)
+            state["hidden"] = True                    # not shown later in the window either: the person chose something else
+            _save(state, mode)
             return steps
     before = dev.status(quiet=True) or {}
     standby = before.get("power") in ("standby", None)
     if not orchestrator.ensure_on(dev, step):
         raise ShowError(f"{dev.name} would not wake up (see the TV log).")
     step(f"Opening the dashboard in {package}: {dev.view_stream(url, package)}")
-    state = _state((now or config.now()).date())
+    state = _state((now or config.now()).date(), mode)
     state.update(shown=True, hidden=False, was_standby=standby)
-    _save(state)
+    _save(state, mode)
     return steps
 
 
-def stop(manual=False, now=None):
+def stop(manual=False, now=None, mode="morning"):
     """Closes the page, and puts the TV back to sleep if it was asleep when the dashboard woke it. -> steps."""
     r, dev = _runtime_device()
     package = settings.get("dash_app")
-    state = _state((now or config.now()).date())
+    state = _state((now or config.now()).date(), mode)
     steps = []
 
     def step(message, ok=True):
@@ -132,41 +136,71 @@ def stop(manual=False, now=None):
     else:
         step(f"The dashboard is not on screen ({app or 'TV off'}), so {dev.name} was left as it is")
     state.update(shown=False, hidden=manual or state.get("hidden", False))
-    _save(state)
+    _save(state, mode)
     return steps
 
 
-def in_window(now):
-    start_m, end_m = config.window()
+def window_of(mode):
+    return config.window() if mode == "morning" else config.eve_window()
+
+
+def active(mode):
+    if mode == "morning":
+        return config.enabled()
+    return settings.get("dash_eve_on") == "1"
+
+
+def in_window(now, mode="morning"):
+    start_m, end_m = window_of(mode)
     minute = now.hour * 60 + now.minute
-    return config.DAYS[now.weekday()] in config.days() and start_m <= minute < end_m
+    chosen = config.days() if mode == "morning" else config.eve_days()
+    return config.DAYS[now.weekday()] in chosen and start_m <= minute < end_m
+
+
+def current_mode(now):
+    """The screen the TV page should show at this time: the evening one inside its window, else the morning one."""
+    return "evening" if active("evening") and in_window(now, "evening") else "morning"
+
+
+def shown_now(day):
+    """True when either screen is open on the TV (as far as SyncHub knows)."""
+    return any(_state(day, m)["shown"] for m in MODES)
 
 
 def tick(now=None):
-    """The minute job: open at the start of the window, close at the end."""
-    if not config.enabled() or not settings.get("dash_tv"):
+    """The minute job: open each screen at the start of its window, close it at the end."""
+    if not settings.get("dash_tv"):
         return
     now = now or config.now()
-    state = _state(now.date())
+    for mode in MODES:
+        if active(mode):
+            _tick_window(now, mode)
+        elif _state(now.date(), mode)["shown"] and not in_window(now, mode):
+            _tick_window(now, mode)                       # switched off while it was open: still take it down
+
+
+def _tick_window(now, mode):
+    state = _state(now.date(), mode)
+    label = "morning" if mode == "morning" else "evening"
     try:
-        if in_window(now):
-            if state["shown"] and settings.get("dash_close_when_left") == "1" and school.all_left(now):
+        if active(mode) and in_window(now, mode):
+            if mode == "morning" and state["shown"] and settings.get("dash_close_when_left") == "1" and school.all_left(now):
                 logger.info("[dashboard] everyone has left for school: closing the morning dashboard")
                 stop(now=now)
                 state = _state(now.date())
                 state["hidden"] = True                    # and it stays closed for the rest of the morning
                 _save(state)
                 return
-            if state["shown"] or state["hidden"] or state["tries"] >= MAX_TRIES or time.time() - _last_try[0] < RETRY_SECONDS:
+            if state["shown"] or state["hidden"] or state["tries"] >= MAX_TRIES or time.time() - _last_try[mode] < RETRY_SECONDS:
                 return
-            _last_try[0] = time.time()
+            _last_try[mode] = time.time()
             state["tries"] += 1
-            _save(state)
-            logger.info("[dashboard] opening the morning dashboard")
-            start(now=now)
+            _save(state, mode)
+            logger.info(f"[dashboard] opening the {label} dashboard")
+            start(now=now, mode=mode)
         elif state["shown"]:
-            logger.info("[dashboard] closing the morning dashboard")
-            stop(now=now)
+            logger.info(f"[dashboard] closing the {label} dashboard")
+            stop(now=now, mode=mode)
     except ShowError as exc:
         logger.warning(f"[dashboard] {exc}")
         _note_problem(str(exc))

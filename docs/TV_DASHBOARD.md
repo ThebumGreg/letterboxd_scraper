@@ -20,7 +20,7 @@ The page itself is made by SyncHub and loads nothing from the internet (no CDN, 
 
 ## Setting it up
 
-All of it is in **Settings, Connections, Morning TV dashboard** (and **UniFi Network** just above it).
+All of it is on **Settings, TV dashboard** (its own tab). The **UniFi Network** connection stays on **Settings, Connections**, because it is an integration. The tab has a status bar at the top (on the TV now or not, the last problem, whose phone is home, and the Show / Close buttons) and sections that fold open and shut: **Screen**, **People** (one card per person, closed until you click it, with a one-line summary), **Weather and extras**, **School days for everyone** and **Welcome home**.
 
 1. Switch it on, choose the **TV** and the **browser app**, set **Show from / Until** and the **Days**. Weekdays are ticked by default; tick Sat and Sun for weekends.
 2. Type your **ZIP code** (or latitude and longitude) and press **Test weather**. Choose US (°F, mph) or metric.
@@ -56,6 +56,24 @@ Rules, so a sleeping phone is not mistaken for someone leaving:
 - **Countdowns and birthdays:** one per line in Settings, `2026-12-21 Winter break` (once) or `03-14 Sam's birthday` (every year). The next three within 90 days are shown at the bottom.
 - **Everyone has left for school** shows once every student with a watched phone has left. The option *Close the dashboard early...* then closes the screen for the morning.
 
+## Welcome home
+
+When someone's phone joins the home Wi-Fi after being away, the TV shows a full-screen "Welcome home, Sam!" for a couple of minutes, then goes back to what it was.
+
+- **Who:** anyone (adult or student) with a phone set under People. Each person can switch it off, and give it a line of their own ("Dinner at 6"). Under the greeting it shows their next event (or tomorrow's school), a weather hint and the next countdown. Two people arriving together get one page. On a birthday (a countdown line that says "birthday", such as `03-14 Sam's birthday`) it says "Happy birthday".
+- **What counts as arriving:** the phone was away for at least 15 minutes (setting) and is back on the Wi-Fi. SyncHub asks UniFi about once a minute, all day (one call). A phone that was never seen, or that napped for a few minutes, does not count. Quiet hours (10 pm to 6 am by default) and "not again within 60 minutes" stop repeats.
+- **The TV:** it never interrupts a film, a camera or another app. If the TV is in standby it is woken (a switch turns that off), and put back to sleep afterwards. If the morning or evening screen is already up, the welcome appears over it. Display time is 2 minutes by default.
+- **Seeing why:** the Welcome home section lists what happened lately ("Sam came home: quiet hours, nothing shown"). **Try it on the TV now** shows it for the first person.
+- Needs each person's phone set to use its real Wi-Fi address (same note as for students). Only "this phone is on the home Wi-Fi" is known, never where anyone is. A phone on mobile data shows as home a few seconds to a minute after it joins the Wi-Fi.
+
+## The evening screen (tomorrow)
+
+Switch it on in Screen. Between 8 and 10 pm (setting) on Sunday to Thursday (setting) the same page shows **tomorrow**: tomorrow's weather and a hint ("Rain tomorrow: pack umbrellas"), each student's leave-by time or no school, and each calendar person's events. **Show tomorrow now** and the "tomorrow screen" link let you try it any time.
+
+## Weather extras, birthdays and the bottom line
+
+The weather box also shows sunrise and sunset, the moon phase (worked out in SyncHub), the UV index and the air quality (free Open-Meteo services), with a hint such as "UV high: sunscreen". On a birthday the screen has a celebration banner. The line at the bottom can be a quote, a dad joke, a fun fact, "this day in history" or a different one each day; each has a built-in list for when the internet is down.
+
 ## What happens at the start and the end
 
 - At the start SyncHub checks the TV. If a **Jellyfin title is playing**, a **camera is showing**, or **another app is open** (and *Leave the TV alone* is ticked, the default) it does nothing and does not try again that morning. Otherwise it wakes the TV and opens the page. It tries three times, 90 seconds apart, and the last problem is shown on the Settings page.
@@ -66,8 +84,7 @@ Rules, so a sleeping phone is not mistaken for someone leaving:
 ## What is not built yet
 
 - Holiday handling beyond the typed *No school days* list (no school-calendar link yet).
-- Doorbell pop-ups and the TV player PC version (the page is the same one the PC will show).
-- Quote categories (the daily quote comes from ZenQuotes).
+- Family photos, a chore chart, doorbell pop-ups and the TV player PC version (the page is the same one the PC will show).
 
 ## If something does not work
 

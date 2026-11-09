@@ -4,7 +4,7 @@ import secrets
 from flask import abort, jsonify, render_template, request
 
 from synchub import settings, unifi_network
-from synchub.dashboard import calendars, config, data, school, show
+from synchub.dashboard import calendars, config, data, school, show, welcome
 
 
 def _checked(token):
@@ -23,7 +23,7 @@ def register(app):
     @app.get("/dash/<token>/data")
     def dash_data(token):
         _checked(token)
-        response = jsonify(data.build())
+        response = jsonify(data.build(mode=request.args.get("mode")))
         response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -34,26 +34,44 @@ def register(app):
             problem = json.loads(settings.get("dash_problem") or "{}")
         except ValueError:
             problem = {}
-        try:
-            state = json.loads(settings.get("dash_state") or "{}")
-        except ValueError:
-            state = {}
-        today = config.now().date().isoformat()
-        presence = school.load_state(config.now().date())
-        return jsonify(ok=True, url=f"/dash/{config.token()}", shown=bool(state.get("day") == today and state.get("shown")), problem=problem,
-                       presence={name: p.get("state") for name, p in presence["kids"].items()}, presence_error=presence.get("error", ""))
+        now = config.now()
+        presence = school.load_state(now.date())
+        home = welcome.load_home()
+        active = welcome.current(now)
+        return jsonify(ok=True, url=f"/dash/{config.token()}", shown=show.shown_now(now.date()), problem=problem,
+                       presence={name: p.get("state") for name, p in presence["kids"].items()}, presence_error=presence.get("error", ""),
+                       home={name: ("home" if r.get("home") else "away" if r.get("home") is False else "unknown") for name, r in home["people"].items()},
+                       welcome_error=home.get("error", ""), welcome_log=home["log"], welcome_now=active["names"] if active else [],
+                       birthdays=config.birthdays(now.date()))
 
     @app.post("/api/tv/dashboard/<action>")
     def api_tv_dashboard_action(action):
-        if action not in ("show", "hide"):
+        if action not in ("show", "hide", "show_evening", "welcome_test"):
             abort(404)
         try:
-            steps = show.start(manual=True) if action == "show" else show.stop(manual=True)
+            if action == "welcome_test":
+                return welcome_test()
+            now = config.now()
+            if action == "hide":
+                open_modes = [m for m in show.MODES if show._state(now.date(), m)["shown"]] or ["morning"]
+                welcome.end_now()
+                steps = [step for m in open_modes for step in show.stop(manual=True, mode=m)]
+            else:
+                steps = show.start(manual=True, mode="evening" if action == "show_evening" else show.current_mode(now))
         except show.ShowError as exc:
             return jsonify(ok=False, message=str(exc))
         except Exception as exc:
             return jsonify(ok=False, message=f"{exc.__class__.__name__}: {exc}")
         return jsonify(ok=True, message=steps[-1] if steps else "Done.", steps=steps)
+
+    def welcome_test():
+        """Shows the welcome page on the TV now for the first person who has a phone (or the first person), as if they had just come home."""
+        now = config.now()
+        who = welcome.people() or config.people()
+        if not who:
+            return jsonify(ok=False, message="Add a person first.")
+        shown, why = welcome.present(now, who[:1])
+        return jsonify(ok=shown, message=f"Welcome home page sent for {who[0]['name']}." + (f" ({why})" if why else "") if shown else f"Not shown: {why}")
 
     @app.get("/api/dashboard/clients")
     def api_dashboard_clients():

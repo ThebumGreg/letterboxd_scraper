@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**TV dashboard phase 2: its own Settings tab, Welcome home, an evening screen (no migration, no new packages).** Update SyncHub only.
+- **Settings, TV dashboard** is a new fourth tab. The dashboard moved out of Connections (UniFi Network stays there, it is an integration). A status bar shows whether it is on the TV, the last problem and whose phone is home, with Show / Show tomorrow / Close buttons. Sections fold open and shut, and each person is a collapsed card with a one-line summary. Saved settings keep their names, so nothing is lost.
+- **Welcome home:** when a phone joins the home Wi-Fi after being away 15 minutes or more, the TV shows "Welcome home, Sam!" for 2 minutes (setting), waking the TV from standby (setting) and putting it back to sleep after. Per-person switch and custom line, any person (adults now get a phone field too), quiet hours, a once-an-hour limit, never over a film, camera or another app, one page for two arrivals, "Happy birthday" on a birthday. The Wi-Fi is checked about once a minute all day, one UniFi call shared with the "Left for school" check. The Settings page lists what happened lately.
+- **Evening screen** (8 to 10 pm, Sunday to Thursday, off by default): tomorrow's weather and hint, each student's leave-by time or no school, and each calendar person's events.
+- **Extras:** sunrise and sunset, moon phase, UV index and air quality, birthday banner, and a choice for the bottom line (quote, dad joke, fun fact, this day in history, or rotate), each with a built-in fallback. New jokes/facts/history sources and the air quality service are untested from here; if one fails the built-in list or nothing is shown.
+- The TV page refreshes every 30 seconds now (it was 2 minutes) so a welcome appears promptly.
+
 **Faster Library and Media pages (migration 041).** Update SyncHub; workers are not involved. From Greg's own timings (/library about 8 s and 6,900 queries, the refresh 4 s and 2,800 queries, with only 0.8 s of that in the database), the time went into working out every file's recommendation again and again.
 - **Only the open tab is built.** The Media page used to build all eight tabs on every visit, so opening any tab cost as much as all of them. Now the open tab is built with the page and each other tab is fetched the first time you click it (a "Loading..." line for a moment). Tabs, addresses and permissions are unchanged; the new `/media/pane/<tab>` address serves the tab content.
 - **Recommendations are kept in memory** until something they depend on changes: a counter (`change_counter`, set by database triggers on files, quality checks and accepts, profiles, settings and shows) goes up on any such change. The Library overview, the queue pages (which worked everything out twice), the Quality page and the Versions list reuse the result. The background refresh may show a result up to 10 seconds old while a scan keeps changing files; a button press and every page visit read it exactly.
@@ -9,7 +16,6 @@
 - Measured on a 2,700-file test library: /library 2.2 s and 24,266 queries before; first visit 0.6 s and 159 queries, then 26 ms. The refresh went from about 0.9 s to 20 ms. Greg's real library is slower per file, so compare with Tools > Page timings.
 
 **Loose films box opens the right lists (no migration).** The box used to open only *Suggested*, which was empty when the loose films were in another list. It now shows one button per list that holds loose films, with the count (done and rejected files are not counted).
-
 **Page timing tools (no migration, no setting).** Update SyncHub; workers are not involved. The first step of making slow pages faster: measure them.
 - Every page request is timed (not static files, posters, or the workers' and players' own polling). The browser's developer tools show it in the `Server-Timing` header (total, database time, number of queries); a request over one second is written to the log as `Slow page: ...`.
 - **Tools & Operations > Page timings** lists, per page, how often it ran, average, 95th percentile and slowest time, queries and size, plus the slowest single requests (last 300, memory only, cleared on restart). Open the slow pages (Library, Dashboard, Jobs, ...) and press *Show timings*.

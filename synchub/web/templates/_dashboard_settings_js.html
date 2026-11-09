@@ -1,5 +1,5 @@
 <script>
-    // Morning TV dashboard: days, the people editor (kept as JSON in a hidden field), Show/Close buttons and today's status.
+    // TV dashboard tab: days, the people cards (kept as JSON in a hidden field), the Show/Close buttons and today's status.
     (function () {
         const root = document.getElementById('dashSettings');
         if (!root) return;
@@ -9,39 +9,107 @@
         const DAYS = [['mon', 'Mon'], ['tue', 'Tue'], ['wed', 'Wed'], ['thu', 'Thu'], ['fri', 'Fri']];
         const COLORS = ['#4dabf7', '#f783ac', '#69db7c', '#ffd43b', '#b197fc', '#ff922b', '#3bc9db', '#ff6b6b'];
 
-        const daysBox = document.getElementById('dashDays'), daysField = document.getElementById('dash_days');
-        daysBox.addEventListener('change', () => { daysField.value = [...daysBox.querySelectorAll('input:checked')].map((i) => i.value).join(','); fire(daysField); });
+        root.querySelectorAll('[data-days-for]').forEach((box) => {
+            const field = document.getElementById(box.dataset.daysFor);
+            box.addEventListener('change', () => { field.value = [...box.querySelectorAll('input:checked')].map((i) => i.value).join(','); fire(field); });
+        });
 
         const field = document.getElementById('dash_people'), list = document.getElementById('dashPeople');
         let people = [];
         try { people = JSON.parse(field.value || '[]'); } catch (e) { people = []; }
-        const save = () => { field.value = JSON.stringify(people); fire(field); };
+        const opened = new Set();                       // the cards the person has opened, kept open when the list is redrawn
+        let summaries = [];
+        const hm12 = (t) => { if (!/^\d\d:\d\d$/.test(t || '')) return ''; const h = +t.slice(0, 2); return (h % 12 || 12) + ':' + t.slice(3) + (h < 12 ? ' AM' : ' PM'); };
+        const summary = (p) => {
+            const bits = [];
+            if (p.kind === 'school') {
+                bits.push('student');
+                const day = DAYS.map(([d]) => (p.week || {})[d]).find((x) => x && x.leave);
+                bits.push(day ? 'leave ' + hm12(day.leave) : 'no school week yet');
+                if (p.ics) bits.push('school calendar');
+            } else { bits.push(p.ics ? 'calendar linked' : 'no calendar link yet'); }
+            bits.push(p.mac ? 'phone linked' : 'no phone');
+            if (p.mac && p.welcome === false) bits.push('no welcome');
+            return bits.join(', ');
+        };
+        const refreshSummaries = () => {
+            summaries.forEach(([p, nameEl, sumEl]) => { nameEl.textContent = p.name || '(no name)'; sumEl.textContent = summary(p); });
+            document.getElementById('dashPeopleCount').textContent = people.length ? people.length + (people.length === 1 ? ' person' : ' people') : '';
+        };
+        const save = () => { field.value = JSON.stringify(people); fire(field); refreshSummaries(); };
         const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
         const input = (type, value, placeholder, onInput, cls) => {
             const i = el('input', cls || 'form-control form-control-sm'); i.type = type; i.value = value || ''; if (placeholder) i.placeholder = placeholder;
             i.addEventListener('input', () => onInput(i.value)); return i;
         };
         const labeled = (text, node, cls) => { const d = el('div', cls || 'col-6 col-md-3'); d.append(el('label', 'form-label small mb-0', text), node); return d; };
+        const testButton = (get) => {
+            const btn = el('button', 'btn btn-outline-info btn-sm', 'Test'); btn.type = 'button';
+            const out = el('span', 'small ms-2');
+            btn.addEventListener('click', async () => {
+                out.textContent = 'Reading...';
+                try {
+                    const r = await (await fetch('/api/dashboard/test_calendar', { method: 'POST', headers: { ...json, ...csrf() }, body: JSON.stringify({ url: get() || '' }) })).json();
+                    out.textContent = r.message; out.className = 'small ms-2 ' + (r.ok ? 'text-success' : 'text-danger');
+                } catch (e) { out.textContent = 'Failed: ' + e.message; }
+            });
+            return [btn, out];
+        };
+
+        // the phone, and whether this person gets the Welcome home page
+        function phoneBlock(p, redraw) {
+            const box = el('div', 'border-top pt-2 mt-2');
+            box.append(el('div', 'small fw-semibold mb-1', 'Phone on the home Wi-Fi'));
+            const row = el('div', 'row g-2 align-items-end');
+            row.append(labeled('Phone Wi-Fi address (optional)', input('text', p.mac, 'aa:bb:cc:dd:ee:ff', (v) => { p.mac = v; save(); }), 'col-12 col-md-5'));
+            const pick = el('button', 'btn btn-outline-secondary btn-sm', 'Pick from UniFi'); pick.type = 'button';
+            const sel = el('select', 'form-select form-select-sm d-none');
+            pick.addEventListener('click', async () => {
+                pick.disabled = true;
+                try {
+                    const r = await (await fetch('/api/dashboard/clients', { headers: { Accept: 'application/json' } })).json();
+                    if (!r.ok) { alert(r.message); return; }
+                    sel.replaceChildren(new Option('Choose the phone...', ''));
+                    r.clients.filter((c) => !c.wired).forEach((c) => sel.append(new Option((c.name || '(no name)') + '  ' + c.mac + (c.ip ? '  ' + c.ip : ''), c.mac + '|' + (c.name || ''))));
+                    sel.classList.remove('d-none');
+                } catch (e) { alert('Could not load the devices: ' + e.message); } finally { pick.disabled = false; }
+            });
+            sel.addEventListener('change', () => { const [m, n] = sel.value.split('|'); if (m) { p.mac = m; p.phone = n; save(); redraw(); } });
+            const pickBox = el('div', 'col-12 col-md-5'); pickBox.append(pick, sel); row.append(pickBox);
+            if (p.phone) row.append(el('div', 'col-12 small text-body-secondary', 'Phone: ' + p.phone));
+            box.append(row);
+            const w = el('div', 'form-check mt-2'); const cb = el('input', 'form-check-input'); cb.type = 'checkbox'; cb.id = 'welcome-' + Math.random().toString(36).slice(2);
+            cb.checked = p.welcome !== false; cb.addEventListener('change', () => { p.welcome = cb.checked; save(); });
+            const lab = el('label', 'form-check-label small', 'Show Welcome home on the TV when this phone arrives'); lab.htmlFor = cb.id; w.append(cb, lab); box.append(w);
+            const line = el('div', 'row g-2 mt-0');
+            line.append(labeled('A line to show under the greeting (optional, for example "Dinner at 6")', input('text', p.welcome_text, '', (v) => { p.welcome_text = v; save(); }), 'col-12 col-md-8'));
+            box.append(line);
+            return box;
+        }
 
         function draw() {
-            list.replaceChildren();
+            list.replaceChildren(); summaries = [];
             people.forEach((p, idx) => {
-                const card = el('div', 'border rounded p-2 mb-2'); card.style.borderLeft = '6px solid ' + (p.color || COLORS[idx % COLORS.length]);
-                const head = el('div', 'row g-2 align-items-end mb-2');
-                head.append(labeled(p.kind === 'school' ? 'Student' : 'Calendar person', input('text', p.name, 'Name', (v) => { p.name = v; save(); }), 'col-8 col-md-4'));
-                const color = input('color', p.color || COLORS[idx % COLORS.length], '', (v) => { p.color = v; card.style.borderLeftColor = v; save(); }, 'form-control form-control-sm form-control-color');
-                head.append(labeled('Color', color, 'col-4 col-md-2'));
+                const color = p.color || COLORS[idx % COLORS.length];
+                const card = el('details', 'dash-card border rounded p-2 mb-2'); card.style.borderLeft = '6px solid ' + color;
+                if (opened.has(p) || !p.name) { card.open = true; }
+                card.addEventListener('toggle', () => { if (card.open) opened.add(p); else opened.delete(p); });
+                const head = el('summary'); const nameEl = el('span', 'fw-semibold'); const sumEl = el('span', 'dash-sum'); head.append(nameEl, sumEl); card.append(head);
+                summaries.push([p, nameEl, sumEl]);
+                const top = el('div', 'row g-2 align-items-end my-1');
+                top.append(labeled(p.kind === 'school' ? 'Student' : 'Calendar person', input('text', p.name, 'Name', (v) => { p.name = v; save(); }), 'col-8 col-md-4'));
+                top.append(labeled('Color', input('color', color, '', (v) => { p.color = v; card.style.borderLeftColor = v; save(); }, 'form-control form-control-sm form-control-color'), 'col-4 col-md-2'));
                 const rm = el('button', 'btn btn-outline-danger btn-sm', 'Remove'); rm.type = 'button';
                 rm.addEventListener('click', () => { people.splice(idx, 1); save(); draw(); });
                 const dup = el('button', 'btn btn-outline-secondary btn-sm me-1', 'Duplicate'); dup.type = 'button';
                 dup.title = p.kind === 'school' ? 'A new student with the same school week (not the phone), to edit' : 'A new person with the same calendar link, to edit';
                 dup.addEventListener('click', () => {
                     const c = JSON.parse(JSON.stringify(p)); c.name = (p.name || 'Student') + ' copy'; c.color = COLORS[people.length % COLORS.length];
-                    if (c.kind === 'school') { c.mac = ''; c.phone = ''; }
+                    c.mac = ''; c.phone = '';
                     people.splice(idx + 1, 0, c); save(); draw();
                 });
-                const rmBox = el('div', 'col-12 col-md-4 ms-md-auto text-md-end'); rmBox.append(dup, rm); head.append(rmBox);
-                card.append(head);
+                const rmBox = el('div', 'col-12 col-md-4 ms-md-auto text-md-end'); rmBox.append(dup, rm); top.append(rmBox);
+                card.append(top);
                 if (p.kind === 'school') {
                     const week = p.week = p.week || {};
                     const grid = el('div', 'row g-2');
@@ -75,83 +143,61 @@
                     }
                     card.append(grid, el('div', 'form-text mb-2', 'Leave a day blank for no school. Add a time for "Leave by" and "School starts" to show the day.'));
                     const extra = el('div', 'row g-2 mb-2');
-                    const cal = input('url', p.ics, 'https://... or webcal:// (the school\'s calendar, optional)', (v) => { p.ics = v; save(); });
-                    const calTest = el('button', 'btn btn-outline-info btn-sm', 'Test'); calTest.type = 'button';
-                    const calOut = el('span', 'small ms-2');
-                    calTest.addEventListener('click', async () => {
-                        calOut.textContent = 'Reading...';
-                        try {
-                            const r = await (await fetch('/api/dashboard/test_calendar', { method: 'POST', headers: { ...json, ...csrf() }, body: JSON.stringify({ url: p.ics || '' }) })).json();
-                            calOut.textContent = r.message; calOut.className = 'small ms-2 ' + (r.ok ? 'text-success' : 'text-danger');
-                        } catch (e) { calOut.textContent = 'Failed: ' + e.message; }
-                    });
-                    const calBox = labeled('School calendar link (optional): all-day "No school", "Holiday" or "Break" events close the day; "Minimum day" or "Early release" events show as a note', cal, 'col-12 col-md-8');
+                    const [calTest, calOut] = testButton(() => p.ics);
+                    const calBox = labeled('School calendar link (optional): all-day "No school", "Holiday" or "Break" events close the day; "Minimum day" or "Early release" events show as a note', input('url', p.ics, 'https://... or webcal:// (the school\'s calendar, optional)', (v) => { p.ics = v; save(); }), 'col-12 col-md-8');
                     const calBtn = el('div', 'col-12 col-md-4 align-self-end'); calBtn.append(calTest, calOut);
                     const ns = el('textarea', 'form-control form-control-sm font-monospace'); ns.rows = 3; ns.value = p.no_school || '';
                     ns.placeholder = '2026-11-26 to 2026-11-27 Thanksgiving break';
                     ns.addEventListener('input', () => { p.no_school = ns.value; save(); });
-                    extra.append(calBox, calBtn, labeled('No school days for this student (one per line: a date or range, then a name). Added to the list for everyone below.', ns, 'col-12'));
+                    extra.append(calBox, calBtn, labeled('No school days for this student (one per line: a date or range, then a name). Added to the list for everyone.', ns, 'col-12'));
                     card.append(extra);
-                    const phone = el('div', 'row g-2 align-items-end');
-                    const mac = input('text', p.mac, 'aa:bb:cc:dd:ee:ff', (v) => { p.mac = v; save(); });
-                    phone.append(labeled('Phone Wi-Fi address (optional)', mac, 'col-12 col-md-5'));
-                    const pick = el('button', 'btn btn-outline-secondary btn-sm', 'Pick from UniFi'); pick.type = 'button';
-                    const sel = el('select', 'form-select form-select-sel form-select-sm d-none');
-                    pick.addEventListener('click', async () => {
-                        pick.disabled = true;
-                        try {
-                            const r = await (await fetch('/api/dashboard/clients', { headers: { Accept: 'application/json' } })).json();
-                            if (!r.ok) { alert(r.message); return; }
-                            sel.replaceChildren(new Option('Choose the phone...', ''));
-                            r.clients.filter((c) => !c.wired).forEach((c) => sel.append(new Option((c.name || '(no name)') + '  ' + c.mac + (c.ip ? '  ' + c.ip : ''), c.mac + '|' + (c.name || ''))));
-                            sel.classList.remove('d-none');
-                        } catch (e) { alert('Could not load the devices: ' + e.message); } finally { pick.disabled = false; }
-                    });
-                    sel.addEventListener('change', () => { const [m, n] = sel.value.split('|'); if (m) { p.mac = m; p.phone = n; save(); draw(); } });
-                    const pickBox = el('div', 'col-12 col-md-5'); pickBox.append(pick, sel);
-                    phone.append(pickBox); if (p.phone) phone.append(el('div', 'col-12 small text-body-secondary', 'Phone: ' + p.phone));
-                    card.append(phone);
                 } else {
                     const row = el('div', 'row g-2 align-items-end');
                     row.append(labeled('Calendar link (ICS)', input('url', p.ics, 'https://... or webcal://...', (v) => { p.ics = v; save(); }), 'col-12 col-md-8'));
-                    const test = el('button', 'btn btn-outline-info btn-sm', 'Test'); test.type = 'button';
-                    const out = el('span', 'small ms-2');
-                    test.addEventListener('click', async () => {
-                        out.textContent = 'Reading...';
-                        try {
-                            const r = await (await fetch('/api/dashboard/test_calendar', { method: 'POST', headers: { ...json, ...csrf() }, body: JSON.stringify({ url: p.ics || '' }) })).json();
-                            out.textContent = r.message; out.className = 'small ms-2 ' + (r.ok ? 'text-success' : 'text-danger');
-                        } catch (e) { out.textContent = 'Failed: ' + e.message; }
-                    });
+                    const [test, out] = testButton(() => p.ics);
                     const tb = el('div', 'col-12 col-md-4'); tb.append(test, out); row.append(tb);
                     card.append(row);
                 }
+                card.append(phoneBlock(p, draw));
                 list.append(card);
             });
             if (!people.length) list.append(el('div', 'small text-body-secondary mb-2', 'Nobody yet.'));
+            refreshSummaries();
         }
-        document.getElementById('addCalendarPerson').addEventListener('click', () => { people.push({ name: '', color: COLORS[people.length % COLORS.length], kind: 'calendar', ics: '' }); save(); draw(); });
-        document.getElementById('addStudent').addEventListener('click', () => { people.push({ name: '', color: COLORS[people.length % COLORS.length], kind: 'school', week: {}, mac: '', phone: '' }); save(); draw(); });
+        const add = (p) => { people.push(p); opened.add(p); save(); draw(); };
+        document.getElementById('addCalendarPerson').addEventListener('click', () => add({ name: '', color: COLORS[people.length % COLORS.length], kind: 'calendar', ics: '', mac: '', phone: '', welcome: true }));
+        document.getElementById('addStudent').addEventListener('click', () => add({ name: '', color: COLORS[people.length % COLORS.length], kind: 'school', week: {}, mac: '', phone: '', welcome: true }));
         draw();
 
-        const result = document.getElementById('dashResult'), status = document.getElementById('dashStatus');
+        const result = document.getElementById('dashResult'), status = document.getElementById('dashStatus'), badge = document.getElementById('dashBadge'), wlog = document.getElementById('welcomeLog');
         root.querySelectorAll('[data-dash]').forEach((btn) => btn.addEventListener('click', async () => {
-            result.textContent = 'Working...'; result.className = 'small ms-2';
+            result.textContent = 'Working...'; result.className = 'small';
             try {
                 const r = await (await fetch('/api/tv/dashboard/' + btn.dataset.dash, { method: 'POST', headers: { Accept: 'application/json', ...csrf() } })).json();
-                result.textContent = r.message; result.className = 'small ms-2 ' + (r.ok ? 'text-success' : 'text-danger');
-            } catch (e) { result.textContent = 'Failed: ' + e.message; result.className = 'small ms-2 text-danger'; }
+                result.textContent = r.message; result.className = 'small ' + (r.ok ? 'text-success' : 'text-danger');
+            } catch (e) { result.textContent = 'Failed: ' + e.message; result.className = 'small text-danger'; }
             loadStatus();
         }));
         async function loadStatus() {
             try {
                 const r = await (await fetch('/api/dashboard/status', { headers: { Accept: 'application/json' } })).json();
-                const lines = [r.shown ? 'On the TV now.' : 'Not on the TV right now.'];
-                if (r.problem && r.problem.message) lines.push('Last problem (' + r.problem.at + '): ' + r.problem.message);
+                badge.textContent = r.welcome_now && r.welcome_now.length ? 'Welcome home on the TV' : r.shown ? 'On the TV now' : 'Not on the TV';
+                badge.className = 'badge text-bg-' + ((r.shown || (r.welcome_now || []).length) ? 'success' : 'secondary');
+                const lines = [];
+                if (r.problem && r.problem.message) lines.push('Last problem (' + r.problem.at.replace('T', ' ').slice(0, 16) + '): ' + r.problem.message);
                 const names = Object.keys(r.presence || {});
-                if (names.length) lines.push('Wi-Fi today: ' + names.map((n) => n + ' ' + r.presence[n]).join(', '));
+                if (names.length) lines.push('Left for school today: ' + names.map((n) => n + ' ' + r.presence[n]).join(', ') + '.');
+                const home = Object.keys(r.home || {});
+                if (home.length) lines.push('Phones: ' + home.map((n) => n + ' ' + r.home[n]).join(', ') + '.');
+                if (r.birthdays && r.birthdays.length) lines.push('Birthday today: ' + r.birthdays.join(', ') + '.');
                 if (r.presence_error) lines.push('Wi-Fi presence: ' + r.presence_error);
+                if (r.welcome_error) lines.push('Welcome home: ' + r.welcome_error);
                 status.textContent = lines.join(' ');
+                wlog.replaceChildren();
+                if ((r.welcome_log || []).length) {
+                    wlog.append(el('div', 'fw-semibold', 'What happened lately'));
+                    r.welcome_log.slice(0, 6).forEach((l) => wlog.append(el('div', 'text-body-secondary', l.at.replace('T', ' ').slice(5, 16) + '  ' + l.message)));
+                }
             } catch (e) { status.textContent = ''; }
         }
         loadStatus();

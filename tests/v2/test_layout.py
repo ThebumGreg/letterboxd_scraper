@@ -22,11 +22,12 @@ def forms(page):
 
 
 # ---------------------------------------------------------------- Settings
-def test_settings_has_three_tabs_each_with_a_form_of_its_own(client, v2):
+def test_settings_has_four_tabs_each_with_a_form_of_its_own(client, v2):
     page = text(client.get("/settings"))
-    assert re.findall(r'data-bs-target="#pane-(\w+)"', page) == ["connections", "automation", "logging"]
+    assert re.findall(r'data-bs-target="#pane-(\w+)"', page) == ["connections", "automation", "logging", "dashboard"]
     found = forms(page)
-    assert set(found) == {"connections", "automation", "logging"}
+    assert set(found) == {"connections", "automation", "logging", "dashboard"}
+    assert {"dash_enabled", "dash_people", "dash_welcome_on", "dash_eve_on"} <= found["dashboard"] and {"unifi_net_host", "unifi_net_api_key"} <= found["connections"] and not found["connections"] & {"dash_people"}
     assert {"jellyfin_url", "jellyfin_api_key", "tmdb_api_key", "radarr_url", "sonarr_url", "apprise_urls"} <= found["connections"]
     assert {"scraper_interval_hours", "metadata_refresh_hours", "queue_poll_seconds", "synchub_url", "backup_keep", "radarr_quality_profile_id", "sonarr_root_folder"} <= found["automation"]
     assert {"payload_logging_enabled", "payload_retention_limit", "log_service_radarr", "log_service_dynu"} <= found["logging"]

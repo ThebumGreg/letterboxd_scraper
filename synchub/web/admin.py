@@ -82,7 +82,7 @@ def register(app):
         scheduler.configure()
         flash("Some values were not saved: " + " ".join(errors), "danger") if errors else flash("Settings updated successfully.", "success")
         tab = request.form.get("tab")
-        return redirect(url_for("settings_page", tab=tab) if tab in ("connections", "automation", "logging") else url_for("settings_page"))
+        return redirect(url_for("settings_page", tab=tab) if tab in ("connections", "automation", "logging", "dashboard") else url_for("settings_page"))
 
     @app.route("/api/tools/library-paths")
     def api_tools_library_paths():

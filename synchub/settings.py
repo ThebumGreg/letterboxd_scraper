@@ -43,6 +43,10 @@ DEFAULTS = {
     "dash_enabled": "0", "dash_tv": "", "dash_app": "com.phlox.tvwebbrowser", "dash_start": "06:30", "dash_end": "08:30", "dash_days": "mon,tue,wed,thu,fri", "dash_skip_busy": "1", "dash_sleep_after": "1",
     "dash_zip": "", "dash_units": "us", "dash_quote_on": "1", "dash_people": "[]", "dash_no_school": "", "dash_presence_from": "06:30", "dash_presence_grace": "3",
     "dash_countdowns": "", "dash_close_when_left": "0",
+    # Welcome home page, the evening (tomorrow) screen and the quote source
+    "dash_welcome_on": "0", "dash_welcome_seconds": "120", "dash_welcome_away": "15", "dash_welcome_gap": "60", "dash_welcome_quiet_on": "1", "dash_welcome_quiet_from": "22:00", "dash_welcome_quiet_to": "06:00",
+    "dash_welcome_wake": "1", "dash_welcome_details": "1",
+    "dash_eve_on": "0", "dash_eve_start": "20:00", "dash_eve_end": "22:00", "dash_eve_days": "sun,mon,tue,wed,thu", "dash_quote_source": "quote",
     "unifi_net_host": "", "unifi_net_verify_tls": "0",
     # quality checks (docs/QUALITY.md): how many slices of a film a worker samples, how long each is, the score under which a film is flagged, whether new downloads are
     # checked (off or flag) and whether the Library clean-up checks the films it has not looked at yet, newest or oldest first

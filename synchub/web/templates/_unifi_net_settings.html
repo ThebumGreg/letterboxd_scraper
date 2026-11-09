@@ -1,0 +1,15 @@
+{% from "_macros.html" import secret_field, switch %}
+<!-- UniFi Network (Wi-Fi presence for the TV dashboard) -->
+<div class="panel p-3 p-md-4 mb-4" id="unifiNetSettings">
+    <h5 class="text-success mb-1">UniFi Network (Wi-Fi presence)</h5>
+    <p class="small text-body-secondary">Lets the TV dashboard see that a phone has left or joined the home Wi-Fi: "Left for school" in the morning and "Welcome home" when someone arrives. Set the people up on the TV dashboard tab. It only asks which devices are connected, never where anyone is. The Network application has its own key (made on its <em>Settings, Control Plane, Integrations</em> page); a Protect key does not work here.</p>
+    <div class="mb-3">
+        <label for="unifi_net_host" class="form-label">Console address</label>
+        <input type="text" class="form-control" id="unifi_net_host" name="unifi_net_host" value="{{ settings.unifi_net_host }}" placeholder="{{ settings.protect_host or '192.168.1.1' }}" autocomplete="off">
+        <div class="form-text">The console's own address, without https://. This is usually the same console as Protect.</div>
+    </div>
+    <div class="mb-3">{{ secret_field('unifi_net_api_key', 'Network API key', settings.unifi_net_api_key, help='Kept here and never shown again.') }}</div>
+    {{ switch('unifi_net_verify_tls', "Check the console's certificate", settings.unifi_net_verify_tls) }}
+    <button type="button" class="btn btn-outline-info btn-sm" data-test-service="unifi_network" data-test-fields="unifi_net_host,unifi_net_api_key,unifi_net_verify_tls">Test connection</button>
+    <span class="small ms-2" data-test-result="unifi_network" role="status"></span>
+</div>
