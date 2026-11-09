@@ -97,3 +97,11 @@ def test_a_worker_hides_the_original_with_an_ignore_file_and_deleting_it_leaves_
     wait(lambda: (conn.commit() or True) and rec_of(conn, record_id)["source_hidden_at"], timeout=60, what="the hiding")
     ignore = source.parent / ".ignore"
     assert ignore.exists() and ignore.stat().st_size == 0 and source.exists()
+
+
+def test_the_hide_buttons_send_the_csrf_token():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2] / "synchub" / "web" / "templates"
+    for name, url in (("_quality.html", "hideSource, { method"), ("_options_scripts.html", "hide-originals', { method")):
+        line = next(l for l in (root / name).read_text().splitlines() if url in l)
+        assert "X-CSRFToken" in line, name
