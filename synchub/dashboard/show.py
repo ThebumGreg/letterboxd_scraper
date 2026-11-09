@@ -6,6 +6,7 @@ again after someone closed it: {"day", "shown", "hidden", "tries", "was_standby"
 import json
 import logging
 import time
+from datetime import datetime, timedelta
 
 from synchub import settings
 from synchub.dashboard import config, school
@@ -15,6 +16,7 @@ from synchub.tv.devices import DeviceError
 logger = logging.getLogger(__name__)
 MAX_TRIES = 3
 RETRY_SECONDS = 90
+HOLD_MINUTES = 30
 
 
 class ShowError(Exception):
@@ -108,6 +110,8 @@ def start(manual=False, now=None, mode="morning"):
     step(f"Opening the dashboard in {package}: {dev.view_stream(url, package)}")
     state = _state((now or config.now()).date(), mode)
     state.update(shown=True, hidden=False, was_standby=standby)
+    # "Show on the TV now" outside the window stays up for a while: the minute job would otherwise close it at once for being outside the window
+    state["hold_until"] = ((now or config.now()) + timedelta(minutes=HOLD_MINUTES)).isoformat() if manual else None
     _save(state, mode)
     return steps
 
@@ -199,6 +203,8 @@ def _tick_window(now, mode):
             logger.info(f"[dashboard] opening the {label} dashboard")
             start(now=now, mode=mode)
         elif state["shown"]:
+            if state.get("hold_until") and now < datetime.fromisoformat(state["hold_until"]):
+                return                                    # shown by hand: stays for a while, then closes
             logger.info(f"[dashboard] closing the {label} dashboard")
             stop(now=now, mode=mode)
     except ShowError as exc:
