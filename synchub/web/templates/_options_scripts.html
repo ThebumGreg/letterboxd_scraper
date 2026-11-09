@@ -4,6 +4,13 @@
     const say = (text, ok) => librarySay(text, ok, 'optMessage');
     const sizeValues = () => ({ size_policy: '1', tv_size_policy: $('setTvPolicy').checked ? '1' : '0', cap_mbps_2160: $('setCap2160').value, cap_mbps_1080: $('setCap1080').value, cap_mbps_720: $('setCap720').value,
         cap_mbps_sd: $('setCapSd').value, trigger_mbps_2160: $('setTrig2160').value, trigger_mbps_1080: $('setTrig1080').value, trigger_mbps_720: $('setTrig720').value, trigger_mbps_sd: $('setTrigSd').value, safety_gb_2160: $('setSafety2160').value, safety_gb_1080: $('setSafety1080').value, tv_cap_share: $('setTvShare').value });
+    $('hideOriginalsBtn').addEventListener('click', async () => {
+        try {
+            const r = await fetch('/api/library/hide-originals', { method: 'POST' });
+            const d = await r.json();
+            say(d.message || d.error || 'Done.', r.ok && d.ok);
+        } catch (e) { say('Could not reach SyncHub.', false); }
+    });
     $('sizePreviewBtn').addEventListener('click', async () => {
         const out = $('sizePreviewOut');
         out.textContent = 'Counting...';
@@ -24,7 +31,7 @@
             naming_style: $('setNaming').value, audio_mode: $('setAudio').value, clean_names: $('setCleanNames').checked ? '1' : '0', naming_tmdb_ids: $('setTmdbIds').checked ? '1' : '0', gpu_encoding: $('setGpu').value, vmaf_mode: $('setVmaf').value,
             dolby_vision_profile_5: $('setDv5').value, dolby_vision_profile_7_8: $('setDv78').value,
             review_first: $('setReviewFirst').value, trust_after: $('setTrustAfter').value, preview_seconds: $('setPreviewSeconds').value, preview_auto: $('setPreviewAuto').checked ? '1' : '0',
-            library_default_profile: $('setProfile').value, source_delete_after_days: $('setSourceDelete').value, arr_after_migration: $('setArr').value, arr_apply_when: $('setArrWhen').value });
+            library_default_profile: $('setProfile').value, source_delete_after_days: $('setSourceDelete').value, hide_source: $('setHideSource').checked ? '1' : '0', arr_after_migration: $('setArr').value, arr_apply_when: $('setArrWhen').value });
         say(data.message || (data.ok ? 'Saved.' : 'Failed.'), data.ok);
         if (data.ok) setTimeout(() => location.reload(), 600);
     });

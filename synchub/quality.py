@@ -694,14 +694,34 @@ def find_movie_files(conn, media_id):
     return sorted(found.values(), key=lambda r: -(r["size_bytes"] or 0)), unmapped
 
 
+def role_of(conn, rec):
+    """What a file is to the film: 'original' (a copy or conversion of it was made in another share), 'converted' (it is that copy), 'remote' (a 1080p extra version) or None."""
+    dest = rec.get("migration_destination_path") or ""
+    if rec.get("migration_status") == v.MIGRATION_COMPLETED and ":" in dest and dest.split(":", 1)[0] != rec.get("root_name") and rec.get("migrated_how") in ("copy", "convert"):
+        return "original"
+    if extra_versions.is_version_file(rec["file_name"]):
+        return "remote"
+    here = f"{rec.get('root_name')}:{rec.get('relative_path')}"
+    if conn.execute("SELECT 1 FROM library_file WHERE lower(migration_destination_path) = lower(?) AND migration_status = ? AND id != ? LIMIT 1", (here, v.MIGRATION_COMPLETED, rec["id"])).fetchone():
+        return "converted"
+    return None
+
+
 def describe_file(conn, rec):
     """One file as the movie page shows it."""
+    from synchub import storage
+    from synchub.library import hide
     width, height, fps, kbps, codec = _facts(rec)
+    role = role_of(conn, rec)
+    root = storage.by_name(conn, rec.get("root_name") or "")
+    folder = folder_of(rec.get("relative_path") or "")
     info = _json(rec.get("video_info_json"), {})
     return {"id": rec["id"], "name": rec["file_name"], "size_bytes": rec["size_bytes"], "container": rec.get("container"), "codec": codec or None, "width": width, "height": height,
             "fps": fps, "video_kbps": kbps, "bits_per_pixel": bits_per_pixel(rec), "bit_depth": info.get("bit_depth"), "picture": extra_versions.picture_label(rec),
             "audio": rec.get("audio_codecs"), "audio_languages": rec.get("audio_languages"), "subtitles": rec.get("subtitle_languages"), "integrity": rec.get("integrity_status"),
-            "is_extra": extra_versions.is_version_file(rec["file_name"]), "found_by": rec.get("found_by"), "root": rec.get("root_name"), "path": rec.get("relative_path"), "analysed": rec["analysis_status"] == v.ANALYSIS_COMPLETED, "quality": state_for(conn, rec)}
+            "is_extra": extra_versions.is_version_file(rec["file_name"]), "found_by": rec.get("found_by"), "root": rec.get("root_name"), "path": rec.get("relative_path"), "analysed": rec["analysis_status"] == v.ANALYSIS_COMPLETED, "quality": state_for(conn, rec),
+            "role": role, "hidden": bool(rec.get("source_hidden_at")), "hide_message": rec.get("source_hide_message"), "windows_path": hide.windows_path(root, folder),
+            "unix_path": f"{rec.get('root_name')}:{folder}" if folder else None, "can_hide": role == "original" and len(str(rec.get("relative_path") or "").split("/")) >= 3}
 
 
 def copies(conn, media_id):
@@ -711,7 +731,7 @@ def copies(conn, media_id):
     files = [describe_file(conn, r) for r in found]
     if not files:
         return {"files": [], "main": None, "remote": [], "missing_remote": False, "full_label": None, "unmapped": unmapped}
-    ranked = sorted(files, key=lambda f: ((f["height"] or 0), f["size_bytes"] or 0), reverse=True)
+    ranked = sorted(files, key=lambda f: ((f["height"] or 0), f["role"] != "original", f["size_bytes"] or 0), reverse=True)   # the converted copy outranks its own original
     main = next((f for f in ranked if not f["is_extra"]), ranked[0])
     remote = [f for f in ranked if f is not main and (f["is_extra"] or (f["height"] or 0) <= 1080) and (f["size_bytes"] or 0) < (main["size_bytes"] or 0)]
     missing = bool((main["height"] or 0) > 1080 and not remote and extra_versions.load(conn).on)

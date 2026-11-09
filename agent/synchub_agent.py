@@ -47,7 +47,9 @@ except ImportError:                        # pragma: no cover - exercised by tes
 __version__ = "1.4.0"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
-OPS = ["copy", "rename", "delete_source", "originals"]     # the operations (plan.op) every agent can do; scan, hash and convert are added when the analysis module and ffmpeg are there
+IGNORE_FILE = ".ignore"           # an empty file with this name makes Jellyfin skip the folder
+VIDEO_EXTENSIONS = (".mkv", ".mp4", ".m4v", ".avi", ".mov", ".ts", ".m2ts", ".wmv", ".iso")
+OPS = ["copy", "rename", "delete_source", "hide_source", "unhide_source", "originals"]     # the operations (plan.op) every agent can do; scan, hash and convert are added when the analysis module and ffmpeg are there
 FEATURES = ["profiles", "scale", "audio_add", "benchmark", "two_outputs"]   # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run). "dovi" is added when dovi_tool and mkvmerge work
 MANIFEST_VERSION = 1
 HASH_BUFFER = 8 * 1024 * 1024
@@ -1632,7 +1634,7 @@ class JobRunner(threading.Thread):
         self.reporter.start()
         try:
             op = (self.job.get("plan") or {}).get("op")
-            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash, "convert": self.do_convert, "preview": self.do_preview, "quality": self.do_quality, "quality_ai": self.do_quality_ai, "rename": self.do_rename, "delete_source": self.do_delete_source, "originals": self.do_originals}.get(op)
+            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash, "convert": self.do_convert, "preview": self.do_preview, "quality": self.do_quality, "quality_ai": self.do_quality_ai, "rename": self.do_rename, "delete_source": self.do_delete_source, "hide_source": self.do_hide_source, "unhide_source": self.do_hide_source, "originals": self.do_originals}.get(op)
             if work is None or (op in ("scan", "hash", "convert", "preview", "quality", "quality_ai") and media_analysis is None):
                 raise JobFailure("unsupported_job", f"This agent ({__version__}) cannot do '{op or self.job.get('kind')}' jobs. Update the agent"
                                  + (" (media_analysis.py must be next to synchub_agent.py)." if op in ("scan", "hash", "convert", "preview", "quality", "quality_ai") else "."), retryable=False)
@@ -1975,9 +1977,42 @@ class JobRunner(threading.Thread):
             raise JobFailure("source_changed", f"{source['rel']} is not the file that was copied (its size or date differs), so it was kept.")
         self.report_progress("publish", 0.9, "Deleting the source", force=True)
         os.remove(src)
+        ignore = os.path.join(os.path.dirname(src), IGNORE_FILE)
+        if os.path.isfile(ignore) and os.path.getsize(ignore) == 0:
+            os.remove(ignore)                                          # our own "hide from Jellyfin" marker would keep the folder from being emptied
         self.prune_empty(os.path.dirname(src), self.agent.roots.path(source["root"]))
         self.log.info(f"Deleted the source {source['rel']} ({human_bytes(stat.st_size)}); the library copy is verified")
         return {"op": "delete_source", "bytes": stat.st_size, "deleted": True}
+
+    # ---- hide the original of a copied film from Jellyfin with an empty .ignore file in its folder (or take that file away again)
+    def do_hide_source(self):
+        source, dest = self.job["source"], self.job["dest"]
+        src, dst = self.endpoints("hide_source")
+        plan = self.job["plan"]
+        folder = os.path.dirname(src)
+        ignore = os.path.join(folder, IGNORE_FILE)
+        if plan.get("op") == "unhide_source":
+            if os.path.isfile(ignore) and os.path.getsize(ignore) == 0:
+                os.remove(ignore)
+                self.log.info(f"Jellyfin can see {os.path.dirname(source['rel'])} again")
+            return {"op": "unhide_source", "hidden": False}
+        if source["root"] == dest["root"]:
+            raise JobFailure("bad_job", "The original and the library copy are in the same share, so nothing was hidden.", retryable=False)
+        if len(source["rel"].strip("/").split("/")) < 3:
+            return {"op": "hide_source", "hidden": False, "skipped": "The file has no folder of its own, so it was not hidden."}
+        if not os.path.isfile(dst):
+            raise JobFailure("verification_failed", f"The library copy {dest['rel']} is not there, so the original was left visible.")
+        if plan.get("dest_size") is not None and os.path.getsize(dst) != plan["dest_size"]:
+            raise JobFailure("verification_failed", "The library copy is not the size that was verified, so the original was left visible.")
+        if not os.path.isdir(folder):
+            return {"op": "hide_source", "hidden": False, "already_gone": True}
+        others = [n for n in os.listdir(folder) if n.lower().endswith(VIDEO_EXTENSIONS) and os.path.join(folder, n) != src]
+        if others:
+            return {"op": "hide_source", "hidden": False, "skipped": f"The folder also holds {others[0]}, so it was not hidden."}
+        with open(ignore, "a"):
+            pass
+        self.log.info(f"Hid {os.path.dirname(source['rel'])} from Jellyfin (.ignore file)")
+        return {"op": "hide_source", "hidden": True}
 
     # ---- the originals kept after a file was replaced: restore one, keep one longer, or delete one now (docs/DESIGN_ENCODING.md section 9)
     def do_originals(self):

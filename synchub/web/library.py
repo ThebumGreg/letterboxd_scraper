@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from flask import Response, jsonify, redirect, render_template, request, send_file, url_for
 
 from synchub import db, downloads, jobs, previews, quality, settings, storage, versions
-from synchub.library import cleanup, findings, migrate, profiles, recommend as rc, rules as profile_rules, report, rule_steps, scan, size_policy, store
+from synchub.library import cleanup, findings, hide, migrate, profiles, recommend as rc, rules as profile_rules, report, rule_steps, scan, size_policy, store
 from synchub.library import vocab as v
 from settings_validation import validate_setting
 
@@ -255,6 +255,9 @@ def register(app):
                 elif action == "keep-source":
                     cleanup.hold(conn, record_id, by)
                     message = "The source will be kept."
+                elif action in ("hide-source", "show-source"):
+                    hide.request(conn, record_id, undo=action == "show-source")
+                    message = "A worker will hide the original from Jellyfin shortly." if action == "hide-source" else "A worker will make the original visible to Jellyfin again shortly."
                 elif action == "release-source":
                     cleanup.release(conn, record_id, by)
                     message = "The source will be deleted when the waiting time is over."
@@ -265,9 +268,15 @@ def register(app):
             return _fail(str(exc))
         return jsonify(ok=True, message=message)
 
+    @app.route("/api/library/hide-originals", methods=["POST"])
+    def api_library_hide_originals():
+        with db.connection() as conn:
+            count = hide.backfill(conn)
+        return jsonify(ok=True, message=f"Queued {count} original(s) to be hidden from Jellyfin." if count else "There are no visible originals to hide.")
+
     @app.route("/api/library/record/<int:record_id>/<action>", methods=["POST"])
     def api_library_decide(record_id, action):
-        if action not in ("approve", "reject", "undo", "tested", "requeue", "redo", "forget", "exclude-folder", "keep-source", "release-source"):
+        if action not in ("approve", "reject", "undo", "tested", "requeue", "redo", "forget", "exclude-folder", "keep-source", "release-source", "hide-source", "show-source"):
             return _fail("Unknown action.", 404)
         return _decide(record_id, action)
 
@@ -398,7 +407,7 @@ def register(app):
                 "size_policy", "size_mode", "cap_mbps_2160", "cap_mbps_1080", "cap_mbps_720", "cap_mbps_sd", "size_trigger_factor", "trigger_mbps_2160", "trigger_mbps_1080", "trigger_mbps_720", "trigger_mbps_sd", "rate_mode", "safety_gb_2160", "safety_gb_1080", "tv_cap_share",
                 "naming_style", "audio_mode", "clean_names", "naming_tmdb_ids", "versions_on", "variant_min_gb", "variant_height", "variant_label", "variant_crf", "variant_maxrate_kbps", "variant_audio_kbps", "variant_stereo", "dv7_remux", "size_crf", "tv_size_policy", "gpu_encoding", "vmaf_mode", "dolby_vision_profile_5", "dolby_vision_profile_7_8",
                 "review_first", "trust_after", "preview_seconds", "preview_keep_days", "preview_auto",
-                "library_default_profile", "source_delete_after_days", "arr_after_migration", "arr_apply_when")
+                "library_default_profile", "source_delete_after_days", "hide_source", "arr_after_migration", "arr_apply_when")
         cleaned, errors = {}, []
         for key in keys:
             if key in data:

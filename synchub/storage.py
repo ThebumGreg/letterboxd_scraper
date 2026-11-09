@@ -152,7 +152,7 @@ def from_app_path(roots, path, service="jellyfin"):
     best = None
     for root in roots:
         for prefix, folder in app_mappings(root, service):
-            if path.startswith(prefix + "/") and (best is None or (len(prefix), bool(folder)) > (len(best[0]), bool(best[2]))):      # on a tie the mapping with a folder is the more specific one
+            if path.casefold().startswith(prefix.casefold() + "/") and (best is None or (len(prefix), bool(folder)) > (len(best[0]), bool(best[2]))):      # on a tie the mapping with a folder is the more specific one
                 best = (prefix, root["name"], folder)
     if best is None:
         return None

@@ -68,6 +68,9 @@ def after_migration(conn, record_id, job, now=None):
         else:
             values.update(arr_status="skipped", arr_message="Set to tell Radarr/Sonarr when the source is deleted, but source deletion is off.")
     store._update(conn, record_id, values)
+    if how in ("copy", "convert") and not _same_file(job) and not job["plan"].get("replace"):
+        from synchub.library import hide
+        hide.after_migration(conn, record_id, job, now)
     store.event(conn, record_id, "worker", "migration_followup", None, {"source_delete": values["source_delete_status"], "arr": values["arr_status"], "due": values["source_delete_due_at"]}, now)
 
 
@@ -253,6 +256,6 @@ def summary(conn):
     counts = {r["source_delete_status"]: r["n"] for r in conn.execute("SELECT source_delete_status, COUNT(*) AS n FROM library_file WHERE source_delete_status IS NOT NULL GROUP BY source_delete_status")}
     nxt = conn.execute("SELECT MIN(source_delete_due_at) FROM library_file WHERE source_delete_status = 'waiting'").fetchone()[0]
     arr = {r["arr_status"]: r["n"] for r in conn.execute("SELECT arr_status, COUNT(*) AS n FROM library_file WHERE arr_status IS NOT NULL GROUP BY arr_status")}
-    return {"days": source_days(conn), "waiting": counts.get("waiting", 0), "queued": counts.get("queued", 0), "deleted": counts.get("deleted", 0), "held": counts.get("held", 0),
+    return {"days": source_days(conn), "hide_source": settings.get("hide_source", conn=conn) == "1", "waiting": counts.get("waiting", 0), "queued": counts.get("queued", 0), "deleted": counts.get("deleted", 0), "held": counts.get("held", 0),
             "failed": counts.get("failed", 0), "next_due": nxt, "arr_mode": arr_mode(conn), "arr_when": settings.get("arr_apply_when", conn=conn),
             "arr_failed": arr.get("failed", 0), "arr_waiting": arr.get("waiting", 0) + arr.get("due", 0)}

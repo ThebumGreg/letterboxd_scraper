@@ -67,7 +67,7 @@ def locate(conn, service, path):
     best = None
     for root in storage.list_all(conn):
         base = (root.get(f"{service}_path") or "").rstrip("/")
-        if base and path.startswith(base + "/") and (best is None or len(base) > len(best[1])):
+        if base and path.casefold().startswith(base.casefold() + "/") and (best is None or len(base) > len(best[1])):
             best = (root["name"], base)
     if best is None:
         return None
@@ -75,6 +75,13 @@ def locate(conn, service, path):
         return best[0], storage.clean_rel(path[len(best[1]) + 1:])
     except storage.StorageError:
         return None
+
+
+def not_covered(conn, service, path):
+    """The message for a path no share covers: names the paths that are set, so a missing or mistyped one is obvious."""
+    paths = [f"{r['name']} = {r.get(f'{service}_path')}" if r.get(f"{service}_path") else f"{r['name']} = (not set)" for r in storage.list_all(conn)]
+    shown = "; ".join(paths) if paths else "there are no shares yet"
+    return f"No share has a {service.title()} path that covers {path}. {service.title()} paths set: {shown}. Set it on the Storage page, then press Check again."
 
 
 def record_event(conn, service, event, payload, now=None):
@@ -86,7 +93,7 @@ def record_event(conn, service, event, payload, now=None):
         located = locate(conn, service, item["path"])
         if located is None:
             made.append(_insert(conn, service, event, item, None, None, "blocked",
-                                f"No share has a {service.title()} path that covers {item['path']}. Set it on the Storage page, then press Check again.", now))
+                                not_covered(conn, service, item["path"]), now))
             continue
         root, rel = located
         key = v.record_key(root, rel)
@@ -312,7 +319,7 @@ def retry(conn, intake_id):
     if not row["root_name"]:
         located = locate(conn, row["service"], row["relative_path"])
         if located is None:
-            raise ValueError(f"No share has a {row['service'].title()} path that covers {row['relative_path']} yet.")
+            raise ValueError(not_covered(conn, row["service"], row["relative_path"]))
         root, rel = located
         conn.execute("UPDATE download_import SET root_name = ?, relative_path = ?, path_key = ? WHERE id = ?", (root, rel, v.record_key(root, rel), intake_id))
     _set(conn, intake_id, status="pending", message="Waiting for a worker to look at the file.", finished_at=None, record_id=None, scan_run_id=None)
