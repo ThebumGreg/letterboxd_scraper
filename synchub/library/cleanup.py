@@ -10,7 +10,6 @@ stop monitoring, or (Radarr only) forget the title without touching any file. `a
 only when the source is deleted. A rename inside a share is different: the file never leaves the share, so the new location is always passed on
 (unless the setting is "nothing").
 """
-import json
 import logging
 import posixpath
 import re

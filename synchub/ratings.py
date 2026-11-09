@@ -37,10 +37,6 @@ def rank(text):
     return RANKS[label] if label else None
 
 
-def level_name(level):
-    return LEVEL_NAMES.get(level, "No limit")
-
-
 def parse_level(value):
     """A stored or submitted limit -> 0-3 or None (no limit). '', 'none' and anything unknown mean no limit."""
     try:

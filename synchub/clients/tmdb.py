@@ -74,6 +74,3 @@ class TmdbClient:
 
     def upcoming_movies(self):
         return (self._get("/movie/upcoming") or {}).get("results", [])
-
-    def airing_this_week(self):
-        return (self._get("/tv/on_the_air") or {}).get("results", [])

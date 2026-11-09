@@ -41,23 +41,27 @@ def with_extras(w, day):
 
 
 _lock = threading.Lock()
-_last = {}                    # (mode asked for) -> (taken at, answer)
+_last = {}                    # (database, mode asked for) -> (taken at, change counter, answer)
+_key_locks = {}
 KEEP_SECONDS = 15
 
 
 def cached(mode=None):
-    """The page's answer, reused for a few seconds: several screens (and a browser tab) ask every 30 seconds, and working it out reads calendars and the weather."""
+    """The page's answer, reused for a few seconds: several screens (and a browser tab) ask every 30 seconds, and working it out reads calendars and the weather.
+    One lock per mode: a slow calendar for one mode does not hold up the other, and each mode keeps its own answer."""
     from synchub import db
     from synchub.library import cache
     with db.connection() as conn:
-        key = (db.DB_FILE, mode, cache.generation(conn))      # any setting change (people, ZIP, school days, who has left) shows at once
-    with _lock:                                    # one request works it out; the others wait and take the same answer
+        gen = cache.generation(conn)                       # any setting change (people, ZIP, school days, who has left) shows at once
+    key = (db.DB_FILE, mode)
+    with _lock:
+        key_lock = _key_locks.setdefault(key, threading.Lock())
+    with key_lock:                                         # one request works it out; the others wait and take the same answer
         held = _last.get(key)
-        if held and time.monotonic() - held[0] < KEEP_SECONDS:
-            return held[1]
+        if held and held[1] == gen and time.monotonic() - held[0] < KEEP_SECONDS:
+            return held[2]
         answer = build(mode=mode)
-        _last.clear()
-        _last[key] = (time.monotonic(), answer)
+        _last[key] = (time.monotonic(), gen, answer)
         return answer
 
 

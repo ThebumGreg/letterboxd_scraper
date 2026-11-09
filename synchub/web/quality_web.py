@@ -1,5 +1,5 @@
 """Quality checks on the web: the Low quality page (what is flagged, what is waiting, the settings), and the buttons that check or accept a file."""
-from flask import Response, jsonify, redirect, render_template, request, url_for
+from flask import Response, jsonify, render_template, request
 
 from synchub import ai_test, better_copy, db, jobs, quality, settings, storage
 from synchub.library import recommend as rc, report, scan

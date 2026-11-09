@@ -1,5 +1,5 @@
 """The Storage page: the shares workers mount, defined once, with how each worker sees them."""
-from flask import jsonify, render_template, request
+from flask import jsonify, request
 
 from synchub import db, storage, workers
 from synchub.web import fleet

@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.5.0
+
+Migrations 030 to 042. Update SyncHub first, then the workers; each worker shows its version and commit on the Workers page.
+
+**Housekeeping (migration 042, no setting).** The Library and dashboard caches (1.5.0's faster pages) were thrown away constantly: a worker PC checking in every minute and every Jellyfin webhook event wrote a setting, and any settings write counted as a change. Those bookkeeping settings (worker check-in, webhook last-seen, DDNS status, updater logs, Pushover quota, notification pauses) no longer count, so the pages stay fast. The TV dashboard now has one lock per mode instead of one for everything, so one slow calendar or weather fetch no longer holds up the other screens; the calendar reader keeps up to 16 parsed calendars, reads one without holding up the others, and drops the old copy when a calendar is downloaded again. Also: unused imports and five unused functions removed, `tools/db_table_sizes.py` and `tools/export_sanitized_db.py` now ship in the image (`docker exec synchub python /app/tools/export_sanitized_db.py /data/synchub.db /data/sample.db`), and a README link text fixed.
 
 **TV dashboard fix: "Show on the TV now" stays up (no migration).** Update SyncHub only. Pressing Show on the TV now outside the morning or evening window opened the page, and the minute job closed it a minute later because it was outside the window. A screen shown by hand now stays for 30 minutes (and through the end of a window that falls inside that time), then closes. Close on the TV still closes it at once. Welcome home still closes after its own display time (2 minutes by default, Settings, TV dashboard, Welcome home).
 

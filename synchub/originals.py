@@ -5,7 +5,7 @@ A worker reports the list with its poll (workers.originals). Each action is a `l
 """
 from datetime import datetime, timezone
 
-from synchub import db, jobs, workers
+from synchub import jobs, workers
 
 REF = "original"
 ACTIONS = ("restore", "extend", "purge")

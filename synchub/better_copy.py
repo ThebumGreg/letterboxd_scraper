@@ -309,7 +309,3 @@ def refresh_tracking(radarr=None, now=None):
                              (state, detail, percent, eta, seen, stamp, stamp, row["id"]))
                 changed += 1
     return changed
-
-
-def history_for(conn, file_id, limit=5):
-    return [dict(r) for r in conn.execute("SELECT * FROM quality_request WHERE library_file_id = ? ORDER BY id DESC LIMIT ?", (file_id, int(limit)))]
