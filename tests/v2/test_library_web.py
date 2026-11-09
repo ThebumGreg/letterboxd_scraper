@@ -11,6 +11,7 @@ from synchub.library import vocab as v
 
 from .library_helpers import CFG, add, plan, track
 from .test_library_findings import rec_of
+from tests.v2.media_helpers import all_tabs
 
 
 def shares(conn):
@@ -29,10 +30,10 @@ def row_for(page, record_id):
 
 # ---------------------------------------------------------------- the overview
 def test_the_library_is_in_the_nav_and_an_empty_one_says_how_to_begin(client, conn):
-    page = client.get("/library").get_data(as_text=True)
+    page = all_tabs(client, "/library")
     assert 'href="/library"' in page and "Nothing has been scanned yet" in page and 'href="/storage"' in page
     shares(conn)
-    page = client.get("/library").get_data(as_text=True)
+    page = all_tabs(client, "/library")
     assert "Choose a share below and press" in page and '<option value="tfiles">tfiles</option>' in page
 
 
@@ -42,7 +43,7 @@ def test_the_overview_counts_each_queue_by_confidence_and_each_share(client, con
     add(conn, root="tfiles", rel="a.mkv", name="A (2000).mkv", size=1024 ** 3)
     add(conn, root="tfiles", rel="b.mkv", name="B (2000).mkv", audio=[track(1, "und")], english="unknown", reasons=[("audio", "English cannot be confirmed")])
     add(conn, root="tfiles", rel="c.mkv", name="C.mkv", integrity=v.INT_DECODE_ERROR, audit_error="x")
-    page = client.get("/library").get_data(as_text=True)
+    page = all_tabs(client, "/library")
     card = lambda key: re.search(r'data-queue="%s">.*?</div>\s*</div>\s*</div>' % key, page, re.S).group(0)      # noqa: E731
     assert ">1</span>" in card("ready") and "1 high" in card("ready") and "1 low" in card("check") and "1 low" in card("needs_you") and ">1</span>" in card("done")
     summary = re.search(r'<table[^>]*id="shareSummary".*?</table>', page, re.S).group(0)
@@ -99,7 +100,7 @@ def test_the_library_settings_are_validated_saved_and_change_what_is_in_place(cl
     assert ok.get_json()["ok"]
     assert (settings.get("library_destination_root", conn=conn), settings.get("library_movie_folder", conn=conn), settings.get("library_exclude_folders", conn=conn)) == ("tfiles", "Films", "Extras\nSample")
     assert f'data-record="{placed}"' not in client.get("/library/queue/done").get_data(as_text=True)        # media is no longer where things belong
-    page = client.get("/library").get_data(as_text=True)
+    page = all_tabs(client, "/library")
     assert 'value="Films"' in page and "Last 45 s" in page and "Films/Film Name (Year)/Film Name (Year).ext" in page
 
 
@@ -375,3 +376,4 @@ def test_a_list_can_be_filtered_by_type_and_where_the_film_sits_and_shows_the_qu
     page = client.get("/library/queue/ready").get_data(as_text=True)
     assert "Quality check" in page and "Not checked" in row_for(page, alone) and "loose" in row_for(page, loose_a) and "loose" not in row_for(page, alone).replace("Loose", "")
     assert "TV episode" in row_for(page, show) and "Loose films" in client.get("/library/fragment").get_data(as_text=True)
+    assert "what=loose" in client.get("/library/fragment").get_data(as_text=True)         # the box links to the list each loose film is in

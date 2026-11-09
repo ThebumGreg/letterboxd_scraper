@@ -5,6 +5,8 @@ A profile names the video codec and quality, the audio bitrate for audio that ha
 applies to a job is copied into the job's plan when it is queued, so a queued job is not affected by a later change.
 """
 import re
+import threading
+from contextlib import contextmanager
 
 from synchub import db, settings
 from synchub.library import rules as profile_rules
@@ -68,16 +70,46 @@ def all_profiles(conn):
     return [_row(r) for r in conn.execute(f"SELECT {_COLUMNS} FROM conversion_profile ORDER BY builtin DESC, id")]
 
 
+_memo = threading.local()
+
+
+@contextmanager
+def lookups():
+    """Inside this block each profile (and the default's id) is read from the database once, not once per file: working out thousands of recommendations
+    asked for the same few profiles thousands of times."""
+    before = getattr(_memo, "found", None)
+    _memo.found = {}
+    try:
+        yield
+    finally:
+        _memo.found = before
+
+
 def get(conn, profile_id):
+    found = getattr(_memo, "found", None)
+    if found is None:
+        return _get(conn, profile_id)
+    if ("profile", profile_id) not in found:
+        found[("profile", profile_id)] = _get(conn, profile_id)
+    return found[("profile", profile_id)]
+
+
+def _get(conn, profile_id):
     r = conn.execute(f"SELECT {_COLUMNS} FROM conversion_profile WHERE id = ?", (profile_id,)).fetchone()
     return _row(r) if r else None
 
 
 def default_id(conn=None):
+    found = getattr(_memo, "found", None)
+    if found is not None and "default_id" in found:
+        return found["default_id"]
     try:
-        return int(settings.get("library_default_profile", conn=conn))
+        value = int(settings.get("library_default_profile", conn=conn))
     except ValueError:
-        return DEFAULT_PROFILE_ID
+        value = DEFAULT_PROFILE_ID
+    if found is not None:
+        found["default_id"] = value
+    return value
 
 
 def default(conn):

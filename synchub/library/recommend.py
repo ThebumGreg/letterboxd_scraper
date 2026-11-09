@@ -399,18 +399,28 @@ def cfg_for(conn, rec, cfg, cache):
     return dataclasses.replace(found, show_folders=cache["_shows"]) if cache["_shows"] else found
 
 
-def classify(conn, cfg=None, match=None, root=None):
-    """[(record, Recommendation)] for every record (optionally filtered), in display order."""
-    cfg = cfg or LibraryConfig()
+def _classify_all(conn, cfg):
     from synchub import quality
-    held, rows, cache, rules_cache = quality.held_ids(conn), [], {}, {}
-    for rec in sorted(all_records(conn), key=_sort_key):
-        if match and match.lower() not in (rec["source_path"] + " " + rec["file_name"]).lower():
-            continue
-        if root and rec.get("root_name") != root:
-            continue
-        rows.append((rec, recommend(rec, cfg_for(conn, rec, cfg, cache), lambda plans, rec=rec: rule_steps.for_record(conn, rec, plans, rules_cache), held=rec["id"] in held)))
+    from synchub.library import profiles
+    rows, cache, rules_cache = [], {}, {}
+    with profiles.lookups():
+        held = quality.held_ids(conn)
+        for rec in sorted(all_records(conn), key=_sort_key):
+            rows.append((rec, recommend(rec, cfg_for(conn, rec, cfg, cache), lambda plans, rec=rec: rule_steps.for_record(conn, rec, plans, rules_cache), held=rec["id"] in held)))
     return rows
+
+
+def classify(conn, cfg=None, match=None, root=None, max_age=0):
+    """[(record, Recommendation)] for every record (optionally filtered), in display order. The worked-out result is kept in memory until a file, quality result, profile,
+    setting or show changes (see cache.py), so callers must not change the records they get. `max_age`: a background refresh may use a result this many seconds old."""
+    cfg = cfg or LibraryConfig()
+    from synchub.library import cache
+    everything = cache.get(conn, "classify", lambda: _classify_all(conn, cfg), extra=repr(cfg), max_age=max_age)
+    if not match and not root:
+        return list(everything)
+    needle = (match or "").lower()
+    return [(rec, r) for rec, r in everything
+            if not (needle and needle not in (rec["source_path"] + " " + rec["file_name"]).lower()) and not (root and rec.get("root_name") != root)]
 
 
 def counts(conn, cfg=None, rows=None):
