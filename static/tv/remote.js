@@ -2,6 +2,8 @@
 /* The Remote page: one device at a time, laid out like a physical remote. */
 S.keyboard = localStorage.getItem('kbd') !== '0';   // arrows / Enter / Esc / Space drive the remote on a computer
 const KEYBOARD = {ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',Enter:'ok',Escape:'back',Backspace:'back',Home:'home',' ':'play_pause',m:'mute','+':'vol_up','=':'vol_up','-':'vol_down'};
+const TABS = [['remote', '🎮', 'Remote'], ['apps', '▦', 'Apps'], ['watch', '🎬', 'Watch'], ['more', '⋯', 'More']];
+S.tab = (() => { try { return localStorage.getItem('rtab') || 'remote'; } catch (_) { return 'remote'; } })();
 const KEYS = {home:'Home',back:'Back',options:'✱',play_pause:'⏯',rewind:'⏪',ff:'⏩',vol_up:'Vol +',vol_down:'Vol −',mute:'Mute'};
 
 function renderRemote() {
@@ -11,29 +13,40 @@ function renderRemote() {
   const volume = ['vol_down', 'mute', 'vol_up'].some(x => d.keys[x]);
   // Volume buttons are press-and-hold buttons (see "volume" below), so they use data-hold rather than data-act.
   const vol = (key, label) => `<button data-hold="${key}" class="vol" ${d.keys[key] ? '' : 'disabled'} title="${key}: tap, tap repeatedly, or hold">${label}</button>`;
-  // On a phone the two groups stack; on a tablet they sit side by side (info and apps left, the pad right)
+  // Phone: a pinned Now playing strip, one tab at a time (Remote, Apps, Watch, More) and a bar of tabs at thumb height.
+  // Tablet and computer: every tab shows at once, laid out in two columns by the stylesheet.
+  const tab = TABS.some(t => t[0] === S.tab) ? S.tab : 'remote';
+  const canType = has('text');
+  el.dataset.tab = tab;
   el.innerHTML = `
     <div class="r-top"><h3>${esc(d.name)}</h3><div id="rstat" class="small"></div></div>
     <div id="pairNote" class="pair" hidden>Not paired with this TV yet. Open <a href="/tv/devices">TVs</a> and use “Start pairing”.</div>
-    <div class="r-info">
-      <div id="now" class="np"></div>
-      ${has('power_on') ? `<div class="rgrid r2"><button data-act="power" data-state="on" class="pwr">⏻ Power on</button><button data-act="power" data-state="off" class="pwr">☾ Sleep</button></div>` : ''}
-      ${has('launch') ? `<button data-act="openjf" class="jfopen">▶ Open Jellyfin</button>` : ''}
-      ${has('stream_view') && CAM.enabled ? `<button data-act="cameras" class="jfopen">📹 Cameras</button>` : ''}
-      <div id="quick" class="quick"></div>
-    </div>
-    <div class="r-pad">
-      <div class="rgrid r3">${k('back')}${k('home')}${k('options')}</div>
-      <div class="dpad">
-        <span></span>${k('up', '▲')}<span></span>
-        ${k('left', '◀')}${k('ok', 'OK', 'ok')}${k('right', '▶')}
-        <span></span>${k('down', '▼')}<span></span>
+    <div id="now" class="np" data-act="npToggle" title="Tap to show or hide the playback controls"></div>
+    <div class="tabs">
+      <div class="tab tab-remote">
+        <div class="rgrid ${canType ? 'r4' : 'r3'}">${k('back')}${k('home')}${k('options')}${canType ? `<button data-act="kbOpen" class="kbbtn" title="Type on the TV, for example in a search box">⌨</button>` : ''}</div>
+        <div class="dpad">
+          <span></span>${k('up', '▲')}<span></span>
+          ${k('left', '◀')}${k('ok', 'OK', 'ok')}${k('right', '▶')}
+          <span></span>${k('down', '▼')}<span></span>
+        </div>
+        <div class="rgrid r3">${k('rewind')}${k('play_pause')}${k('ff')}</div>
+        ${volume ? `<div class="rgrid r3">${vol('vol_down', 'Vol −')}${k('mute')}${vol('vol_up', 'Vol +')}</div>` : ''}
       </div>
-      <div class="rgrid r3">${k('rewind')}${k('play_pause')}${k('ff')}</div>
-      ${volume ? `<div class="rgrid r3">${vol('vol_down', 'Vol −')}${k('mute')}${vol('vol_up', 'Vol +')}</div>` : ''}
+      <div class="tab tab-apps">
+        ${has('launch') ? `<button data-act="openjf" class="jfopen">▶ Open Jellyfin</button>` : ''}
+        <div id="quick" class="quick"></div>
+        <div id="rapps" class="r-apps"></div>
+      </div>
+      <div class="tab tab-watch">
+        <button data-act="watch" class="primary watchbtn">🎬 Watch a movie…</button>
+        ${has('stream_view') && CAM.enabled ? `<button data-act="cameras" class="jfopen">📹 Cameras</button>` : ''}
+      </div>
+      <div class="tab tab-more">
+        ${has('power_on') ? `<div class="rgrid r2"><button data-act="power" data-state="on" class="pwr">⏻ Power on</button><button data-act="power" data-state="off" class="pwr">☾ Sleep</button></div>` : '<div class="dim small">Nothing else to set on this device.</div>'}
+      </div>
     </div>
-    <button data-act="watch" class="primary watchbtn">🎬 Watch a movie…</button>
-    <div id="rapps" class="r-apps"></div>`;
+    <nav class="tabbar">${TABS.map(([id, icon, label]) => `<button data-act="tab" data-tab="${id}" class="${id === tab ? 'sel' : ''}"><span class="ti">${icon}</span><span>${label}</span></button>`).join('')}</nav>`;
   renderStatus(); renderNow(); renderQuick(); renderApps();
 }
 
@@ -170,6 +183,89 @@ Object.assign(ACTIONS, {
   camHide: () => $('#cam').close(),
 });
 
+
+/* ------------------------------------------------------------------ keyboard sheet
+   Typing in the box is sent to the TV as you type: only the new characters, and a Backspace for every character you remove,
+   so the TV's search field always matches the box. Sends never overlap (a Roku takes one request per letter). */
+const KB = {sent: '', busy: false, again: false, timer: null, msg: ''};
+const KB_ADB = /^[A-Za-z0-9 ._@-]*$/, KB_ASCII = /^[\x20-\x7e]*$/;
+$('.tvr').insertAdjacentHTML('beforeend', `<dialog id="kbs" class="sheet">
+  <div class="dlg-head"><b>Type on the TV</b><button data-act="kbClose" class="small">✕</button></div>
+  <input id="kbText" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" placeholder="Open the TV's search box first, then type here">
+  <div id="kbMsg" class="small dim"></div>
+  <div class="rgrid r3"><button data-act="kbBack" title="Delete the last letter">⌫</button><button data-act="kbClear">Clear</button><button data-act="kbEnter" class="primary" id="kbEnterBtn">Search ↵</button></div>
+</dialog>`);
+const kbAllowed = () => (dev() && dev().type === 'androidtv') ? KB_ADB : KB_ASCII;
+function kbNote(text, bad) { KB.msg = text; const m = $('#kbMsg'); m.textContent = text; m.style.color = bad ? 'var(--bad)' : ''; }
+function kbLimits() {
+  return (dev() && dev().type === 'androidtv') ? 'This TV is controlled over ADB, which can only take letters, numbers, space and . _ @ -' : '';
+}
+function kbSchedule(delay = 300) { clearTimeout(KB.timer); KB.timer = setTimeout(kbSync, delay); }
+async function kbSync() {
+  if (KB.busy) { KB.again = true; return; }
+  KB.busy = true;
+  try {
+    do {
+      KB.again = false;
+      const target = $('#kbText').value, cur = KB.sent;
+      let n = 0; while (n < cur.length && n < target.length && cur[n] === target[n]) n++;
+      const del = cur.length - n, add = target.slice(n);
+      if (!del && !add) continue;
+      kbNote('Sending…');
+      if (del) {
+        const r = await api('POST', devPath('/key'), {key: 'backspace', count: Math.min(del, 30)});
+        if (!r.ok) throw new Error(lastLine(r.body));
+        KB.sent = cur.slice(0, cur.length - Math.min(del, 30)); if (del > 30) { KB.again = true; continue; }
+      }
+      for (let i = 0; i < add.length; i += 100) {
+        const part = add.slice(i, i + 100), r = await api('POST', devPath('/text'), {text: part});
+        if (!r.ok) throw new Error(lastLine(r.body));
+        KB.sent += part;
+      }
+      kbNote('Sent.');
+    } while (KB.again);
+  } catch (e) {
+    KB.sent = $('#kbText').value;      // do not retry a failing letter in a loop; the box keeps the text so you can see what happened
+    kbNote(String(e.message || e) || 'The TV did not take that.', true);
+  }
+  KB.busy = false; fetchLog();
+}
+async function kbFlush() { clearTimeout(KB.timer); await kbSync(); while (KB.busy) await new Promise(r => setTimeout(r, 50)); }
+$('#kbText').addEventListener('input', e => {
+  const ok = kbAllowed(), v = e.target.value;
+  if (!ok.test(v)) {
+    const clean = [...v].filter(c => ok.test(c)).join('');
+    e.target.value = clean; kbNote(kbLimits() || 'That character cannot be sent to the TV.', true);
+  } else if (KB.msg.startsWith('This TV') || KB.msg.startsWith('That char')) kbNote('');
+  kbSchedule();
+});
+$('#kbText').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); ACTIONS.kbEnter($('#kbEnterBtn')); } });
+Object.assign(ACTIONS, {
+  tab: b => {
+    S.tab = b.dataset.tab; try { localStorage.setItem('rtab', S.tab); } catch (_) {}
+    $('#remote').dataset.tab = S.tab;
+    document.querySelectorAll('#remote .tabbar button').forEach(x => x.classList.toggle('sel', x === b));
+    window.scrollTo(0, 0);
+  },
+  npToggle: () => $('#now').classList.toggle('open'),
+  kbOpen: () => {
+    KB.sent = ''; $('#kbText').value = ''; kbNote(kbLimits());
+    $('#kbEnterBtn').textContent = (dev() && dev().keys.enter) ? 'Search ↵' : 'OK';
+    $('#kbs').showModal(); $('#kbText').focus();
+  },
+  kbClose: async () => { await kbFlush(); $('#kbs').close(); },
+  kbBack: () => { const t = $('#kbText'); t.value = t.value.slice(0, -1); kbSchedule(0); t.focus(); },
+  kbClear: () => { const t = $('#kbText'); t.value = ''; kbSchedule(0); t.focus(); },
+  kbEnter: async b => {
+    await kbFlush();
+    const key = dev().keys.enter ? 'enter' : 'ok';
+    const r = await run(b, api('POST', devPath('/key'), {key}));
+    if (r.ok) { $('#kbText').value = ''; KB.sent = ''; kbNote('Sent. Type again for another search, or close this.'); }
+    else kbNote(lastLine(r.body) || 'The TV did not take that.', true);
+    $('#kbText').focus(); fetchLog();
+  },
+});
+
 Object.assign(Page, {
   onStart: startFromLink,
   onSelect: renderRemote,
@@ -233,7 +329,7 @@ document.addEventListener('click', e => {           // Enter/Space on a focused 
 });
 
 document.addEventListener('keydown', e => {
-  if (!S.keyboard || !S.devId || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey || $('#watch').open) return;
+  if (!S.keyboard || !S.devId || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey || $('#watch').open || $('#kbs').open) return;
   const key = KEYBOARD[e.key];
   if (!key) return;
   e.preventDefault();
