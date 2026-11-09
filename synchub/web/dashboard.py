@@ -23,7 +23,7 @@ def register(app):
     @app.get("/dash/<token>/data")
     def dash_data(token):
         _checked(token)
-        response = jsonify(data.build(mode=request.args.get("mode")))
+        response = jsonify(data.cached(request.args.get("mode")))
         response.headers["Cache-Control"] = "no-store"
         return response
 

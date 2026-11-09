@@ -890,3 +890,27 @@ def test_a_screen_shown_by_hand_outside_the_window_stays_up_for_a_while(tv):
     assert tv.closed == []
     show.tick(at(2026, 11, 9, 14, 31))
     assert tv.closed == ["com.phlox.tvwebbrowser"]
+
+
+# ------------------------------------------------------------------ speed: a big calendar is read once, the page's answer is reused for a few seconds
+def test_a_calendar_is_parsed_once_however_many_times_it_is_asked(monkeypatch):
+    import icalendar
+    calendars._parsed.clear()
+    calendars._found.clear()
+    reads = []
+    real = icalendar.Calendar.from_ical
+    monkeypatch.setattr(icalendar.Calendar, "from_ical", classmethod(lambda cls, text: reads.append(1) or real(text)))
+    monkeypatch.setattr(calendars, "download", lambda url: (ICS, False))
+    for _ in range(3):
+        calendars.for_person("https://x/y.ics", at(2026, 11, 9, 6, 30))
+        calendars.for_day("https://x/y.ics", at(2026, 11, 10, 6, 30).date(), at(2026, 11, 9).tzinfo)
+    assert len(reads) == 1
+
+
+def test_the_page_answer_is_reused_for_a_few_seconds_and_a_setting_change_shows_at_once(v2, monkeypatch):
+    built = []
+    monkeypatch.setattr(data, "build", lambda now=None, mode=None: built.append(1) or {"n": len(built)})
+    data._last.clear()
+    assert data.cached() == data.cached() == {"n": 1} and len(built) == 1
+    settings.set_value("dash_zip", "90210")
+    assert data.cached() == {"n": 2}

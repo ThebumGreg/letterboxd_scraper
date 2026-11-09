@@ -1,4 +1,5 @@
 """A person's calendar from the private ICS address Google, iCloud or Outlook gives out: today's events, or the next day with some."""
+import threading
 import time
 from datetime import date, datetime, time as dtime, timedelta
 
@@ -46,11 +47,46 @@ def _as_local(value, tz):
     return datetime.combine(value, dtime.min, tzinfo=tz), True
 
 
-def events_between(text, start, end):
-    """Events that overlap [start, end) (timezone aware datetimes), sorted: all-day first, then by start. -> [{"title", "start", "end", "all_day", "where"}]"""
+_parsed = {}            # calendar text -> the parsed calendar: reading a big calendar takes seconds and held the whole server while it did
+_parse_lock = threading.Lock()
+MAX_PARSED = 6
+
+
+def parsed(text):
+    """The parsed calendar for this text, read once however many pages ask (the text is replaced only when the calendar is downloaded again, every ten minutes)."""
     import icalendar
+    with _parse_lock:
+        cal = _parsed.get(text)
+        if cal is None:
+            if len(_parsed) >= MAX_PARSED:
+                _parsed.pop(next(iter(_parsed)))
+            cal = _parsed[text] = icalendar.Calendar.from_ical(text)
+        return cal
+
+
+_found = {}             # (calendar text, start, end) -> the events: spreading out repeating events over a window is slow too
+MAX_FOUND = 64
+
+
+def events_between(text, start, end):
+    """Events that overlap [start, end) (timezone aware datetimes), sorted: all-day first, then by start. -> [{"title", "start", "end", "all_day", "where"}]
+    The answer for a window is kept (the text changes only when the calendar is downloaded again); callers must not change it."""
+    key = (text, start.isoformat(), end.isoformat())
+    with _parse_lock:
+        held = _found.get(key)
+    if held is not None:
+        return list(held)
+    out = _events_between(text, start, end)
+    with _parse_lock:
+        if len(_found) >= MAX_FOUND:
+            _found.pop(next(iter(_found)))
+        _found[key] = out
+    return list(out)
+
+
+def _events_between(text, start, end):
     import recurring_ical_events
-    cal = icalendar.Calendar.from_ical(text)
+    cal = parsed(text)
     tz = start.tzinfo
     out = []
     for ev in recurring_ical_events.of(cal).between(start, end):
@@ -73,18 +109,29 @@ def day_range(day, tz):
     return first, first + timedelta(days=1)
 
 
+def _overlapping(events, start, end):
+    """The events (already sorted) that overlap [start, end), the way events_between finds them; an event with no length counts at its start."""
+    out = []
+    for e in events:
+        begin, finish = datetime.fromisoformat(e["start"]), datetime.fromisoformat(e["end"])
+        if begin < end and (finish > start or (finish == begin and begin >= start)):
+            out.append(e)
+    return out
+
+
 def for_person(url, now):
     """-> {"today": [...], "next": {"date", "events"} or None, "stale": bool}. Events already over today are dropped, except all-day ones."""
     text, stale = download(url)
     tz = now.tzinfo
     start, end = day_range(now.date(), tz)
-    today = [e for e in events_between(text, start, end) if e["all_day"] or datetime.fromisoformat(e["end"]) > now or datetime.fromisoformat(e["start"]) >= now]
+    week = events_between(text, start, start + timedelta(days=8))       # one pass over the calendar for today and the week ahead
+    today = [e for e in _overlapping(week, start, end) if e["all_day"] or datetime.fromisoformat(e["end"]) > now or datetime.fromisoformat(e["start"]) >= now]
     upcoming = None
     if not any(not e["all_day"] for e in today):
         for ahead in range(1, 8):
             d = now.date() + timedelta(days=ahead)
             first, last = day_range(d, tz)
-            found = events_between(text, first, last)
+            found = _overlapping(week, first, last)
             if found:
                 upcoming = {"date": d.isoformat(), "events": found[:4]}
                 break

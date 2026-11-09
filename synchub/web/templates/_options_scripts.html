@@ -111,9 +111,10 @@
         }, 250);
     });
     async function refresh() {
+        if (!$('media-pane-options')?.classList.contains('active') || document.hidden) return;            // a hidden tab does not ask
         try {
             const res = await fetch('/library/quality/ai');
-            if (res.ok && $('media-pane-options')?.classList.contains('active')) $('aiResults').innerHTML = await res.text();
+            if (res.ok) $('aiResults').innerHTML = await res.text();
         } catch (e) { /* next time */ }
     }
     setInterval(refresh, 5000);
