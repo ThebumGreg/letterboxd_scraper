@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+**TV dashboard fix: "Show on the TV now" stays up (no migration).** Update SyncHub only. Pressing Show on the TV now outside the morning or evening window opened the page, and the minute job closed it a minute later because it was outside the window. A screen shown by hand now stays for 30 minutes (and through the end of a window that falls inside that time), then closes. Close on the TV still closes it at once. Welcome home still closes after its own display time (2 minutes by default, Settings, TV dashboard, Welcome home).
+
 **TV dashboard phase 2: its own Settings tab, Welcome home, an evening screen (no migration, no new packages).** Update SyncHub only.
 - **Settings, TV dashboard** is a new fourth tab. The dashboard moved out of Connections (UniFi Network stays there, it is an integration). A status bar shows whether it is on the TV, the last problem and whose phone is home, with Show / Show tomorrow / Close buttons. Sections fold open and shut, and each person is a collapsed card with a one-line summary. Saved settings keep their names, so nothing is lost.
 - **Welcome home:** when a phone joins the home Wi-Fi after being away 15 minutes or more, the TV shows "Welcome home, Sam!" for 2 minutes (setting), waking the TV from standby (setting) and putting it back to sleep after. Per-person switch and custom line, any person (adults now get a phone field too), quiet hours, a once-an-hour limit, never over a film, camera or another app, one page for two arrivals, "Happy birthday" on a birthday. The Wi-Fi is checked about once a minute all day, one UniFi call shared with the "Left for school" check. The Settings page lists what happened lately.

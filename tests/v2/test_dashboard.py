@@ -876,3 +876,17 @@ def test_the_tab_saves_on_its_own_and_unifi_stays_with_connections(client, v2):
     assert settings.get("dash_welcome_seconds") == "90" and settings.get("dash_welcome_on") == "1" and settings.get("dash_eve_on") == "1" and settings.get("dash_quote_source") == "joke"
     client.post("/tools/update-settings", data={"tab": "connections", "unifi_net_host": "10.0.0.5"})
     assert settings.get("dash_welcome_seconds") == "90"                           # the other tab's save did not touch it
+
+
+def test_a_screen_shown_by_hand_outside_the_window_stays_up_for_a_while(tv):
+    show.start(manual=True, now=at(2026, 11, 9, 6, 15))                      # before the 6:30 window
+    show.tick(at(2026, 11, 9, 6, 16))
+    show.tick(at(2026, 11, 9, 6, 29))
+    assert tv.closed == []
+    show.tick(at(2026, 11, 9, 6, 31))                                          # in the window now: no second opening, still up
+    assert len(tv.opened) == 1 and tv.closed == []
+    show.start(manual=True, now=at(2026, 11, 9, 14, 0))
+    show.tick(at(2026, 11, 9, 14, 29))
+    assert tv.closed == []
+    show.tick(at(2026, 11, 9, 14, 31))
+    assert tv.closed == ["com.phlox.tvwebbrowser"]
