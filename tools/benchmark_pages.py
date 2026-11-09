@@ -29,6 +29,7 @@ def main():
     ap.add_argument("database")
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--only", default="", help="only pages whose address contains this text")
+    ap.add_argument("--profile", default="", help="instead of the table, show where one page spends its time (for example --profile /): the 30 slowest functions")
     args = ap.parse_args()
 
     work = Path(tempfile.mkdtemp(prefix="synchub-bench-"))
@@ -58,6 +59,22 @@ def main():
     app = create_app(csrf=False)
     client = app.test_client()
     client.set_cookie("synchub_profile", "0")
+
+    if args.profile:
+        import cProfile
+        import pstats
+        client.get(args.profile)                                      # warm: imports, caches
+        timing.reset()
+        profiler = cProfile.Profile()
+        started = time.perf_counter()
+        profiler.enable()
+        response = client.get(args.profile)
+        profiler.disable()
+        print(f"{args.profile}: {response.status_code}, {(time.perf_counter() - started) * 1000:.0f} ms (with profiling overhead), {len(response.get_data()) / 1024:.0f} KB\n")
+        pstats.Stats(profiler).sort_stats("cumulative").print_stats(30)
+        pstats.Stats(profiler).sort_stats("tottime").print_stats(15)
+        shutil.rmtree(work, ignore_errors=True)
+        return
 
     paths = set()
     with db.connection() as conn:
