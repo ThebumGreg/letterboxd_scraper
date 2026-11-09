@@ -1,5 +1,7 @@
 """Everything the TV page shows, in one answer. Each part fails on its own: a calendar that cannot be read leaves the rest of the screen alone."""
 import logging
+import threading
+import time
 from datetime import timedelta
 
 from synchub import settings
@@ -36,6 +38,27 @@ def with_extras(w, day):
     if w.get("aqi") is not None and w["aqi"] > 100:
         notes.append(f"Air quality: {w['aqi_words'].lower()} ({w['aqi']})")
     return {**w, "moon": weather.moon(day), "uv": today.get("uv"), "sun": {"rise": today.get("sunrise") or w.get("sunrise"), "set": today.get("sunset") or w.get("sunset")}, "notes": notes}
+
+
+_lock = threading.Lock()
+_last = {}                    # (mode asked for) -> (taken at, answer)
+KEEP_SECONDS = 15
+
+
+def cached(mode=None):
+    """The page's answer, reused for a few seconds: several screens (and a browser tab) ask every 30 seconds, and working it out reads calendars and the weather."""
+    from synchub import db
+    from synchub.library import cache
+    with db.connection() as conn:
+        key = (db.DB_FILE, mode, cache.generation(conn))      # any setting change (people, ZIP, school days, who has left) shows at once
+    with _lock:                                    # one request works it out; the others wait and take the same answer
+        held = _last.get(key)
+        if held and time.monotonic() - held[0] < KEEP_SECONDS:
+            return held[1]
+        answer = build(mode=mode)
+        _last.clear()
+        _last[key] = (time.monotonic(), answer)
+        return answer
 
 
 def build(now=None, mode=None):
