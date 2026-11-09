@@ -508,3 +508,26 @@ def test_the_remote_page_script_has_the_button_and_the_address_exists(app):
     from config import BASE_DIR
     assert "data-act=\"openjf\"" in (BASE_DIR / "static" / "tv" / "remote.js").read_text()
     assert "openjf:" in (BASE_DIR / "static" / "tv" / "common.js").read_text()
+
+
+def test_the_phone_remote_has_tabs_and_a_keyboard_sheet(client, tv):
+    from config import BASE_DIR
+    js = (BASE_DIR / "static" / "tv" / "remote.js").read_text()
+    css = (BASE_DIR / "static" / "tv" / "tv.css").read_text()
+    for name in ("kbOpen", "kbEnter", "kbBack", "kbClear", "npToggle"):
+        assert f"{name}:" in js and f'data-act="{name}"' in js, name
+    assert 'data-act="tab"' in js and "'remote', '🎮'" in js
+    assert "tabbar" in css and "dialog.sheet" in css
+    depth = 0
+    for ch in css:                                     # a stray brace would silently switch off every rule after it
+        depth += ch == "{"
+        depth -= ch == "}"
+    assert depth == 0
+
+
+def test_text_and_delete_reach_every_kind_of_tv():
+    from synchub.tv.devices import REGISTRY
+    for kind in ("androidtv", "googletv", "roku"):
+        cls = REGISTRY[kind]
+        assert cls.text.__qualname__.startswith(cls.__name__), kind   # the driver really implements typing
+        assert cls.keymap["backspace"] and cls.keymap["enter"], kind

@@ -180,9 +180,6 @@
   .tvr .remote-card{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);column-gap:30px;align-items:start;padding:26px;border-radius:34px}
   .tvr .r-top,.tvr .remote-card .pair{grid-column:1/-1}
   .tvr .r-top h3{font-size:22px}
-  .tvr .r-info{grid-column:1;grid-row:2}
-  .tvr .r-pad{grid-column:2;grid-row:2 / span 2}
-  .tvr .watchbtn{grid-column:1;grid-row:3;align-self:end;padding:16px;font-size:17px}
   .tvr .np{padding:16px;border-radius:20px}
   .tvr .np .ico{width:56px;height:56px;font-size:18px;border-radius:13px}
   .tvr .np-app{font-size:16px}
@@ -249,6 +246,38 @@
 .tvr .field input:not([type=checkbox]),.tvr .field select{display:block;width:100%;margin-top:3px}
 .tvr .field.check{display:flex;gap:8px;align-items:flex-start}
 .tvr #tvForm .field[hidden]{display:none}
-@media (min-width:700px){.tvr .agrid{gap:12px}
-.tvr .r-apps{grid-column:1/-1}}
+@media (min-width:700px){.tvr .agrid{gap:12px}}
 .tvr h3{font-size:16px;font-weight:600}
+
+}   /* closes the (hover:hover) block opened above, so the rules below apply on phones too */
+/* ---------------------------------------------------------------- phone remote: tabs, pinned Now playing, keyboard sheet */
+.tvr .tabbar{display:none}
+.tvr .rgrid.r4{grid-template-columns:repeat(4,1fr)}
+.tvr .kbbtn{font-size:20px}
+.tvr .watchbtn{padding:13px;font-size:15px}
+@media (max-width:699px){
+  .tvr .remote-page{padding-bottom:calc(84px + env(safe-area-inset-bottom))}
+  .tvr .tab{display:none}
+  .tvr .remote-card[data-tab=remote] .tab-remote,.tvr .remote-card[data-tab=apps] .tab-apps,
+  .tvr .remote-card[data-tab=watch] .tab-watch,.tvr .remote-card[data-tab=more] .tab-more{display:block}
+  /* Now playing stays at the top on every tab; tap it for the playback controls */
+  .tvr #now{position:sticky;top:0;z-index:3;margin:6px 0;cursor:pointer}
+  .tvr #now:not(.open) .np-ctl,.tvr #now:not(.open) .bar{display:none}
+  .tvr .remote-page .dpad{grid-template-columns:repeat(3,minmax(64px,1fr));grid-template-rows:repeat(3,64px);gap:8px;margin:14px auto;max-width:320px}
+  .tvr .remote-page .rgrid button{min-height:48px}
+  .tvr .quick{grid-template-columns:repeat(3,1fr)}
+  .tvr .tabbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--card);border-top:1px solid var(--line);padding:6px max(6px,env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left));gap:6px}
+  .tvr .tabbar button{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:52px;font-size:12px;border-radius:12px;border-color:transparent;background:transparent;color:var(--dim)}
+  .tvr .tabbar button .ti{font-size:20px;line-height:1}
+  .tvr .tabbar button.sel{color:var(--fg);background:var(--key);border-color:var(--acc)}}
+@media (min-width:700px){
+  .tvr .tabs{display:contents}
+  .tvr .remote-card #now{grid-column:1;grid-row:2;margin-top:0}
+  .tvr .tab-more{grid-column:1;grid-row:3}
+  .tvr .tab-watch{grid-column:1;grid-row:4}
+  .tvr .tab-apps{grid-column:1;grid-row:5}
+  .tvr .tab-remote{grid-column:2;grid-row:2 / span 4}}
+/* keyboard sheet: slides up from the bottom edge; the phone's own keyboard opens under it */
+.tvr dialog.sheet{margin:auto 0 0 0;width:100%;max-width:560px;left:50%;transform:translateX(-50%);position:fixed;bottom:0;border-radius:16px 16px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom))}
+.tvr dialog.sheet input{width:100%;margin:6px 0;padding:10px;font-size:16px}
+.tvr dialog.sheet .rgrid{margin:8px 0 0}
