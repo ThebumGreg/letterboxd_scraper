@@ -245,3 +245,11 @@ def test_the_csv_has_the_original_columns_one_row_per_record_and_readable_cells(
     assert good["Root"] == "tfiles" and good["Relative Path"] == "Movies/Heat.1995.1080p.mkv" and good["Approval Status"] == "approved" and good["Approved Action"] == "copy_rename"
     assert good["Approved Track Changes"] == "keep English only; remove audio #2 ita; default audio #1" and good["File Size (GB)"] == "0.001"
     assert unreadable["File Size (Bytes)"] == "" and unreadable["Unreadable Reason"] == "stat failed" and unreadable["Modified Time"] == ""
+
+
+# ---------------------------------------------------------------- loose films and the queue filters
+def test_many_subtitles_are_summarised_as_counts():
+    from synchub.library import recommend as rcm
+    tracks = [{"index": i, "language": lang} for i, lang in enumerate(["fre", "fre", "ger", "ger", "ger", "spa", "ita", "por"])]
+    text = rcm._subtitle_summary(tracks)
+    assert text.startswith("Remove 8 subtitles (") and "German ×3" in text and "French ×2" in text and "+2 more languages" in text

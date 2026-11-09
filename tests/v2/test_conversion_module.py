@@ -209,7 +209,7 @@ def test_renaming_is_refused_for_a_file_already_in_place_and_a_rename_keeps_the_
         rc.apply_recommendation(conn, placed, "Greg", cfg=CFG, mode="rename_only")
     old = add(conn, root="media", rel="Old/Heat.avi", name="Heat (1995).mkv", container="avi", video="mpeg4", action="remux_copy", proposals=[plan(convert={"remux": True}, keep_audio=(1,))])
     rc.apply_recommendation(conn, old, "Greg", cfg=CFG, mode="rename_only")
-    assert jobs.get(conn, job_of(conn, old))["dest_rel"] == "Movies/Heat (1995)/Heat (1995).avi"
+    assert jobs.get(conn, job_of(conn, old))["dest_rel"] == "Old/Heat (1995)/Heat (1995).avi"      # a film loose in another library folder gets its own folder there, it does not change library
 
 
 def test_choosing_copy_overrides_the_rename_the_recommendation_suggested(conn):

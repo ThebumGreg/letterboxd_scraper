@@ -27,6 +27,20 @@
         </div>
     </div>
     {% endfor %}
+    {% if loose_count is defined %}
+    <div class="col">
+        <div class="panel h-100 p-3 d-flex flex-column" data-queue="loose">
+            <div class="d-flex justify-content-between align-items-start mb-1">
+                <h5 class="mb-0">Loose films</h5>
+                <span class="fs-4 fw-bold lh-1" aria-label="{{ loose_count }} films">{{ loose_count }}</span>
+            </div>
+            <p class="small text-body-secondary flex-grow-1">Films that share a folder with other films, or sit loose in a library folder. Approving their suggested move puts each in its own Title (Year) folder inside the same library folder (Old Movies stays Old Movies), then Jellyfin is told.</p>
+            <div class="d-flex gap-2 flex-wrap">
+                <a class="btn btn-sm btn-outline-secondary{% if not loose_count %} disabled{% endif %}" href="{{ url_for('library_queue', group='suggested', what='loose') }}"{% if not loose_count %} aria-disabled="true" tabindex="-1"{% endif %}>Open list</a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
     {% if quality_box is defined %}
     <div class="col">
         <div class="panel h-100 p-3 d-flex flex-column" data-queue="below_minimum">

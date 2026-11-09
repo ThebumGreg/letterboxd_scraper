@@ -360,3 +360,18 @@ def test_the_csv_export_has_the_original_columns_and_follows_the_filters(client,
     assert [r["Relative Path"] for r in only] == ["Movies/Alien.mkv"]
     assert [r["Root"] for r in csv.DictReader(io.StringIO(client.get("/library/export.csv?root=tfiles").get_data(as_text=True).lstrip("﻿")))] == ["tfiles"]
     assert "library_export_needs_you_" in client.get("/library/export.csv?group=needs_you").headers["Content-Disposition"] and a and b
+
+
+def test_a_list_can_be_filtered_by_type_and_where_the_film_sits_and_shows_the_quality_check(client, conn):
+    shares(conn)
+    loose_a = add(conn, root="tfiles", rel="Old Movies/Heat.mkv", name="Heat (1995).mkv")
+    loose_b = add(conn, root="tfiles", rel="Old Movies/Alien.mkv", name="Alien (1979).mkv")
+    alone = add(conn, root="tfiles", rel="Kids Movies/Cars (2006)/Cars.mkv", name="Cars (2006).mkv")
+    show = add(conn, root="tfiles", rel="TV Shows/Show/Show.S01E02.mkv", name="Show - S01E02.mkv", media_type="TV Episode", show="Show", season=1)
+    ids = lambda url: set(int(i) for i in re.findall(r'data-record="(\d+)"', client.get(url).get_data(as_text=True)))      # noqa: E731
+    assert ids("/library/queue/ready?what=loose") == {loose_a, loose_b} and ids("/library/queue/ready?what=alone") == {alone}
+    assert ids("/library/queue/ready?type=tv") == {show} and ids("/library/queue/ready?type=movies") == {loose_a, loose_b, alone}
+    assert ids("/library/queue/ready?quality=unchecked") >= {loose_a, alone} and ids("/library/queue/ready?quality=waiting") == set()
+    page = client.get("/library/queue/ready").get_data(as_text=True)
+    assert "Quality check" in page and "Not checked" in row_for(page, alone) and "loose" in row_for(page, loose_a) and "loose" not in row_for(page, alone).replace("Loose", "")
+    assert "TV episode" in row_for(page, show) and "Loose films" in client.get("/library/fragment").get_data(as_text=True)

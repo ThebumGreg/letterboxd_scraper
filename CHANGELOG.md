@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**Library lists: loose films, quality check, type, shorter suggestions (no migration).** Update SyncHub, then the workers (only the poster move needs a worker).
+- **Loose films.** A film is loose when its folder holds other films, or it sits directly in a library folder (`Old Movies/Alien.mkv`). The Library overview has a **Loose films** box with the count, and every list has a **Where it sits** filter (loose / in its own folder) and a *loose* badge. Approve (one by one, or together: the bulk button follows the filter) puts the film in its own `Title (Year)` folder.
+- **Behaviour change:** a film that is already in the library share but in another top-level folder (Old Movies, Kids Movies) is now tidied *inside that folder* (`Old Movies/Alien (1979)/Alien (1979).mkv`) instead of being moved into `Movies/`, so it stays in its own Jellyfin library. Files on other shares are still copied into the movie folder as before.
+- **Quality check column and filter** on every list: Queued or checking, Not checked, the result (e.g. Good 82), Low quality, Too small. Movies only.
+- **Type badge and filter**: Movie or TV episode, with *Movies only* / *TV shows only*. (The bulk Approve bar is hidden while the Type or Quality filter is on, since bulk approval does not know those filters.)
+- **Shorter suggestions**: more than three subtitle tracks to remove show as a count ("Remove 23 subtitles (English x3, French x2, +4 more languages)"); the film's page still lists every track.
+
 **Loose films move with their artwork (no migration).** Update SyncHub, then the workers (the artwork move is in the worker). When a film sits loose in a shared folder (for example `Movies/Heat (1995).mkv` next to other films), the Library page already offers *Rename in place*, which puts it in its own `Movies/Heat (1995)/` folder, tells Jellyfin and, when a path is set, Radarr. That move now also takes the film's poster and artwork with it: `Heat (1995)-poster.jpg`, `-fanart`, `-banner`, `-landscape`, `-thumb`, `-clearlogo`, `-disc` and `Heat (1995).jpg` (renamed to the new name), plus `poster.jpg`, `folder.jpg`, `fanart.jpg` and the like when the film was the only video in its old folder. Subtitle and `.nfo` files already moved. Other films' files are left where they are, and nothing is deleted or overwritten.
 
 **Hide the original from Jellyfin, labelled copies, folder path (migration 040).** Update SyncHub first, then the workers (the new `hide_source` operation needs a new worker; an old worker simply never takes those jobs).
