@@ -16,7 +16,6 @@ import json
 from typing import List, Optional
 
 from synchub import settings
-from synchub.library import vocab as v
 
 GIB = 1024 ** 3
 BUDGET_SHARE = 0.99                  # the video gets 99 % of what is left of the target after audio and subtitles

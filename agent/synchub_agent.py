@@ -44,7 +44,7 @@ try:
 except ImportError:                        # pragma: no cover - exercised by tests that remove the module
     media_analysis = None
 
-__version__ = "1.4.0"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
+__version__ = "1.5.0"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
 IGNORE_FILE = ".ignore"           # an empty file with this name makes Jellyfin skip the folder
@@ -2143,7 +2143,7 @@ class JobRunner(threading.Thread):
             done["sha256"] = hash_file(converted, check=self.guard)
             self.save()
         keep = (lambda: self.keep_original(src, local, size, mtime, plan)) if replace else None
-        out_seconds = self.copy_out(converted, dst, out_size, done["sha256"], stat.st_mtime_ns, overwrite=src if replace else None, before_swap=keep)
+        self.copy_out(converted, dst, out_size, done["sha256"], stat.st_mtime_ns, overwrite=src if replace else None, before_swap=keep)
         extra_result = self.deliver_extra(plan, extra, stat.st_mtime_ns) if extra is not None else None
         elapsed = time.monotonic() - t0
         result = {"op": "convert", "bytes": out_size, "source_bytes": size, "sha256": done["sha256"], "verified": "sha256" if self.cfg.verify == "hash" else "size",
@@ -3557,7 +3557,7 @@ def benchmark_report(cfg, caps, source=None, seconds=BENCHMARK_SECONDS, say=lamb
         if source:
             code, out = run_quiet([cfg.ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-y", "-ss", "60", "-t", str(int(seconds)), "-i", source, "-map", "0:v:0", "-an", "-sn", "-c:v", "copy", clip], timeout=300)
         else:
-            code, out = run_quiet([cfg.ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc2=size=1920x1080:rate=24,noise=alls=8:allf=t",
+            code, out = run_quiet([cfg.ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=24,noise=alls=8:allf=t",
                                    "-t", str(int(seconds)), "-c:v", "libx264", "-crf", "16", "-preset", "veryfast", "-pix_fmt", "yuv420p", clip], timeout=300)
         if code != 0 or not os.path.exists(clip) or os.path.getsize(clip) == 0:
             health.append({"name": "test clip", "ok": False, "detail": (out or "ffmpeg could not make or cut the clip").strip()[-300:]})

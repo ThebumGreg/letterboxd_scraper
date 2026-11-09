@@ -71,3 +71,15 @@ def test_profiles_are_read_once_inside_lookups(v2):
             assert len(reads) == 3
         finally:
             profiles._get = real
+
+
+def test_background_bookkeeping_settings_leave_the_counter_alone(v2, conn):
+    from synchub import settings, webhooks
+    with v2.connection() as c:
+        before = cache.generation(c)
+        for key in ("worker_host_seen:1", "webhook_last_jellyfin", "ddns_last_run", "pushover_quota", "notify_paused", "worker_update:2", "worker_updater_log:2"):
+            settings.set_value(key, "a", conn=c)
+            settings.set_value(key, "b", conn=c)
+        assert cache.generation(c) == before
+        settings.set_value("naming_style", "plex", conn=c)
+        assert cache.generation(c) == before + 1

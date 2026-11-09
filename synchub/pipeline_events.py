@@ -4,7 +4,6 @@ While a worker handles a Library or download job, one open `processing_event` (p
 engine lets it win over "In Library", so a title that is being converted shows its stage, then returns to In Library when the job ends. A title
 that is only being renamed or whose source is being deleted shows nothing: nothing about it is in flight.
 """
-import json
 import logging
 import re
 

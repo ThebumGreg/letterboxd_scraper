@@ -50,7 +50,7 @@ Two commands worth knowing, which also work from a checkout (in Docker: `docker 
 
 ## Troubleshooting
 
-**Dynamic DNS takes 30 to 45 seconds to show the new address:** most of that is usually not SyncHub. **Dynamic DNS, Run the check** times the path to the services, then asks Dynu's own name servers and the big public resolvers what they say about the name, with the time each still has the old answer in its cache, and says in words where the wait sits. Every update reports how long each step took (public address, Dynu), and after a real address change SyncHub watches how long each server took to show it (shown on the same page). Background and findings: [docs/DDNS_DELAY.md](docs/archive/DDNS_DELAY.md).
+**Dynamic DNS takes 30 to 45 seconds to show the new address:** most of that is usually not SyncHub. **Dynamic DNS, Run the check** times the path to the services, then asks Dynu's own name servers and the big public resolvers what they say about the name, with the time each still has the old answer in its cache, and says in words where the wait sits. Every update reports how long each step took (public address, Dynu), and after a real address change SyncHub watches how long each server took to show it (shown on the same page). Background and findings: [docs/archive/DDNS_DELAY.md](docs/archive/DDNS_DELAY.md).
 
 **Posters missing:** **Tools, Refresh posters** forgets earlier failures, asks TMDB for the poster of every title that has none, and saves every poster that is not cached yet. The log names the first titles that have no poster anywhere.
 

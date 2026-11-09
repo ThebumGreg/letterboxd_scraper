@@ -82,10 +82,6 @@ def approved_count(conn, sig):
     return r["approved"] if r else 0
 
 
-def trusted(conn, rec):
-    return approved_count(conn, signature(rec)) >= trust_after(conn)
-
-
 def low_confidence(size):
     """A compression that is closer to the edge than usual: HDR, interlaced, or within a quarter of the quality floor."""
     profile, numbers = size.profile or {}, size.numbers or {}

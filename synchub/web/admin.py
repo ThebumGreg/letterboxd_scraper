@@ -10,7 +10,6 @@ from datetime import datetime
 from flask import Response, flash, jsonify, redirect, render_template, request, send_file, url_for
 
 from config import LOG_FILE_PATH
-from settings_validation import validate_setting
 from synchub import catalog, db, ddns, ddns_check, jellyfin_events, profiles, settings, tasks, webhooks
 from synchub.profiles import ProfileError
 from synchub.web import current_limit

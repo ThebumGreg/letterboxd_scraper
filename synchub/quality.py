@@ -660,11 +660,6 @@ def _title_key(text):
     return "".join(ch for ch in str(text or "").casefold() if ch.isalnum())
 
 
-def files_for_movie(conn, media_id):
-    """The Library files of a film (see `find_movie_files`)."""
-    return find_movie_files(conn, media_id)[0]
-
-
 def find_movie_files(conn, media_id):
     """([Library files of a film], [Jellyfin paths no storage mapping covers]). Every Jellyfin item linked to the film gives a main file's path; SyncHub turns each into
     a share and a path with the share's Jellyfin mappings (storage page). Its other files are the ones in the same folder named after it (`Heat (1995) - 1080p.mkv`

@@ -9,7 +9,6 @@ job (a `scan`-kind job like the usual check) that only a worker reporting the `q
 
 The models (pyiqa: MUSIQ, TOPIQ-NR, CLIP-IQA) score single frames, so they do not see motion.
 """
-import json
 import logging
 
 from synchub import db, jobs, quality, workers

@@ -1,9 +1,8 @@
 """Current weather and the forecast from Open-Meteo (free, no key). A ZIP code is turned into a place once by zippopotam.us and remembered."""
 import json
-import math
 import re
 import time
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 from synchub import http, settings
 from synchub.dashboard import config

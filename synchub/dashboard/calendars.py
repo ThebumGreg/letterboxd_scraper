@@ -1,7 +1,7 @@
 """A person's calendar from the private ICS address Google, iCloud or Outlook gives out: today's events, or the next day with some."""
 import threading
 import time
-from datetime import date, datetime, time as dtime, timedelta
+from datetime import datetime, time as dtime, timedelta
 
 from synchub import http
 
@@ -38,6 +38,7 @@ def download(url):
             return held["text"], True
         raise CalendarError(f"Could not read the calendar ({exc.__class__.__name__}).")
     _cache[url] = {"at": time.time(), "text": text}
+    forget_except(c["text"] for c in _cache.values() if c.get("text") is not None)
     return text, False
 
 
@@ -49,23 +50,43 @@ def _as_local(value, tz):
 
 _parsed = {}            # calendar text -> the parsed calendar: reading a big calendar takes seconds and held the whole server while it did
 _parse_lock = threading.Lock()
-MAX_PARSED = 6
+_parse_key_locks = {}
+MAX_PARSED = 16
 
 
 def parsed(text):
-    """The parsed calendar for this text, read once however many pages ask (the text is replaced only when the calendar is downloaded again, every ten minutes)."""
+    """The parsed calendar for this text, read once however many pages ask (the text is replaced only when the calendar is downloaded again, every ten minutes).
+    The parsing happens outside the shared lock, so reading one big calendar does not hold up answers that are already kept."""
     import icalendar
     with _parse_lock:
         cal = _parsed.get(text)
+        if cal is not None:
+            return cal
+        key_lock = _parse_key_locks.setdefault(hash(text), threading.Lock())
+    with key_lock:
+        with _parse_lock:
+            cal = _parsed.get(text)
         if cal is None:
-            if len(_parsed) >= MAX_PARSED:
-                _parsed.pop(next(iter(_parsed)))
-            cal = _parsed[text] = icalendar.Calendar.from_ical(text)
+            cal = icalendar.Calendar.from_ical(text)
+            with _parse_lock:
+                if len(_parsed) >= MAX_PARSED:
+                    _parsed.pop(next(iter(_parsed)))
+                _parsed[text] = cal
         return cal
 
 
 _found = {}             # (calendar text, start, end) -> the events: spreading out repeating events over a window is slow too
 MAX_FOUND = 64
+
+
+def forget_except(texts):
+    """Drops what is kept for calendar texts that were replaced by a new download, so old multi-megabyte copies do not stay in memory."""
+    keep = set(texts)
+    with _parse_lock:
+        for t in [t for t in _parsed if t not in keep]:
+            del _parsed[t]
+        for k in [k for k in _found if k[0] not in keep]:
+            del _found[k]
 
 
 def events_between(text, start, end):
