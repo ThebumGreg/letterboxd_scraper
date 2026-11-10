@@ -583,31 +583,41 @@ def _flagged(conn, match=None, root=None, file_id=None):
 
 
 def _flagged_rows(conn, file_id=None):
+    """Every flagged file, worst first. Judging a whole library means looking at every file, so the judging facts come back as ONE aggregated value (a row per file would
+    be one step per row, and under load each step waits its turn for the interpreter: 13,000 files took minutes). Only the few flagged files are then read in full."""
     below, wanted = flag_below(conn), min_height(conn)
-    rows = conn.execute("""
-        SELECT f.*, q.id AS check_id, q.score AS q_score, q.findings_json AS q_findings, q.finished_at AS q_finished, q.check_version AS q_version, q.size_bytes AS q_size, q.mtime AS q_mtime,
-               (SELECT 1 FROM quality_accept a WHERE a.library_file_id = f.id AND a.size_bytes = f.size_bytes AND a.mtime = f.mtime) AS accepted,
+    packed = conn.execute("""
+        SELECT json_group_array(json_array(f.id, f.resolution, q.id, q.score, q.findings_json, q.check_version, q.size_bytes, q.mtime, f.size_bytes, f.mtime,
+               (SELECT 1 FROM quality_accept a WHERE a.library_file_id = f.id AND a.size_bytes = f.size_bytes AND a.mtime = f.mtime),
                (SELECT z.findings_json FROM quality_check z WHERE z.library_file_id = f.id AND z.mode = 'damage' AND z.status = 'done' AND z.size_bytes = f.size_bytes AND z.mtime = f.mtime
-                ORDER BY z.id DESC LIMIT 1) AS damage_findings
+                ORDER BY z.id DESC LIMIT 1),
+               CASE WHEN json_valid(f.video_info_json) THEN json_extract(f.video_info_json, '$.width') END,
+               CASE WHEN json_valid(f.video_info_json) THEN json_extract(f.video_info_json, '$.height') END))
         FROM library_file f
         LEFT JOIN quality_check q ON q.id = (SELECT MAX(id) FROM quality_check WHERE library_file_id = f.id AND mode = 'quality' AND status = 'done')
         WHERE f.missing_since IS NULL AND f.analysis_status = 'completed'""" + (" AND f.id = ?" if file_id is not None else ""),
-        (file_id,) if file_id is not None else ()).fetchall()
-    out = []
-    for r in rows:
-        d = dict(r)
-        if d.pop("accepted"):
+        (file_id,) if file_id is not None else ()).fetchone()[0]
+    judged = {}
+    for (fid, resolution, check_id, q_score, q_findings, q_version, q_size, q_mtime, size, mtime, accepted, damage, width, height) in json.loads(packed or "[]"):
+        if accepted:
             continue
-        findings = _json(d.pop("q_findings"), [])
-        current = d["check_id"] is not None and d["q_size"] == d["size_bytes"] and d["q_mtime"] == d["mtime"] and d["q_version"] == CHECK_VERSION
-        scored_low = bool(current and d["q_score"] is not None and d["q_score"] < below)
-        small = resolution_finding(d, wanted)
-        damaged = _json(d.pop("damage_findings"), [])
+        findings = _json(q_findings, [])
+        current = check_id is not None and q_size == size and q_mtime == mtime and q_version == CHECK_VERSION
+        scored_low = bool(current and q_score is not None and q_score < below)
+        small = resolution_finding({"resolution": resolution, "video_info_json": json.dumps({"width": width, "height": height})}, wanted)
+        damaged = _json(damage, [])
         if not (scored_low or small or damaged):
             continue
-        d["findings"] = damaged + ([small] if small else []) + (findings if current else [])
-        d["sort_score"] = d["q_score"] if current and d["q_score"] is not None else (0 if small or damaged else 100)
-        out.append(d)
+        judged[fid] = {"check_id": check_id, "q_score": q_score, "findings": damaged + ([small] if small else []) + (findings if current else []),
+                       "sort_score": q_score if current and q_score is not None else (0 if small or damaged else 100)}
+    out = []
+    ids_all = list(judged)
+    for chunk in range(0, len(ids_all), 400):
+        ids = ids_all[chunk:chunk + 400]
+        for r in conn.execute(f"SELECT * FROM library_file WHERE id IN ({','.join('?' * len(ids))})", ids).fetchall():
+            d = dict(r)
+            d.update(judged[d["id"]])
+            out.append(d)
     out.sort(key=lambda d: (d["sort_score"], d["id"]))
     return out
 
