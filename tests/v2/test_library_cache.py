@@ -83,3 +83,61 @@ def test_background_bookkeeping_settings_leave_the_counter_alone(v2, conn):
         assert cache.generation(c) == before
         settings.set_value("naming_style", "plex", conn=c)
         assert cache.generation(c) == before + 1
+
+
+def test_requests_waiting_on_a_slow_compute_share_the_next_one_even_when_files_keep_changing(v2, conn):
+    """Every change moved the counter, so each waiting request found a result older than its own and worked it all out again, one after another."""
+    import threading
+    import time
+    cache.clear()
+    h.add(conn)
+    runs, results = [], []
+
+    def slow():
+        runs.append(1)
+        time.sleep(0.4)
+        return len(runs)
+
+    def ask():
+        with v2.connection() as c:
+            results.append(cache.get(c, "slow", slow))
+
+    first = threading.Thread(target=ask)
+    first.start()
+    time.sleep(0.1)
+    waiters = []
+    for _ in range(5):
+        conn.execute("UPDATE library_file SET size_bytes = size_bytes + 1")           # the counter moves for every request that arrives
+        conn.commit()
+        waiters.append(threading.Thread(target=ask))
+        waiters[-1].start()
+        time.sleep(0.05)
+    for t in [first] + waiters:
+        t.join()
+    assert len(runs) == 2                      # the first, and one more that all five waiters share
+
+
+def test_a_background_refresh_shows_the_last_result_instead_of_queueing_behind_a_slow_compute(v2, conn):
+    import threading
+    import time
+    cache.clear()
+    h.add(conn)
+    with v2.connection() as c:
+        cache.get(c, "slowpoll", lambda: "old")
+    conn.execute("UPDATE library_file SET size_bytes = size_bytes + 1")
+    conn.commit()
+    started = threading.Event()
+
+    def slow():
+        started.set()
+        time.sleep(0.6)
+        return "new"
+
+    worker = threading.Thread(target=lambda: cache.get(v2.connect(), "slowpoll", slow))
+    worker.start()
+    started.wait(2)
+    began = time.monotonic()
+    with v2.connection() as c:
+        assert cache.get(c, "slowpoll", lambda: "never", max_age=1) == "old"
+    assert time.monotonic() - began < 0.3
+    worker.join()

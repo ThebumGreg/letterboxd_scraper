@@ -33,3 +33,16 @@ def test_a_slow_page_is_logged_and_clear_empties_the_report(client, v2, monkeypa
 
 def test_the_tools_page_has_the_timings_card(client, v2):
     assert "Page timings" in client.get("/tools").get_data(as_text=True)
+
+
+def test_the_thread_dump_names_every_thread_and_shows_where_it_is(monkeypatch):
+    import threading
+    release = threading.Event()
+    worker = threading.Thread(target=release.wait, name="held-up-worker")
+    worker.start()
+    try:
+        dump = timing.thread_dump()
+        assert "--- held-up-worker" in dump and "release.wait" not in dump and "wait" in dump
+    finally:
+        release.set()
+        worker.join()
