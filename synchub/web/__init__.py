@@ -1,6 +1,7 @@
 """The v2 web application. Run it with: python -m synchub.web"""
 import logging
 import os
+import sys
 from pathlib import Path
 
 from flask import Flask, g, jsonify, redirect, render_template, request, url_for
@@ -110,6 +111,11 @@ def create_app(start_scheduler=False, csrf=True):
     db.migrate()
     app.secret_key = os.getenv("SECRET_KEY") or access.persistent_secret()
     tasks.reset_stale()
+
+    if not app.config.get("TESTING"):
+        # A thread that reads many database rows gives up the interpreter at every row and then waits its turn for it. With the default 5 ms turn and a busy
+        # thread alongside, 13,000 rows took tens of seconds. A 0.5 ms turn makes that wait ten times shorter.
+        sys.setswitchinterval(0.0005)
 
     if os.getenv("SYNCHUB_WATCHDOG") != "0" and not app.config.get("TESTING"):
         from synchub import timing as _timing
