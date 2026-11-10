@@ -914,3 +914,31 @@ def test_the_page_answer_is_reused_for_a_few_seconds_and_a_setting_change_shows_
     assert data.cached() == data.cached() == {"n": 1} and len(built) == 1
     settings.set_value("dash_zip", "90210")
     assert data.cached() == {"n": 2}
+
+
+def test_trimming_a_big_calendar_gives_the_same_events_as_reading_all_of_it():
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0"]
+    for i in range(300):                                        # a few years of single events
+        d = date(2023, 1, 1) + timedelta(days=i * 4)
+        lines += ["BEGIN:VEVENT", f"UID:old{i}", f"DTSTART:{d:%Y%m%d}T150000Z", f"DTEND:{d:%Y%m%d}T160000Z", f"SUMMARY:Old {i}", "END:VEVENT"]
+    lines += ["BEGIN:VEVENT", "UID:trip", "DTSTART;VALUE=DATE:20261105", "DTEND;VALUE=DATE:20261112", "SUMMARY:Trip across the day", "END:VEVENT",
+              "BEGIN:VEVENT", "UID:long", "DTSTART:20261101T090000Z", "DURATION:P10D", "SUMMARY:Long duration", "END:VEVENT",
+              "BEGIN:VEVENT", "UID:soccer", "DTSTART;TZID=America/Los_Angeles:20230103T170000", "DTEND;TZID=America/Los_Angeles:20230103T180000", "RRULE:FREQ=WEEKLY;BYDAY=MO", "SUMMARY:Practice", "END:VEVENT",
+              "BEGIN:VEVENT", "UID:today", "DTSTART:20261109T180000Z", "DTEND:20261109T190000Z", "SUMMARY:Today", "END:VEVENT", "END:VCALENDAR"]
+    text = "\r\n".join(lines)
+    start = at(2026, 11, 9)
+    end = start + timedelta(days=8)
+    trimmed = calendars.trim_ics(text, start.date(), end.date())
+    assert len(trimmed) < len(text) / 3 and "Trip across the day" in trimmed and "Long duration" in trimmed and "Practice" in trimmed and "Old 5" not in trimmed
+    calendars._parsed.clear()
+    calendars._trimmed.clear()
+    fast = calendars._events_between(text, start, end)
+    calendars._parsed.clear()
+    original = calendars.trimmed
+    calendars.trimmed = lambda t, s, e: t
+    try:
+        slow = calendars._events_between(text, start, end)
+    finally:
+        calendars.trimmed = original
+        calendars._parsed.clear()
+    assert fast == slow and {e["title"] for e in fast} >= {"Today", "Trip across the day", "Long duration", "Practice"}

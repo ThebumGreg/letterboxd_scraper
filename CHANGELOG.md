@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**Big calendars no longer freeze the app, and a slow page now says why (no migration).** Update SyncHub. Greg's restart log showed the Library page and its refresh blocked for 107-118 s at once (under a second of that in the database), ending right as the scheduled Dashboard jobs ran. Reading a large Google calendar in Python takes tens of seconds and holds up every other request while it does; the Dashboard jobs and the TV page did it again each time a calendar was downloaded (every 10 minutes) or the app started.
+- The calendar text is cut down before it is read: single events that lie wholly outside the days being shown (give or take two days) are left out, so a calendar with years of history is read as if it held a couple of weeks. Repeating events, their exceptions and anything unusual are always kept, and the same events come out (tested against reading the whole calendar).
+- When a page has run for over 20 seconds, the log gets one `Slow request watchdog` entry (at most every 2 minutes) listing what every thread is doing at that moment, so the code holding it up is named. `SYNCHUB_WATCHDOG=0` switches it off.
+
 **Library pages no longer pile up behind a slow refresh (no migration).** Update SyncHub. When files, quality results or settings kept changing (a scan running, workers reporting), every request that arrived while the Library's recommendations were being worked out waited, then worked them out again itself, one after another. Greg's log showed `/library` taking 206 s and the refresh 173 s with under a second in the database, and the Library page never loaded. Now a request reuses any result that was worked out entirely after it arrived, so waiting requests share one refresh, and the background refresh (every 4 or 30 seconds) shows the last result instead of queueing behind someone else's work.
 
 ## 1.5.0

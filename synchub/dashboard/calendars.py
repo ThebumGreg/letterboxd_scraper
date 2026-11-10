@@ -1,4 +1,5 @@
 """A person's calendar from the private ICS address Google, iCloud or Outlook gives out: today's events, or the next day with some."""
+import re
 import threading
 import time
 from datetime import datetime, time as dtime, timedelta
@@ -79,14 +80,69 @@ _found = {}             # (calendar text, start, end) -> the events: spreading o
 MAX_FOUND = 64
 
 
+_trimmed = {}           # (calendar text, first day, last day) -> the text with the events far from those days left out
+_EVENT = re.compile(r"BEGIN:VEVENT\r?\n.*?END:VEVENT\r?\n?", re.S)
+_DATES = re.compile(r"^(DTSTART|DTEND)[^:\r\n]*:(\d{8})", re.M)
+_REPEATS = re.compile(r"^(RRULE|RDATE|RECURRENCE-ID|EXDATE)\b", re.M)
+MARGIN_DAYS = 2
+
+
+def _stamp(day):
+    return day.strftime("%Y%m%d")
+
+
+def trim_ics(text, first, last):
+    """The calendar text with every single (not repeating) event that lies wholly outside [first, last] days, give or take a couple of days, left out.
+    A Google calendar holds years of old events and reading them all in Python takes tens of seconds, during which nothing else in the app moves; the days the
+    screen shows hold a handful. Repeating events, their exceptions and anything unusual are always kept."""
+    lo, hi = _stamp(first - timedelta(days=MARGIN_DAYS)), _stamp(last + timedelta(days=MARGIN_DAYS))
+    lo_long = _stamp(first - timedelta(days=MARGIN_DAYS + 40))          # an event with a DURATION instead of an end may run for a while
+    out, at = [], 0
+    for m in _EVENT.finditer(text):
+        block = m.group(0)
+        out.append(text[at:m.start()])
+        at = m.end()
+        if _REPEATS.search(block):
+            out.append(block)
+            continue
+        found = {k: v for k, v in _DATES.findall(block)}
+        begin = found.get("DTSTART")
+        if begin is None:
+            out.append(block)
+            continue
+        finish = found.get("DTEND") or (lo_long if "\nDURATION" in block or block.startswith("DURATION") else begin)
+        if finish == lo_long:
+            keep = lo_long <= begin <= hi
+        else:
+            keep = finish >= lo and begin <= hi
+        if keep:
+            out.append(block)
+    out.append(text[at:])
+    return "".join(out)
+
+
+def trimmed(text, start, end):
+    first, last = start.date(), (end - timedelta(microseconds=1)).date()
+    key = (text, first, last)
+    with _parse_lock:
+        held = _trimmed.get(key)
+    if held is None:
+        held = trim_ics(text, first, last)
+        with _parse_lock:
+            if len(_trimmed) >= MAX_FOUND:
+                _trimmed.pop(next(iter(_trimmed)))
+            _trimmed[key] = held
+    return held
+
+
 def forget_except(texts):
     """Drops what is kept for calendar texts that were replaced by a new download, so old multi-megabyte copies do not stay in memory."""
     keep = set(texts)
     with _parse_lock:
-        for t in [t for t in _parsed if t not in keep]:
-            del _parsed[t]
         for k in [k for k in _found if k[0] not in keep]:
             del _found[k]
+        for k in [k for k in _trimmed if k[0] not in keep]:
+            del _trimmed[k]
 
 
 def events_between(text, start, end):
@@ -107,7 +163,7 @@ def events_between(text, start, end):
 
 def _events_between(text, start, end):
     import recurring_ical_events
-    cal = parsed(text)
+    cal = parsed(trimmed(text, start, end))
     tz = start.tzinfo
     out = []
     for ev in recurring_ical_events.of(cal).between(start, end):

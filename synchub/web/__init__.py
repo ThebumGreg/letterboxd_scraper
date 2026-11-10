@@ -111,6 +111,10 @@ def create_app(start_scheduler=False, csrf=True):
     app.secret_key = os.getenv("SECRET_KEY") or access.persistent_secret()
     tasks.reset_stale()
 
+    if os.getenv("SYNCHUB_WATCHDOG") != "0" and not app.config.get("TESTING"):
+        from synchub import timing as _timing
+        _timing.start_watchdog()
+
     @app.before_request
     def start_timer():
         from synchub import timing
