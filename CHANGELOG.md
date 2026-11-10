@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+**Library pages no longer pile up behind a slow refresh (no migration).** Update SyncHub. When files, quality results or settings kept changing (a scan running, workers reporting), every request that arrived while the Library's recommendations were being worked out waited, then worked them out again itself, one after another. Greg's log showed `/library` taking 206 s and the refresh 173 s with under a second in the database, and the Library page never loaded. Now a request reuses any result that was worked out entirely after it arrived, so waiting requests share one refresh, and the background refresh (every 4 or 30 seconds) shows the last result instead of queueing behind someone else's work.
+
 ## 1.5.0
 
 Migrations 030 to 042. Update SyncHub first, then the workers; each worker shows its version and commit on the Workers page.

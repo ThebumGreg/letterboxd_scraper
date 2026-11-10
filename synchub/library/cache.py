@@ -12,7 +12,7 @@ from synchub import db
 TTL = 900                     # seconds: even when the counter says nothing changed, work it out again this often
 
 _lock = threading.Lock()
-_entries = {}                 # key -> (generation, stored_at, value)
+_entries = {}                 # key -> (generation, stored_at, value, started_at)
 _key_locks = {}
 
 
@@ -30,22 +30,35 @@ def _fresh(entry, gen, now, max_age):
 def get(conn, name, compute, extra="", max_age=0):
     """The value for `name` (and `extra`, such as the settings it was made with), from memory when nothing changed, else `compute()`."""
     key = (db.DB_FILE, name, extra)
-    gen, now = generation(conn), time.monotonic()
+    gen = generation(conn)
+    arrived = now = time.monotonic()
     with _lock:
         entry = _entries.get(key)
         if _fresh(entry, gen, now, max_age):
             return entry[2]
         key_lock = _key_locks.setdefault(key, threading.Lock())
-    with key_lock:                                    # one request works it out; the others wait and reuse it
+        old_value = entry
+    if max_age and old_value is not None and now - old_value[1] <= TTL:
+        if not key_lock.acquire(blocking=False):      # a background refresh does not queue behind someone else's work: it shows the last result, which is a few seconds old
+            return old_value[2]
+    else:
+        key_lock.acquire()
+    try:                                              # one request works it out; the others wait and reuse it
         now = time.monotonic()
         with _lock:
             entry = _entries.get(key)
         if _fresh(entry, gen, now, max_age):
             return entry[2]
+        if entry is not None and entry[3] >= arrived and now - entry[1] <= TTL:
+            return entry[2]                           # worked out entirely after this request arrived, so it shows everything this request could have seen:
+                                                      # without this, files changing every second made every waiting request work it all out again, one after another
+        started = time.monotonic()
         value = compute()
         with _lock:
-            _entries[key] = (gen, time.monotonic(), value)
+            _entries[key] = (gen, time.monotonic(), value, started)
         return value
+    finally:
+        key_lock.release()
 
 
 def clear():
