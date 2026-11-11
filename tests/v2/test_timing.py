@@ -46,3 +46,21 @@ def test_the_thread_dump_names_every_thread_and_shows_where_it_is(monkeypatch):
     finally:
         release.set()
         worker.join()
+
+
+def test_a_streaming_response_is_not_read_to_measure_it(v2):
+    """The live-events stream never ends: measuring its length by reading it held the request (and its thread) for ever."""
+    from flask import Response
+    pulled = []
+
+    def endless():
+        while True:
+            pulled.append(1)
+            yield b"x"
+            assert len(pulled) < 5, "the stream was read to measure it"
+
+    timing.reset()
+    timing.begin("stream", "GET", "/api/stream/events")
+    response = timing.finish(Response(endless(), mimetype="text/event-stream"))
+    assert not pulled and "Server-Timing" in response.headers
+    assert timing.report()["slowest"][0]["bytes"] == 0

@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.5.1
+
+Migration 043. Update SyncHub first, then the workers.
+
+**The Library page no longer takes minutes to load (migration 043).** Update SyncHub. Greg's watchdog log and a timing run on his server found two causes.
+- **A slow database lookup.** The Library's "low quality" list asks, for every file, for its newest finished quality check. On Greg's database SQLite answered that by reading every finished check for every file (36 s for 1,494 files and 1,180 checks, a single lookup 22 ms), and every Library refresh waited for it. Migration 043 adds an index that answers the question without reading the checks, and the list now finds all the newest checks in one pass instead of one lookup per file. The Library's timer also accepts a list a few seconds old instead of waiting for a new calculation (a person pressing a button still sees the current one).
+- **The live-update stream held a web thread for ever.** Since 1.5.0 the page-timing code measured every response's length, and for the endless `/api/stream/events` stream that meant reading it to the end: the request never finished, the stream never started, and every open tab (and every reconnect) used up another web thread and kept collecting events in memory. Streaming responses are no longer read to be measured.
 
 **The Library page no longer stalls for minutes while other work is running (no migration).** Update SyncHub. The watchdog entries in Greg's log showed the stuck thread inside the "low quality" list, reading about 13,000 files one row at a time. Each row read gives up the interpreter and then waits for another turn; while any other thread is busy a turn takes about 5 ms, so a plain read of that size took minutes even though the database itself answered in well under a second (the Page timings "in execute" figure does not count row reading, which hid it). The list now comes back as one aggregated value and only the few flagged files are read in full, and the turn length is cut tenfold, which speeds up every other large read too.
 
