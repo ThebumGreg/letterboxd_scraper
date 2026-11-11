@@ -388,6 +388,13 @@ class FakeDevice:
     def power(self, on):
         self.slept.append(on)
 
+    def _in_screensaver(self, status):
+        return status.get("power") == "dreaming"
+
+    def leave_screensaver(self, status=None):
+        self.power_state = "on"
+        return True
+
 
 class FakeLog:
     def add(self, *a, **k):
@@ -942,3 +949,27 @@ def test_trimming_a_big_calendar_gives_the_same_events_as_reading_all_of_it():
         calendars.trimmed = original
         calendars._parsed.clear()
     assert fast == slow and {e["title"] for e in fast} >= {"Today", "Trip across the day", "Long duration", "Practice"}
+
+
+def test_a_screensaver_that_hides_the_page_is_undone_while_the_screen_should_be_up(tv):
+    show.tick(at(2026, 11, 9, 6, 31))
+    assert len(tv.opened) == 1
+    show.tick(at(2026, 11, 9, 6, 45))
+    assert len(tv.opened) == 1                                                  # page is up: left alone
+    tv.power_state, tv.app = "dreaming", "com.google.android.apps.tv.dreamx"      # the TV's own screensaver after 19 idle minutes
+    show.tick(at(2026, 11, 9, 6, 50))
+    assert len(tv.opened) == 2 and tv.power_state == "on"
+    tv.app = "com.netflix.ninja"                                                  # somebody chose something else: not taken over
+    show.tick(at(2026, 11, 9, 7, 0))
+    assert len(tv.opened) == 2
+    tv.power_state, tv.app = "dreaming", None
+    show.stop(manual=True, now=at(2026, 11, 9, 7, 5))
+    show.tick(at(2026, 11, 9, 7, 10))
+    assert len(tv.opened) == 2                                                  # closed by hand: stays closed
+
+
+def test_a_screensaver_over_a_screen_shown_by_hand_is_undone_too(tv):
+    show.start(manual=True, now=at(2026, 11, 9, 14, 0))
+    tv.power_state = "dreaming"
+    show.tick(at(2026, 11, 9, 14, 20))
+    assert len(tv.opened) == 2
