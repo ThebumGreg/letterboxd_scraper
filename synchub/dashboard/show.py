@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 MAX_TRIES = 3
 RETRY_SECONDS = 90
 HOLD_MINUTES = 30
+KEEPALIVE_SECONDS = 300
+_last_keepalive = [0.0]
 
 
 class ShowError(Exception):
@@ -145,11 +147,15 @@ def stop(manual=False, now=None, mode="morning"):
 
 
 def revive(mode="morning"):
-    """A TV nobody touches goes to its screensaver after a while, which hides the page (the browser holds no screen lock). When that happens while
-    the screen should be up, wake it and open the page again. -> True when it did."""
+    """A TV nobody touches goes to its screensaver after a while, which hides the page (the browser holds no screen lock). So while the page is up, a
+    harmless key press every few minutes keeps the timer from running out; if the screensaver started anyway, wake the TV and open the page again.
+    -> True when it had to reopen it."""
     r, dev = _runtime_device()
     status = dev.status(quiet=True) or {}
     if not (status.get("online") and dev._in_screensaver(status)):
+        if status.get("online") and status.get("app") == settings.get("dash_app") and time.time() - _last_keepalive[0] >= KEEPALIVE_SECONDS:
+            _last_keepalive[0] = time.time()
+            dev.send_key("KEYCODE_WAKEUP")                # counts as a touch: the TV's screensaver timer starts over, and the page is not changed
         return False
     r.logbook.add("system", dev.id, "dashboard", response="The TV went to its screensaver: opening the dashboard again", ok=True)
     dev.leave_screensaver(status)

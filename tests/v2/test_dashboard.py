@@ -391,6 +391,9 @@ class FakeDevice:
     def _in_screensaver(self, status):
         return status.get("power") == "dreaming"
 
+    def send_key(self, native, count=1):
+        self.keys = getattr(self, "keys", []) + [native]
+
     def leave_screensaver(self, status=None):
         self.power_state = "on"
         return True
@@ -973,3 +976,16 @@ def test_a_screensaver_over_a_screen_shown_by_hand_is_undone_too(tv):
     tv.power_state = "dreaming"
     show.tick(at(2026, 11, 9, 14, 20))
     assert len(tv.opened) == 2
+
+
+def test_a_key_press_every_few_minutes_keeps_the_screensaver_away(tv, monkeypatch):
+    monkeypatch.setattr(show, "_last_keepalive", [0.0])
+    show.tick(at(2026, 11, 9, 6, 31))
+    show.tick(at(2026, 11, 9, 6, 32))
+    assert tv.keys == ["KEYCODE_WAKEUP"]                                          # once, then not again for five minutes
+    show.tick(at(2026, 11, 9, 6, 33))
+    assert tv.keys == ["KEYCODE_WAKEUP"]
+    monkeypatch.setattr(show, "KEEPALIVE_SECONDS", 0)
+    tv.app = "com.netflix.ninja"
+    show.tick(at(2026, 11, 9, 6, 40))
+    assert tv.keys == ["KEYCODE_WAKEUP"]                                          # another app in front: no key presses
