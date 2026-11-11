@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 MAX_TRIES = 3
 RETRY_SECONDS = 90
 HOLD_MINUTES = 30
+KEEPALIVE_SECONDS = 300
+_last_keepalive = [0.0]
 
 
 class ShowError(Exception):
@@ -144,6 +146,23 @@ def stop(manual=False, now=None, mode="morning"):
     return steps
 
 
+def revive(mode="morning"):
+    """A TV nobody touches goes to its screensaver after a while, which hides the page (the browser holds no screen lock). So while the page is up, a
+    harmless key press every few minutes keeps the timer from running out; if the screensaver started anyway, wake the TV and open the page again.
+    -> True when it had to reopen it."""
+    r, dev = _runtime_device()
+    status = dev.status(quiet=True) or {}
+    if not (status.get("online") and dev._in_screensaver(status)):
+        if status.get("online") and status.get("app") == settings.get("dash_app") and time.time() - _last_keepalive[0] >= KEEPALIVE_SECONDS:
+            _last_keepalive[0] = time.time()
+            dev.send_key("KEYCODE_WAKEUP")                # counts as a touch: the TV's screensaver timer starts over, and the page is not changed
+        return False
+    r.logbook.add("system", dev.id, "dashboard", response="The TV went to its screensaver: opening the dashboard again", ok=True)
+    dev.leave_screensaver(status)
+    r.logbook.add("system", dev.id, "dashboard", response=f"Opened the dashboard again: {dev.view_stream(page_url(mode), settings.get('dash_app'))}", ok=True)
+    return True
+
+
 def window_of(mode):
     return config.window() if mode == "morning" else config.eve_window()
 
@@ -195,7 +214,10 @@ def _tick_window(now, mode):
                 state["hidden"] = True                    # and it stays closed for the rest of the morning
                 _save(state)
                 return
-            if state["shown"] or state["hidden"] or state["tries"] >= MAX_TRIES or time.time() - _last_try[mode] < RETRY_SECONDS:
+            if state["shown"] and not state["hidden"]:
+                revive(mode)
+                return
+            if state["hidden"] or state["tries"] >= MAX_TRIES or time.time() - _last_try[mode] < RETRY_SECONDS:
                 return
             _last_try[mode] = time.time()
             state["tries"] += 1
@@ -204,6 +226,7 @@ def _tick_window(now, mode):
             start(now=now, mode=mode)
         elif state["shown"]:
             if state.get("hold_until") and now < datetime.fromisoformat(state["hold_until"]):
+                revive(mode)
                 return                                    # shown by hand: stays for a while, then closes
             logger.info(f"[dashboard] closing the {label} dashboard")
             stop(now=now, mode=mode)
