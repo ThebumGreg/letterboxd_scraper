@@ -565,10 +565,11 @@ def is_held(conn, file_id):
     return bool(_flagged(conn, file_id=file_id))
 
 
-def held_ids(conn):
-    """The ids of the files held from conversion: flagged low quality (or damaged) and not accepted. Such a file may still be renamed and moved, never converted."""
+def held_ids(conn, max_age=0):
+    """The ids of the files held from conversion: flagged low quality (or damaged) and not accepted. Such a file may still be renamed and moved, never converted.
+    `max_age`: the Library's timer may use a list worked out this many seconds ago instead of waiting for a new one."""
     from synchub.library import cache
-    return cache.get(conn, "held_ids", lambda: frozenset(d["id"] for d in _flagged(conn)))
+    return cache.get(conn, "held_ids", lambda: frozenset(d["id"] for d in _flagged(conn)), max_age=max_age)
 
 
 def _flagged(conn, match=None, root=None, file_id=None):
@@ -594,7 +595,8 @@ def _flagged_rows(conn, file_id=None):
                CASE WHEN json_valid(f.video_info_json) THEN json_extract(f.video_info_json, '$.width') END,
                CASE WHEN json_valid(f.video_info_json) THEN json_extract(f.video_info_json, '$.height') END))
         FROM library_file f
-        LEFT JOIN quality_check q ON q.id = (SELECT MAX(id) FROM quality_check WHERE library_file_id = f.id AND mode = 'quality' AND status = 'done')
+        LEFT JOIN (SELECT library_file_id, MAX(id) AS newest FROM quality_check WHERE mode = 'quality' AND status = 'done' GROUP BY library_file_id) latest ON latest.library_file_id = f.id
+        LEFT JOIN quality_check q ON q.id = latest.newest
         WHERE f.missing_since IS NULL AND f.analysis_status = 'completed'""" + (" AND f.id = ?" if file_id is not None else ""),
         (file_id,) if file_id is not None else ()).fetchone()[0]
     judged = {}
@@ -649,13 +651,13 @@ def latest_request(conn, file_id):
     return d
 
 
-def low_count(conn):
-    return len(held_ids(conn))
+def low_count(conn, max_age=0):
+    return len(held_ids(conn, max_age))
 
 
-def counts(conn):
+def counts(conn, max_age=0):
     row = conn.execute("SELECT SUM(status = 'queued') AS queued, SUM(status = 'running') AS running FROM quality_check").fetchone()
-    return {"waiting": row["queued"] or 0, "running": row["running"] or 0, "low": low_count(conn)}
+    return {"waiting": row["queued"] or 0, "running": row["running"] or 0, "low": low_count(conn, max_age)}
 
 
 def folder_of(path):

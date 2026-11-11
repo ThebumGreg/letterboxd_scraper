@@ -55,7 +55,7 @@ def finish(response):
     db_ms = state["db"] * 1000
     response.headers["Server-Timing"] = f'total;dur={total:.1f}, db;dur={db_ms:.1f};desc="{state["queries"]} queries"'
     entry = {"at": time.strftime("%H:%M:%S"), "endpoint": state["endpoint"], "method": state["method"], "path": state["path"][:120], "status": response.status_code,
-             "ms": round(total, 1), "db_ms": round(db_ms, 1), "queries": state["queries"], "bytes": response.calculate_content_length() or 0}
+             "ms": round(total, 1), "db_ms": round(db_ms, 1), "queries": state["queries"], "bytes": (response.calculate_content_length() or 0) if response.is_sequence else 0}
     with _lock:
         _recent.append(entry)
     if total >= SLOW_MS:

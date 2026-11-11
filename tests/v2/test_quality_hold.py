@@ -268,3 +268,22 @@ def test_the_mapping_that_names_a_folder_wins_when_two_use_the_same_jellyfin_pat
     assert "/media2 is used twice" in storage.mapping_warning(conn)
     conn.execute("UPDATE storage_root SET jellyfin_path = NULL")
     assert storage.mapping_warning(conn) == ""
+
+
+def test_the_newest_check_lookup_uses_the_covering_index(conn):
+    """On a real database SQLite chose the status index and read every finished check once per file (36 s for 1,500 files)."""
+    for i in range(30):
+        low_score(conn, fixture_file(conn, rel=f"F{i} (2000)/F{i} (2000).mkv"))
+    plan_rows = " ".join(r[3] for r in conn.execute(
+        "EXPLAIN QUERY PLAN SELECT library_file_id, MAX(id) FROM quality_check WHERE mode = 'quality' AND status = 'done' GROUP BY library_file_id"))
+    assert "ix_quality_mode_status_file" in plan_rows
+
+
+def test_held_ids_can_show_a_recent_list_to_the_timer(conn):
+    from synchub.library import cache
+    cache.clear()
+    first = fixture_file(conn, rel="One (2000)/One (2000).mkv", resolution="854x480", kbps=1500)
+    assert quality.held_ids(conn) == {first}
+    second = fixture_file(conn, rel="Two (2000)/Two (2000).mkv", resolution="854x480", kbps=1500)
+    assert quality.held_ids(conn, max_age=30) == {first}              # the timer does not wait for a new calculation
+    assert quality.held_ids(conn) == {first, second}                  # a person always sees the current list
