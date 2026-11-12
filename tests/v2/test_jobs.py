@@ -487,3 +487,12 @@ def test_a_job_is_stuck_only_after_an_hour_and_only_when_nothing_can_take_it(con
     assert jobs.stuck(conn, soon) == []
     conn.execute("UPDATE worker SET last_seen = ? WHERE id = ?", (T0, w["id"]))
     assert jobs.stuck(conn, later(7200))[0]["id"] == jid
+
+
+def test_a_job_waiting_for_the_gpu_is_shown_as_such(conn):
+    w = worker(conn)
+    jid = queue(conn)
+    run_one(conn, w)
+    jobs.progress(conn, jid, w["id"], stage="wait_gpu", progress=0.2, message="Copied here, waiting for the GPU (3 min)", now=later(5))
+    got = jobs.get(conn, jid)
+    assert got["stage"] == "wait_gpu" and jobs.lifecycle(got) == ("working", "Waiting for the GPU")

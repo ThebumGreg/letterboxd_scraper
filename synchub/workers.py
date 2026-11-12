@@ -104,14 +104,17 @@ def is_online(last_seen, now=None):
 # 'agent' fields are sent to the agent in its register and poll answers; 'host' fields are read by agent/auto-update.sh on the PC.
 SETTINGS = {
     "encoder": ("agent", "choice", "auto", ("auto", "cpu", "nvenc", "qsv", "vaapi")),
-    "gpu_slots": ("agent", "int", 1, (1, 16)),                 # GPU encodes at once; a job over the limit uses the CPU instead of waiting
+    "gpu_slots": ("agent", "int", 1, (1, 16)),                 # GPU encodes at once; a job over the limit waits or uses the CPU, as "gpu_busy" says
+    "gpu_busy": ("agent", "choice", "smart", ("smart", "wait", "cpu")),    # when the GPU is busy: smart = small files use the CPU and big ones wait (up to 3 hours), wait = always wait, cpu = use the CPU
     "max_copy_mb_s": ("agent", "float", 0, (0, 100000)),       # 0 = no limit
     "scan_threads": ("agent", "int", 2, (1, 16)),
     "log_level": ("agent", "choice", "INFO", ("DEBUG", "INFO", "WARNING", "ERROR")),
     "auto_update": ("host", "bool", True, None),
     "ai_quality": ("host", "bool", False, None),                # build the image with the AI quality test layer (PyTorch and models, about 1 GB); see agent/auto-update.sh
+    "work_dir": ("host", "path", "", None),                      # the folder on the PC that holds job files (WORK_DIR in .env); the PC's helper switches to it when the worker is idle
     "update_window": ("host", "window", "", None),              # HH:MM-HH:MM local time on the PC, empty = only when idle
 }
+_PATH = re.compile(r"^/[A-Za-z0-9._@+/-]{1,200}$")
 _WINDOW = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$")
 
 
@@ -139,6 +142,10 @@ def clean_settings(given, current=None):
                 if value not in (True, False, 1, 0, "1", "0", "true", "false", "on", "off"):
                     raise ValueError
                 value = value in (True, 1, "1", "true", "on")
+            elif kind == "path":
+                value = str(value).strip().rstrip("/") or "/"
+                if not _PATH.match(value) or ".." in value.split("/") or value == "/" or "//" in value:
+                    raise ValueError
             elif kind == "window":
                 value = str(value).strip()
                 if not _WINDOW.match(value):
@@ -373,7 +380,10 @@ def host_check(conn, worker_id, now=None):
     want_log = settings.get(UPDATER_WANT_KEY.format(worker_id), "", conn=conn) == "1"
     if want_log:
         settings.set_value(UPDATER_WANT_KEY.format(worker_id), "", conn=conn)
-    return {"want_log": want_log, "idle": running == 0, "running": running, "auto_update": bool(setting(w, "auto_update")), "ai_quality": bool(setting(w, "ai_quality")), "window": setting(w, "update_window"), "request": request,
+    want_disks = settings.get(DISKS_WANT_KEY.format(worker_id), "", conn=conn) == "1"
+    if want_disks:
+        settings.set_value(DISKS_WANT_KEY.format(worker_id), "", conn=conn)
+    return {"want_log": want_log, "want_disks": want_disks, "work_dir": setting(w, "work_dir"), "idle": running == 0, "running": running, "auto_update": bool(setting(w, "auto_update")), "ai_quality": bool(setting(w, "ai_quality")), "window": setting(w, "update_window"), "request": request,
             **protect.host_instruction(conn, worker_id)}
 
 
@@ -586,3 +596,64 @@ def recent_tasks(conn, limit=30, now=None):
 def get_task(conn, task_id):
     r = conn.execute("SELECT t.*, w.name AS worker_name FROM worker_task t LEFT JOIN worker w ON w.id = t.worker_id WHERE t.id = ?", (task_id,)).fetchone()
     return dict(r) if r else None
+
+
+# ---------------------------------------------------------------- the PC's drives and its work folder
+DISKS_KEY = "worker_disks:{}"
+DISKS_WANT_KEY = "worker_disks_wanted:{}"
+WORKDIR_KEY = "worker_workdir:{}"
+DISK_FIELDS = (("device", 120), ("name", 80), ("mount", 200), ("fstype", 30), ("model", 80), ("label", 60))
+
+
+def request_disks(conn, worker_id):
+    """Asks the PC's helper for its drives at its next check. Kept apart from host_request so it never replaces a pending update or restart."""
+    if get(conn, worker_id) is None:
+        raise WorkerError("That worker no longer exists.")
+    settings.set_value(DISKS_WANT_KEY.format(worker_id), "1", conn=conn)
+
+
+def store_disks(conn, worker_id, report, now=None):
+    """The drives the PC's helper found (lsblk and statvfs on the host). Kept exactly as reported, cleaned: only plain fields, at most 40 drives."""
+    disks = []
+    for d in (report.get("disks") if isinstance(report, dict) else None) or []:
+        if not isinstance(d, dict) or len(disks) >= 40:
+            continue
+        one = {k: str(d.get(k) or "")[:n] for k, n in DISK_FIELDS}
+        for key in ("size", "used", "free"):
+            value = d.get(key)
+            one[key] = int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0 else None
+        one["mounted"] = bool(d.get("mounted"))
+        one["ssd"] = d.get("ssd") if d.get("ssd") in (True, False) else None
+        one["system"] = bool(d.get("system"))
+        disks.append(one)
+    current = str(report.get("work_dir") or "")[:200] if isinstance(report, dict) else ""
+    settings.set_value(DISKS_KEY.format(worker_id), json.dumps({"disks": disks, "work_dir": current, "at": now or db.now()}), conn=conn)
+    return disks
+
+
+def disks_of(conn, worker_id):
+    """{'disks': [...], 'at': when} as last reported, with `in_use` marked on the drive that holds the worker's current work folder, or None if never reported."""
+    got = _load(settings.get(DISKS_KEY.format(worker_id), "", conn=conn), {})
+    if not got or not isinstance(got.get("disks"), list):
+        return None
+    current = got.get("work_dir") or None                          # the host path WORK_DIR points at, as the helper read it from .env
+    best = None
+    for d in got["disks"]:
+        d["in_use"] = False
+        if current and d.get("mount") and (current == d["mount"] or current.startswith(d["mount"].rstrip("/") + "/")) and (best is None or len(d["mount"]) > len(best["mount"])):
+            best = d
+    if best:
+        best["in_use"] = True
+    return got
+
+
+def store_workdir_report(conn, worker_id, report, now=None):
+    """What the PC's helper did about the work folder chosen in SyncHub: status 'ok', 'waiting' or 'failed', and a sentence."""
+    status = str((report or {}).get("status") or "")
+    if status not in ("ok", "waiting", "failed"):
+        raise ValueError("The work folder report needs a status of ok, waiting or failed.")
+    settings.set_value(WORKDIR_KEY.format(worker_id), json.dumps({"status": status, "message": str((report or {}).get("message") or "")[:500], "path": str((report or {}).get("path") or "")[:200], "at": now or db.now()}), conn=conn)
+
+
+def workdir_report(conn, worker_id):
+    return _load(settings.get(WORKDIR_KEY.format(worker_id), "", conn=conn), {}) or None

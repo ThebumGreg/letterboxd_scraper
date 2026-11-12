@@ -54,6 +54,9 @@ OPS = ["copy", "rename", "delete_source", "hide_source", "unhide_source", "origi
 FEATURES = ["profiles", "scale", "audio_add", "benchmark", "two_outputs"]   # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run). "dovi" is added when dovi_tool and mkvmerge work
 MANIFEST_VERSION = 1
 HASH_BUFFER = 8 * 1024 * 1024
+GPU_BUSY_MODES = ("smart", "wait", "cpu")
+GPU_WAIT_MIN_BYTES = 10 * 1024 ** 3        # "smart": a file smaller than this does not wait for the GPU, the CPU takes it at once
+GPU_WAIT_MAX_SECONDS = 3 * 3600            # "smart": a big file that has waited this long is given to the CPU
 SPACE_MARGIN = 1024 ** 3           # room left over on a disk after a copy
 
 DEFAULT_CONFIG_FILES = ("synchub-agent.ini", "/etc/synchub-agent.ini")
@@ -189,6 +192,7 @@ class Config:
         self.video_encoder = (pick("worker", "video_encoder", "SYNCHUB_VIDEO_ENCODER", "auto") or "auto").lower()      # which GPU encoder to use when a plan allows GPU encoding
         self.vaapi_device = pick("worker", "vaapi_device", "SYNCHUB_VAAPI_DEVICE", "/dev/dri/renderD128") or "/dev/dri/renderD128"
         self.gpu_slots = 1                                 # GPU encodes at once; set from SyncHub (an integrated GPU should not be given more)
+        self.gpu_busy = "smart"                            # what a conversion does while the GPU is busy: "smart" (small files use the CPU, big ones wait up to GPU_WAIT_MAX_SECONDS), "wait" or "cpu"
         self.use_proxy = (pick("synchub", "use_proxy", "SYNCHUB_USE_PROXY", "no") or "no").lower() in ("1", "yes", "true", "on")
         defaults = {"scan_threads": 2, "scan_batch": 25, "slots": 1, "log_max_mb": 10, "log_backups": 5, "copy_chunk_mb": 8, "checkpoint_mb": 256, "failed_retention_days": 14, "request_timeout": 30, "chunk_minutes": 10, "vmaf_samples": 5}
         for key, (low, high) in self.INTS.items():
@@ -225,7 +229,7 @@ class Config:
         if not isinstance(remote, dict):
             return changed
         if not hasattr(self, "_local"):
-            self._local = {k: getattr(self, k) for k in ("slots", "gpu_slots", "max_copy_mb_s", "scan_threads", "video_encoder", "log_level")}
+            self._local = {k: getattr(self, k) for k in ("slots", "gpu_slots", "max_copy_mb_s", "scan_threads", "video_encoder", "log_level", "gpu_busy")}
         wanted = dict(self._local)
         for key, (attr, kind, low, high) in self.REMOTE.items():
             try:
@@ -237,6 +241,9 @@ class Config:
         encoder = str(remote.get("encoder") or "").lower()
         if encoder in ("auto", "cpu", "nvenc", "qsv", "vaapi"):
             wanted["video_encoder"] = encoder
+        busy = str(remote.get("gpu_busy") or "").lower()
+        if busy in GPU_BUSY_MODES:
+            wanted["gpu_busy"] = busy
         level = str(remote.get("log_level") or "").upper()
         if level in ("DEBUG", "INFO", "WARNING", "ERROR"):
             wanted["log_level"] = level
@@ -2559,9 +2566,8 @@ class JobRunner(threading.Thread):
         started, tried = time.monotonic(), []
         holding = False
         if kind != "cpu":
-            holding = self.agent.gpu_take()
+            holding = self.wait_for_gpu(size)
             if not holding:
-                self.log.info(f"The GPU is already encoding {self.cfg.gpu_slots} job(s) (the limit set in SyncHub); using the CPU encoder for this one")
                 kind = "cpu"
         try:
             while True:
@@ -2598,6 +2604,31 @@ class JobRunner(threading.Thread):
         self.m.pop("chunks", None)
         return {"done": True, "bytes": os.path.getsize(converted), "seconds": round(time.monotonic() - started, 1), "command": command_text[-4000:], "probe": probe, "finished": iso(),
                 "encoder": kind, "fallback": tried or None, "chunked": bool(self.m.get("chunked"))}
+
+    def wait_for_gpu(self, size):
+        """Takes a GPU slot, waiting for one when the worker's "when the GPU is busy" setting says so. Returns True when a slot is held (the caller must
+        gpu_give() it), False when the CPU should do the encode: the setting is "cpu", the file is small ("smart"), or a big file has waited too long ("smart").
+        The file is already copied here, so the GPU can start the moment the encode before it ends, and the copy out of that one runs alongside."""
+        if self.agent.gpu_take():
+            return True
+        mode = self.cfg.gpu_busy
+        if mode == "cpu" or (mode == "smart" and size < GPU_WAIT_MIN_BYTES):
+            self.log.info(f"The GPU is already encoding {self.cfg.gpu_slots} job(s); using the CPU encoder for this one ({'the setting says so' if mode == 'cpu' else 'it is a small file'})")
+            return False
+        started = time.monotonic()
+        self.log.info(f"The GPU is already encoding {self.cfg.gpu_slots} job(s); this file is copied here and waits for it", mode=mode)
+        while True:
+            waited = time.monotonic() - started
+            if mode == "smart" and waited >= GPU_WAIT_MAX_SECONDS:
+                self.log.info(f"Waited {int(waited // 60)} minutes for the GPU; using the CPU encoder for this one")
+                return False
+            self.report_progress("wait_gpu", 0.2, f"Copied here, waiting for the GPU ({int(waited // 60)} min)", force=waited < 1)
+            for _ in range(10):                                   # check every second for a stop or a cancel, ask for the GPU every ten
+                self.reporter.check()
+                time.sleep(1)
+            if self.agent.gpu_take():
+                self.log.info(f"The GPU is free after {int(time.monotonic() - started)} s")
+                return True
 
     def encode_with(self, kind, local, partial, change, profile, expected_duration, transcode):
         """One encode of the whole video with `kind` ('cpu' or a GPU kind), into `partial`. Returns the ffmpeg command it ran (the last one, for chunks)."""

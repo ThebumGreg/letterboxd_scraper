@@ -180,6 +180,55 @@
 
     // Add or edit a worker
     let editing = null;
+    // The PC's drives (the update helper on the PC lists them; SyncHub never formats or mounts anything)
+    const gb = (n) => (n === null || n === undefined) ? '?' : (n >= 1e12 ? (n / 1e12).toFixed(1) + ' TB' : Math.round(n / 1e9) + ' GB');
+    let disksTimer = null;
+    function disksReset() {
+        clearInterval(disksTimer); disksTimer = null;
+        document.getElementById('disksBody').textContent = ''; document.getElementById('disksTable').classList.add('d-none');
+        document.getElementById('disksNote').textContent = ''; document.getElementById('workDirReport').textContent = '';
+    }
+    function disksPaint(data) {
+        const body = document.getElementById('disksBody'), table = document.getElementById('disksTable'), note = document.getElementById('disksNote'), report = document.getElementById('workDirReport');
+        body.textContent = '';
+        const r = data.report;
+        report.className = 'small mt-1 ' + (r && r.status === 'failed' ? 'text-danger' : r && r.status === 'waiting' ? 'text-warning' : 'text-body-secondary');
+        report.textContent = r ? `PC helper (${r.at} UTC): ${r.message}` : '';
+        const found = data.disks;
+        if (!found) { table.classList.add('d-none'); note.textContent = data.asking ? 'Asked the PC. The drives appear within a minute.' : 'No drives listed yet. Press Scan drives (the update timer on the PC answers within a minute).'; return; }
+        const biggest = (data.queued_needs || [])[0] || 0;
+        found.disks.forEach((d) => {
+            const tr = document.createElement('tr');
+            const cell = (text, cls) => { const td = document.createElement('td'); td.textContent = text; if (cls) td.className = cls; tr.appendChild(td); return td; };
+            cell(`${d.name || d.device}${d.model ? ' · ' + d.model : ''}${d.ssd === true ? ' · SSD' : d.ssd === false ? ' · HDD' : ''}${d.fstype ? ' · ' + d.fstype : ''}`);
+            cell(d.mounted ? d.mount : 'not mounted');
+            const free = cell(d.mounted ? gb(d.free) : '', 'text-end' + (d.mounted && biggest && d.free !== null && d.free < biggest ? ' text-warning' : ''));
+            if (d.mounted && biggest && d.free !== null) free.title = d.free < biggest ? `Less than the ${gb(biggest)} the biggest waiting job needs` : `Enough for the biggest waiting job (${gb(biggest)})`;
+            cell(gb(d.size), 'text-end');
+            const act = document.createElement('td'); act.className = 'text-end text-nowrap';
+            if (d.in_use) { act.textContent = 'in use'; }
+            else if (d.mounted && !d.system && d.mount !== '/') {
+                const b = document.createElement('button'); b.type = 'button'; b.className = 'btn btn-sm btn-outline-success py-0'; b.textContent = 'Use for work files';
+                b.addEventListener('click', () => { document.getElementById('setWorkDir').value = d.mount.replace(/\/$/, '') + '/synchub-work'; });
+                act.appendChild(b);
+            } else if (!d.mounted) { act.textContent = 'needs setting up on the PC'; act.className += ' text-body-secondary'; }
+            tr.appendChild(act); body.appendChild(tr);
+        });
+        table.classList.remove('d-none');
+        note.textContent = `Listed ${found.at} UTC. Pressing Use for work files fills the folder above; press Save to apply it.`;
+    }
+    async function disksLoad(ask) {
+        if (!editing) return;
+        if (ask) { const a = await post(`/api/workers/${editing}/host_disks`); say(a.message || 'Asked.', a.ok); }
+        try { const res = await fetch(`/api/workers/${editing}/disks`); const data = await res.json(); if (data.ok) disksPaint(data); } catch (e) { /* the next poll tries again */ }
+        if (ask) {
+            clearInterval(disksTimer); let tries = 0;
+            disksTimer = setInterval(async () => { if (++tries > 30) { clearInterval(disksTimer); return; }
+                try { const res = await fetch(`/api/workers/${editing}/disks`); const data = await res.json(); if (data.ok) { disksPaint(data); if (!data.asking) clearInterval(disksTimer); } } catch (e) { /* keep trying */ } }, 4000);
+        }
+    }
+    document.getElementById('scanDisksBtn').addEventListener('click', () => disksLoad(true));
+    document.getElementById('workerModal').addEventListener('hidden.bs.modal', () => { clearInterval(disksTimer); disksTimer = null; });
     const form = document.getElementById('workerForm');
     function openForm(title, values) {
         document.getElementById('workerModalTitle').textContent = title;
@@ -192,6 +241,9 @@
         document.getElementById('setCopy').value = st.max_copy_mb_s || 0;
         document.getElementById('setScan').value = st.scan_threads || 2;
         document.getElementById('setLog').value = st.log_level || 'INFO';
+        document.getElementById('setGpuBusy').value = st.gpu_busy || 'smart';
+        document.getElementById('setWorkDir').value = st.work_dir || '';
+        disksReset(); if (editing) disksLoad(false);
         document.getElementById('setWindow').value = st.update_window || '';
         document.getElementById('setAutoUpdate').checked = st.auto_update !== false;
         document.getElementById('setAiQuality').checked = st.ai_quality === true;
@@ -202,7 +254,7 @@
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const body = { name: document.getElementById('workerName').value, tags: document.getElementById('workerTags').value, slots: document.getElementById('workerSlots').value,
-            settings: { encoder: document.getElementById('setEncoder').value, gpu_slots: document.getElementById('setGpuSlots').value, max_copy_mb_s: document.getElementById('setCopy').value, scan_threads: document.getElementById('setScan').value,
+            settings: { encoder: document.getElementById('setEncoder').value, gpu_slots: document.getElementById('setGpuSlots').value, gpu_busy: document.getElementById('setGpuBusy').value, work_dir: document.getElementById('setWorkDir').value, max_copy_mb_s: document.getElementById('setCopy').value, scan_threads: document.getElementById('setScan').value,
                         log_level: document.getElementById('setLog').value, update_window: document.getElementById('setWindow').value, auto_update: document.getElementById('setAutoUpdate').checked, ai_quality: document.getElementById('setAiQuality').checked } };
         const data = await post(editing ? `/api/workers/${editing}/update` : '/api/workers', body);
         if (!data.ok) { document.getElementById('workerError').textContent = data.message || 'Failed.'; return; }

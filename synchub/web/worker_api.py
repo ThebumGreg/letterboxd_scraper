@@ -123,6 +123,24 @@ def register(app):
         logger.info(f"[workers] {g.worker['name']} automatic update: {report['status']} {report['commit']}")
         return jsonify(ok=True)
 
+    @route("/update/disks", "update_disks")
+    def update_disks():
+        """For agent/auto-update.sh: the PC's drives (size, used, free), sent when the Workers page's Scan drives button asked for them."""
+        with db.connection() as conn:
+            found = workers.store_disks(conn, g.worker["id"], _body())
+        logger.info(f"[workers] {g.worker['name']} reported {len(found)} drive(s)")
+        return jsonify(ok=True)
+
+    @route("/update/workdir", "update_workdir")
+    def update_workdir():
+        """For agent/auto-update.sh: what it did about the work folder chosen on the Workers page (switched, waiting for the worker to be idle, or refused and why)."""
+        with db.connection() as conn:
+            try:
+                workers.store_workdir_report(conn, g.worker["id"], _body())
+            except ValueError as exc:
+                return _error(str(exc), 400)
+        return jsonify(ok=True)
+
     @route("/update/log", "update_log")
     def update_log():
         """For agent/auto-update.sh: its own recent log lines, sent when the Workers page's Logs button asked for them."""

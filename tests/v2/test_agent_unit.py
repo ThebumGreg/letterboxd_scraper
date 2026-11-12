@@ -702,3 +702,67 @@ def test_a_lone_films_folder_poster_goes_with_it_but_only_into_a_new_folder(tmp_
     moved = _sidecars(os.path.join(folder, "Heat.1995.mkv"), str(tmp_path / "Movies" / "Heat (1995)" / "Heat (1995).mkv"))
     assert moved == {("poster.jpg", "Heat (1995)/poster.jpg"), ("fanart.jpg", "Heat (1995)/fanart.jpg")}
     assert _sidecars(os.path.join(folder, "Heat.1995.mkv"), os.path.join(folder, "Heat (1995).mkv")) == set()        # renamed in the same folder: leave the folder's artwork alone
+
+
+# ---------------------------------------------------------------- when the GPU is busy
+class _FakeJob:
+    """Just what wait_for_gpu uses of a job: the agent's GPU slots, the settings, a log, progress reports and the stop check."""
+    def __init__(self, tmp_path, mode, free_after=None):
+        self.cfg = config(tmp_path)
+        self.cfg.gpu_busy, self.cfg.gpu_slots = mode, 1
+        self.reports, self.checks, self.free_after = [], 0, free_after
+        outer = self
+
+        class A:
+            def gpu_take(self):
+                if outer.free_after is not None and outer.checks >= outer.free_after:
+                    return True
+                return False
+        self.agent = A()
+
+        class L:
+            def info(self, *a, **k): pass
+        self.log = L()
+
+        class R:
+            def check(self):
+                outer.checks += 1
+        self.reporter = R()
+
+    def report_progress(self, stage, fraction, message=None, eta=None, force=False):
+        self.reports.append((stage, message))
+
+
+def test_the_gpu_busy_setting_is_chosen_in_synchub_and_ignores_nonsense(tmp_path):
+    cfg = config(tmp_path)
+    assert cfg.gpu_busy == "smart"
+    assert cfg.apply_remote({"gpu_busy": "WAIT"}) == {"gpu_busy": "wait"} and cfg.gpu_busy == "wait"
+    cfg.apply_remote({"gpu_busy": "never"})
+    assert cfg.gpu_busy == "smart"                                                 # a value that is not understood: back to the local one
+
+
+def test_a_conversion_uses_the_cpu_at_once_when_asked_to_or_when_the_file_is_small(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent.time, "sleep", lambda s: None)
+    big, small = 40 * 1024 ** 3, 2 * 1024 ** 3
+    assert agent.JobRunner.wait_for_gpu(_FakeJob(tmp_path, "cpu"), big) is False
+    assert agent.JobRunner.wait_for_gpu(_FakeJob(tmp_path, "smart"), small) is False
+    job = _FakeJob(tmp_path, "smart", free_after=0)
+    assert agent.JobRunner.wait_for_gpu(job, big) is True                                  # a free slot is always taken, whatever the setting
+
+
+def test_a_big_film_waits_for_the_gpu_and_says_so(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent.time, "sleep", lambda s: None)
+    job = _FakeJob(tmp_path, "wait", free_after=25)
+    assert agent.JobRunner.wait_for_gpu(job, 40 * 1024 ** 3) is True and job.checks >= 25
+    assert job.reports and job.reports[0][0] == "wait_gpu" and "waiting for the GPU" in job.reports[0][1]
+
+
+def test_in_smart_mode_a_big_film_gives_up_waiting_after_the_limit(tmp_path, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(agent.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(agent.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + 600))          # every "second" costs ten minutes
+    assert agent.JobRunner.wait_for_gpu(_FakeJob(tmp_path, "smart"), 40 * 1024 ** 3) is False
+    assert clock[0] - 1000 >= agent.GPU_WAIT_MAX_SECONDS
+    clock[0] = 1000.0
+    job = _FakeJob(tmp_path, "wait", free_after=40)                                   # "wait" never gives up
+    assert agent.JobRunner.wait_for_gpu(job, 40 * 1024 ** 3) is True

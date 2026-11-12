@@ -552,3 +552,99 @@ def test_the_workers_ai_setting_is_sent_to_the_pcs_helper(client, v2):
         workers.report_update(conn, wid, note)
         task = workers.recent_tasks(conn)[0]
         assert task["status"] == "done" and task["message"] == "AI quality test layer is now on" and workers.last_update(conn, wid) is None
+
+
+# ---------------------------------------------------------------- the PC's drives and the work folder chosen in SyncHub
+def shim(box, name, body):
+    (box.state.parent / "worker" / "docker-compose.yml").write_text("services: {}\n")      # a worker folder has one; the helper leaves a folder without it alone
+    f = box.state.parent / "bin" / name
+    f.write_text(f"#!/bin/sh\n{body}\n")
+    f.chmod(f.stat().st_mode | stat.S_IXUSR)
+
+
+LSBLK = '''{"blockdevices": [
+ {"name":"sda","path":"/dev/sda","type":"disk","size":250059350016,"fstype":null,"label":null,"mountpoint":null,"rota":false,"model":"Spare SSD","children":[
+   {"name":"sda1","path":"/dev/sda1","type":"part","size":1073741824,"fstype":"vfat","mountpoint":"/boot/efi","rota":false,"model":null},
+   {"name":"sda3","path":"/dev/sda3","type":"part","size":200000000000,"fstype":"LVM2_member","mountpoint":null,"rota":false,"model":null,"children":[
+     {"name":"ubuntu--vg-ubuntu--lv","path":"/dev/mapper/ubuntu--vg-ubuntu--lv","type":"lvm","size":200000000000,"fstype":"ext4","mountpoint":"/","rota":false,"model":null}]}]},
+ {"name":"sdb","path":"/dev/sdb","type":"disk","size":500107862016,"fstype":null,"label":null,"mountpoint":null,"rota":false,"model":"Old SSD","children":[
+   {"name":"sdb1","path":"/dev/sdb1","type":"part","size":500000000000,"fstype":"ext4","label":"synchub-work","mountpoint":"/","rota":false,"model":null}]},
+ {"name":"sdc","path":"/dev/sdc","type":"disk","size":1000204886016,"fstype":null,"label":null,"mountpoint":null,"rota":true,"model":"Blank HDD"}]}'''
+
+
+def test_the_helper_lists_the_drives_when_asked_and_only_then(box):
+    shim(box, "lsblk", f"cat <<'JSON'\n{LSBLK}\nJSON")
+    assert "update/disks" not in box.run(SHIM_ANSWER=answer())[2]
+    code, out, calls = box.run(SHIM_ANSWER=answer(want_disks=True))
+    sent = [c for c in calls.splitlines() if "update/disks" in c]
+    assert code == 0 and len(sent) == 1
+    import json
+    body = json.loads(sent[0].split("--data ", 1)[1].rsplit(" http", 1)[0])
+    names = {d["name"]: d for d in body["disks"]}
+    assert "sda1" not in names and "sda3" not in names                              # the EFI partition and the LVM member are not offered
+    assert names["ubuntu--vg-ubuntu--lv"]["system"] is True and names["sdb1"]["ssd"] is True
+    assert names["sdc"]["mounted"] is False and names["sdc"]["ssd"] is False and names["sdc"]["model"] == "Blank HDD"
+
+
+def test_a_work_folder_on_the_system_disk_or_a_missing_one_is_refused(box, tmp_path):
+    env = (box.state.parent / "worker" / ".env")
+    before = env.read_text()
+    (tmp_path / "mnt").mkdir()
+    shim(box, "findmnt", 'echo /')
+    code, out, calls = box.run(SHIM_ANSWER=answer(work_dir=str(tmp_path / "mnt")))
+    assert code == 0 and "system disk" in calls and '"status":"failed"' in calls and env.read_text() == before
+    code, out, calls = box.run(SHIM_ANSWER=answer(work_dir=str(tmp_path / "nothing" / "work")))
+    assert "does not exist on the PC" in calls and env.read_text() == before
+
+
+def test_a_busy_worker_keeps_its_folder_until_it_is_idle_then_switches(box, tmp_path):
+    env = box.state.parent / "worker" / ".env"
+    drive = tmp_path / "ssd"
+    drive.mkdir()
+    shim(box, "findmnt", f"echo {drive}")
+    shim(box, "docker", 'echo "docker $*" >> "$SHIM_LOG"\ncase "$*" in "compose ps --status running --services") echo worker;; esac')
+    want = str(drive / "synchub-work")
+    (drive / "synchub-work").mkdir()
+    code, out, calls = box.run(SHIM_ANSWER=answer(work_dir=want, idle=False, running=1))
+    assert '"status":"waiting"' in calls and "WORK_DIR" not in env.read_text() and "docker compose up -d" not in calls
+    code, out, calls = box.run(SHIM_ANSWER=answer(work_dir=want))
+    assert f"WORK_DIR={want}" in env.read_text() and "docker compose up -d" in calls and '"status":"ok"' in calls
+    assert "SYNCHUB_TOKEN=sw_secret" in env.read_text()                              # the rest of .env is untouched
+    again = box.run(SHIM_ANSWER=answer(work_dir=want))[2]
+    assert again.count("docker compose up -d") == 1                                   # already there: nothing more
+
+
+def test_a_switch_that_does_not_start_the_worker_is_put_back(box, tmp_path):
+    env = box.state.parent / "worker" / ".env"
+    before = env.read_text()
+    drive = tmp_path / "ssd"
+    (drive / "synchub-work").mkdir(parents=True)
+    shim(box, "findmnt", f"echo {drive}")
+    shim(box, "docker", 'echo "docker $*" >> "$SHIM_LOG"\n[ "$*" = "compose up -d" ] && echo "boom" >&2 && exit 1\nexit 0')
+    code, out, calls = box.run(SHIM_ANSWER=answer(work_dir=str(drive / "synchub-work")))
+    assert env.read_text() == before and '"status":"failed"' in calls and "put back" in calls
+
+
+def test_the_work_folder_and_drive_requests_reach_the_helper_and_the_page(client, v2):
+    wid, headers = authed(v2)
+    with v2.connection() as conn:
+        workers.update(conn, wid, settings={"work_dir": "/mnt/ssd/synchub-work", "gpu_busy": "wait"})
+    got = client.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()
+    assert got["work_dir"] == "/mnt/ssd/synchub-work" and got["want_disks"] is False
+    with v2.connection() as conn:
+        for bad in ({"work_dir": "/mnt/../etc"}, {"work_dir": "relative/path"}, {"gpu_busy": "never"}):
+            with pytest.raises(workers.WorkerError):
+                workers.update(conn, wid, settings=bad)
+    assert client.post(f"/api/workers/{wid}/host_disks").get_json()["ok"] is True
+    assert client.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()["want_disks"] is True
+    assert client.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()["want_disks"] is False      # asked once
+    assert client.post("/api/worker/v1/update/disks", headers=headers, json={"work_dir": "/opt/synchub-worker/work", "disks": [
+        {"device": "/dev/sdb1", "name": "sdb1", "mount": "/mnt/ssd", "fstype": "ext4", "mounted": True, "size": 500 * 10 ** 9, "free": 400 * 10 ** 9, "used": 100 * 10 ** 9, "ssd": True},
+        {"device": "/dev/mapper/root", "name": "root", "mount": "/", "fstype": "ext4", "mounted": True, "size": 200 * 10 ** 9, "free": 100 * 10 ** 9, "system": True}]}).status_code == 200
+    client.post("/api/worker/v1/update/workdir", headers=headers, json={"status": "failed", "message": "not a mounted drive"})
+    assert client.post("/api/worker/v1/update/workdir", headers=headers, json={"status": "maybe"}).status_code == 400
+    page = client.get(f"/api/workers/{wid}/disks").get_json()
+    assert page["ok"] and [d["name"] for d in page["disks"]["disks"]] == ["sdb1", "root"] and page["report"]["status"] == "failed"
+    assert [d["in_use"] for d in page["disks"]["disks"]] == [False, True]                    # /opt/synchub-worker/work is on the system disk
+    html = client.get("/workers").get_data(as_text=True)
+    assert 'id="setWorkDir"' in html and 'id="setGpuBusy"' in html and 'id="scanDisksBtn"' in html

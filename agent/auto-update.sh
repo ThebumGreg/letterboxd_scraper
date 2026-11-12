@@ -302,8 +302,101 @@ ai_sync() {
         send_report "{\"status\":\"failed\",\"note\":\"The AI quality test layer could not be switched $want\",\"error\":$(printf '%s' "$output" | tail -n 5 | json_escape)}"
     fi
 }
+# The PC's drives, listed when the Workers page's Scan drives button asked (Edit worker > Work folder). Read-only: lsblk and the free space of what is mounted.
+# Nothing is formatted or mounted here; an unmounted or unformatted drive is only listed, so the person who runs the PC can set it up.
+WORK_CURRENT() { local v; v="$(env_value WORK_DIR)"; case "$v" in "") v="$DIR/work" ;; ./*) v="$DIR/${v#./}" ;; esac; printf '%s' "$v"; }
+disks_sync() {
+    [ "$(jget want_disks)" = true ] || return 0
+    command -v lsblk >/dev/null 2>&1 || { log "WARNING lsblk is not installed, so the drives cannot be listed"; return 0; }
+    log "Listing this PC's drives for SyncHub"
+    lsblk -J -b -o NAME,PATH,TYPE,SIZE,FSTYPE,LABEL,MOUNTPOINT,ROTA,MODEL 2>/dev/null | WORKDIR="$(WORK_CURRENT)" python3 -c '
+import json, os, sys
+try:
+    tree = json.load(sys.stdin).get("blockdevices", [])
+except Exception:
+    tree = []
+SYSTEM = ("/boot", "/boot/efi", "/snap", "[SWAP]")
+out = []
+def walk(node, rota, model):
+    rota = node.get("rota") if node.get("rota") is not None else rota
+    model = (node.get("model") or model or "").strip()
+    mount = node.get("mountpoint")
+    kind, fstype = node.get("type"), node.get("fstype") or ""
+    children = node.get("children") or []
+    if kind in ("part", "lvm", "crypt", "disk", "raid0", "raid1", "raid5", "raid10", "md") and (mount or (not children and kind in ("part", "disk"))):
+        if kind == "disk" and children:
+            pass
+        elif fstype in ("swap", "LVM2_member", "linux_raid_member", "crypto_LUKS"):
+            pass
+        elif mount and (mount in SYSTEM or mount.startswith("/snap/") or mount.startswith("/boot/")):
+            pass
+        else:
+            one = {"device": node.get("path") or "", "name": node.get("name") or "", "mount": mount or "", "fstype": fstype, "model": model, "label": node.get("label") or "",
+                   "mounted": bool(mount), "ssd": (not bool(int(rota))) if rota is not None else None, "system": mount == "/", "size": int(node.get("size") or 0)}
+            if mount:
+                try:
+                    st = os.statvfs(mount)
+                    one["size"], one["free"], one["used"] = st.f_blocks * st.f_frsize, st.f_bavail * st.f_frsize, (st.f_blocks - st.f_bfree) * st.f_frsize
+                except OSError:
+                    pass
+            if one["device"] and (mount or kind == "part" or not fstype):
+                out.append(one)
+    for child in children:
+        walk(child, rota, model)
+for top in tree:
+    walk(top, None, None)
+seen, unique = set(), []
+for d in out:
+    key = (d["device"], d["mount"])
+    if key not in seen:
+        seen.add(key); unique.append(d)
+sys.stdout.write(json.dumps({"disks": unique, "work_dir": os.environ.get("WORKDIR", "")}))
+' > "$STATE/disks.json" 2>/dev/null && api /update/disks "$(cat "$STATE/disks.json")" >/dev/null 2>&1 || log "WARNING could not send the list of drives to SyncHub"
+}
+# The work folder chosen in SyncHub (Edit worker > Work folder, or a drive picked from the list). Safe by construction: it only switches when the worker is idle, only to
+# a folder that is on a separate mounted drive (never the root disk by accident) and writable, keeps the old .env, and puts everything back if the worker does not start.
+workdir_report() { # workdir_report STATUS MESSAGE: once per distinct outcome
+    local key="$1|$2"
+    [ "$(cat "$STATE/workdir-reported" 2>/dev/null)" = "$key" ] && return 0
+    if api /update/workdir "{\"status\":\"$1\",\"message\":$(printf '%s' "$2" | json_escape),\"path\":$(printf '%s' "$(WORK_CURRENT)" | json_escape)}" >/dev/null 2>&1; then printf '%s' "$key" > "$STATE/workdir-reported"; fi
+}
+workdir_sync() {
+    local want have target
+    want="$(jget work_dir)"; [ -n "$want" ] || return 0
+    have="$(WORK_CURRENT)"
+    [ "$want" != "$have" ] || { rm -f "$STATE/workdir-waiting"; workdir_report ok "The worker keeps its job files in $have."; return 0; }
+    [ -f "$DIR/docker-compose.yml" ] || return 0
+    case "$want" in /*) ;; *) workdir_report failed "The work folder must be a full path starting with /."; return 0 ;; esac
+    if [ ! -d "$want" ]; then
+        if [ -d "$(dirname "$want")" ] && [ "$(dirname "$want")" != "/" ] && [ "$(dirname "$want")" != "$(dirname "$DIR")" ]; then mkdir -p "$want" 2>/dev/null || true; fi
+        [ -d "$want" ] || { workdir_report failed "$want does not exist on the PC, and its parent folder is not there to create it in. Mount the drive first."; return 0; }
+    fi
+    target="$(findmnt -n -o TARGET -T "$want" 2>/dev/null | head -n1)"
+    if [ -z "$target" ] || [ "$target" = "/" ]; then
+        workdir_report failed "$want is on the PC's system disk, not on a separate mounted drive, so SyncHub did not switch to it (a drive that is not mounted would silently fill the system disk). Mount the drive, then pick it again."; return 0
+    fi
+    if ! ( touch "$want/.synchub-write-test" && rm -f "$want/.synchub-write-test" ) 2>/dev/null; then workdir_report failed "$want is not writable."; return 0; fi
+    if [ "$(jget idle)" != true ]; then
+        [ "$(cat "$STATE/workdir-waiting" 2>/dev/null)" = "$want" ] || { log "The work folder will change to $want when the worker is idle"; echo "$want" > "$STATE/workdir-waiting"; }
+        workdir_report waiting "The worker is busy. It switches to $want when it has no job running."; return 0
+    fi
+    rm -f "$STATE/workdir-waiting"
+    log "Switching the work folder from $have to $want"
+    cp -p "$DIR/.env" "$STATE/env.before-workdir" 2>/dev/null || { workdir_report failed "Could not back up $DIR/.env, so nothing was changed."; return 0; }
+    if grep -q '^WORK_DIR=' "$DIR/.env"; then sed -i "s|^WORK_DIR=.*|WORK_DIR=$want|" "$DIR/.env"; else printf '\nWORK_DIR=%s\n' "$want" >> "$DIR/.env"; fi
+    if ( cd "$DIR" && docker compose up -d ) >"$STATE/workdir.out" 2>&1 && sleep 5 && ( cd "$DIR" && docker compose ps --status running --services 2>/dev/null ) | grep -qx worker; then
+        log "The worker now keeps its job files in $want (they were in $have; unfinished jobs there are not moved)"
+        workdir_report ok "The worker now keeps its job files in $want. Old job folders stay in $have."
+    else
+        cp -p "$STATE/env.before-workdir" "$DIR/.env"; ( cd "$DIR" && docker compose up -d ) >>"$STATE/workdir.out" 2>&1 || true
+        log "ERROR switching the work folder to $want failed; put back to $have: $(tail -n 2 "$STATE/workdir.out" | cut -c1-300)"
+        workdir_report failed "Switching to $want failed, so the worker was put back on $have: $(tail -n 2 "$STATE/workdir.out" | cut -c1-300)"
+    fi
+}
 [ "$FORCE" = 1 ] || [ -z "$answer" ] || relay_sync
 [ "$FORCE" = 1 ] || [ -z "$answer" ] || ai_sync
+[ "$FORCE" = 1 ] || [ -z "$answer" ] || disks_sync
+[ "$FORCE" = 1 ] || [ -z "$answer" ] || workdir_sync
 
 # The installed copy of this script is what the timer runs: when the checkout holds a newer one, replace it (a rename, so a run in progress is not disturbed).
 refresh_self() {
