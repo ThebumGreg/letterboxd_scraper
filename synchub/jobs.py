@@ -160,6 +160,9 @@ def claim(conn, worker, free_slots, free_bytes=None, now=None):
         return []
     tags = set(worker["tags"])
     claimed = []
+    # Space already promised: what the jobs this worker is running may still need, plus what it is given in this call. Counted in full (some of it is
+    # already used and so already missing from free_bytes), which errs on the side of waiting rather than filling the disk.
+    reserved = conn.execute("SELECT COALESCE(SUM(need_bytes), 0) FROM job WHERE worker_id = ? AND status = 'running'", (worker["id"],)).fetchone()[0] or 0
     candidates = conn.execute(
         """SELECT * FROM job WHERE status = 'queued' AND cancel_requested = 0 AND (not_before IS NULL OR not_before <= ?)
            AND (pinned_worker_id IS NULL OR pinned_worker_id = ?) ORDER BY priority DESC, id""", (now, worker["id"])).fetchall()
@@ -167,12 +170,10 @@ def claim(conn, worker, free_slots, free_bytes=None, now=None):
         if len(claimed) >= room:
             break
         job = row(r)
-        if not set(job["required_tags"]) <= tags or not can_run(worker, job):
+        why = wait_reason(worker, job, free_bytes, reserved)
+        if why:
+            _note_wait(conn, job, f"{worker['name']}: {why}")
             continue
-        if job["need_bytes"] and free_bytes is not None and job["need_bytes"] > free_bytes:
-            continue
-        if not roots_ready(worker, job):
-            continue                                   # a share is not mounted (or not the right one) on this worker
         holder = job["preferred_worker_id"]
         if holder and holder != worker["id"] and job["preferred_until"] and job["preferred_until"] > now:
             continue                                   # another worker holds this job's files and has first call
@@ -180,15 +181,72 @@ def claim(conn, worker, free_slots, free_bytes=None, now=None):
         won = conn.execute(
             """UPDATE job SET status = 'running', worker_id = ?, attempts = attempts + 1, lease_until = ?, claimed_at = ?,
                       started_at = COALESCE(started_at, ?), stage = 'claimed', progress = NULL, fps = NULL, speed = NULL, eta_seconds = NULL,
-                      message = NULL, cleanup = 0, updated_at = ?
+                      message = NULL, wait_reason = NULL, cleanup = 0, updated_at = ?
                WHERE id = ? AND status = 'queued'""",
             (worker["id"], _later(now, LEASE_SECONDS), now, now, now, job["id"])).rowcount == 1
         if not won:
             continue                                   # another worker took it between the read and the update
+        reserved += job["need_bytes"] or 0
         conn.execute("INSERT INTO job_attempt (job_id, attempt_no, worker_id, started_at) VALUES (?, ?, ?, ?)", (job["id"], attempt_no, worker["id"], now))
         job.update(attempt_no=attempt_no)
         claimed.append(payload(job))
     return claimed
+
+
+STUCK_AFTER_SECONDS = 3600         # a queued job nothing can take for this long is "stuck": it shows as a problem and sends a notification
+
+
+def stuck(conn, now=None, after_seconds=STUCK_AFTER_SECONDS):
+    """Queued jobs that have waited longer than `after_seconds` because nothing is able to take them: no worker is online and ready, or every
+    worker that asked was unable (space, a share, a missing feature). A job that is just waiting its turn behind busy slots is not stuck.
+    Returns [{'id', 'title', 'reason'}]."""
+    now = now or db.now()
+    limit = _later(now, -after_seconds)
+    ready = [r for r in conn.execute("SELECT id, last_seen, enabled, paused, draining, revoked_at FROM worker")
+             if r["enabled"] and not r["paused"] and not r["draining"] and not r["revoked_at"] and _fresh(r["last_seen"], now)]
+    out = []
+    for r in conn.execute("SELECT id, title, created_at, not_before, wait_reason FROM job WHERE status = 'queued' AND cancel_requested = 0 ORDER BY id"):
+        since = max(r["created_at"] or "", r["not_before"] or "")
+        if since > limit:
+            continue
+        reason = None if ready else "no worker is online and ready to take it"
+        reason = reason or r["wait_reason"]
+        if reason:
+            out.append({"id": r["id"], "title": r["title"], "reason": reason})
+    return out
+
+
+def _fresh(last_seen, now):
+    from synchub import workers
+    return bool(last_seen) and workers.is_online(last_seen, now)
+
+
+def _gb(n):
+    return f"{n / 1e9:.0f} GB"
+
+
+def wait_reason(worker, job, free_bytes=None, reserved=0):
+    """Why this worker cannot take this job right now, in a sentence a person can act on, or None when it can.
+    The same rules claim() applies; a job reserved for another worker is not a problem and is not reported here."""
+    missing = sorted(set(job["required_tags"]) - set(worker["tags"]))
+    if missing:
+        return f"the job needs the tag {', '.join(missing)}, which this worker does not have"
+    if not can_run(worker, job):
+        plan = job["plan"] if isinstance(job.get("plan"), dict) else {}
+        return f"this worker's agent cannot do '{plan.get('op') or 'this job'}' yet (it needs {', '.join(plan.get('needs') or []) or 'a newer agent'}); update the worker"
+    need = job["need_bytes"] or 0
+    if need and free_bytes is not None and need > free_bytes - reserved:
+        held = f" ({_gb(reserved)} of it is promised to jobs already running)" if reserved else ""
+        return f"needs {_gb(need)} free on the work disk, only {_gb(max(free_bytes - reserved, 0))} is available{held}"
+    if not roots_ready(worker, job):
+        return "a share this job uses is not mounted on this worker"
+    return None
+
+
+def _note_wait(conn, job, text):
+    """Records why a queued job was skipped, only when it changed (the workers ask every few seconds)."""
+    if job.get("wait_reason") != text:
+        conn.execute("UPDATE job SET wait_reason = ? WHERE id = ? AND status = 'queued'", (text, job["id"]))
 
 
 def resume_for(conn, worker_id, active):

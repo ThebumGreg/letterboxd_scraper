@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+Migration 044. Update SyncHub first, then the workers.
+
+**Queued jobs now wait safely and say why (migration 044).** Update SyncHub. Two big convert jobs (about 101 GB and 171 GB of space needed) sat in Queue for hours because the worker's disk had 73 GB free, and nothing said so.
+- **Space is reserved across jobs.** A worker is no longer given two jobs that each fit the free space but not together: the space jobs it is already running may still need, and the jobs handed out in the same check, are counted before the next job is given. Counted in full, so a job waits rather than the disk filling.
+- **Every waiting job says why.** On Media > Jobs a queued job shows "Waiting: wtwo: needs 101 GB free on the work disk, only 73 GB is available" (or a missing tag, an agent that cannot do the job yet, or a share that is not mounted).
+- **Stuck queue alert.** A queued job that has waited over an hour because no worker is online and ready, or the workers cannot take it, shows as "Stuck jobs" in the problems list and sends one notification (new "Jobs are stuck in the queue" event, on for administrators by default). Waiting behind busy slots is not stuck.
+
 ## 1.5.1
 
 Migration 043. Update SyncHub first, then the workers.
