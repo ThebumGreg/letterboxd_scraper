@@ -30,7 +30,10 @@
                         <div class="col-6"><label for="setEncoder" class="form-label small mb-0">Video encoder</label>
                             <select class="form-select form-select-sm" id="setEncoder"><option value="auto">Automatic (GPU when allowed and working)</option><option value="cpu">CPU only</option><option value="vaapi">VAAPI (Intel / AMD)</option><option value="qsv">Quick Sync</option><option value="nvenc">NVIDIA NVENC</option></select></div>
                         <div class="col-6"><label for="setGpuSlots" class="form-label small mb-0">GPU encodes at once</label><input type="number" class="form-control form-control-sm" id="setGpuSlots" min="1" max="16" value="1">
-                            <div class="form-text">A job over this uses the CPU. Keep 1 for integrated graphics.</div></div>
+                            <div class="form-text">Keep 1 for integrated graphics.</div></div>
+                        <div class="col-12"><label for="setGpuBusy" class="form-label small mb-0">When the GPU is busy</label>
+                            <select class="form-select form-select-sm" id="setGpuBusy"><option value="smart">Smart: small films use the CPU, big ones wait for the GPU (up to 3 hours)</option><option value="wait">Always wait for the GPU</option><option value="cpu">Use the CPU</option></select>
+                            <div class="form-text">A film that waits is already copied to the PC, so the GPU starts it the moment the one before it ends.</div></div>
                         <div class="col-6"><label for="setCopy" class="form-label small mb-0">Copy speed limit (MB/s)</label><input type="number" class="form-control form-control-sm" id="setCopy" min="0" value="0"><div class="form-text">0 = no limit</div></div>
                         <div class="col-6"><label for="setScan" class="form-label small mb-0">Files analysed at once in a scan</label><input type="number" class="form-control form-control-sm" id="setScan" min="1" max="16" value="2"></div>
                         <div class="col-6"><label for="setLog" class="form-label small mb-0">Log detail</label>
@@ -39,6 +42,12 @@
                             <div class="form-text">Inside it the worker updates even if busy; otherwise only when idle.</div></div>
                         <div class="col-12 form-check ms-1"><input type="checkbox" class="form-check-input" id="setAutoUpdate" checked><label class="form-check-label small" for="setAutoUpdate">Update automatically (needs <code>agent/auto-update.sh</code> on the PC)</label></div>
                         <div class="col-12 form-check ms-1"><input type="checkbox" class="form-check-input" id="setAiQuality"><label class="form-check-label small" for="setAiQuality">AI quality test (rebuilds the worker with PyTorch and three models, about 1 GB; runs when the worker is idle; needs <code>agent/auto-update.sh</code> on the PC)</label></div>
+                        <div class="col-12 mt-2"><label for="setWorkDir" class="form-label small mb-0">Work folder on the PC</label>
+                            <div class="input-group input-group-sm"><input class="form-control" id="setWorkDir" placeholder="leave empty to keep the current one" maxlength="200" autocomplete="off"><button type="button" class="btn btn-outline-secondary" id="scanDisksBtn">Scan drives</button></div>
+                            <div class="form-text">Where jobs keep their copies while converting. Pick a drive below or type a folder that is already mounted on the PC. The PC's helper switches to it when the worker is idle, and refuses a folder that is not a separate mounted drive.</div>
+                            <div class="small mt-1" id="workDirReport"></div>
+                            <div class="table-responsive"><table class="table table-sm small mb-0 d-none" id="disksTable"><thead><tr><th>Drive</th><th>Mounted at</th><th class="text-end">Free</th><th class="text-end">Size</th><th></th></tr></thead><tbody id="disksBody"></tbody></table></div>
+                            <div class="small text-body-secondary" id="disksNote"></div></div>
                     </div>
                 </details>
                 <div class="small text-danger" id="workerError" role="alert"></div>

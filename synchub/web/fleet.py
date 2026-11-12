@@ -2,7 +2,7 @@
 from flask import jsonify, render_template, request
 
 from synchub import __version__, buildinfo
-from synchub import db, jobs, protect, storage, versions, webhooks, workers
+from synchub import db, jobs, protect, settings, storage, versions, webhooks, workers
 from synchub.library import cleanup, migrate
 
 # What each worker button does: setting, new value.
@@ -343,6 +343,11 @@ def register(app):
                         return jsonify(ok=True, message="Asked the PC to restart the worker. It happens within a minute; unfinished jobs resume." + note)
                     return jsonify(ok=True, message=("Asked the PC to update the worker. It is running " + str(busy) + " job(s), so the update starts when it is idle." if busy
                                                      else "Asked the PC to update the worker. It starts within a minute.") + note)
+                if action == "host_disks":
+                    workers.request_disks(conn, worker_id)
+                    seen = workers.host_seen(conn, worker_id)
+                    return jsonify(ok=True, message="Asked the PC to list its drives. They appear within a minute." if seen
+                                   else "Asked. The update timer on that PC has not checked in recently, so the drives appear when it does (install it once with agent/auto-update.sh --install).")
                 if action == "benchmark":
                     workers.request_benchmark(conn, worker_id, by=_who(conn))
                     return jsonify(ok=True, message="Asked the worker to run a benchmark. It starts when the worker has no job running, and the result appears here when it is done (a few minutes).")
@@ -360,6 +365,17 @@ def register(app):
         except workers.WorkerError as exc:
             return _fail(str(exc))
         return _fail("Unknown action.", 404)
+
+    @app.route("/api/workers/<int:worker_id>/disks")
+    def api_worker_disks(worker_id):
+        """The PC's drives as last reported, what the helper did about the chosen work folder, and the largest queued jobs' space needs."""
+        with db.connection() as conn:
+            worker = workers.get(conn, worker_id)
+            if worker is None:
+                return _fail("That worker no longer exists.", 404)
+            needs = [r["need_bytes"] for r in conn.execute("SELECT need_bytes FROM job WHERE status = 'queued' AND need_bytes > 0 ORDER BY need_bytes DESC LIMIT 5")]
+            return jsonify(ok=True, name=worker["name"], work_dir=workers.setting(worker, "work_dir"), disks=workers.disks_of(conn, worker_id),
+                           report=workers.workdir_report(conn, worker_id), asking=settings.get(workers.DISKS_WANT_KEY.format(worker_id), "", conn=conn) == "1", queued_needs=needs)
 
     @app.route("/api/workers/<int:worker_id>/log")
     def api_worker_log(worker_id):

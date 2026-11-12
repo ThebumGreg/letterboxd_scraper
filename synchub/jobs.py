@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 KINDS = ("scan", "library", "download", "preview")
 PRIORITY = {"preview": 120, "download": 100, "scan": 50, "library": 10}      # someone waiting beats a backlog
-STAGES = ("claimed", "copy_in", "analyze", "plan", "preview", "encode", "verify", "copy_out", "publish", "scan", "done")
+STAGES = ("claimed", "copy_in", "analyze", "plan", "preview", "wait_gpu", "encode", "verify", "copy_out", "publish", "scan", "done")
 TERMINAL = ("done", "failed", "cancelled", "skipped")
 
 LEASE_SECONDS = 90                 # a claimed job whose worker is silent this long goes back to the queue
@@ -71,7 +71,7 @@ def row(r):
 
 # What a person sees for a job, from its status and the stage its worker reported. `code` is also the Dashboard state while a title is being handled.
 LIFECYCLE = {"queued": ("queued", "Queued"), "claimed": ("assigned", "Assigned to a worker"), "copy_in": ("transferring", "Transferring to worker"),
-             "analyze": ("working", "Working"), "plan": ("working", "Working"), "preview": ("working", "Working"), "scan": ("working", "Working"),
+             "analyze": ("working", "Working"), "plan": ("working", "Working"), "preview": ("working", "Working"), "wait_gpu": ("working", "Waiting for the GPU"), "scan": ("working", "Working"),
              "encode": ("converting", "Converting"), "verify": ("transferring_library", "Transferring to library"), "copy_out": ("transferring_library", "Transferring to library"),
              "publish": ("transferring_library", "Transferring to library"), "done": ("completed", "Completed")}
 LIFECYCLE_STATUS = {"needs_review": ("needs_you", "Needs you"), "failed": ("failed", "Failed"), "cancelled": ("cancelled", "Cancelled"), "skipped": ("cancelled", "Skipped"),

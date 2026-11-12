@@ -4,6 +4,11 @@
 
 Migration 044. Update SyncHub first, then the workers.
 
+**Choose the work drive from SyncHub, and a busy GPU now makes big films wait (no migration).** Update SyncHub, then the workers (the PC's helper updates itself with the worker).
+- **Work folder and drives (Edit worker).** "Scan drives" asks the PC's helper to list its drives: name, SSD or HDD, where it is mounted, free and total space, and whether it has room for the biggest queued job. "Use for work files" fills in a folder on that drive; Save applies it. The helper switches only when the worker is idle, only to a folder on a separate mounted drive that is writable (never the system disk by accident), keeps the old `.env`, and puts everything back if the worker does not start. What it did is shown under the field. SyncHub never formats or mounts a drive; an unmounted or blank drive is listed as "needs setting up on the PC". Old job folders are not moved.
+- **When the GPU is busy (Edit worker, Settings).** *Smart* (default): a film under 10 GB uses the CPU at once, a bigger one waits for the GPU and is given to the CPU only after 3 hours. *Always wait for the GPU*, or *Use the CPU* (the old behaviour). A waiting film is already copied to the PC, shows as "Waiting for the GPU" on Media > Jobs, and starts the moment the GPU is free while the encode before it copies its result out.
+- How many films may be copied ahead is limited by the worker's slots and, from the queue fix above, by free disk space.
+
 **Queued jobs now wait safely and say why (migration 044).** Update SyncHub. Two big convert jobs (about 101 GB and 171 GB of space needed) sat in Queue for hours because the worker's disk had 73 GB free, and nothing said so.
 - **Space is reserved across jobs.** A worker is no longer given two jobs that each fit the free space but not together: the space jobs it is already running may still need, and the jobs handed out in the same check, are counted before the next job is given. Counted in full, so a job waits rather than the disk filling.
 - **Every waiting job says why.** On Media > Jobs a queued job shows "Waiting: wtwo: needs 101 GB free on the work disk, only 73 GB is available" (or a missing tag, an agent that cannot do the job yet, or a share that is not mounted).
