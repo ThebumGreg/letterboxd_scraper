@@ -43,6 +43,7 @@
                         {% if j.status == 'needs_review' and j.review_reason %}<div class="text-warning">{{ j.review_reason }}</div>
                         {% elif j.status == 'done' %}<div class="text-body-secondary">Finished. Open the job for its log.</div>
                         {% elif j.message and j.status != 'running' %}<div class="text-body-secondary">{{ j.message }}</div>{% endif %}
+                        {% if j.status == 'queued' and j.wait_reason %}<div class="text-warning">Waiting: {{ j.wait_reason }}</div>{% endif %}
                         {% if j.waiting_for %}<div class="text-warning">{{ j.waiting_for }}</div>{% endif %}
                         {% if j.status in ['failed'] and j.error %}<div class="text-danger">{{ j.error_class }}: {{ j.error }}</div>{% endif %}
                     </td>

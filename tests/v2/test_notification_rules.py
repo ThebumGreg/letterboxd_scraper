@@ -352,3 +352,16 @@ def test_batch_choices_are_checked(conn):
     pid = add_profile(conn)
     with pytest.raises(ValueError):
         store.set_pref(conn, pid, False, "22:00", "07:00", "UTC", batch_minutes=7)
+
+
+def test_a_stuck_queue_is_reported_once_and_shows_as_a_problem(conn):
+    from synchub import status
+    admin(conn)
+    jobs.create(conn, "library", title="big.mkv", now=T0)
+    conn.commit()
+    assert watch.check(now=jobs._later(T0, 600)) == 0                            # waiting ten minutes is normal
+    hour = jobs._later(T0, 3700)
+    assert watch.check(now=hour) == 1 and watch.check(now=jobs._later(hour, 60)) == 0
+    assert "no worker is online" in notes(conn, "queue_stuck")[0]["body"]
+    item = [i for i in status.snapshot(conn)["items"] if i["label"] == "Stuck jobs"]
+    assert item and item[0]["state"] == "warn" and "no worker is online" in item[0]["detail"]

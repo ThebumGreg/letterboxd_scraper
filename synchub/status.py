@@ -6,7 +6,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from synchub import db, settings, workers
+from synchub import db, jobs, settings, workers
 
 OK, WARN, BAD, OFF = "ok", "warn", "bad", "off"
 DISMISSED_KEY = "failed_jobs_dismissed_at"
@@ -77,6 +77,10 @@ def _queue_items(conn):
                                  (dismissed,)).fetchone()["n"] if failed else 0
     out = [{"label": "Work queue", "state": OK, "detail": f"{running} running, {queued} waiting", "href": "/library"}]
     out.append({"label": "Waiting for you", "state": WARN if review else OK, "detail": f"{review} job{' needs' if review == 1 else 's need'} a decision" if review else "Nothing to approve", "href": "/library"})
+    stuck = jobs.stuck(conn)
+    if stuck:
+        first = stuck[0]
+        out.append({"label": "Stuck jobs", "state": WARN, "detail": f"{len(stuck)} waiting over an hour and nothing can take {'it' if len(stuck) == 1 else 'them'}: job {first['id']}, {first['reason']}"[:240], "href": "/jobs"})
     if recent_failed:
         out.append({"label": "Failed jobs", "state": BAD, "detail": f"{recent_failed} failed in the last day", "href": "/jobs", "dismiss": "/api/status/dismiss-failed"})
     return out

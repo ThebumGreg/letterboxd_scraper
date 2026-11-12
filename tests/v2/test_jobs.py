@@ -434,3 +434,56 @@ def test_recent_orders_running_then_waiting_then_queued_then_finished(conn):
     assert len(jobs.recent(conn, limit=2)) == 2
     assert jobs.counts(conn) == {"done": 1, "needs_review": 1, "queued": 1, "running": 1}
     assert jobs.detail(conn, 999) is None
+
+
+# ---------------------------------------------------------------- disk space across jobs and why a job waits
+GB = 10 ** 9
+
+
+def test_space_is_reserved_for_jobs_given_out_in_the_same_claim(conn):
+    w = worker(conn, slots=3)
+    first = queue(conn, need_bytes=100 * GB)
+    second = queue(conn, need_bytes=100 * GB)
+    got = jobs.claim(conn, w, 3, free_bytes=150 * GB, now=T0)
+    assert [j["id"] for j in got] == [first]                                    # both would fit alone, not together
+    assert "only 50 GB is available" in jobs.get(conn, second)["wait_reason"]
+
+
+def test_space_is_reserved_for_jobs_the_worker_is_already_running(conn):
+    w = worker(conn, slots=3)
+    running = queue(conn, need_bytes=100 * GB)
+    assert run_one(conn, w, free_bytes=300 * GB) == running
+    waiting = queue(conn, need_bytes=120 * GB)
+    assert jobs.claim(conn, w, 2, free_bytes=150 * GB, now=T0) == []
+    reason = jobs.get(conn, waiting)["wait_reason"]
+    assert reason.startswith("w1: needs 120 GB free") and "100 GB of it is promised" in reason
+    assert [j["id"] for j in jobs.claim(conn, w, 2, free_bytes=300 * GB, now=T0)] == [waiting]
+    assert jobs.get(conn, waiting)["wait_reason"] is None                       # cleared once a worker takes it
+
+
+def test_a_job_says_why_a_worker_skipped_it(conn):
+    w = worker(conn)
+    tagged = queue(conn, required_tags=["gpu"])
+    assert jobs.claim(conn, w, 1, now=T0) == []
+    assert "needs the tag gpu" in jobs.get(conn, tagged)["wait_reason"]
+    w2 = worker(conn, "w2", tags=["gpu"], slots=2)
+    w2["status"] = {"roots": {"tfiles": {"ok": False}}}
+    shared = queue(conn, source=("tfiles", "a.mkv"))
+    assert jobs.claim(conn, w2, 1, now=T0)[0]["id"] == tagged
+    jobs.claim(conn, w2, 1, now=T0)
+    assert "share" in jobs.get(conn, shared)["wait_reason"]
+
+
+def test_a_job_is_stuck_only_after_an_hour_and_only_when_nothing_can_take_it(conn):
+    w = worker(conn)
+    jid = queue(conn, need_bytes=100 * GB)
+    assert jobs.stuck(conn, T0) == []
+    soon, hour = later(600), later(3700)
+    conn.execute("UPDATE worker SET last_seen = ? WHERE id = ?", (hour, w["id"]))
+    assert jobs.stuck(conn, hour) == []                                         # an online worker that has not refused it: just waiting its turn
+    jobs.claim(conn, w, 1, free_bytes=10 * GB, now=hour)
+    got = jobs.stuck(conn, hour)
+    assert [g["id"] for g in got] == [jid] and "needs 100 GB" in got[0]["reason"]
+    assert jobs.stuck(conn, soon) == []
+    conn.execute("UPDATE worker SET last_seen = ? WHERE id = ?", (T0, w["id"]))
+    assert jobs.stuck(conn, later(7200))[0]["id"] == jid

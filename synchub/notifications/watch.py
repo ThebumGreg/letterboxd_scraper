@@ -69,5 +69,10 @@ def check(now=None):
             after[tk] = bad
             if bad and before.get(tk) is not True:
                 raised += bool(emit.notify(conn, "tv_adb_unauthorized", f"{tk}:{now}", {"tv": name}, now=now))
+        from synchub import jobs
+        stuck = jobs.stuck(conn, now)
+        after["queue:stuck"] = bool(stuck)
+        if stuck and not before.get("queue:stuck"):                    # said once when it starts, not every minute
+            raised += bool(emit.notify(conn, "queue_stuck", f"queue:stuck:{now}", {"count": len(stuck), "reason": f"Job {stuck[0]['id']}: {stuck[0]['reason']}"}, now=now))
         settings.set_value(KEY, json.dumps(after), conn=conn)
     return raised

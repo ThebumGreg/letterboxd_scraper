@@ -89,6 +89,11 @@ register(EventType(
     description="The automatic update on a worker failed. The old version keeps running. The update is not tried again until there is newer code.",
 ))
 register(EventType(
+    "queue_stuck", "Jobs are stuck in the queue", ADMIN,
+    render=lambda p: Message("Jobs stuck in the queue", f"{p.get('count') or 'Some'} job(s) have waited over an hour and nothing can take them. {p.get('reason') or ''}"[:1000], priority=0, ttl_seconds=86400),
+    description="A queued job has waited over an hour because no worker is online, or the workers cannot take it (not enough free space, a share down, a missing feature).",
+))
+register(EventType(
     "share_problem", "A share is not mounted", ADMIN,
     render=lambda p: Message("Share problem", f"{p.get('worker') or 'A worker'} reports that '{p.get('root')}' is {p.get('state') or 'not ready'}.", priority=1, ttl_seconds=86400),
     description="A worker cannot reach one of its shares (not mounted, or its marker file is missing). Urgent.",
