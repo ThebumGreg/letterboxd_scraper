@@ -178,6 +178,54 @@
     });
     wlEl('workerLogModal').addEventListener('hidden.bs.modal', () => { wlStop(); clearInterval(wl.helperTimer); wl.raw = null; wlEl('wlText').textContent = ''; });
 
+    // Stats: CPU, temperature and free space over time, drawn as small SVG line charts (no library, works offline)
+    const stats = { id: null, name: '' };
+    function statsChart(title, points, key, { unit = '', max = null, lines = [], digits = 0 } = {}) {
+        const W = 640, H = 120, L = 44, R = 8, T = 8, B = 18;
+        const vals = points.map((p) => p[key]).filter((v) => v !== null && v !== undefined);
+        const box = document.createElement('div'); box.className = 'mb-3';
+        const head = document.createElement('div'); head.className = 'small fw-bold'; box.appendChild(head);
+        if (!vals.length) { head.textContent = `${title}: no readings yet`; return box; }
+        const lo = Math.min(0, ...vals), hi = Math.max(max ?? 0, ...vals, ...lines.map((l) => l.value)) * 1.05 || 1;
+        const t0 = Date.parse(points[0].at.replace(' ', 'T') + 'Z'), t1 = Date.parse(points[points.length - 1].at.replace(' ', 'T') + 'Z') || t0 + 1;
+        const x = (p) => L + (W - L - R) * ((Date.parse(p.at.replace(' ', 'T') + 'Z') - t0) / Math.max(t1 - t0, 1));
+        const y = (v) => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+        head.textContent = `${title}: now ${vals[vals.length - 1].toFixed(digits)}${unit}, highest ${Math.max(...vals).toFixed(digits)}${unit}, lowest ${Math.min(...vals).toFixed(digits)}${unit}`;
+        const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
+        svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('class', 'w-100'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', title);
+        const add = (tag, attrs, text) => { const e = document.createElementNS(ns, tag); Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v)); if (text) e.textContent = text; svg.appendChild(e); return e; };
+        add('rect', { x: L, y: T, width: W - L - R, height: H - T - B, fill: 'none', stroke: '#495057', 'stroke-width': 1 });
+        [lo, (lo + hi) / 2, hi].forEach((v) => add('text', { x: L - 4, y: y(v) + 3, 'text-anchor': 'end', 'font-size': 10, fill: '#adb5bd' }, v.toFixed(digits)));
+        lines.forEach((l) => { add('line', { x1: L, x2: W - R, y1: y(l.value), y2: y(l.value), stroke: l.color, 'stroke-dasharray': '4 3', 'stroke-width': 1 }); add('text', { x: W - R - 2, y: y(l.value) - 2, 'text-anchor': 'end', 'font-size': 9, fill: l.color }, l.label); });
+        const fmt = (ms) => new Date(ms).toLocaleString([], t1 - t0 > 36e5 * 30 ? { weekday: 'short', hour: '2-digit', minute: '2-digit' } : { hour: '2-digit', minute: '2-digit' });
+        add('text', { x: L, y: H - 4, 'font-size': 10, fill: '#adb5bd' }, fmt(t0)); add('text', { x: W - R, y: H - 4, 'text-anchor': 'end', 'font-size': 10, fill: '#adb5bd' }, fmt(t1));
+        const pts = points.filter((p) => p[key] !== null && p[key] !== undefined).map((p) => `${x(p).toFixed(1)},${y(p[key]).toFixed(1)}`).join(' ');
+        add('polyline', { points: pts, fill: 'none', stroke: '#0dcaf0', 'stroke-width': 1.6, 'stroke-linejoin': 'round' });
+        box.appendChild(svg); return box;
+    }
+    async function statsLoad() {
+        const hours = document.getElementById('statsHours').value;
+        const res = await fetch(`/api/workers/${stats.id}/history?hours=${hours}`); const data = await res.json();
+        const charts = document.getElementById('statsCharts'), note = document.getElementById('statsNote');
+        charts.textContent = ''; note.textContent = ''; note.className = 'small mb-2';
+        if (!data.ok) { note.textContent = data.message || 'Could not load the history.'; return; }
+        if (data.heat.throttled) { note.className += ' text-danger'; note.textContent = 'Cooling down: this worker is too hot and is not being given new jobs.'; }
+        else if (data.heat.alerted) { note.className += ' text-warning'; note.textContent = 'This worker has been running hot.'; }
+        if (data.drives.length) { const d = document.createElement('div'); d.className = 'small text-danger'; d.textContent = data.drives.map((x) => `${x.device} ${x.model} ${x.problem}`).join('; '); note.appendChild(d); }
+        if (!data.points.length) { charts.textContent = 'No history yet. A point is saved every five minutes while the worker checks in.'; return; }
+        const hot = [{ value: data.limits.alert_c, color: '#ffc107', label: `alert ${data.limits.alert_c}\u00b0` }]; if (data.limits.throttle_c) hot.push({ value: data.limits.throttle_c, color: '#dc3545', label: `cool-down ${data.limits.throttle_c}\u00b0` });
+        charts.appendChild(statsChart('CPU temperature', data.points, 'temp', { unit: '\u00b0C', lines: hot }));
+        charts.appendChild(statsChart('CPU in use', data.points, 'cpu', { unit: '%', max: 100 }));
+        charts.appendChild(statsChart('Free work space', data.points, 'free_gb', { unit: ' GB' }));
+        charts.appendChild(statsChart('Jobs running', data.points, 'running', { max: 1 }));
+    }
+    document.getElementById('statsHours').addEventListener('change', statsLoad);
+    document.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-worker-stats]'); if (!b) return;
+        stats.id = b.dataset.workerStats; stats.name = b.dataset.name; document.getElementById('workerStatsTitle').textContent = `Stats of ${b.dataset.name}`;
+        modal('workerStatsModal').show(); statsLoad();
+    });
+
     // Add or edit a worker
     let editing = null;
     // The PC's drives (the update helper on the PC lists them; SyncHub never formats or mounts anything)
@@ -216,6 +264,10 @@
         });
         table.classList.remove('d-none');
         note.textContent = `Listed ${found.at} UTC. Pressing Use for work files fills the folder above; press Save to apply it.`;
+        const extra = (text, cls) => { const d = document.createElement('div'); d.className = cls; d.textContent = text; note.appendChild(d); };
+        (found.smart || []).forEach((d) => extra(`${d.device} ${d.model || ''}: health ${d.passed === true ? 'OK' : d.passed === false ? 'FAILED' : 'unknown'}${d.temp_c !== null && d.temp_c !== undefined ? ', ' + d.temp_c + '\u00b0C' : ''}${d.wear_pct !== null && d.wear_pct !== undefined ? ', ' + d.wear_pct + '% worn' : ''}${d.hours ? ', ' + Math.round(d.hours / 24) + ' days powered on' : ''}`, d.passed === false || d.wear_pct >= 90 ? 'text-danger' : 'text-body-secondary'));
+        if (found.smart_note) extra(found.smart_note, 'text-warning');
+        if (found.sleep === true) extra('This PC is allowed to suspend. A sleeping worker goes offline and drops its shares: mask it with  sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target', 'text-warning');
     }
     async function disksLoad(ask) {
         if (!editing) return;
@@ -242,6 +294,9 @@
         document.getElementById('setScan').value = st.scan_threads || 2;
         document.getElementById('setLog').value = st.log_level || 'INFO';
         document.getElementById('setGpuBusy').value = st.gpu_busy || 'smart';
+        document.getElementById('setTempAlert').value = st.temp_alert_c ?? 85; document.getElementById('setTempMinutes').value = st.temp_alert_minutes ?? 10;
+        document.getElementById('setDiskLow').value = st.disk_low_gb ?? 30; document.getElementById('setThrottle').checked = st.throttle !== false;
+        document.getElementById('setThrottleC').value = st.throttle_c ?? 90; document.getElementById('setThrottleMin').value = st.throttle_minutes ?? 5; document.getElementById('setResumeC').value = st.throttle_resume_c ?? 80;
         document.getElementById('setWorkDir').value = st.work_dir || '';
         disksReset(); if (editing) disksLoad(false);
         document.getElementById('setWindow').value = st.update_window || '';
@@ -254,7 +309,9 @@
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const body = { name: document.getElementById('workerName').value, tags: document.getElementById('workerTags').value, slots: document.getElementById('workerSlots').value,
-            settings: { encoder: document.getElementById('setEncoder').value, gpu_slots: document.getElementById('setGpuSlots').value, gpu_busy: document.getElementById('setGpuBusy').value, work_dir: document.getElementById('setWorkDir').value, max_copy_mb_s: document.getElementById('setCopy').value, scan_threads: document.getElementById('setScan').value,
+            settings: { encoder: document.getElementById('setEncoder').value, gpu_slots: document.getElementById('setGpuSlots').value, gpu_busy: document.getElementById('setGpuBusy').value,
+                        temp_alert_c: document.getElementById('setTempAlert').value, temp_alert_minutes: document.getElementById('setTempMinutes').value, disk_low_gb: document.getElementById('setDiskLow').value, throttle: document.getElementById('setThrottle').checked,
+                        throttle_c: document.getElementById('setThrottleC').value, throttle_minutes: document.getElementById('setThrottleMin').value, throttle_resume_c: document.getElementById('setResumeC').value, work_dir: document.getElementById('setWorkDir').value, max_copy_mb_s: document.getElementById('setCopy').value, scan_threads: document.getElementById('setScan').value,
                         log_level: document.getElementById('setLog').value, update_window: document.getElementById('setWindow').value, auto_update: document.getElementById('setAutoUpdate').checked, ai_quality: document.getElementById('setAiQuality').checked } };
         const data = await post(editing ? `/api/workers/${editing}/update` : '/api/workers', body);
         if (!data.ok) { document.getElementById('workerError').textContent = data.message || 'Failed.'; return; }

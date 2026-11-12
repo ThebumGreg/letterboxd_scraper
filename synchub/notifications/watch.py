@@ -69,6 +69,28 @@ def check(now=None):
             after[tk] = bad
             if bad and before.get(tk) is not True:
                 raised += bool(emit.notify(conn, "tv_adb_unauthorized", f"{tk}:{now}", {"tv": name}, now=now))
+        for w in workers.list_all(conn, now):
+            if w.get("revoked") or not w["online"]:
+                continue
+            name, wk = w.get("name") or f"worker {w['id']}", f"worker:{w['id']}"
+            heat = workers.heat_state(conn, w["id"])
+            after[f"{wk}:hot"] = heat["alerted"]
+            if heat["alerted"] != bool(before.get(f"{wk}:hot")) and (heat["alerted"] or f"{wk}:hot" in before):
+                temp = ((w["status"].get("host") or {}).get("temps") or {}).get("cpu") if isinstance(w["status"], dict) else None
+                payload = {"worker": name, "temp": round(temp) if isinstance(temp, (int, float)) else "?", "minutes": workers.setting(w, "temp_alert_minutes"), "throttle": heat["throttled"]}
+                kind = "worker_hot" if heat["alerted"] else "worker_cooled"
+                raised += bool(emit.notify(conn, kind, f"{wk}:{kind}:{now}", payload if heat["alerted"] else {"worker": name}, now=now))
+            free, limit = (w["status"] or {}).get("work_free_bytes"), workers.setting(w, "disk_low_gb")
+            if isinstance(free, (int, float)) and limit:
+                low = (before.get(f"{wk}:lowdisk") is True and free < limit * 1e9 * 1.1) or free < limit * 1e9      # 10% slack before it counts as recovered
+                after[f"{wk}:lowdisk"] = low
+                if low and not before.get(f"{wk}:lowdisk"):
+                    raised += bool(emit.notify(conn, "worker_disk_low", f"{wk}:lowdisk:{now}", {"worker": name, "free_gb": round(free / 1e9), "limit_gb": limit}, now=now))
+            for drive in (workers.drive_problems(conn, w["id"])):
+                dk = f"{wk}:drive:{drive['device']}"
+                after[dk] = True
+                if not before.get(dk):
+                    raised += bool(emit.notify(conn, "drive_health", f"{dk}:{now}", {"worker": name, **drive}, now=now))
         from synchub import jobs
         stuck = jobs.stuck(conn, now)
         after["queue:stuck"] = bool(stuck)

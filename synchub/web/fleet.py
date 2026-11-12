@@ -82,6 +82,7 @@ def describe_host(w):
     cpu = host.get("cpu") if host and isinstance(host.get("cpu"), dict) else {}
     threads, cores = _whole(cpu.get("threads")) or _whole(caps.get("cores")), _whole(cpu.get("cores"))
     load = [x for x in _items(dynamic.get("load"), 3) if isinstance(x, (int, float)) and not isinstance(x, bool)]
+    temps = dynamic.get("temps") if isinstance(dynamic.get("temps"), dict) else {}
     gpus = []
     for gpu in _items((host or {}).get("gpus"), 8):
         if isinstance(gpu, dict) and gpu.get("name"):
@@ -96,6 +97,12 @@ def describe_host(w):
         "cpu_flags": [str(f)[:16] for f in _items(cpu.get("flags"))], "cpu_percent": round(dynamic["cpu_percent"]) if isinstance(dynamic.get("cpu_percent"), (int, float)) else None,
         "load": " ".join(f"{x:.2f}" for x in load) or None, "memory_total": _gb((host or {}).get("memory_bytes")), "memory_free": _gb(dynamic.get("mem_available_bytes")),
         "gpus": gpus, "render_devices": [str(d)[:40] for d in _items((host or {}).get("render_devices"), 8)],
+        "temps": " · ".join(f"{label} {t:.0f} °C" for label, t in (("CPU", temps.get("cpu")), ("Drive", temps.get("nvme")), ("GPU", temps.get("gpu")), ("Other", temps.get("other")))
+                            if isinstance(t, (int, float)) and not isinstance(t, bool)) or None,
+        "temp_cpu": temps.get("cpu") if isinstance(temps.get("cpu"), (int, float)) else None,
+        "gpu_clock": (f"{_whole(dynamic.get('gpu_mhz'))} of {_whole(dynamic.get('gpu_max_mhz'))} MHz" if _whole(dynamic.get("gpu_mhz")) is not None and _whole(dynamic.get("gpu_max_mhz")) else
+                      f"{_whole(dynamic.get('gpu_percent'))}% busy" if _whole(dynamic.get("gpu_percent")) is not None else None),
+        "gpu_encodes": _whole(live.get("gpu_encodes")),
         "container": container, "host_uptime": _duration(dynamic.get("host_uptime_seconds")), "agent_uptime": _duration(live.get("uptime_seconds")),
         "python": _text(caps.get("python"), 20), "ffmpeg": _text(caps.get("ffmpeg"), 120), "ffprobe": _text(caps.get("ffprobe"), 120),
         "hwaccels": [str(h)[:24] for h in _items(ffmpeg.get("hwaccels"), 20)], "vmaf": bool(caps.get("vmaf")), "ops": [str(o)[:24] for o in _items(caps.get("ops"), 20)],
@@ -148,7 +155,7 @@ def describe_relay(w):
     return {"text": f"Camera relay: {len(seen.get('streams') or [])} camera(s)", "color": "success" if not seen.get("error") else "warning", "title": seen.get("error") or ""}
 
 
-def describe_worker(w, root_names=(), update=None, host_seen=False):
+def describe_worker(w, root_names=(), update=None, host_seen=False, heat=None):
     """The worker plus what the page shows: a state, encoders, space, its shares and when it was last heard from."""
     if w["revoked"]:
         state, color = "Revoked", "danger"
@@ -172,6 +179,7 @@ def describe_worker(w, root_names=(), update=None, host_seen=False):
     w["build_differs"] = bool(w["commit"] and buildinfo.get()["commit"] and w["commit"] != buildinfo.get()["commit"] and w["version"] == __version__)
     w["benchmark"] = describe_benchmark(w)
     w["relay"] = describe_relay(w)
+    w["heat"] = heat or {"alerted": False, "throttled": False}
     return w
 
 
@@ -247,7 +255,7 @@ def snapshot(conn):
     for j in listed:
         j["waiting_for"] = _waiting_for(j, able)
     tasks = [describe_task(t) for t in workers.recent_tasks(conn, 30)]
-    return {"workers": [describe_worker(w, root_names, workers.last_update(conn, w["id"]), workers.host_seen(conn, w["id"])) for w in raw], "jobs": listed, "tasks": tasks, "rows": merged_rows(listed, tasks), "counts": counts, "summary": summary, "root_names": root_names, "app_version": __version__, "app_build": buildinfo.get()}
+    return {"workers": [describe_worker(w, root_names, workers.last_update(conn, w["id"]), workers.host_seen(conn, w["id"]), workers.heat_state(conn, w["id"])) for w in raw], "jobs": listed, "tasks": tasks, "rows": merged_rows(listed, tasks), "counts": counts, "summary": summary, "root_names": root_names, "app_version": __version__, "app_build": buildinfo.get()}
 
 
 def _setup(conn, name, token=None):
@@ -376,6 +384,21 @@ def register(app):
             needs = [r["need_bytes"] for r in conn.execute("SELECT need_bytes FROM job WHERE status = 'queued' AND need_bytes > 0 ORDER BY need_bytes DESC LIMIT 5")]
             return jsonify(ok=True, name=worker["name"], work_dir=workers.setting(worker, "work_dir"), disks=workers.disks_of(conn, worker_id),
                            report=workers.workdir_report(conn, worker_id), asking=settings.get(workers.DISKS_WANT_KEY.format(worker_id), "", conn=conn) == "1", queued_needs=needs)
+
+    @app.route("/api/workers/<int:worker_id>/history")
+    def api_worker_history(worker_id):
+        """The worker's health history (CPU, temperature, free work space, jobs) for the Stats window: ?hours=24 up to 336 (14 days)."""
+        try:
+            hours = int(request.args.get("hours", 24))
+        except ValueError:
+            hours = 24
+        with db.connection() as conn:
+            worker = workers.get(conn, worker_id)
+            if worker is None:
+                return _fail("That worker no longer exists.", 404)
+            return jsonify(ok=True, name=worker["name"], hours=hours, points=workers.history(conn, worker_id, hours),
+                           limits={"alert_c": workers.setting(worker, "temp_alert_c"), "throttle_c": workers.setting(worker, "throttle_c") if workers.setting(worker, "throttle") else None},
+                           heat=workers.heat_state(conn, worker_id), drives=workers.drive_problems(conn, worker_id))
 
     @app.route("/api/workers/<int:worker_id>/log")
     def api_worker_log(worker_id):

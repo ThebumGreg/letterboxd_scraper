@@ -5,12 +5,15 @@ lost token is replaced (rotated), never recovered.
 """
 import hashlib
 import json
+import logging
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
 from synchub import db, settings
 from synchub.notifications import emit
+
+logger = logging.getLogger(__name__)
 
 PROTOCOL = 1                  # bumped when the worker API changes incompatibly; older agents are refused
 ONLINE_SECONDS = 60           # a worker that has not polled for this long shows as offline
@@ -112,7 +115,15 @@ SETTINGS = {
     "auto_update": ("host", "bool", True, None),
     "ai_quality": ("host", "bool", False, None),                # build the image with the AI quality test layer (PyTorch and models, about 1 GB); see agent/auto-update.sh
     "work_dir": ("host", "path", "", None),                      # the folder on the PC that holds job files (WORK_DIR in .env); the PC's helper switches to it when the worker is idle
-    "update_window": ("host", "window", "", None),              # HH:MM-HH:MM local time on the PC, empty = only when idle
+    "update_window": ("host", "window", "", None),
+    # SyncHub's own limits for this PC ("hub": never sent to the agent or the helper): when to warn about heat and low space, and when to stop taking new jobs
+    "temp_alert_c": ("hub", "int", 85, (50, 110)),              # tell the administrators when the CPU stays at or above this ...
+    "temp_alert_minutes": ("hub", "int", 10, (1, 240)),         # ... for this long
+    "disk_low_gb": ("hub", "int", 30, (0, 100000)),             # tell them when the work folder has less than this free (0 = never)
+    "throttle": ("hub", "bool", True, None),                    # stop giving this worker new jobs while it is too hot; a running job is never stopped
+    "throttle_c": ("hub", "int", 90, (50, 115)),
+    "throttle_minutes": ("hub", "int", 5, (1, 120)),
+    "throttle_resume_c": ("hub", "int", 80, (40, 110)),         # new jobs again once it is back under this              # HH:MM-HH:MM local time on the PC, empty = only when idle
 }
 _PATH = re.compile(r"^/[A-Za-z0-9._@+/-]{1,200}$")
 _WINDOW = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$")
@@ -291,8 +302,100 @@ def touch(conn, worker_id, status=None, now=None):
         text = json.dumps(status)
         if len(text) <= MAX_STATUS_BYTES:
             conn.execute("UPDATE worker SET last_seen = ?, status = ? WHERE id = ?", (now or db.now(), text, worker_id))
+            try:
+                record_stat(conn, worker_id, status, now)
+            except Exception as exc:                                 # noqa: B902  (a history problem must never stop a check-in)
+                logger.warning(f"[workers] could not record health for worker {worker_id}: {exc.__class__.__name__}: {exc}")
             return
     conn.execute("UPDATE worker SET last_seen = ? WHERE id = ?", (now or db.now(), worker_id))
+
+
+# ---------------------------------------------------------------- health history, heat alerts and the throttle guard
+STAT_EVERY_SECONDS = 300
+STAT_KEEP_DAYS = 14
+HEAT_KEY = "worker_heat:{}"
+
+
+def _seconds(a, b):
+    """Seconds from time text a to time text b."""
+    fmt = "%Y-%m-%d %H:%M:%S"
+    return (datetime.strptime(b[:19], fmt) - datetime.strptime(a[:19], fmt)).total_seconds()
+
+
+def _number(value):
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def heat_state(conn, worker_id):
+    """{'alert_since', 'throttle_since', 'alerted', 'throttled'}: the heat watch for one worker (see track_heat)."""
+    got = _load(settings.get(HEAT_KEY.format(worker_id), "", conn=conn), {})
+    return {"alert_since": got.get("alert_since"), "throttle_since": got.get("throttle_since"), "alerted": bool(got.get("alerted")), "throttled": bool(got.get("throttled"))}
+
+
+def throttled(conn, worker_id):
+    """True while the worker is too hot to be given new jobs (the throttle guard)."""
+    return heat_state(conn, worker_id)["throttled"]
+
+
+def track_heat(conn, worker_id, temp, now):
+    """Follows the CPU temperature from every check-in. Hot for `temp_alert_minutes` flags an alert (the notification watcher tells people); hot for
+    `throttle_minutes` at the throttle temperature stops new jobs until it is back under `throttle_resume_c`. Writes only when something changes."""
+    w = get(conn, worker_id)
+    if w is None or temp is None:
+        return
+    state = heat_state(conn, worker_id)
+    was = dict(state)
+    if temp >= setting(w, "temp_alert_c"):
+        state["alert_since"] = state["alert_since"] or now
+        if _seconds(state["alert_since"], now) >= setting(w, "temp_alert_minutes") * 60:
+            state["alerted"] = True
+    else:
+        state["alert_since"], state["alerted"] = None, False
+    if setting(w, "throttle"):
+        if temp >= setting(w, "throttle_c"):
+            state["throttle_since"] = state["throttle_since"] or now
+            if _seconds(state["throttle_since"], now) >= setting(w, "throttle_minutes") * 60:
+                state["throttled"] = True
+        else:
+            state["throttle_since"] = None
+            if temp <= setting(w, "throttle_resume_c"):
+                state["throttled"] = False
+    else:
+        state["throttle_since"], state["throttled"] = None, False
+    if state != was:
+        settings.set_value(HEAT_KEY.format(worker_id), json.dumps(state), conn=conn)
+
+
+def record_stat(conn, worker_id, status, now=None):
+    """One history row per worker per five minutes from the status it sends, old rows dropped; the heat watch sees every check-in."""
+    now = now or db.now()
+    host = status.get("host") if isinstance(status.get("host"), dict) else {}
+    temps = host.get("temps") if isinstance(host.get("temps"), dict) else {}
+    track_heat(conn, worker_id, _number(temps.get("cpu")) if _number(temps.get("cpu")) is not None else _number(temps.get("max")), now)
+    last = conn.execute("SELECT MAX(at) FROM worker_stat WHERE worker_id = ?", (worker_id,)).fetchone()[0]
+    if last is not None and _seconds(last, now) < STAT_EVERY_SECONDS:
+        return
+    running = conn.execute("SELECT COUNT(*) FROM job WHERE worker_id = ? AND status = 'running'", (worker_id,)).fetchone()[0]
+    conn.execute("INSERT INTO worker_stat (worker_id, at, cpu_percent, temp_cpu, temp_max, mem_available, work_free, running, gpu_encodes, gpu_mhz) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 (worker_id, now, _number(host.get("cpu_percent")), _number(temps.get("cpu")), _number(temps.get("max")), _number(host.get("mem_available_bytes")),
+                  _number(status.get("work_free_bytes")), running, _number(status.get("gpu_encodes")), _number(host.get("gpu_mhz"))))
+    conn.execute("DELETE FROM worker_stat WHERE at < ?", ((datetime.strptime(now[:19], "%Y-%m-%d %H:%M:%S") - timedelta(days=STAT_KEEP_DAYS)).strftime("%Y-%m-%d %H:%M:%S"),))
+
+
+def history(conn, worker_id, hours=24, points=240, now=None):
+    """The worker's health history for the last `hours`, averaged into at most `points` steps: [{'at', 'cpu', 'temp', 'free_gb', 'running', 'gpu_encodes'}]."""
+    now = now or db.now()
+    hours = max(1, min(int(hours), STAT_KEEP_DAYS * 24))
+    since = (datetime.strptime(now[:19], "%Y-%m-%d %H:%M:%S") - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+    rows = [dict(r) for r in conn.execute("SELECT * FROM worker_stat WHERE worker_id = ? AND at >= ? ORDER BY at", (worker_id, since))]
+    step = max(1, -(-len(rows) // max(1, points)))
+    out = []
+    for i in range(0, len(rows), step):
+        chunk = rows[i:i + step]
+        avg = lambda key: (round(sum(r[key] for r in chunk if r[key] is not None) / n, 1) if (n := sum(1 for r in chunk if r[key] is not None)) else None)   # noqa: E731
+        out.append({"at": chunk[-1]["at"], "cpu": avg("cpu_percent"), "temp": max((r["temp_cpu"] if r["temp_cpu"] is not None else r["temp_max"] for r in chunk if r["temp_cpu"] is not None or r["temp_max"] is not None), default=None),
+                    "free_gb": round(avg("work_free") / 1e9) if avg("work_free") is not None else None, "running": max(r["running"] or 0 for r in chunk), "gpu_encodes": max(r["gpu_encodes"] or 0 for r in chunk)})
+    return out
 
 
 # ---------------------------------------------------------------- the worker's own log ("Get logs")
@@ -605,6 +708,19 @@ WORKDIR_KEY = "worker_workdir:{}"
 DISK_FIELDS = (("device", 120), ("name", 80), ("mount", 200), ("fstype", 30), ("model", 80), ("label", 60))
 
 
+def drive_problems(conn, worker_id):
+    """Drives the PC's helper says are failing: [{'device', 'model', 'problem'}], from the last SMART report."""
+    got = _load(settings.get(DISKS_KEY.format(worker_id), "", conn=conn), {})
+    out = []
+    for d in got.get("smart") or []:
+        if not isinstance(d, dict):
+            continue
+        problem = "failed its health check" if d.get("passed") is False else f"is {round(d['wear_pct'])}% worn out" if isinstance(d.get("wear_pct"), (int, float)) and d["wear_pct"] >= 90 else None
+        if problem:
+            out.append({"device": str(d.get("device") or "")[:60], "model": str(d.get("model") or "")[:60], "problem": problem})
+    return out
+
+
 def request_disks(conn, worker_id):
     """Asks the PC's helper for its drives at its next check. Kept apart from host_request so it never replaces a pending update or restart."""
     if get(conn, worker_id) is None:
@@ -614,8 +730,9 @@ def request_disks(conn, worker_id):
 
 def store_disks(conn, worker_id, report, now=None):
     """The drives the PC's helper found (lsblk and statvfs on the host). Kept exactly as reported, cleaned: only plain fields, at most 40 drives."""
+    old = _load(settings.get(DISKS_KEY.format(worker_id), "", conn=conn), {})
     disks = []
-    for d in (report.get("disks") if isinstance(report, dict) else None) or []:
+    for d in (report.get("disks") if isinstance(report, dict) and "disks" in report else old.get("disks")) or []:
         if not isinstance(d, dict) or len(disks) >= 40:
             continue
         one = {k: str(d.get(k) or "")[:n] for k, n in DISK_FIELDS}
@@ -626,8 +743,14 @@ def store_disks(conn, worker_id, report, now=None):
         one["ssd"] = d.get("ssd") if d.get("ssd") in (True, False) else None
         one["system"] = bool(d.get("system"))
         disks.append(one)
-    current = str(report.get("work_dir") or "")[:200] if isinstance(report, dict) else ""
-    settings.set_value(DISKS_KEY.format(worker_id), json.dumps({"disks": disks, "work_dir": current, "at": now or db.now()}), conn=conn)
+    current = str(report.get("work_dir") or "")[:200] if isinstance(report, dict) and "work_dir" in report else old.get("work_dir", "")
+    smart = old.get("smart") or []                                    # the health list arrives on its own schedule: a drive scan without one keeps the last
+    if isinstance(report, dict) and isinstance(report.get("smart"), list):
+        smart = [{"device": str(d.get("device") or "")[:60], "model": str(d.get("model") or "")[:60], "passed": d.get("passed") if d.get("passed") in (True, False) else None,
+                  "temp_c": _number(d.get("temp_c")), "wear_pct": _number(d.get("wear_pct")), "hours": _number(d.get("hours"))} for d in report["smart"][:20] if isinstance(d, dict)]
+    extra = {"smart": smart, "smart_note": str(report.get("smart_note") or "")[:200] if isinstance(report, dict) else "",
+             "sleep": report.get("sleep") if isinstance(report, dict) and report.get("sleep") in (True, False) else old.get("sleep")}
+    settings.set_value(DISKS_KEY.format(worker_id), json.dumps({"disks": disks, "work_dir": current, "at": (now or db.now()) if isinstance(report, dict) and "disks" in report else old.get("at") or now or db.now(), **extra}), conn=conn)
     return disks
 
 

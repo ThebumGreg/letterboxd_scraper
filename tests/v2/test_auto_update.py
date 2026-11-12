@@ -572,18 +572,32 @@ LSBLK = '''{"blockdevices": [
  {"name":"sdc","path":"/dev/sdc","type":"disk","size":1000204886016,"fstype":null,"label":null,"mountpoint":null,"rota":true,"model":"Blank HDD"}]}'''
 
 
+def posted(calls, what):
+    import json
+    return [json.loads(c.split("--data ", 1)[1].rsplit(" http", 1)[0]) for c in calls.splitlines() if what in c and "--data " in c]
+
+
 def test_the_helper_lists_the_drives_when_asked_and_only_then(box):
     shim(box, "lsblk", f"cat <<'JSON'\n{LSBLK}\nJSON")
-    assert "update/disks" not in box.run(SHIM_ANSWER=answer())[2]
+    first = posted(box.run(SHIM_ANSWER=answer())[2], "update/disks")
+    assert len(first) == 1 and "disks" not in first[0] and "smartmontools is not installed" in first[0]["smart_note"]      # the health check runs on its own once; no drive list
+    assert posted(box.run(SHIM_ANSWER=answer())[2], "update/disks") == first                                           # and not again for six hours
     code, out, calls = box.run(SHIM_ANSWER=answer(want_disks=True))
-    sent = [c for c in calls.splitlines() if "update/disks" in c]
+    sent = [b for b in posted(calls, "update/disks") if "disks" in b]
     assert code == 0 and len(sent) == 1
-    import json
-    body = json.loads(sent[0].split("--data ", 1)[1].rsplit(" http", 1)[0])
-    names = {d["name"]: d for d in body["disks"]}
+    names = {d["name"]: d for d in sent[0]["disks"]}
     assert "sda1" not in names and "sda3" not in names                              # the EFI partition and the LVM member are not offered
     assert names["ubuntu--vg-ubuntu--lv"]["system"] is True and names["sdb1"]["ssd"] is True
     assert names["sdc"]["mounted"] is False and names["sdc"]["ssd"] is False and names["sdc"]["model"] == "Blank HDD"
+
+
+def test_drive_health_is_read_with_smartctl_and_sent_with_the_sleep_check(box):
+    shim(box, "lsblk", "printf '/dev/sdb disk Old SSD\\n/dev/loop0 loop\\n'")
+    shim(box, "smartctl", """echo '{"model_name":"Old SSD","smart_status":{"passed":false},"temperature":{"current":41},"power_on_time":{"hours":4800},"ata_smart_attributes":{"table":[]}}'""")
+    shim(box, "systemctl", "echo masked")
+    body = posted(box.run(SHIM_ANSWER=answer(want_disks=True))[2], "update/disks")[-1]
+    assert body["smart"] == [{"device": "/dev/sdb", "model": "Old SSD", "passed": False, "temp_c": 41, "wear_pct": None, "hours": 4800}]
+    assert body["sleep"] is False                                                   # sleep.target is masked: the PC cannot suspend
 
 
 def test_a_work_folder_on_the_system_disk_or_a_missing_one_is_refused(box, tmp_path):

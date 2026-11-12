@@ -2,7 +2,15 @@
 
 ## Unreleased
 
-Migration 044. Update SyncHub first, then the workers.
+Migrations 044 and 045. Update SyncHub first, then the workers.
+
+**Worker health: temperatures, history, alerts, a cool-down guard and drive health (migration 045).** Update SyncHub, then the workers.
+- **Temperatures.** The worker reads the PC's sensors (CPU, drives, GPU where exposed) and the integrated GPU's clock; the Workers page shows them, and a "Hot" or "Cooling down" badge when it matters.
+- **History.** One point every five minutes for 14 days (CPU, hottest temperature, free work space, jobs running, GPU encodes). **Stats** on each worker draws them as charts for 6 hours up to 14 days.
+- **Alerts** (through your notification settings, administrators): the CPU stays at or above 85 °C for 10 minutes ("Worker running hot", and one all-clear when it cools); the work folder has under 30 GB free; a drive fails its health check or is 90% worn out (urgent). Each is told once, not every minute. The numbers are per worker in Edit worker > Settings.
+- **Cool-down guard.** At 90 °C for 5 minutes the worker is given no new jobs until it is back under 80 °C. A running job is never stopped. Switch it off per worker in Edit worker.
+- **Drive health.** The PC's helper reads SMART and NVMe wear every 6 hours and when you press Scan drives (needs `sudo apt install smartmontools` on the PC; without it the drive list says so). The same report says whether the PC is allowed to suspend, which would drop the shares.
+- Not included: estimated finish times for queued work.
 
 **Choose the work drive from SyncHub, and a busy GPU now makes big films wait (no migration).** Update SyncHub, then the workers (the PC's helper updates itself with the worker).
 - **Work folder and drives (Edit worker).** "Scan drives" asks the PC's helper to list its drives: name, SSD or HDD, where it is mounted, free and total space, and whether it has room for the biggest queued job. "Use for work files" fills in a folder on that drive; Save applies it. The helper switches only when the worker is idle, only to a folder on a separate mounted drive that is writable (never the system disk by accident), keeps the old `.env`, and puts everything back if the worker does not start. What it did is shown under the field. SyncHub never formats or mounts a drive; an unmounted or blank drive is listed as "needs setting up on the PC". Old job folders are not moved.
