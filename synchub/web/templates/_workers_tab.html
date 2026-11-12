@@ -42,6 +42,14 @@
                             <div class="form-text">Inside it the worker updates even if busy; otherwise only when idle.</div></div>
                         <div class="col-12 form-check ms-1"><input type="checkbox" class="form-check-input" id="setAutoUpdate" checked><label class="form-check-label small" for="setAutoUpdate">Update automatically (needs <code>agent/auto-update.sh</code> on the PC)</label></div>
                         <div class="col-12 form-check ms-1"><input type="checkbox" class="form-check-input" id="setAiQuality"><label class="form-check-label small" for="setAiQuality">AI quality test (rebuilds the worker with PyTorch and three models, about 1 GB; runs when the worker is idle; needs <code>agent/auto-update.sh</code> on the PC)</label></div>
+                        <div class="col-12 mt-2 small fw-bold">Heat and space limits</div>
+                        <div class="col-4"><label for="setTempAlert" class="form-label small mb-0">Alert at (&deg;C)</label><input type="number" class="form-control form-control-sm" id="setTempAlert" min="50" max="110" value="85"></div>
+                        <div class="col-4"><label for="setTempMinutes" class="form-label small mb-0">for (minutes)</label><input type="number" class="form-control form-control-sm" id="setTempMinutes" min="1" max="240" value="10"></div>
+                        <div class="col-4"><label for="setDiskLow" class="form-label small mb-0">Low space (GB)</label><input type="number" class="form-control form-control-sm" id="setDiskLow" min="0" value="30"><div class="form-text">0 = never</div></div>
+                        <div class="col-12 form-check ms-1"><input type="checkbox" class="form-check-input" id="setThrottle" checked><label class="form-check-label small" for="setThrottle">Cool-down guard: stop giving this worker new jobs while it is too hot (a running job is never stopped)</label></div>
+                        <div class="col-4"><label for="setThrottleC" class="form-label small mb-0">Too hot at (&deg;C)</label><input type="number" class="form-control form-control-sm" id="setThrottleC" min="50" max="115" value="90"></div>
+                        <div class="col-4"><label for="setThrottleMin" class="form-label small mb-0">for (minutes)</label><input type="number" class="form-control form-control-sm" id="setThrottleMin" min="1" max="120" value="5"></div>
+                        <div class="col-4"><label for="setResumeC" class="form-label small mb-0">Resume under (&deg;C)</label><input type="number" class="form-control form-control-sm" id="setResumeC" min="40" max="110" value="80"></div>
                         <div class="col-12 mt-2"><label for="setWorkDir" class="form-label small mb-0">Work folder on the PC</label>
                             <div class="input-group input-group-sm"><input class="form-control" id="setWorkDir" placeholder="leave empty to keep the current one" maxlength="200" autocomplete="off"><button type="button" class="btn btn-outline-secondary" id="scanDisksBtn">Scan drives</button></div>
                             <div class="form-text">Where jobs keep their copies while converting. Pick a drive below or type a folder that is already mounted on the PC. The PC's helper switches to it when the worker is idle, and refuses a folder that is not a separate mounted drive.</div>
@@ -117,6 +125,22 @@
                 <button type="button" class="btn btn-outline-secondary" data-decision="skip" title="Leave the file as it is and do not ask again until it changes">Skip</button>
                 <button type="button" class="btn btn-outline-info" data-decision="retry">Retry</button>
                 <button type="button" class="btn btn-success" data-decision="approve">Approve as recommended</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- A worker's health over time -->
+<div class="modal fade" id="workerStatsModal" tabindex="-1" aria-labelledby="workerStatsTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title" id="workerStatsTitle">Stats</h5>
+                <select class="form-select form-select-sm w-auto ms-3" id="statsHours" aria-label="Period"><option value="6">Last 6 hours</option><option value="24" selected>Last 24 hours</option><option value="168">Last 7 days</option><option value="336">Last 14 days</option></select>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+            <div class="modal-body">
+                <div class="small mb-2" id="statsNote"></div>
+                <div id="statsCharts"></div>
+                <div class="small text-body-secondary">One point every five minutes (averaged when zoomed out), kept for 14 days. Temperature shows the hottest reading in each step; the dashed lines are this worker's alert and cool-down limits (Edit worker, Settings).</div>
             </div>
         </div>
     </div>

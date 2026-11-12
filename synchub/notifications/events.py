@@ -94,6 +94,27 @@ register(EventType(
     description="A queued job has waited over an hour because no worker is online, or the workers cannot take it (not enough free space, a share down, a missing feature).",
 ))
 register(EventType(
+    "worker_hot", "A worker is running hot", ADMIN,
+    render=lambda p: Message("Worker running hot", f"{p.get('worker') or 'A worker'} has had its CPU at {p.get('temp')} C for {p.get('minutes')} minutes."
+                             + (" It is not being given new jobs until it cools down." if p.get("throttle") else ""), priority=0, ttl_seconds=86400),
+    description="A worker's CPU stayed at or above the temperature set for it (Edit worker, Settings) for the time set there.",
+))
+register(EventType(
+    "worker_cooled", "A worker cooled down", ADMIN,
+    render=lambda p: Message("Worker cooled down", f"{p.get('worker') or 'A worker'} is back to a normal temperature.", priority=-1, ttl_seconds=86400),
+    description="A worker that was running hot is back under its limit.",
+))
+register(EventType(
+    "worker_disk_low", "A worker is low on disk space", ADMIN,
+    render=lambda p: Message("Worker low on space", f"{p.get('worker') or 'A worker'} has only {p.get('free_gb')} GB free for its job files (the limit set for it is {p.get('limit_gb')} GB). Big jobs will wait.", priority=0, ttl_seconds=86400),
+    description="A worker's work folder has less free space than the limit set for it.",
+))
+register(EventType(
+    "drive_health", "A drive reports a problem", ADMIN,
+    render=lambda p: Message("Drive health warning", f"{p.get('worker') or 'A worker'}: drive {p.get('device')} {p.get('model') or ''} {p.get('problem') or 'is failing'}.".replace("  ", " "), priority=1, ttl_seconds=86400),
+    description="A drive in a worker's PC failed its SMART health check or is nearly worn out. Urgent.",
+))
+register(EventType(
     "share_problem", "A share is not mounted", ADMIN,
     render=lambda p: Message("Share problem", f"{p.get('worker') or 'A worker'} reports that '{p.get('root')}' is {p.get('state') or 'not ready'}.", priority=1, ttl_seconds=86400),
     description="A worker cannot reach one of its shares (not mounted, or its marker file is missing). Urgent.",

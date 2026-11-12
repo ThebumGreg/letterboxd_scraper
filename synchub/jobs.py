@@ -153,6 +153,9 @@ def claim(conn, worker, free_slots, free_bytes=None, now=None):
     """Gives the worker up to `free_slots` queued jobs it is allowed and able to run. A disabled, paused or draining worker gets none."""
     if not worker["enabled"] or worker["paused"] or worker["draining"]:
         return []
+    from synchub import workers
+    if workers.throttled(conn, worker["id"]):
+        return []                                      # too hot: no new jobs until it cools (a running job carries on)
     now = now or db.now()
     busy = conn.execute("SELECT COUNT(*) FROM job WHERE worker_id = ? AND status = 'running'", (worker["id"],)).fetchone()[0]
     room = min(int(free_slots or 0), worker["slots"] - busy)

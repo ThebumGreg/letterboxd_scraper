@@ -353,6 +353,44 @@ for d in out:
 sys.stdout.write(json.dumps({"disks": unique, "work_dir": os.environ.get("WORKDIR", "")}))
 ' > "$STATE/disks.json" 2>/dev/null && api /update/disks "$(cat "$STATE/disks.json")" >/dev/null 2>&1 || log "WARNING could not send the list of drives to SyncHub"
 }
+# Drive health (SMART) and whether the PC may go to sleep: sent with the drive list when asked, and on its own every 6 hours, so SyncHub can warn about a failing drive.
+# Read-only. Needs smartmontools on the PC (sudo apt install smartmontools); without it SyncHub is told that, and nothing else changes.
+health_sync() {
+    local due=0 now last; now="$(date +%s)"; last="$(cat "$STATE/health-last" 2>/dev/null || echo 0)"
+    [ $((now - last)) -ge 21600 ] && due=1
+    [ "$due" = 1 ] || [ "$(jget want_disks)" = true ] || return 0
+    command -v lsblk >/dev/null 2>&1 || return 0
+    echo "$now" > "$STATE/health-last"
+    local sleepy=true; [ "$(systemctl is-enabled sleep.target 2>/dev/null)" = masked ] && sleepy=false
+    SLEEPY="$sleepy" SMARTCTL="$(command -v smartctl || true)" python3 -c '
+import json, os, subprocess, sys
+out = {"smart": [], "smart_note": "", "sleep": os.environ.get("SLEEPY") == "true"}
+tool = os.environ.get("SMARTCTL")
+try:
+    names = [l.split() for l in subprocess.run(["lsblk", "-dn", "-o", "PATH,TYPE,MODEL"], capture_output=True, text=True, timeout=20).stdout.splitlines()]
+except Exception:
+    names = []
+if not tool:
+    out["smart_note"] = "smartmontools is not installed on the PC, so drive health cannot be read (sudo apt install smartmontools)"
+else:
+    for parts in names:
+        if len(parts) < 2 or parts[1] != "disk" or "/loop" in parts[0] or "/zram" in parts[0]:
+            continue
+        try:
+            raw = subprocess.run([tool, "-H", "-A", "-i", "-j", parts[0]], capture_output=True, text=True, timeout=30).stdout
+            d = json.loads(raw)
+        except Exception:
+            continue
+        status = (d.get("smart_status") or {}).get("passed")
+        nvme = d.get("nvme_smart_health_information_log") or {}
+        wear = nvme.get("percentage_used")
+        temp = (d.get("temperature") or {}).get("current")
+        if status is None and not nvme and not (d.get("ata_smart_attributes")):
+            continue
+        out["smart"].append({"device": parts[0], "model": d.get("model_name") or " ".join(parts[2:]), "passed": status, "temp_c": temp, "wear_pct": wear, "hours": (d.get("power_on_time") or {}).get("hours")})
+sys.stdout.write(json.dumps(out))
+' > "$STATE/health.json" 2>/dev/null && api /update/disks "$(cat "$STATE/health.json")" >/dev/null 2>&1 || true
+}
 # The work folder chosen in SyncHub (Edit worker > Work folder, or a drive picked from the list). Safe by construction: it only switches when the worker is idle, only to
 # a folder that is on a separate mounted drive (never the root disk by accident) and writable, keeps the old .env, and puts everything back if the worker does not start.
 workdir_report() { # workdir_report STATUS MESSAGE: once per distinct outcome
@@ -396,6 +434,7 @@ workdir_sync() {
 [ "$FORCE" = 1 ] || [ -z "$answer" ] || relay_sync
 [ "$FORCE" = 1 ] || [ -z "$answer" ] || ai_sync
 [ "$FORCE" = 1 ] || [ -z "$answer" ] || disks_sync
+[ "$FORCE" = 1 ] || [ -z "$answer" ] || health_sync
 [ "$FORCE" = 1 ] || [ -z "$answer" ] || workdir_sync
 
 # The installed copy of this script is what the timer runs: when the checkout holds a newer one, replace it (a rename, so a run in progress is not disturbed).

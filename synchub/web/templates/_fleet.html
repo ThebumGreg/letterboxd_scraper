@@ -74,12 +74,13 @@
 <div class="panel mb-4{% if not w.online %} opacity-75{% endif %}" data-status-worker="{{ w.id }}">
     <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
         <div>
-            <h5 class="mb-1">{{ w.name }} <span class="badge bg-{{ w.state_color }}{% if w.state_color in ['info', 'warning'] %} text-dark{% endif %} fs-6">{{ w.state }}</span></h5>
+            <h5 class="mb-1">{{ w.name }} <span class="badge bg-{{ w.state_color }}{% if w.state_color in ['info', 'warning'] %} text-dark{% endif %} fs-6">{{ w.state }}</span>{% if w.heat.throttled %} <span class="badge bg-danger fs-6" title="Too hot: this worker is not given new jobs until it cools down. A running job carries on.">Cooling down</span>{% elif w.heat.alerted %} <span class="badge bg-warning text-dark fs-6" title="The CPU has stayed over the temperature set for this worker">Hot</span>{% endif %}</h5>
             <div class="small text-body-secondary">{{ w.hostname or 'not connected yet' }}{% if w.os %} &middot; {{ w.os }}{% endif %}{% if w.version %} &middot; agent {{ w.version }}{% endif %} &middot; seen {{ w.seen }}{% if not w.online and h.known %} (the figures below are from then){% endif %}</div>
         </div>
         {% if not w.revoked and w.enabled %}<div class="d-flex gap-2">
             <button type="button" class="btn btn-sm btn-outline-secondary" data-worker-action="benchmark" data-id="{{ w.id }}"{% if not w.benchmark.can_run %} disabled title="Update this worker's agent to run benchmarks"{% elif w.benchmark.pending %} disabled{% endif %}><i class="bi bi-speedometer2" aria-hidden="true"></i> {{ 'Benchmark queued' if w.benchmark.pending else 'Run benchmark' }}</button>
-            <button type="button" class="btn btn-sm btn-outline-info" data-worker-logs="{{ w.id }}" data-name="{{ w.name }}"><i class="bi bi-card-text" aria-hidden="true"></i> Logs</button></div>{% endif %}
+            <button type="button" class="btn btn-sm btn-outline-info" data-worker-logs="{{ w.id }}" data-name="{{ w.name }}"><i class="bi bi-card-text" aria-hidden="true"></i> Logs</button>
+            <button type="button" class="btn btn-sm btn-outline-info" data-worker-stats="{{ w.id }}" data-name="{{ w.name }}" title="CPU, temperature and free space over the last 14 days"><i class="bi bi-graph-up" aria-hidden="true"></i> Stats</button></div>{% endif %}
     </div>
     {% set b = w.benchmark.last %}
     <div class="border rounded p-2 mb-3 small" data-benchmark="{{ w.id }}">
@@ -111,6 +112,7 @@
                 {% if h.cpu_size %}<dt class="col-5 fw-normal text-body-secondary">Size</dt><dd class="col-7">{{ h.cpu_size }}</dd>{% endif %}
                 {% if h.arch %}<dt class="col-5 fw-normal text-body-secondary">Architecture</dt><dd class="col-7">{{ h.arch }}</dd>{% endif %}
                 {% if h.cpu_percent is not none %}<dt class="col-5 fw-normal text-body-secondary">In use</dt><dd class="col-7">{{ h.cpu_percent }}%</dd>{% endif %}
+                {% if h.temps %}<dt class="col-5 fw-normal text-body-secondary">Temperature</dt><dd class="col-7{% if w.heat.alerted %} text-warning{% endif %}">{{ h.temps }}</dd>{% endif %}
                 {% if h.load %}<dt class="col-5 fw-normal text-body-secondary" title="1, 5 and 15 minute load average">Load</dt><dd class="col-7">{{ h.load }}</dd>{% endif %}
             </dl>
             {% if h.cpu_flags %}<div class="mt-2" title="Instruction sets that software encoders (x264, x265, SVT-AV1) use to go faster">{% for f in h.cpu_flags %}<span class="badge bg-secondary me-1">{{ f }}</span>{% endfor %}</div>{% endif %}
@@ -132,6 +134,7 @@
             {% else %}
             <div class="small text-body-secondary">No graphics card is visible to the agent.{% if h.container %} It runs in a {{ h.container }} container, which sees a GPU only if one is passed in.{% endif %}</div>
             {% endfor %}
+            {% if h.gpu_clock %}<div class="small text-body-secondary mt-1" title="The integrated GPU's clock (or busy share): it climbs while an encode is really using the GPU">GPU now: {{ h.gpu_clock }}{% if h.gpu_encodes %} &middot; {{ h.gpu_encodes }} GPU encode(s) running{% endif %}</div>{% endif %}
             {% if h.render_devices %}<div class="small text-body-secondary mt-1" title="/dev/dri: what VAAPI and Quick Sync encode through">Render devices: {{ h.render_devices|join(', ') }}</div>{% endif %}
         </div>
         <div class="col-md-6 col-xl-3">

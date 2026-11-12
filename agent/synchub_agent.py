@@ -1362,6 +1362,57 @@ def cpu_times():
     return sum(values), values[3] + (values[4] if len(values) > 4 else 0)
 
 
+CPU_SENSORS = ("coretemp", "k10temp", "zenpower", "cpu_thermal", "x86_pkg_temp")
+
+
+def read_temperatures(sysfs="/sys"):
+    """Temperatures in degrees C from the kernel's sensors: {'cpu': hottest CPU reading, 'nvme': .., 'gpu': .., 'other': .., 'max': hottest of all}.
+    Anything that cannot be read is left out ({} on a PC with no readable sensor, such as some VMs). Read-only; never raises."""
+    found = {}
+    try:
+        import glob
+        for hw in sorted(glob.glob(os.path.join(sysfs, "class", "hwmon", "hwmon*"))):
+            name = read_file(os.path.join(hw, "name"), 64).strip()
+            group = "cpu" if name in CPU_SENSORS else "nvme" if name == "nvme" else "gpu" if name in ("amdgpu", "i915", "nouveau", "radeon", "xe") else "other"
+            for path in sorted(glob.glob(os.path.join(hw, "temp*_input"))):
+                try:
+                    value = int(read_file(path, 32).strip()) / 1000.0
+                except ValueError:
+                    continue
+                if 0 < value < 130:
+                    found[group] = max(found.get(group, 0.0), value)
+        if "cpu" not in found:                                          # a PC without hwmon coretemp may still have the thermal zone
+            for zone in sorted(glob.glob(os.path.join(sysfs, "class", "thermal", "thermal_zone*"))):
+                if read_file(os.path.join(zone, "type"), 64).strip() in CPU_SENSORS:
+                    try:
+                        value = int(read_file(os.path.join(zone, "temp"), 32).strip()) / 1000.0
+                    except ValueError:
+                        continue
+                    if 0 < value < 130:
+                        found["cpu"] = max(found.get("cpu", 0.0), value)
+    except Exception:                                                  # noqa: B902  (a sensor we cannot read must not stop the agent)
+        return {}
+    if found:
+        found["max"] = max(found.values())
+    return {k: round(v, 1) for k, v in found.items()}
+
+
+def read_gpu_clock(sysfs="/sys"):
+    """The integrated GPU's current and highest clock in MHz (Intel i915), or its busy percent (AMD): a rough sign of whether an encode is really using it. {} when not readable."""
+    try:
+        import glob
+        for card in sorted(glob.glob(os.path.join(sysfs, "class", "drm", "card[0-9]"))):
+            cur, top = read_file(os.path.join(card, "gt_cur_freq_mhz"), 16).strip(), read_file(os.path.join(card, "gt_max_freq_mhz"), 16).strip()
+            if cur.isdigit() and top.isdigit():
+                return {"gpu_mhz": int(cur), "gpu_max_mhz": int(top)}
+            busy = read_file(os.path.join(card, "device", "gpu_busy_percent"), 16).strip()
+            if busy.isdigit():
+                return {"gpu_percent": int(busy)}
+    except Exception:                                                  # noqa: B902
+        pass
+    return {}
+
+
 def live_host_stats(previous):
     """The numbers that change: load, how busy the CPU was since `previous`, free memory and how long the PC has been up. Returns (stats, sample)."""
     stats, sample = {}, cpu_times()
@@ -1371,6 +1422,10 @@ def live_host_stats(previous):
         pass
     if sample and previous and sample[0] > previous[0]:
         stats["cpu_percent"] = round(100.0 * (1 - (sample[1] - previous[1]) / (sample[0] - previous[0])), 1)
+    temps = read_temperatures()
+    if temps:
+        stats["temps"] = temps
+    stats.update(read_gpu_clock())
     available = memory_bytes("MemAvailable")
     if available is not None:
         stats["mem_available_bytes"] = available
@@ -3218,7 +3273,7 @@ class Agent:
         roots = {name: {"ok": r["ok"], "state": r["state"], "message": (r["message"] or "")[:200], "free_bytes": r["free_bytes"]} for name, r in self.monitor.snapshot().items()}
         host, self._cpu_sample = live_host_stats(self._cpu_sample)
         count, held = self.originals_held()
-        return {"version": __version__, "commit": build_info()["commit"], "uptime_seconds": int(time.monotonic() - self.started), "work_free_bytes": self.work_free(), "roots": roots, "jobs": jobs, "host": host,
+        return {"version": __version__, "commit": build_info()["commit"], "uptime_seconds": int(time.monotonic() - self.started), "work_free_bytes": self.work_free(), "gpu_encodes": self.gpu_busy, "roots": roots, "jobs": jobs, "host": host,
                 "originals_count": count, "originals_bytes": held, **({"relay": self.relay_state} if self.relay_state else {})}
 
     def originals(self):
