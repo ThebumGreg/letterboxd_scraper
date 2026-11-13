@@ -8,15 +8,15 @@ def tabs(page):
     return re.findall(r'id="media-tab-(\w+)"', page)
 
 
-def test_library_versions_workers_and_storage_are_tabs_of_one_page(client):
-    for path, active in (("/library", "library"), ("/versions", "versions"), ("/workers", "workers"), ("/jobs", "jobs"), ("/originals", "originals"), ("/storage", "storage"), ("/library/options", "options")):
+def test_library_cleanup_workers_and_storage_are_tabs_of_one_page(client):
+    for path, active in (("/library", "library"), ("/workers", "workers"), ("/jobs", "jobs"), ("/originals", "originals"), ("/storage", "storage"), ("/library/options", "options")):
         page = client.get(path).get_data(as_text=True)
-        assert tabs(page) == ["library", "versions", "originals", "workers", "players", "jobs", "storage", "options"]
+        assert tabs(page) == ["library", "originals", "workers", "jobs", "storage", "options"]
         assert re.search(r'class="nav-link active" id="media-tab-%s"' % active, page)
-        for key in ("library", "versions", "originals", "workers", "jobs", "storage", "options"):
+        for key in ("library", "originals", "workers", "jobs", "storage", "options"):
             assert 'id="media-pane-%s"' % key in page
         built = re.findall(r'data-lazy-pane="(\w+)"', page)
-        assert active not in built and len(built) == 7              # only the open tab is built; the other seven are fetched when opened
+        assert active not in built and len(built) == 5              # only the open tab is built; the other five are fetched when opened
         assert all_tabs(client, path).count('id="fleet"') == 1 and 'id="libraryLive"' in all_tabs(client, path) and 'id="shareModal"' in all_tabs(client, path)
 
 

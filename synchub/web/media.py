@@ -9,10 +9,8 @@ from synchub import access, db, storage
 # (key, label, endpoint that opens it, what it holds)
 TABS = (
     ("library", "Library", "library_page", "Every video file on your shares and what to do with it"),
-    ("versions", "Versions", "library_versions_page", "Smaller extra copies of big films and Dolby Vision 7 conversions, for you to approve"),
-    ("originals", "Originals", "workers_originals_page", "Original files kept after a file was replaced: restore, keep longer or delete"),
+    ("originals", "Cleanup", "workers_originals_page", "Original files kept after a file was replaced or converted: restore, keep longer or delete"),
     ("workers", "Workers", "workers_page", "The PCs that do the heavy work, and the hardware behind each"),
-    ("players", "Players", "players_page", "The small PCs behind your TVs that play media, controlled from here"),
     ("jobs", "Jobs", "jobs_page", "What the workers have been asked to do and how it is going"),
     ("storage", "Storage", "storage_page", "The shares the workers mount"),
     ("options", "Options", "library_options_page", "Where files go, when films are compressed, previews and conversion profiles"),
@@ -22,17 +20,12 @@ TABS = (
 def _data(key, conn):
     if key == "library":
         from synchub.web import library, quality_web
-        return {**library.overview(conn), "qual": quality_web.overview(conn, full=False)}
-    if key == "versions":
         from synchub.web import versions
-        return versions.overview(conn)
+        return {**library.overview(conn), **versions.overview(conn), "qual": quality_web.overview(conn, full=False)}
     if key == "options":
         from synchub import ai_test
         from synchub.web import library, quality_web
         return {**library.overview(conn), "qual": quality_web.overview(conn, full=False), "ai": ai_test.overview(conn)}
-    if key == "players":
-        from synchub.web import players_web
-        return players_web.snapshot(conn)
     if key in ("workers", "jobs"):
         from synchub.web import fleet
         return fleet.snapshot(conn)

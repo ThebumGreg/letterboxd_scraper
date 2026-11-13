@@ -1,4 +1,4 @@
-"""The movie size policy (docs/DESIGN_ENCODING.md 11.2): a movie larger than `movie_max_gb` is compressed toward `movie_target_gb`.
+"""The size policy (docs/DESIGN_ENCODING.md 11.2): a picture whose video bitrate is above the re-encode limit for its size is compressed toward the aim-for bitrate.
 
 Pure decisions over a Library record's facts; nothing here touches a file. The answer is a `Decision`:
 
@@ -34,18 +34,13 @@ NONE, COMPRESS, REVIEW, BLOCKED = "none", "compress", "review", "blocked"
 @dataclasses.dataclass
 class Settings:
     on: bool = False
-    movie_max_gb: float = 30.0
-    movie_target_gb: float = 25.0
     tv_on: bool = False                    # episodes have their own switch: the size is a limit per hour of runtime, not per file
-    tv_max_gb_per_hour: float = 4.0
-    tv_target_gb_per_hour: float = 2.5
     crf: int = 22
     preset: str = "medium"
     dv_profile_5: str = "review"           # review | hdr10
     dv_profile_7_8: str = "hdr10"          # hdr10 | review
     gpu: bool = False                      # let a worker with a working GPU encoder use it (faster, larger files than the CPU encoder at the same quality)
     vmaf_mode: str = "warn"                # off | warn (record the score) | hold (a low score pauses the job for review)
-    mode: str = "size"                     # size: the GB limits above | bitrate: a video bitrate ceiling per picture height (what `load` gives; see docs/DESIGN_ENCODING.md)
     caps_mbps: dict = dataclasses.field(default_factory=lambda: {"2160": 18.0, "1080": 8.0, "720": 4.0, "sd": 2.0})
     tv_cap_share: float = 0.5              # an episode's ceiling as a share of a film's
     trigger_factor: float = 1.5            # compress only when the video bitrate is this many times over the ceiling
@@ -81,31 +76,11 @@ def load(conn=None, profile=None):
     """The policy's settings for a conversion profile (None = the Options page). `size_policy` off (the default) means nothing is ever compressed."""
     from synchub.library import rules as profile_rules
     r = profile_rules.resolve(conn, profile)
-    if settings.get("size_mode", conn=conn) == "size":            # the older rule: limits in GB (a hidden setting, kept so the old numbers still work)
-        return dataclasses.replace(load_legacy(conn), on=r["size_policy"], tv_on=r["tv_size_policy"], crf=r["crf"], preset=r["preset"], gpu=r["gpu"], vmaf_mode=r["vmaf_mode"],
-                                   dv_profile_5=r["dv_profile_5"], dv_profile_7_8=r["dv_profile_7_8"],
-                                   trigger_mbps={"2160": r["trigger_2160"], "1080": r["trigger_1080"], "720": r["trigger_720"], "sd": r["trigger_sd"]}, rate_mode=r["rate_mode"])
     return Settings(on=r["size_policy"], tv_on=r["tv_size_policy"], crf=r["crf"], preset=r["preset"], gpu=r["gpu"], vmaf_mode=r["vmaf_mode"],
-                    dv_profile_5=r["dv_profile_5"], dv_profile_7_8=r["dv_profile_7_8"], mode="bitrate",
+                    dv_profile_5=r["dv_profile_5"], dv_profile_7_8=r["dv_profile_7_8"],
                     caps_mbps={"2160": r["cap_2160"], "1080": r["cap_1080"], "720": r["cap_720"], "sd": r["cap_sd"]}, tv_cap_share=r["tv_cap_share"],
                     trigger_factor=r["trigger_factor"], safety_gb={"2160": r["safety_gb_2160"], "1080": r["safety_gb_1080"]},
                     trigger_mbps={"2160": r["trigger_2160"], "1080": r["trigger_1080"], "720": r["trigger_720"], "sd": r["trigger_sd"]}, rate_mode=r["rate_mode"])
-
-
-def load_legacy(conn=None):
-    """The GB-limit settings (movie_max_gb, movie_target_gb, ...) as before bitrate mode; kept for the size preview and for tests of the old rules."""
-    try:
-        crf = min(40, max(10, int(settings.get("size_crf", conn=conn))))
-    except (TypeError, ValueError):
-        crf = 22
-    preset = settings.get("size_preset", conn=conn)
-    return Settings(on=settings.get("size_policy", conn=conn) == "1", movie_max_gb=_float("movie_max_gb", 30.0, conn), movie_target_gb=_float("movie_target_gb", 25.0, conn),
-                    tv_on=settings.get("tv_size_policy", conn=conn) == "1", tv_max_gb_per_hour=_float("tv_max_gb_per_hour", 4.0, conn),
-                    tv_target_gb_per_hour=_float("tv_target_gb_per_hour", 2.5, conn), crf=crf,
-                    preset=preset if preset in ("fast", "medium", "slow", "slower") else "medium",
-                    gpu=settings.get("gpu_encoding", conn=conn) == "1", vmaf_mode=settings.get("vmaf_mode", conn=conn) if settings.get("vmaf_mode", conn=conn) in ("off", "warn", "hold") else "warn",
-                    dv_profile_5="hdr10" if settings.get("dolby_vision_profile_5", conn=conn) == "hdr10" else "review",
-                    dv_profile_7_8="review" if settings.get("dolby_vision_profile_7_8", conn=conn) == "review" else "hdr10")
 
 
 def _json(value, default):
@@ -169,18 +144,8 @@ def decide(rec, plans=(), cfg=None):
     if not movie and not cfg.tv_on:
         return Decision(NONE)
     duration = float(rec.get("duration_seconds") or 0)
-    bitrate_mode = cfg.mode == "bitrate"
-    if bitrate_mode:
-        ceiling = target_gb = 0.0                                       # worked out below from the bitrate ceiling
-    elif movie:
-        ceiling, target_gb = cfg.movie_max_gb, cfg.movie_target_gb
-    else:                                                               # TV: the limits are per hour of runtime, so a 22-minute and a 90-minute episode are judged alike
-        ceiling, target_gb = cfg.tv_max_gb_per_hour * duration / 3600, cfg.tv_target_gb_per_hour * duration / 3600
-    if rec.get("size_target_gb") and (ceiling > 0 or bitrate_mode):     # a target chosen for this one title on the review screen
-        target_gb = float(rec["size_target_gb"])
+    target_gb = float(rec["size_target_gb"]) if rec.get("size_target_gb") else 0.0      # a target chosen for this one title on the review screen
     size = rec.get("size_bytes") or 0
-    if not bitrate_mode and ((duration > 0 and (ceiling <= 0 or target_gb <= 0)) or size <= 0 or (movie and (ceiling <= 0 or target_gb <= 0))):
-        return Decision(NONE)
     if size <= 0:
         return Decision(NONE)
     tracks = [t for t in _json(rec.get("streams_json"), []) if isinstance(t, dict)]
@@ -201,24 +166,21 @@ def decide(rec, plans=(), cfg=None):
     source_kbps = info.get("video_kbps") or max(0.0, (rec.get("bitrate_kbps") or 0) - sum(_track_kbps(t) for t in tracks if t.get("type") == "audio"))
     if not source_kbps:
         source_kbps = max(0.0, size * 8 / duration / 1000 - sum(_track_kbps(t) for t in tracks if t.get("type") in ("audio", "subtitle")))
-    if bitrate_mode:
-        height_class = picture_class(width, height)
-        cap_kbps = cfg.caps_mbps[height_class] * 1000 * (1 if movie else cfg.tv_cap_share)
-        safety = (cfg.safety_gb.get(height_class) or 0) if movie else 0
-        trigger = trigger_kbps(cfg, height_class, movie)
-        over_bitrate = trigger > 0 and source_kbps > trigger
-        over_size = bool(safety) and after > safety * GIB
-        if not (over_bitrate or over_size):
-            if trigger <= 0:
-                return Decision(NONE, notes=["Pictures of this size are not compressed (the re-encode limit is off)."])
-            return Decision(NONE, notes=[f"The video runs at about {source_kbps / 1000:.1f} Mbps; it is only compressed above {trigger / 1000:g} Mbps (and then aimed at {cap_kbps / 1000:g} Mbps)."])
-        target_kbps_plan = min(cap_kbps, source_kbps * SOURCE_SHARE)
-        if target_gb:
-            target_kbps_plan = max(1.0, (target_gb * GIB * BUDGET_SHARE - kept_bytes) * 8 / duration / 1000)
-        target_gb = (target_kbps_plan * 1000 / 8 * duration + kept_bytes) / GIB
-        ceiling = target_gb * 1.1
-    elif after <= ceiling * GIB:
-        return Decision(NONE, notes=[f"About {after / GIB:.1f} GB once the unwanted tracks are gone: under the {ceiling:g} GB limit."] if removed else [])
+    height_class = picture_class(width, height)
+    cap_kbps = cfg.caps_mbps[height_class] * 1000 * (1 if movie else cfg.tv_cap_share)
+    safety = (cfg.safety_gb.get(height_class) or 0) if movie else 0
+    trigger = trigger_kbps(cfg, height_class, movie)
+    over_bitrate = trigger > 0 and source_kbps > trigger
+    over_size = bool(safety) and after > safety * GIB
+    if not (over_bitrate or over_size):
+        if trigger <= 0:
+            return Decision(NONE, notes=["Pictures of this size are not compressed (the re-encode limit is off)."])
+        return Decision(NONE, notes=[f"The video runs at about {source_kbps / 1000:.1f} Mbps; it is only compressed above {trigger / 1000:g} Mbps (and then aimed at {cap_kbps / 1000:g} Mbps)."])
+    target_kbps_plan = min(cap_kbps, source_kbps * SOURCE_SHARE)
+    if target_gb:
+        target_kbps_plan = max(1.0, (target_gb * GIB * BUDGET_SHARE - kept_bytes) * 8 / duration / 1000)
+    target_gb = (target_kbps_plan * 1000 / 8 * duration + kept_bytes) / GIB
+    ceiling = target_gb * 1.1
 
     target_bytes = target_gb * GIB
     budget = target_bytes * BUDGET_SHARE - kept_bytes
@@ -268,7 +230,7 @@ def decide(rec, plans=(), cfg=None):
     profile = {"video_codec": "hevc", "crf": cfg.crf, "preset": cfg.preset, "ten_bit": True if keep_hdr or bit_depth >= 10 else True, "audio_kbps": None,
                "maxrate_kbps": maxrate, "bufsize_kbps": maxrate * 2, "max_bytes": int(ceiling * GIB), "target_bytes": int(target_bytes), "size_policy": True,
                "deinterlace": bool(info.get("interlaced")), "gpu": cfg.gpu, "vmaf_mode": cfg.vmaf_mode}
-    if bitrate_mode and cfg.rate_mode == "target":
+    if cfg.rate_mode == "target":
         profile["rate_mode"] = "target"                      # the encoder aims at the bitrate (maxrate / headroom) instead of a constant quality
     if keep_hdr:
         profile["hdr"] = {"kind": keep_hdr, **{k: info.get(k) for k in ("transfer", "primaries", "matrix", "master_display", "max_cll") if info.get(k)}}

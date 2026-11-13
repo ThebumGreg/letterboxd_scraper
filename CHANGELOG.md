@@ -1,8 +1,14 @@
 # Changelog
 
-## Unreleased
+## 1.6.0
 
-Migrations 044 and 045. Update SyncHub first, then the workers.
+Migrations 044 and 045 are new since 1.5.1. Update SyncHub first, then the workers.
+
+**Polish, part 2: fewer tabs, one size rule, a tidier Options page (no migration).**
+- **Versions is now a section of the Library tab** ("Extra copies"); the old `/versions` address opens it. **Originals is now Cleanup.** **Players moved to System, Admin.** The Media tabs are Library, Cleanup, Workers, Jobs, Storage and Options.
+- **The old limits in GB are gone.** Compression is judged by video bitrate only (re-encode above, aim for, safety size), which is what had been in use since 1.4. The unused rows `movie_max_gb`, `movie_target_gb`, `tv_max_gb_per_hour`, `tv_target_gb_per_hour` and `size_mode` in the settings table are ignored.
+- **Options has one Quality section** with a short note on what each check does; the AI test is folded away.
+- Docs refreshed (design notes, features, quality) and a timing-dependent library cache test made deterministic.
 
 **Polish, part 1: Dolby Vision in the conversion, retention choices, clearer names (no migration).** Update SyncHub, then the workers.
 - **Dolby Vision 7 to 8.1 is a step of the conversion, not a separate job.** When "Dolby Vision 7 becomes 8.1" is the rule (Options, or a profile's rule), a profile 7 file is remuxed to 8.1 (no re-encode) whenever it goes through a Library conversion or a Radarr/Sonarr replacement. The Versions tab no longer lists Dolby Vision files and the `dv7_remux` setting is gone; there is one setting. A file converted this way keeps every track: track clean-ups and a compatible audio track planned for it are not applied in the same pass, and the file report says so.

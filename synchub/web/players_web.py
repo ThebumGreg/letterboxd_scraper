@@ -1,4 +1,4 @@
-"""The Players tab of the Media page: add a TV player, see whether it is up, and send it Ping, Update and Restart. The player's own calls are in player_api.py."""
+"""The Players page (System menu): add a TV player, see whether it is up, and send it Ping, Update and Restart. The player's own calls are in player_api.py."""
 from flask import jsonify, render_template, request
 
 from synchub import db, players, webhooks
@@ -42,8 +42,9 @@ def _setup(name, token):
 def register(app):
     @app.route("/players")
     def players_page():
-        from synchub.web import media
-        return media.render_media("players")
+        with db.connection() as conn:
+            data = snapshot(conn)
+        return render_template("players.html", **data)
 
     @app.route("/players/fragment")
     def players_fragment():

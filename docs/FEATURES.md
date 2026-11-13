@@ -14,7 +14,7 @@ New states need no code or schema change: add a row to `state_def` and have a sc
 
 **Storage** (Media menu) defines the Unraid shares the workers use: a short name, SMB or NFS, the server address, the share, and the folder every worker mounts it at, plus, once, the **Share login** (kept encrypted, given only to a worker that proves its token). SyncHub cannot mount anything on a worker PC itself, so `setup-worker.sh` writes the `/etc/fstab` lines, and a worker refuses any share whose `.synchub-root` marker file is missing or names a different share.
 
-**Players** (Media menu) are the small PCs behind your TVs, managed like workers (token each, only call out). Today you can add one, see it online with its mpv, graphics and connected screens, and Ping, Update, Restart and fetch its log from SyncHub; playing media comes next. See [PLAYERS.md](PLAYERS.md).
+**Players** (System menu, Admin) are the small PCs behind your TVs, managed like workers (token each, only call out). Today you can add one, see it online with its mpv, graphics and connected screens, and Ping, Update, Restart and fetch its log from SyncHub; playing media comes next. See [PLAYERS.md](PLAYERS.md).
 
 The worker side is a small API (`/api/worker/v1/...`, token per worker, documented in [DESIGN_ENCODING.md](DESIGN_ENCODING.md), Appendix A) and an agent in `agent/` ([agent/README.md](../agent/README.md)). Workers ask for jobs; a job whose worker goes silent returns to the queue.
 
@@ -28,7 +28,10 @@ The worker side is a small API (`/api/worker/v1/...`, token per worker, document
 - **Approve together** approves everything in a list that qualifies, after showing what it will approve. Low-confidence files are never included, and duplicates are decided one at a time.
 - **Find duplicates** compares files of the same size across all shares (reading only what it must) and suggests keeping the copy already in place.
 - **Export** gives the same CSV report as the original tool.
-- **Approving records a decision and nothing else.** Copying and converting the approved files is the next phase.
+- **Approving queues the work.** A worker copies or converts the file into the library share, checks the result and (when you ask for it) tells Radarr, Sonarr and Jellyfin. The conversion follows the file's profile: track clean-up, a compatible audio track, a smaller HEVC file when the video bitrate is above the limit for its picture size, and **Dolby Vision 7 converted to 8.1** (no re-encode; every track is kept) when that rule is on.
+- **Extra copies** (a section at the bottom of the Library tab) suggests a smaller 1080p copy next to a big 4K film, for phones and remote viewing. Nothing is made until you approve it; Jellyfin shows it as another version of the same film.
+- **New Radarr/Sonarr downloads** (Options): Do nothing, Ask me first, or Convert automatically when safe. A converted download replaces the file in place under its own name (Dolby Vision 7 included), the original is kept for the time you chose (right away, 7 days, 30 days or never), and SyncHub scans the folder afterwards so the file report is current.
+- **Cleanup** (Media menu) lists every original that is still being kept after a replacement or a library conversion, with Restore, Keep longer and Delete. **Workers > Work drive** shows what fills a worker's disk and deletes old job files. **Options** has separate choices for how long originals of downloads (right away, 7, 30 days, never) and of library conversions (never, 7, 30 days) are kept.
 
 ## TV remote
 
@@ -56,13 +59,13 @@ The worker side is a small API (`/api/worker/v1/...`, token per worker, document
 
 ## The menu
 
-**Dashboard, Discover, Remote, Media, System** and **Settings** are in the top bar, and your name at the right opens **My profile** and **Switch profile**. **Discover** is a dropdown with **New & trending** (TMDB's trending, popular and upcoming lists, what was added to Jellyfin lately, and what Radarr and Sonarr expect in the next three weeks; each person's age limit applies) **Find & request** (search TMDB and add a title to Radarr or Sonarr) and **My watchlist** (your own list, seeded from your Letterboxd and Serializd watchlists; add or remove films and shows, and optionally have watched titles come off; it never requests or downloads anything, and auto-add works as before). The Dashboard list can be sorted by **Date Added** (when Jellyfin added the title to the library; a show counts as new as its newest episode) and shows that date under each title. The dates come from Jellyfin's next sync after an upgrade. While a TV is playing something through Jellyfin, a **Playing now** strip at the top of the Dashboard names it and links to its remote. **Media** is a dropdown with Library and Resolution Center (Workers and Storage are tabs of the Library page). **System** is a dropdown in four headed groups:
+**Dashboard, Discover, Remote, Media, System** and **Settings** are in the top bar, and your name at the right opens **My profile** and **Switch profile**. **Discover** is a dropdown with **New & trending** (TMDB's trending, popular and upcoming lists, what was added to Jellyfin lately, and what Radarr and Sonarr expect in the next three weeks; each person's age limit applies) **Find & request** (search TMDB and add a title to Radarr or Sonarr) and **My watchlist** (your own list, seeded from your Letterboxd and Serializd watchlists; add or remove films and shows, and optionally have watched titles come off; it never requests or downloads anything, and auto-add works as before). The Dashboard list can be sorted by **Date Added** (when Jellyfin added the title to the library; a show counts as new as its newest episode) and shows that date under each title. The dates come from Jellyfin's next sync after an upgrade. While a TV is playing something through Jellyfin, a **Playing now** strip at the top of the Dashboard names it and links to its remote. **Media** is a dropdown with Library, Cleanup, Workers, Jobs, Storage, Options and Resolution Center (the first six are tabs of one page). **System** is a dropdown in four headed groups:
 
 | Group | Pages |
 |---|---|
 | Run | Tools & Operations |
 | Monitor | System status, What it's doing now, Logs, Jellyfin events, Payloads (things you look at) |
-| Admin | Dynamic DNS, People |
+| Admin | Players, Dynamic DNS, People |
 | TV | Remote Apps, TVs, Remote Tools |
 
 A person only sees the entries their profile may open (see People below); a group with nothing in it is hidden, and so is a dropdown with nothing in it. **Settings** has three tabs, each saved on its own: *Connections* (Jellyfin, TMDB, Radarr, Sonarr, push notifications), *Automation* (schedules, live updates and webhooks, backups, and the rules for adding titles to Radarr and Sonarr) and *Logging* (what is kept for the Payloads page). The old addresses `/access` and `/diagnostics` still work and lead to People and What it's doing now.

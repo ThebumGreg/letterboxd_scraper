@@ -85,17 +85,32 @@ def test_background_bookkeeping_settings_leave_the_counter_alone(v2, conn):
         assert cache.generation(c) == before + 1
 
 
-def test_requests_waiting_on_a_slow_compute_share_the_next_one_even_when_files_keep_changing(v2, conn):
-    """Every change moved the counter, so each waiting request found a result older than its own and worked it all out again, one after another."""
+def test_requests_waiting_on_a_slow_compute_share_the_next_one_even_when_files_keep_changing(v2, conn, monkeypatch):
+    """Every change moved the counter, so each waiting request found a result older than its own and worked it all out again, one after another.
+    No sleeps decide the order: the first compute is held open until all five waiters have arrived (counted where a request first reads the counter)."""
     import threading
     import time
     cache.clear()
     h.add(conn)
     runs, results = [], []
+    arrivals, all_here, lock = [], threading.Event(), threading.Lock()
+    real_generation = cache.generation
+
+    def counting_generation(c):
+        value = real_generation(c)
+        with lock:
+            arrivals.append(1)
+            if len(arrivals) == 6:                                   # the first request and the five that wait behind it
+                all_here.set()
+        return value
+
+    monkeypatch.setattr(cache, "generation", counting_generation)
 
     def slow():
         runs.append(1)
-        time.sleep(0.4)
+        if len(runs) == 1:
+            assert all_here.wait(10), "the waiters never arrived"
+            time.sleep(0.2)                                          # they have read the counter; let them reach the lock before the first compute ends
         return len(runs)
 
     def ask():
@@ -104,16 +119,16 @@ def test_requests_waiting_on_a_slow_compute_share_the_next_one_even_when_files_k
 
     first = threading.Thread(target=ask)
     first.start()
-    time.sleep(0.1)
+    while not runs:                                                  # the first compute is under way (and held open)
+        time.sleep(0.01)
     waiters = []
     for _ in range(5):
         conn.execute("UPDATE library_file SET size_bytes = size_bytes + 1")           # the counter moves for every request that arrives
         conn.commit()
         waiters.append(threading.Thread(target=ask))
         waiters[-1].start()
-        time.sleep(0.05)
     for t in [first] + waiters:
-        t.join()
+        t.join(20)
     assert len(runs) == 2                      # the first, and one more that all five waiters share
 
 

@@ -1,7 +1,7 @@
 """The Versions tab of the Media page: recommended extra versions of films and Dolby Vision 7 to 8.1 conversions, approved in bulk or one by one.
 
 Nothing here is automatic: a recommendation is a row on this tab until a person approves it (with the choices they changed) or declines it."""
-from flask import jsonify
+from flask import jsonify, redirect, url_for
 
 from flask import request
 
@@ -24,8 +24,7 @@ def _fail(message, status=400):
 def register(app):
     @app.route("/versions")
     def library_versions_page():
-        from synchub.web import media
-        return media.render_media("versions")
+        return redirect(url_for("library_page") + "#extra-copies")
 
     @app.route("/api/library/versions/approve", methods=["POST"])
     def api_library_versions_approve():

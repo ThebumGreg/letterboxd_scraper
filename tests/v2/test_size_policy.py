@@ -30,41 +30,40 @@ ON = sp.Settings(on=True)
 
 def test_nothing_happens_while_the_policy_is_off_or_the_film_is_small_enough():
     assert sp.decide(movie(), cfg=sp.Settings()).action == sp.NONE
-    assert sp.decide(movie(size_gb=28), cfg=ON).action == sp.NONE                  # between the target and the limit: left alone
+    assert sp.decide(movie(size_gb=12, video_info={"hdr": "sdr", "video_kbps": 9000}), cfg=ON).action == sp.NONE        # under the re-encode limit for 1080p and under the safety size
     assert sp.decide(movie(size_gb=10), cfg=ON).action == sp.NONE
 
 
 def test_tv_is_left_alone_unless_its_own_switch_is_on():
     episode = movie(size_gb=45, media_type="TV Episode")                               # two hours, so 22.5 GB per hour
     assert sp.decide(episode, cfg=ON).action == sp.NONE
-    assert sp.decide(episode, cfg=sp.Settings(on=True, tv_on=True, tv_max_gb_per_hour=10, tv_target_gb_per_hour=8)).action == sp.COMPRESS
+    assert sp.decide(episode, cfg=sp.Settings(on=True, tv_on=True)).action == sp.COMPRESS
     assert sp.decide(episode, cfg=sp.Settings(tv_on=True)).action == sp.NONE           # the master switch still decides
 
 
-def test_tv_limits_are_per_hour_of_runtime():
-    cfg = sp.Settings(on=True, tv_on=True, tv_max_gb_per_hour=4, tv_target_gb_per_hour=2.5)
-    long_episode = movie(size_gb=7, media_type="TV Episode", minutes=90, audio=[track(1, codec="aac", bitrate_kbps=128)], video_info={"hdr": "sdr", "video_kbps": 9000})          # 4.7 GB per hour: over
-    short_episode = movie(size_gb=2, media_type="TV Episode", minutes=30, audio=[track(1, codec="aac", bitrate_kbps=128)], video_info={"hdr": "sdr", "video_kbps": 9000})          # 4 GB per hour: at the limit, left alone
-    decision = sp.decide(long_episode, cfg=cfg)
-    assert decision.action == sp.COMPRESS and decision.numbers["target_gb"] == 3.75 and decision.numbers["max_gb"] == 6
+def test_an_episode_is_judged_against_a_share_of_the_film_ceiling():
+    cfg = sp.Settings(on=True, tv_on=True)
+    audio = [track(1, codec="aac", bitrate_kbps=128)]
+    long_episode = movie(size_gb=7, media_type="TV Episode", minutes=90, audio=audio, video_info={"hdr": "sdr", "video_kbps": 9000})       # 9 Mbps: over half of the 1080p ceiling, times the trigger factor
+    short_episode = movie(size_gb=1, media_type="TV Episode", minutes=30, audio=audio, video_info={"hdr": "sdr", "video_kbps": 3000})       # 3 Mbps: left alone
+    assert sp.decide(long_episode, cfg=cfg).action == sp.COMPRESS
     assert sp.decide(short_episode, cfg=cfg).action == sp.NONE
 
 
-def test_removing_tracks_that_brings_it_under_the_limit_is_tried_first():
+def test_removing_tracks_that_brings_it_under_the_safety_size_is_tried_first():
     audio = [track(1, codec="truehd", bitrate_kbps=4000), track(2, language="ita", codec="truehd", bitrate_kbps=4000), track(3, language="fra", codec="truehd", bitrate_kbps=4000)]
-    rec = movie(size_gb=32, audio=audio)                                           # two foreign TrueHD tracks are about 7 GB over two hours
-    decision = sp.decide(rec, [plan(remove_audio=[(2, "ita"), (3, "fra")], keep_audio=(1,))], ON)
-    assert decision.action == sp.NONE and "under the 30 GB limit" in decision.notes[0]
-    assert sp.decide(rec, [], ON).action == sp.COMPRESS
+    rec = movie(size_gb=16, audio=audio, video_info={"hdr": "sdr", "video_kbps": 4000})        # two foreign TrueHD tracks are about 7 GB over two hours; the picture itself is light
+    assert sp.decide(rec, [plan(remove_audio=[(2, "ita"), (3, "fra")], keep_audio=(1,))], ON).action == sp.NONE
+    assert sp.decide(rec, [], ON).action != sp.NONE
 
 
-def test_a_big_film_is_compressed_to_hevc_with_a_bitrate_cap_under_the_target():
+def test_a_big_film_is_compressed_to_hevc_with_a_bitrate_cap_under_the_aim():
     decision = sp.decide(movie(size_gb=45, video_info={"hdr": "sdr", "bit_depth": 8, "video_kbps": 45000}), [], ON)
     assert decision.action == sp.COMPRESS
     n, p = decision.numbers, decision.profile
-    assert n["target_gb"] == 25 and 25000 < n["target_video_kbps"] < 28000                        # (25 GiB * 0.99 - 4 Mbps of TrueHD) over two hours
+    assert 9.5 < n["target_gb"] < 10.5 and 7500 < n["target_video_kbps"] < 8200                   # about 8 Mbps (the 1080p aim-for bitrate) of picture, 4 Mbps of TrueHD kept
     assert p["video_codec"] == "hevc" and p["crf"] == 22 and p["ten_bit"] and p["maxrate_kbps"] == round(n["target_video_kbps"] * 1.05) and p["bufsize_kbps"] == 2 * p["maxrate_kbps"]
-    assert p["max_bytes"] == 30 * GIB and "hdr" not in p and decision.summary.startswith("Compress 45.0 GB")
+    assert abs(p["max_bytes"] - n["max_gb"] * GIB) < 0.01 * GIB and "hdr" not in p and decision.summary.startswith("Compress 45.0 GB")
 
 
 def test_the_target_never_asks_for_more_than_most_of_what_the_source_has():
@@ -110,17 +109,17 @@ def test_interlaced_video_is_deinterlaced_and_already_hevc_is_warned_about():
 
 def test_settings_come_from_the_settings_table(conn):
     assert sp.load(conn).on is False
-    for key, value in (("size_policy", "1"), ("movie_max_gb", "20"), ("movie_target_gb", "15"), ("size_crf", "19"), ("dolby_vision_profile_5", "hdr10")):
+    for key, value in (("size_policy", "1"), ("cap_mbps_1080", "10"), ("safety_gb_1080", "20"), ("size_crf", "19"), ("dolby_vision_profile_5", "hdr10")):
         settings.set_value(key, value, conn=conn)
     loaded = sp.load(conn)
-    assert (loaded.on, loaded.movie_max_gb, loaded.movie_target_gb, loaded.crf, loaded.dv_profile_5) == (True, 20.0, 15.0, 19, "hdr10")
+    assert (loaded.on, loaded.caps_mbps["1080"], loaded.safety_gb["1080"], loaded.crf, loaded.dv_profile_5) == (True, 10.0, 20.0, 19, "hdr10")
 
 
 def test_applying_a_decision_makes_an_hevc_matroska_job_plan():
     decision = sp.decide(movie(size_gb=45), [], ON)
     out, dest = sp.apply({"op": "copy", "revision": 1}, decision, "Movies/Heat (1995)/Heat (1995).mp4")
     assert out["op"] == "convert" and out["change"]["video"] == {"action": "transcode", "codec": "hevc"} and out["change"]["container"] == "matroska"
-    assert dest == "Movies/Heat (1995)/Heat (1995).mkv" and out["needs"] == ["profiles"] and out["profile"]["maxrate_kbps"] and out["size_policy"]["target_gb"] == 25
+    assert dest == "Movies/Heat (1995)/Heat (1995).mkv" and out["needs"] == ["profiles"] and out["profile"]["maxrate_kbps"] and 9.5 < out["size_policy"]["target_gb"] < 10.5
 
 
 def test_a_profile_the_person_chose_keeps_its_quality_and_gets_only_the_cap():
@@ -140,7 +139,7 @@ def test_an_approved_big_film_is_queued_as_a_compression_when_the_policy_is_on(c
     rc.apply_recommendation(conn, record_id, "Greg", cfg=CFG)
     conn.commit()
     job = jobs.get(conn, conn.execute("SELECT id FROM job WHERE ref_type = 'library_file' ORDER BY id DESC").fetchone()[0])
-    assert job["plan"]["op"] == "convert" and job["plan"]["profile"]["video_codec"] == "hevc" and job["plan"]["profile"]["max_bytes"] == 30 * GIB
+    assert job["plan"]["op"] == "convert" and job["plan"]["profile"]["video_codec"] == "hevc" and job["plan"]["profile"]["max_bytes"] > 10 * GIB
     assert job["plan"]["needs"] == ["profiles"] and job["dest_rel"].endswith(".mkv")
 
 
@@ -200,10 +199,10 @@ def test_video_facts_read_hdr_dolby_vision_and_bitrate_from_ffprobe():
 
 
 def test_the_settings_can_be_saved_from_the_library_page_and_are_validated(app, client):
-    saved = client.post("/api/library/settings", json={"size_mode": "bitrate", "size_policy": "1", "cap_mbps_2160": "20", "safety_gb_2160": "40", "size_crf": "20", "dolby_vision_profile_5": "hdr10", "dolby_vision_profile_7_8": "review"})
+    saved = client.post("/api/library/settings", json={"size_policy": "1", "cap_mbps_2160": "20", "safety_gb_2160": "40", "size_crf": "20", "dolby_vision_profile_5": "hdr10", "dolby_vision_profile_7_8": "review"})
     assert saved.get_json()["ok"] is True
     loaded = sp.load()
-    assert (loaded.on, loaded.mode, loaded.caps_mbps["2160"], loaded.safety_gb["2160"], loaded.crf, loaded.dv_profile_5, loaded.dv_profile_7_8) == (True, "bitrate", 20.0, 40.0, 20, "hdr10", "review")
+    assert (loaded.on, loaded.caps_mbps["2160"], loaded.safety_gb["2160"], loaded.crf, loaded.dv_profile_5, loaded.dv_profile_7_8) == (True, 20.0, 40.0, 20, "hdr10", "review")
     assert client.post("/api/library/settings", json={"size_crf": "5"}).get_json()["ok"] is False
     assert client.post("/api/library/settings", json={"dolby_vision_profile_5": "yes"}).get_json()["ok"] is False
     page = all_tabs(client, "/library")
@@ -230,5 +229,5 @@ def test_a_download_of_a_big_film_is_compressed_automatically_when_the_policy_an
     row = downloads.get(conn, made)
     assert row["status"] == "queued", row["message"]
     job = jobs.get(conn, row["job_id"])
-    assert job["plan"]["replace"] is True and job["plan"]["profile"]["video_codec"] == "hevc" and job["plan"]["size_policy"]["target_gb"] == 25
+    assert job["plan"]["replace"] is True and job["plan"]["profile"]["video_codec"] == "hevc" and 9.5 < job["plan"]["size_policy"]["target_gb"] < 10.5
     assert job["dest_rel"] == "Heat (1995)/Heat.1995.mkv" and job["plan"]["change"]["video"]["action"] == "transcode"

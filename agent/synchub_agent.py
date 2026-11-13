@@ -44,7 +44,7 @@ try:
 except ImportError:                        # pragma: no cover - exercised by tests that remove the module
     media_analysis = None
 
-__version__ = "1.5.1"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
+__version__ = "1.6.0"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
 IGNORE_FILE = ".ignore"           # an empty file with this name makes Jellyfin skip the folder
