@@ -129,6 +129,22 @@ def hash_file(path, upto=None, check=None):
     return digest.hexdigest()
 
 
+KEPT_SUFFIXES = (".synchub-original", ".synchub-converted")       # what a replaced original (or a converted file set aside by a restore) is renamed to on the share
+
+
+def share_file_of(roots, meta):
+    """The path on a share of a kept original that was renamed there (meta where='share'), or None when the share is unknown. Only a file whose name ends in a
+    kept suffix is ever returned, so a damaged meta.json cannot point a delete at a real video."""
+    path = roots.path(meta.get("root")) if meta.get("root") else None
+    rel = str(meta.get("renamed_rel") or "")
+    if path is None or not rel.endswith(KEPT_SUFFIXES):
+        return None
+    try:
+        return safe_path(path, rel)
+    except ValueError:
+        return None
+
+
 def safe_path(root_path, rel):
     """The real path of `rel` inside the root, or ValueError if it would leave it (a '..', an absolute path or a symlink out)."""
     rel = str(rel or "").replace("\\", "/")
@@ -2099,7 +2115,12 @@ class JobRunner(threading.Thread):
                 return {"op": "originals", "action": action, "already_gone": True}
             raise JobFailure("source_changed", "This worker no longer holds that original (it was deleted or its time ran out).", retryable=False)
         if action == "purge":
-            shutil.rmtree(folder, ignore_errors=True)
+            if meta.get("where") == "share":
+                self.agent.monitor.require(meta.get("root"))
+                if self.agent.drop_share_original(folder, meta, check_converted=False) is None:
+                    raise JobFailure("bad_job", "Could not delete the renamed original on the share (its name or share was not recognised).", retryable=False)
+            else:
+                shutil.rmtree(folder, ignore_errors=True)
             self.log.info(f"Deleted the kept original {meta.get('rel')} on request")
             return {"op": "originals", "action": action, "bytes": meta.get("size"), "deleted": True}
         if action == "extend":
@@ -2123,6 +2144,8 @@ class JobRunner(threading.Thread):
         if (meta.get("kind") or "original") != "original":
             raise JobFailure("bad_job", "This is a converted copy set aside by an earlier restore; it cannot be restored.", retryable=False)
         src, dst = self.endpoints("restore")                     # src: the converted file on the share, dst: where the original goes
+        if meta.get("where") == "share":
+            return self.restore_share_original(folder, meta, src, dst)
         kept = os.path.join(folder, str(meta.get("name") or ""))
         if not os.path.isfile(kept) or os.path.getsize(kept) != meta.get("size"):
             raise JobFailure("source_changed", "The kept original is missing or incomplete on this worker, so nothing was restored.", retryable=False)
@@ -2166,6 +2189,37 @@ class JobRunner(threading.Thread):
         self.log.info(f"Restored {self.job['dest']['rel']}" + (f"; the converted file was set aside for {days} days" if aside else ""))
         return {"op": "originals", "action": "restore", "bytes": size, "sha256": digest.hexdigest(), "converted_set_aside": bool(aside)}
 
+    def restore_share_original(self, folder, meta, src, dst):
+        """The original is renamed next to the converted file on the share, so restoring is two renames: the converted file steps aside (renamed, never deleted) and the
+        original takes its old name back. If the second rename fails the first is undone."""
+        kept = share_file_of(self.agent.roots, meta)
+        if kept is None or not os.path.isfile(kept):
+            raise JobFailure("source_changed", "The renamed original is no longer on the share, so nothing was restored.", retryable=False)
+        if os.path.lexists(dst) and os.path.abspath(dst) != os.path.abspath(src):
+            raise JobFailure("dest_exists", f"{self.job['dest']['rel']} already exists, so the original was not restored over it.", retryable=False)
+        aside = src + KEPT_SUFFIXES[1] if os.path.isfile(src) else None
+        if aside and os.path.lexists(aside):
+            raise JobFailure("dest_exists", "A converted file is already set aside next to it; delete that first.", retryable=False)
+        if aside:
+            os.rename(src, aside)
+        try:
+            os.rename(kept, dst)
+        except OSError as exc:
+            if aside:
+                os.rename(aside, src)
+            raise JobFailure("transient", f"The share would not rename the original back ({exc}); nothing was changed.")
+        days = 7
+        if aside:
+            marker = folder + "-converted"
+            os.makedirs(marker, exist_ok=True)
+            atomic_write_json(os.path.join(marker, "meta.json"),
+                              {"kind": "converted", "where": "share", "job_id": self.job["id"], "root": self.job["source"]["root"], "rel": self.job["source"]["rel"],
+                               "renamed_rel": self.job["source"]["rel"] + KEPT_SUFFIXES[1], "name": os.path.basename(src), "size": os.path.getsize(aside), "saved_at": iso(),
+                               "retention_days": days, "expires_at": iso(utcnow() + timedelta(days=days))})
+        shutil.rmtree(folder, ignore_errors=True)
+        self.log.info(f"Restored {self.job['dest']['rel']}" + (f"; the converted file was set aside on the share for {days} days" if aside else ""))
+        return {"op": "originals", "action": "restore", "bytes": meta.get("size"), "converted_set_aside": bool(aside)}
+
     # ---- a conversion: copy in, run ffmpeg on the local copy, check the result, copy the result out to the destination share
     CONVERT_BANDS = {"copy_in": (0.0, 0.25), "copy_out": (0.85, 0.95), "verify": (0.95, 1.0)}      # the encode itself is 25 - 85 %
 
@@ -2178,6 +2232,8 @@ class JobRunner(threading.Thread):
             self.log.info("The file was already replaced; only the report is left")
             self.remove_replaced_source(src, dst)
             return self.m["replace_result"]
+        if replace:
+            self.recover_renamed(src, dst)
         stat = os.stat(src)
         if not os.path.isfile(src):
             raise JobFailure("source_changed", f"The source is not a file: {self.job['source']['rel']}")
@@ -2215,11 +2271,12 @@ class JobRunner(threading.Thread):
             result["extra"] = extra_result
         if replace:
             original = self.m.get("original") or {}
-            result.update(replaced=True, kept_original=bool(original.get("path")), original_expires=original.get("expires_at"), path_changed=dst != src)
+            result.update(replaced=True, kept_original=bool(original.get("path")), original_expires=original.get("expires_at"), path_changed=dst != src,
+                          original_where=original.get("where"), original_path=(self.job["source"]["rel"] + KEPT_SUFFIXES[0]) if original.get("where") == "share" else None)
             self.m["replace_result"] = result
             self.save()
             self.remove_replaced_source(src, dst)
-            self.log.info(f"Replaced {name} in place ({human_bytes(size)} to {human_bytes(out_size)}); " + (f"the original is kept until {original['expires_at']}" if original.get("path") else "the original was not kept"))
+            self.log.info(f"Replaced {name} in place ({human_bytes(size)} to {human_bytes(out_size)}); " + (f"the original is kept {'on the share ' if original.get('where') == 'share' else ''}until {original['expires_at']}" if original.get("path") else "the original was not kept"))
             return result
         self.log.info(f"Converted {name} ({human_bytes(size)} to {human_bytes(out_size)}) and brought it into the destination in {human_duration(elapsed)}")
         return result
@@ -2564,9 +2621,24 @@ class JobRunner(threading.Thread):
         if dst != src and os.path.isfile(src) and os.path.isfile(dst):
             os.remove(src)
 
+    def recover_renamed(self, src, dst):
+        """A job that stopped between renaming the original on the share and putting the converted file in: the original goes back under its name, so the job
+        starts from the file SyncHub analysed. Not done once the converted file is in place."""
+        kept = src + KEPT_SUFFIXES[0]
+        if os.path.lexists(src) or not os.path.isfile(kept) or (dst != src and os.path.lexists(dst)):
+            return
+        os.rename(kept, src)
+        shutil.rmtree(self.original_folder(), ignore_errors=True)
+        self.log.warning("An earlier attempt had renamed the original and stopped before the converted file was in place; the original is back under its name")
+
+    def original_folder(self):
+        return os.path.join(self.cfg.originals_dir, f"{self.job['id']}-{hashlib.sha1(self.job['source']['rel'].encode('utf-8')).hexdigest()[:8]}")
+
     def keep_original(self, src, local, size, mtime, plan):
-        """Called just before the converted file is swapped in: checks the share still holds the file that was copied and moves the verified local copy
-        into the originals folder, with a meta.json saying where it came from and when it may go. Does nothing if the retention is 0."""
+        """Called just before the converted file is swapped in: checks the share still holds the file that was copied, then keeps the original. With
+        plan.originals_where = "share" the original is renamed next to the new file (name.synchub-original), which costs no copy and stores nothing on this PC;
+        otherwise (or when the share will not rename) the verified local copy goes into the originals folder. Either way a meta.json says where it came from and
+        when it may go. Does nothing if the retention is 0. Returns a function that undoes the rename, or None."""
         now = os.stat(src)
         if now.st_size != size or int(now.st_mtime) != mtime:
             raise JobFailure("source_changed", "The file on the share changed while it was being converted; it was not replaced.")
@@ -2574,22 +2646,50 @@ class JobRunner(threading.Thread):
         days = int(days) if isinstance(days, (int, float)) else 30
         if days <= 0:
             self.log.info("Originals are not kept (retention is 0); the replacement is verified, so the original is dropped")
-            return
+            return None
         info = self.stage_info("copy_in")
-        folder = os.path.join(self.cfg.originals_dir, f"{self.job['id']}-{hashlib.sha1(self.job['source']['rel'].encode('utf-8')).hexdigest()[:8]}")
+        folder = self.original_folder()
         os.makedirs(folder, exist_ok=True)
+        expires = iso(utcnow() + timedelta(days=days))
+        meta = {"job_id": self.job["id"], "root": self.job["source"]["root"], "rel": self.job["source"]["rel"], "name": os.path.basename(src), "size": size,
+                "sha256": info.get("sha256"), "mtime": mtime, "saved_at": iso(), "retention_days": days, "expires_at": expires, "replaced_with": self.job["dest"]["rel"]}
+        if plan.get("originals_where") == "share":
+            renamed = src + KEPT_SUFFIXES[0]
+            if os.path.lexists(renamed):
+                self.log.warning(f"{os.path.basename(renamed)} already exists on the share; keeping this original on the worker instead")
+            else:
+                try:
+                    os.rename(src, renamed)
+                except OSError as exc:
+                    self.log.warning(f"The share would not rename the original ({exc}); keeping it on the worker instead")
+                else:
+                    meta.update(where="share", renamed_rel=self.job["source"]["rel"] + KEPT_SUFFIXES[0])
+                    try:
+                        atomic_write_json(os.path.join(folder, "meta.json"), meta)
+                    except BaseException:
+                        os.rename(renamed, src)
+                        raise
+                    self.m["original"] = {"path": renamed, "expires_at": expires, "where": "share"}
+                    self.save()
+                    self.log.info(f"Kept the original on the share as {os.path.basename(renamed)} for {days} day(s)")
+
+                    def undo():
+                        if not os.path.lexists(src) and os.path.isfile(renamed):
+                            os.rename(renamed, src)
+                        shutil.rmtree(folder, ignore_errors=True)
+                        self.m.pop("original", None)
+                        self.log.warning("The converted file could not be put in place; the original is back under its name")
+                    return undo
         kept = os.path.join(folder, os.path.basename(src))
         if not (os.path.isfile(kept) and os.path.getsize(kept) == size):
             if not os.path.isfile(local):
                 raise JobFailure("transient", "The verified copy of the original is missing from the work folder.")
             shutil.move(local, kept)
-        expires = iso(utcnow() + timedelta(days=days))
-        meta = {"job_id": self.job["id"], "root": self.job["source"]["root"], "rel": self.job["source"]["rel"], "name": os.path.basename(src), "size": size,
-                "sha256": info.get("sha256"), "mtime": mtime, "saved_at": iso(), "retention_days": days, "expires_at": expires, "replaced_with": self.job["dest"]["rel"]}
         atomic_write_json(os.path.join(folder, "meta.json"), meta)
-        self.m["original"] = {"path": kept, "expires_at": expires}
+        self.m["original"] = {"path": kept, "expires_at": expires, "where": "worker"}
         self.save()
         self.log.info(f"Kept the original in {folder} for {days} day(s)")
+        return None
 
     def encode(self, local, converted, change, expected_duration, profile=None):
         """Runs ffmpeg on the local copy and checks what it made. Returns what the job remembers about the encode. The output only gets its
@@ -3171,14 +3271,20 @@ class JobRunner(threading.Thread):
                 raise JobFailure("verification_failed", "The copy on the share does not match the source (checksums differ). Both copies were deleted so the retry starts clean.")
         if os.path.lexists(dst) and overwrite != dst:
             raise JobFailure("dest_exists", f"Someone created {self.job['dest']['rel']} while it was being copied. The finished copy is kept next to it as {os.path.basename(partial)}.", retryable=False)
+        undo = None
         if before_swap is not None:
             try:
-                before_swap()
+                undo = before_swap()
             except JobFailure:
                 self._remove(partial)
                 info.clear()
                 raise
-        os.replace(partial, dst)
+        try:
+            os.replace(partial, dst)
+        except BaseException:
+            if callable(undo):
+                undo()
+            raise
         try:
             os.utime(dst, ns=(time.time_ns(), source_mtime_ns))             # keep the original's modified date, which Jellyfin shows as "date added"
         except OSError:
@@ -3300,12 +3406,37 @@ class Agent:
         for folder, meta in self.originals()[:400]:
             out.append({"id": os.path.basename(folder), "kind": meta.get("kind") or "original", "root": meta.get("root"), "rel": meta.get("rel"), "name": meta.get("name"),
                         "size": meta.get("size"), "saved_at": meta.get("saved_at"), "expires_at": meta.get("expires_at"), "retention_days": meta.get("retention_days"),
-                        "replaced_with": meta.get("replaced_with")})
+                        "replaced_with": meta.get("replaced_with"), "where": meta.get("where") or "worker"})
         return out
 
     def originals_held(self):
         held = self.originals()
-        return len(held), sum(int(m.get("size") or 0) for _, m in held)
+        return len(held), sum(int(m.get("size") or 0) for _, m in held if m.get("where") != "share")       # a renamed original sits on the share, not on this disk
+
+    def drop_share_original(self, folder, meta, check_converted=True):
+        """Deletes a renamed original (or set-aside converted file) from the share and its marker here. By default only while the converted file that replaced it is
+        still on the share. Returns True when it is gone, None when it could not be done (unknown share or name, converted file missing, share error)."""
+        target = share_file_of(self.roots, meta)
+        if target is None:
+            self.log.warning(f"Not deleting the kept original {meta.get('rel')}: its share or file name is not recognised")
+            return None
+        if check_converted and meta.get("replaced_with"):
+            try:
+                converted = safe_path(self.roots.path(meta["root"]), meta["replaced_with"])
+            except ValueError:
+                converted = None
+            if converted is None or not os.path.isfile(converted):
+                self.log.warning(f"Keeping the original {meta.get('rel')}: the converted file {meta.get('replaced_with')} is not on the share any more")
+                return None
+        try:
+            os.remove(target)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            self.log.warning(f"Could not delete {os.path.basename(target)} on the share: {exc}")
+            return None
+        shutil.rmtree(folder, ignore_errors=True)
+        return True
 
     def sweep_originals(self):
         """Deletes the originals whose retention has passed (never before). Returns how many."""
@@ -3313,7 +3444,15 @@ class Agent:
         for folder, meta in self.originals():
             until = parse_iso(meta.get("expires_at"))
             if until is not None and until < utcnow():
-                shutil.rmtree(folder, ignore_errors=True)
+                if meta.get("where") == "share":
+                    try:
+                        self.monitor.require(meta.get("root"), wait=0)
+                    except JobFailure:
+                        continue                                            # the share is not ready; try again at the next sweep
+                    if self.drop_share_original(folder, meta, check_converted=meta.get("kind") != "converted") is None:
+                        continue
+                else:
+                    shutil.rmtree(folder, ignore_errors=True)
                 removed += 1
                 self.log.info(f"Removed the kept original {meta.get('rel')} (retention of {meta.get('retention_days')} day(s) is over)")
         return removed

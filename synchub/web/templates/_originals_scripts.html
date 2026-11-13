@@ -3,6 +3,18 @@
     const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
     const box = document.getElementById('originalsMessage');
     const say = (ok, text) => { box.className = 'alert alert-' + (ok ? 'success' : 'danger'); box.textContent = text; };
+    document.querySelectorAll('[data-delete-source]').forEach((button) => {
+        button.addEventListener('click', async () => {
+            if (!confirm('Delete the original of "' + button.dataset.name + '" now? A worker first checks that the converted copy is on its share and unchanged. This cannot be undone.')) return;
+            button.disabled = true;
+            try {
+                const res = await fetch('/api/library/record/' + button.dataset.deleteSource + '/delete-source-now', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf }, body: '{}' });
+                const data = await res.json();
+                say(data.ok, data.message);
+                if (data.ok) setTimeout(() => location.reload(), 1200); else button.disabled = false;
+            } catch (e) { say(false, 'Could not reach the server.'); button.disabled = false; }
+        });
+    });
     document.querySelectorAll('[data-original-action]').forEach((button) => {
         button.addEventListener('click', async () => {
             const action = button.dataset.originalAction, name = button.dataset.name;

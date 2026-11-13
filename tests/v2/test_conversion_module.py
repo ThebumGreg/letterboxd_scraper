@@ -323,6 +323,16 @@ def test_the_deletion_job_is_queued_only_when_the_time_is_up_and_the_setting_is_
     assert rec_of(conn, record_id)["source_delete_status"] == "queued"
 
 
+def test_delete_now_queues_the_same_checked_deletion_job_without_waiting_for_the_timer(conn):
+    record_id, _ = finished_copy(conn, "0")                                                      # automatic deletion is Off, so nothing is armed
+    assert rec_of(conn, record_id)["source_delete_status"] is None
+    job_id = cleanup.delete_now(conn, record_id, "Greg")
+    job = conn.execute("SELECT * FROM job WHERE id = ?", (job_id,)).fetchone()
+    assert json.loads(job["plan"])["op"] == "delete_source" and json.loads(job["plan"])["dest_sha256"] == "ab" * 32 and rec_of(conn, record_id)["source_delete_status"] == "queued"
+    with pytest.raises(ValueError):
+        cleanup.delete_now(conn, record_id, "Greg")                                               # already queued
+
+
 def test_the_record_follows_the_deletion_job_and_a_changed_source_is_never_swept(conn):
     record_id, _ = finished_copy(conn, "7")
     conn.execute("UPDATE library_file SET source_delete_due_at = datetime('now', '-1 minute') WHERE id = ?", (record_id,))

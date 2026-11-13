@@ -216,6 +216,56 @@ def test_the_worker_lists_its_originals_and_can_keep_one_longer_delete_one_and_r
     wait(lambda: stored(rig, "7-aaaa1111-converted") and not stored(rig, "7-aaaa1111"), what="the list to follow")
 
 
+def keep_on_share(rig, name):
+    """An original renamed on the share (as the agent does when the setting is On the share): the share holds both files, the worker only a meta.json."""
+    folder = rig.work / "originals" / name
+    folder.mkdir(parents=True)
+    movies = rig.roots["media"] / "Movies/Heat (1995)"
+    movies.mkdir(parents=True)
+    (movies / "Heat (1995).avi.synchub-original").write_bytes(b"original bytes")
+    (movies / "Heat (1995).mkv").write_bytes(b"the converted file")
+    meta = {"job_id": 1, "root": "media", "rel": "Movies/Heat (1995)/Heat (1995).avi", "name": "Heat (1995).avi", "size": 14, "saved_at": "2026-10-01T00:00:00+00:00", "retention_days": 30,
+            "expires_at": "2099-01-01T00:00:00+00:00", "replaced_with": "Movies/Heat (1995)/Heat (1995).mkv", "where": "share", "renamed_rel": "Movies/Heat (1995)/Heat (1995).avi.synchub-original"}
+    (folder / "meta.json").write_text(json.dumps(meta))
+    return movies
+
+
+def test_an_original_renamed_on_the_share_can_be_restored_with_two_renames_and_deleted(rig):     # noqa: F811
+    movies = keep_on_share(rig, "11-dddd4444")
+    rig.start()
+    wait(lambda: stored(rig, "11-dddd4444"), what="the list of originals")
+    assert stored(rig, "11-dddd4444")["where"] == "share"
+    restored = run_original(rig, "11-dddd4444", "restore")
+    assert restored["status"] == "done", restored["error"]
+    assert (movies / "Heat (1995).avi").read_bytes() == b"original bytes" and not (movies / "Heat (1995).avi.synchub-original").exists()
+    assert not (movies / "Heat (1995).mkv").exists() and (movies / "Heat (1995).mkv.synchub-converted").read_bytes() == b"the converted file"
+    aside = rig.work / "originals/11-dddd4444-converted"
+    meta = json.loads((aside / "meta.json").read_text())
+    assert meta["kind"] == "converted" and meta["where"] == "share" and meta["renamed_rel"] == "Movies/Heat (1995)/Heat (1995).mkv.synchub-converted"
+    wait(lambda: stored(rig, "11-dddd4444-converted") and not stored(rig, "11-dddd4444"), what="the list to follow")
+    assert run_original(rig, "11-dddd4444-converted", "purge")["status"] == "done"
+    assert not list(movies.glob("*synchub-converted")) and not aside.exists() and (movies / "Heat (1995).avi").exists()
+
+
+def test_deleting_a_renamed_original_removes_the_file_on_the_share_and_the_marker(rig):     # noqa: F811
+    movies = keep_on_share(rig, "12-eeee5555")
+    rig.start()
+    wait(lambda: stored(rig, "12-eeee5555"), what="the list of originals")
+    assert run_original(rig, "12-eeee5555", "purge")["status"] == "done"
+    assert not (movies / "Heat (1995).avi.synchub-original").exists() and (movies / "Heat (1995).mkv").exists() and not (rig.work / "originals/12-eeee5555").exists()
+
+
+def test_the_originals_page_lists_library_conversions_whose_original_is_still_on_its_share(conn):
+    from .library_helpers import add
+    done = add(conn, rel="Old/Heat.avi", name="Heat.avi", size=5 * 1073741824)
+    conn.execute("UPDATE library_file SET migration_status = 'completed', migrated_how = 'convert', migration_destination_path = 'media:Movies/Heat (1995)/Heat (1995).mkv' WHERE id = ?", (done,))
+    other = add(conn, rel="Old/Other.avi", name="Other.avi")
+    conn.execute("UPDATE library_file SET migration_status = 'completed', migrated_how = 'convert', migration_destination_path = 'media:Movies/Other.mkv', source_delete_status = 'deleted' WHERE id = ?", (other,))
+    conn.commit()
+    listed = originals.conversions(conn)
+    assert [r["id"] for r in listed["items"]] == [done] and listed["bytes"] == 5 * 1073741824
+
+
 def test_a_restore_refuses_a_kept_original_that_does_not_match_its_checksum(rig):    # noqa: F811
     folder = keep(rig, "9-cccc3333")
     (folder / "Heat (1995).avi").write_bytes(b"original byteS")                               # same size, different content

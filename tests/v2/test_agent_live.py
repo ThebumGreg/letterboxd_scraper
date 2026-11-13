@@ -658,10 +658,11 @@ def test_approving_a_file_gets_it_converted_by_the_worker_and_the_library_record
 
 
 # ---------------------------------------------------------------- replacing a download in place (real ffmpeg)
-def queue_replace(rig, rel, change, size, mtime, dst=None, days=30, duration=2.0):
+def queue_replace(rig, rel, change, size, mtime, dst=None, days=30, duration=2.0, where=None):
     with rig.db.connection() as conn:
         return jobs.create(conn, "download", title="Replace", source=("media", rel), dest=("media", dst or rel), pinned_worker_id=rig.worker_id,
-                           plan={"op": "convert", "replace": True, "change": change, "duration": duration, "source_size": size, "source_mtime": mtime, "originals_retention_days": days})
+                           plan={"op": "convert", "replace": True, "change": change, "duration": duration, "source_size": size, "source_mtime": mtime, "originals_retention_days": days,
+                                                                         **({"originals_where": where} if where else {})})
 
 
 KEEP_FIRST_AUDIO = {"op": "keep_tracks", "container": "matroska", "keep_audio": [1], "remove_audio": [{"index": 2, "language": "ita", "title": ""}], "keep_subtitle": [], "remove_subtitle": [],
@@ -687,6 +688,80 @@ def test_a_download_is_replaced_in_place_under_the_same_name_and_the_original_is
     assert kept[0][1]["rel"] == "Movies/Heat (1995)/Heat.1995.mkv" and kept[0][1]["retention_days"] == 30 and kept[0][1]["sha256"] == original_hash
     assert job["result"]["replaced"] is True and job["result"]["kept_original"] is True
     assert instance.originals_held() == (1, stat.st_size)
+
+
+@needs_ffmpeg
+def test_with_originals_on_the_share_the_original_is_renamed_there_and_nothing_stays_on_the_worker(rig):
+    source = rig.roots["media"] / "Movies/Heat (1995)/Heat.1995.mkv"
+    make_avi(source)
+    original_hash, stat = sha(source), source.stat()
+    job_id = queue_replace(rig, "Movies/Heat (1995)/Heat.1995.mkv", KEEP_FIRST_AUDIO, stat.st_size, stat.st_mtime, where="share")
+    instance = rig.start()
+    job = wait(lambda: (j := rig.job(job_id))["status"] in ("done", "failed", "needs_review") and j, timeout=60, what="the replacement")
+    assert job["status"] == "done", job["error"]
+    renamed = source.parent / "Heat.1995.mkv.synchub-original"
+    assert sha(renamed) == original_hash and sha(source) == job["result"]["sha256"] != original_hash
+    assert job["result"]["original_where"] == "share" and job["result"]["original_path"] == "Movies/Heat (1995)/Heat.1995.mkv.synchub-original"
+    (folder, meta), = instance.originals()
+    assert meta["where"] == "share" and meta["renamed_rel"].endswith(".synchub-original") and not (Path(folder) / source.name).exists()
+    assert instance.originals_held() == (1, 0)                                                 # it counts, but takes no room on the work disk
+    assert instance.originals_listing()[0]["where"] == "share"
+    meta["expires_at"] = agent.iso(agent.utcnow() - agent.timedelta(days=1))                  # its time is over: the sweep deletes it from the share
+    (Path(folder) / "meta.json").write_text(json.dumps(meta))
+    assert instance.sweep_originals() == 1 and not renamed.exists() and source.exists() and not list(Path(instance.cfg.originals_dir).iterdir())
+
+
+@needs_ffmpeg
+def test_an_original_on_the_share_is_not_deleted_when_the_converted_file_is_gone_or_the_name_is_odd(rig):
+    source = rig.roots["media"] / "Movies/Heat (1995)/Heat.1995.mkv"
+    make_avi(source)
+    stat = source.stat()
+    job_id = queue_replace(rig, "Movies/Heat (1995)/Heat.1995.mkv", KEEP_FIRST_AUDIO, stat.st_size, stat.st_mtime, where="share")
+    instance = rig.start()
+    wait(lambda: rig.job(job_id)["status"] == "done", timeout=60, what="the replacement")
+    (folder, meta), = instance.originals()
+    renamed = source.parent / "Heat.1995.mkv.synchub-original"
+    meta["expires_at"] = agent.iso(agent.utcnow() - agent.timedelta(days=1))
+    source.unlink()                                                                           # the converted file is gone: the original is the only copy
+    (Path(folder) / "meta.json").write_text(json.dumps(meta))
+    assert instance.sweep_originals() == 0 and renamed.exists()
+    source.write_bytes(b"x")
+    meta["renamed_rel"] = "Movies/Heat (1995)/Heat.1995.mkv"                                  # a damaged meta.json must never point a delete at a real video
+    (Path(folder) / "meta.json").write_text(json.dumps(meta))
+    assert instance.sweep_originals() == 0 and source.exists()
+
+
+@needs_ffmpeg
+def test_when_the_share_will_not_rename_the_original_stays_on_the_worker(rig):
+    source = rig.roots["media"] / "Movies/Heat (1995)/Heat.1995.mkv"
+    make_avi(source)
+    stat = source.stat()
+    (source.parent / "Heat.1995.mkv.synchub-original").write_bytes(b"older")                 # a name that is already taken
+    job_id = queue_replace(rig, "Movies/Heat (1995)/Heat.1995.mkv", KEEP_FIRST_AUDIO, stat.st_size, stat.st_mtime, where="share")
+    instance = rig.start()
+    job = wait(lambda: (j := rig.job(job_id))["status"] in ("done", "failed", "needs_review") and j, timeout=60, what="the replacement")
+    assert job["status"] == "done" and job["result"]["original_where"] == "worker"
+    assert (source.parent / "Heat.1995.mkv.synchub-original").read_bytes() == b"older"
+    assert instance.originals_held() == (1, stat.st_size)
+
+
+@needs_ffmpeg
+def test_if_the_converted_file_cannot_be_put_in_place_the_renamed_original_goes_back(rig, monkeypatch):
+    source = rig.roots["media"] / "Movies/Heat (1995)/Heat.1995.mkv"
+    make_avi(source)
+    original_hash, stat = sha(source), source.stat()
+    real = os.replace
+
+    def broken(a, b, *args, **kwargs):
+        if str(a).endswith(".synchub-partial"):
+            raise OSError("share went away")
+        return real(a, b, *args, **kwargs)
+    monkeypatch.setattr(agent.os, "replace", broken)
+    job_id = queue_replace(rig, "Movies/Heat (1995)/Heat.1995.mkv", KEEP_FIRST_AUDIO, stat.st_size, stat.st_mtime, where="share")
+    instance = rig.start()
+    wait(lambda: any("back under its name" in line["msg"] for line in rig.joblog(job_id)), timeout=60, what="the rename to be undone")
+    assert sha(source) == original_hash and not (source.parent / "Heat.1995.mkv.synchub-original").exists()
+    assert instance.originals_held() == (0, 0)
 
 
 @needs_ffmpeg

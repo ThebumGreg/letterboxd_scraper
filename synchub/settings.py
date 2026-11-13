@@ -33,7 +33,7 @@ DEFAULTS = {
     "trigger_mbps_2160": "50", "trigger_mbps_1080": "25", "trigger_mbps_720": "0", "trigger_mbps_sd": "0", "rate_mode": "target",
     "clean_names": "1", "audio_mode": "add_compatible", "naming_style": "jellyfin", "naming_tmdb_ids": "0",
     "review_first": "always", "trust_after": "3", "preview_seconds": "45", "preview_keep_days": "7", "preview_auto": "1",
-    "download_pipeline": "off", "originals_retention_days": "30",
+    "download_pipeline": "off", "originals_retention_days": "30", "originals_where": "share",
     # conversion profile used when none is chosen for a file; the source file is deleted this many days after a verified migration (0 = never);
     # what Radarr/Sonarr are told about the move (none, update_location, unmonitor, remove) and when (right after the copy, or only when the source is deleted)
     "library_default_profile": "1", "source_delete_after_days": "0", "hide_source": "1", "arr_after_migration": "none", "arr_apply_when": "after_copy",

@@ -283,7 +283,7 @@ def register(conn, worker_id, info, now=None):
 
 MAX_ORIGINALS = 400
 MAX_ORIGINALS_BYTES = 262144
-ORIGINAL_FIELDS = ("id", "kind", "root", "rel", "name", "size", "saved_at", "expires_at", "retention_days", "replaced_with")
+ORIGINAL_FIELDS = ("id", "kind", "root", "rel", "name", "size", "saved_at", "expires_at", "retention_days", "replaced_with", "where")
 
 
 def store_originals(conn, worker_id, listing):

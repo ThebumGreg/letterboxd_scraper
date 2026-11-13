@@ -6,7 +6,7 @@ from synchub import db, originals
 
 def overview(conn):
     data = originals.listing(conn)
-    return {**data, "actions": originals.ACTIONS}
+    return {**data, "actions": originals.ACTIONS, "conversions": originals.conversions(conn)}
 
 
 def register(app):
