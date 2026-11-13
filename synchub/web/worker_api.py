@@ -8,7 +8,7 @@ from functools import wraps
 
 from flask import Response, g, jsonify, request
 
-from synchub import downloads, db, jobs, pipeline_events, previews, protect, quality, states, storage, tasks, versions, workers
+from synchub import downloads, db, jobs, pipeline_events, previews, protect, quality, states, storage, tasks, versions, workdrive, workers
 from synchub.library import cleanup, hide, migrate, scan
 
 logger = logging.getLogger(__name__)
@@ -168,6 +168,8 @@ def register(app):
             workers.touch(conn, g.worker["id"], data.get("status"))
             if "originals" in data:
                 workers.store_originals(conn, g.worker["id"], data["originals"])
+            if "work_usage" in data:
+                workdrive.store_usage(conn, g.worker["id"], data["work_usage"])
             worker = workers.get(conn, g.worker["id"])
             if isinstance(data.get("holding"), list):
                 lost = jobs.reconcile(conn, worker["id"], data["holding"])
@@ -186,7 +188,7 @@ def register(app):
             cleanup.sync_active(conn)
             for job in claimed:
                 logger.info(f"[jobs] job {job['id']} ({job['kind']}: {job['title']}) went to {worker['name']}, attempt {job['attempt']}")
-            response = jsonify(ok=True, jobs=claimed, resume=resume, release=release, cancel=jobs.cancels_for(conn, worker["id"]), cleanup=jobs.cleanups_for(conn, worker["id"]),
+            response = jsonify(ok=True, jobs=claimed, resume=resume, release=release, cancel=jobs.cancels_for(conn, worker["id"]), cleanup=jobs.cleanups_for(conn, worker["id"]), purge=workdrive.for_worker(conn, worker["id"], data.get("holding")),
                            log_requests=jobs.log_requests_for(conn, worker["id"]), worker_log=bool(worker["log_requested"]), benchmark=bool(worker["benchmark_requested"]), roots_hash=storage.roots_hash(conn), paused=bool(worker["paused"]), draining=bool(worker["draining"]),
                            poll_seconds=POLL_SECONDS, lease_seconds=jobs.LEASE_SECONDS, settings=workers.agent_settings(worker), **({"relay": relay} if relay else {}))
         downloads.rescan_due()

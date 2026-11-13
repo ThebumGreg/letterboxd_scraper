@@ -4,6 +4,12 @@
 
 Migrations 044 and 045. Update SyncHub first, then the workers.
 
+**Work drive: see what uses a worker's disk, and delete old job files (no migration).** Update SyncHub, then the workers.
+- **Workers > Work drive** (button on each worker card) shows a bar of what fills the work folder (job folders, kept originals, logs, other) and the free space, then a table of the 40 biggest job folders with their job title, state (running, finished, failed, cancelled, waiting for you, stopped part-way), size, age and the date they go automatically. The worker measures its folder every five minutes in the background.
+- **Delete files** removes one job folder. **Delete all finished** and **Delete failed older than 3 days** show the count and GB first. A failed job that is retried later copies its file to the worker again.
+- **Protected:** a running job, a result SyncHub has not received yet, a job waiting for your decision or stopped part-way (never in a bulk delete), and anything in the folder that is not SyncHub's (shown as Other, never touched). The worker checks again on its side. Kept originals stay on the Originals page.
+- Not included: deleting automatically when the disk is nearly full.
+
 **Replaced originals now stay on the share, renamed (no migration).** Update SyncHub, then the workers.
 - When a Radarr/Sonarr download or a Dolby Vision 7 file is replaced, the original is renamed next to the new file (`Film (2020).mkv.synchub-original`) instead of being copied to the worker. It is one instant rename on the share: nothing is stored on the worker's disk, and Radarr, Sonarr and Jellyfin ignore the unknown extension. Subtitles and `.nfo` files keep matching because the new file has the old name. It uses share space (original plus new file) until the original is deleted.
 - Safe order as before: the new file is made, copied and checked first; only then is the original renamed and the new file put in place. If putting it in place fails, the rename is undone. If a job stops in between, the next attempt puts the original back first. The new file is never discarded on a failure.

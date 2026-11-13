@@ -80,7 +80,8 @@
         {% if not w.revoked and w.enabled %}<div class="d-flex gap-2">
             <button type="button" class="btn btn-sm btn-outline-secondary" data-worker-action="benchmark" data-id="{{ w.id }}"{% if not w.benchmark.can_run %} disabled title="Update this worker's agent to run benchmarks"{% elif w.benchmark.pending %} disabled{% endif %}><i class="bi bi-speedometer2" aria-hidden="true"></i> {{ 'Benchmark queued' if w.benchmark.pending else 'Run benchmark' }}</button>
             <button type="button" class="btn btn-sm btn-outline-info" data-worker-logs="{{ w.id }}" data-name="{{ w.name }}"><i class="bi bi-card-text" aria-hidden="true"></i> Logs</button>
-            <button type="button" class="btn btn-sm btn-outline-info" data-worker-stats="{{ w.id }}" data-name="{{ w.name }}" title="CPU, temperature and free space over the last 14 days"><i class="bi bi-graph-up" aria-hidden="true"></i> Stats</button></div>{% endif %}
+            <button type="button" class="btn btn-sm btn-outline-info" data-worker-stats="{{ w.id }}" data-name="{{ w.name }}" title="CPU, temperature and free space over the last 14 days"><i class="bi bi-graph-up" aria-hidden="true"></i> Stats</button>
+            <button type="button" class="btn btn-sm btn-outline-info" data-worker-work="{{ w.id }}" data-name="{{ w.name }}" title="What is using the work drive, and delete old job files"><i class="bi bi-hdd" aria-hidden="true"></i> Work drive</button></div>{% endif %}
     </div>
     {% set b = w.benchmark.last %}
     <div class="border rounded p-2 mb-3 small" data-benchmark="{{ w.id }}">
