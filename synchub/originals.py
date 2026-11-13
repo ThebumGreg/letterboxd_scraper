@@ -38,9 +38,11 @@ def _open_actions(conn):
 def listing(conn, now=None):
     """Every original held by any worker, newest first, with the worker's name and what is already being done to it."""
     pending, out, held = _open_actions(conn), [], 0
+    records = {(r["root_name"], r["relative_path"]): r["id"] for r in conn.execute("SELECT id, root_name, relative_path FROM library_file")}
     for w in workers.list_all(conn):
         for item in w["originals"]:
-            entry = dict(item, worker_id=w["id"], worker=w["name"], online=w["online"], days_left=_days_left(item.get("expires_at"), now), pending=pending.get((w["id"], item["id"])))
+            record = records.get((item.get("root"), item.get("rel"))) or records.get((item.get("root"), item.get("replaced_with")))      # the file's report in the Library, where it was approved
+            entry = dict(item, worker_id=w["id"], worker=w["name"], online=w["online"], days_left=_days_left(item.get("expires_at"), now), pending=pending.get((w["id"], item["id"])), record_id=record)
             held += int(item.get("size") or 0)
             out.append(entry)
     out.sort(key=lambda e: e.get("saved_at") or "", reverse=True)

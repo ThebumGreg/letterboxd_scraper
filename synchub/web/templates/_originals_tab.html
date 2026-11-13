@@ -14,7 +14,7 @@
         <tbody>
         {% for o in items %}
             <tr>
-                <td><div class="fw-semibold text-break">{{ o.name or o.id }}</div><div class="small text-body-secondary text-break">{{ o.root }}:{{ o.rel }}{% if o.kind == 'converted' %} &middot; converted copy set aside by a restore{% endif %}</div></td>
+                <td><div class="fw-semibold text-break">{% if o.record_id %}<a href="/library/record/{{ o.record_id }}" class="text-decoration-none" title="Open this file's report">{{ o.name or o.id }}</a>{% else %}{{ o.name or o.id }}{% endif %}</div><div class="small text-body-secondary text-break">{{ o.root }}:{{ o.rel }}{% if o.kind == 'converted' %} &middot; converted copy set aside by a restore{% endif %}</div></td>
                 <td>{% if o.where == 'share' %}the share{% else %}{{ o.worker }}{% endif %}{% if not o.online %} <span class="badge bg-secondary">offline</span>{% endif %}</td>
                 <td class="text-end">{{ '%.2f'|format((o.size or 0) / 1073741824) }} GB</td>
                 <td>{% if o.days_left is none %}&ndash;{% elif o.days_left < 0 %}due{% else %}{{ '%g'|format(o.days_left) }} day{{ '' if o.days_left == 1 else 's' }}{% endif %}</td>
@@ -44,7 +44,7 @@
         <tbody>
         {% for c in conversions['items'] %}
             <tr>
-                <td><div class="fw-semibold text-break">{{ c.file_name }}</div><div class="small text-body-secondary text-break">{{ c.root_name }}:{{ c.relative_path }}</div></td>
+                <td><div class="fw-semibold text-break"><a href="/library/record/{{ c.id }}" class="text-decoration-none" title="Open this file's report">{{ c.file_name }}</a></div><div class="small text-body-secondary text-break">{{ c.root_name }}:{{ c.relative_path }}</div></td>
                 <td class="small text-break">{{ c.migration_destination_path }}</td>
                 <td class="text-end">{{ '%.2f'|format((c.size_bytes or 0) / 1073741824) }} GB</td>
                 <td class="small">{% if c.source_delete_status == 'waiting' %}{{ c.source_delete_due_at }}{% elif c.source_delete_status == 'held' %}kept on purpose{% elif c.source_delete_status == 'queued' %}being deleted{% elif c.source_delete_status == 'failed' %}failed: {{ c.source_delete_message }}{% else %}not scheduled{% endif %}</td>

@@ -255,6 +255,20 @@ def test_deleting_a_renamed_original_removes_the_file_on_the_share_and_the_marke
     assert not (movies / "Heat (1995).avi.synchub-original").exists() and (movies / "Heat (1995).mkv").exists() and not (rig.work / "originals/12-eeee5555").exists()
 
 
+def test_the_titles_on_the_originals_page_open_the_files_report_in_the_library(conn, client):
+    from .library_helpers import add
+    record = add(conn, rel="Old/Heat.avi", name="Heat.avi", size=1000)
+    conn.execute("UPDATE library_file SET migration_status = 'completed', migrated_how = 'convert', migration_destination_path = 'media:Movies/Heat (1995)/Heat (1995).mkv' WHERE id = ?", (record,))
+    root = conn.execute("SELECT root_name FROM library_file WHERE id = ?", (record,)).fetchone()[0]
+    wid = workers.create(conn, "w1")[0]
+    workers.store_originals(conn, wid, [{"id": "5-abcd1234", "kind": "original", "root": root, "rel": "Old/Heat.avi", "name": "Heat.avi", "size": 10, "saved_at": "2026-10-01T00:00:00+00:00",
+                                         "expires_at": "2099-01-01T00:00:00+00:00", "replaced_with": "Old/Heat.mkv"}])
+    conn.commit()
+    assert originals.listing(conn)["items"][0]["record_id"] == record
+    page = client.get("/originals").get_data(as_text=True)
+    assert page.count(f'href="/library/record/{record}"') >= 1
+
+
 def test_the_originals_page_lists_library_conversions_whose_original_is_still_on_its_share(conn):
     from .library_helpers import add
     done = add(conn, rel="Old/Heat.avi", name="Heat.avi", size=5 * 1073741824)

@@ -4,6 +4,8 @@
 
 Migrations 044 and 045. Update SyncHub first, then the workers.
 
+**Originals page: file names open the file's report.** Click a name in either list to open that file's report in the Library, where you approved it. No migration.
+
 **Work drive: see what uses a worker's disk, and delete old job files (no migration).** Update SyncHub, then the workers.
 - **Workers > Work drive** (button on each worker card) shows a bar of what fills the work folder (job folders, kept originals, logs, other) and the free space, then a table of the 40 biggest job folders with their job title, state (running, finished, failed, cancelled, waiting for you, stopped part-way), size, age and the date they go automatically. The worker measures its folder every five minutes in the background.
 - **Delete files** removes one job folder. **Delete all finished** and **Delete failed older than 3 days** show the count and GB first. A failed job that is retried later copies its file to the worker again.
