@@ -25,7 +25,6 @@ def OLD_NUMBERS(conn):
 
 @pytest.fixture
 def bitrate(conn):
-    settings.set_value("size_mode", "bitrate", conn=conn)
     settings.set_value("size_policy", "1", conn=conn)
     OLD_NUMBERS(conn)
     conn.commit()
@@ -195,7 +194,6 @@ def test_the_extra_copy_follows_the_profile_of_the_film(conn):
 def test_a_big_4k_film_with_lossless_audio_sits_in_format_conversion_with_the_rule_steps(conn):
     from .library_helpers import add
     from synchub.library import recommend as rc, scan
-    settings.set_value("size_mode", "bitrate", conn=conn)
     settings.set_value("size_policy", "1", conn=conn)
     settings.set_value("audio_mode", "add_compatible", conn=conn)
     conn.commit()
@@ -299,7 +297,6 @@ def test_the_agent_benchmark_times_an_encoder_and_reports_it(tmp_path):
 # ---------------------------------------------------------------- quality facts on the record page
 def test_the_record_page_shows_the_bitrate_against_the_ceiling_and_the_vmaf_of_a_finished_job(client, conn):
     from .library_helpers import add
-    settings.set_value("size_mode", "bitrate", conn=conn)
     settings.set_value("size_policy", "1", conn=conn)
     OLD_NUMBERS(conn)
     conn.commit()
@@ -332,7 +329,6 @@ def test_the_workers_page_flags_a_worker_that_is_not_on_this_version(client, con
 # ---------------------------------------------------------------- approving together
 def test_the_bulk_page_says_what_will_happen_and_can_set_the_profile_for_all(client, conn):
     from .library_helpers import add
-    settings.set_value("size_mode", "bitrate", conn=conn)
     settings.set_value("size_policy", "1", conn=conn)
     conn.commit()
     ids = []

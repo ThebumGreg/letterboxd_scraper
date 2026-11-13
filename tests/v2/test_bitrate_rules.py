@@ -10,7 +10,7 @@ from tests.v2.media_helpers import all_tabs
 
 
 def cfg(**kw):
-    return sp.Settings(on=True, mode="bitrate", trigger_mbps={"2160": 50.0, "1080": 25.0, "720": 0.0, "sd": 0.0}, caps_mbps={"2160": 35.0, "1080": 12.0, "720": 4.0, "sd": 2.0},
+    return sp.Settings(on=True, trigger_mbps={"2160": 50.0, "1080": 25.0, "720": 0.0, "sd": 0.0}, caps_mbps={"2160": 35.0, "1080": 12.0, "720": 4.0, "sd": 2.0},
                        safety_gb={"2160": 0.0, "1080": 0.0}, rate_mode="target", **kw)
 
 
@@ -46,7 +46,6 @@ def test_an_episode_follows_the_same_rule_scaled_by_its_share():
 
 
 def test_the_new_defaults_are_loaded_and_a_profile_can_override_the_trigger(conn):
-    settings.set_value("size_mode", "bitrate", conn=conn)
     conn.commit()
     loaded = sp.load(conn)
     assert (loaded.trigger_mbps["2160"], loaded.caps_mbps["2160"], loaded.trigger_mbps["1080"], loaded.caps_mbps["1080"], loaded.trigger_mbps["720"]) == (50.0, 35.0, 25.0, 12.0, 0.0)
@@ -73,7 +72,7 @@ def test_the_encoder_aims_at_the_bitrate_in_target_mode_and_uses_crf_otherwise()
 
 
 def test_the_settings_page_saves_the_new_fields(app, client):
-    saved = client.post("/api/library/settings", json={"size_mode": "bitrate", "trigger_mbps_2160": "55", "cap_mbps_2160": "36", "rate_mode": "quality", "variant_min_gb": "0"})
+    saved = client.post("/api/library/settings", json={"trigger_mbps_2160": "55", "cap_mbps_2160": "36", "rate_mode": "quality", "variant_min_gb": "0"})
     assert saved.get_json()["ok"] is True
     loaded = sp.load()
     assert (loaded.trigger_mbps["2160"], loaded.caps_mbps["2160"], loaded.rate_mode) == (55.0, 36.0, "quality")

@@ -18,7 +18,7 @@
     const say = (text, ok) => { const box = document.getElementById('playerMessage'); box.className = 'alert player-message ' + (ok ? 'alert-success' : 'alert-danger'); box.textContent = text; };
     const busy = () => document.querySelector('.modal.show, .dropdown-menu.show');
     async function refresh() {
-        if (busy() || !document.getElementById('media-pane-players')?.classList.contains('active')) return;
+        if (busy() || document.hidden) return;
         try {
             const res = await fetch('/players/fragment');
             if (res.ok && !busy()) holder.innerHTML = await res.text();

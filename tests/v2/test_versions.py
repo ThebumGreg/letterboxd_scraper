@@ -194,7 +194,8 @@ def test_a_job_of_another_kind_is_ignored_by_sync(conn):
 def test_the_versions_tab_renders_and_its_buttons_queue_and_decline(client, conn):
     big = film(conn)
     seven = film(conn, info=DV7, rel="Movies/Seven (2002)/Seven (2002).mkv")
-    page = client.get("/versions")
+    assert client.get("/versions").headers["Location"].endswith("/library#extra-copies")
+    page = client.get("/library")
     assert page.status_code == 200
     html = page.get_data(as_text=True)
     assert "Smaller extra copy" in html and "Heat (1995)" in html
@@ -203,7 +204,7 @@ def test_the_versions_tab_renders_and_its_buttons_queue_and_decline(client, conn
     assert client.post("/api/library/versions/skip", json={"kind": "variant", "id": seven}).get_json()["ok"]
     assert client.post("/api/library/versions/approve", json={"kind": "nope", "items": [{"id": 1}]}).status_code == 400
     assert client.post("/api/library/versions/approve", json={"kind": "variant", "items": []}).status_code == 400
-    page = client.get("/versions").get_data(as_text=True)
+    page = client.get("/library").get_data(as_text=True)
     assert "Declined (1)" in page and "720p" in page
 
 

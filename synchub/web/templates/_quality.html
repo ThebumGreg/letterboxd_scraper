@@ -103,7 +103,7 @@
         {% elif copies.missing_remote %}<span class="badge bg-warning text-dark"><i class="bi bi-phone" aria-hidden="true"></i> No smaller copy for remote viewing</span>
         {% else %}<span class="badge bg-secondary"><i class="bi bi-phone" aria-hidden="true"></i> No separate remote copy</span>{% endif %}
     </div>
-    {% if copies.missing_remote %}<p class="small text-body-secondary">The full copy is above 1080p. A smaller copy plays on phones and away from home without transcoding. Create one on the <a href="{{ url_for('library_versions_page') }}">Versions</a> tab.</p>{% endif %}
+    {% if copies.missing_remote %}<p class="small text-body-secondary">The full copy is above 1080p. A smaller copy plays on phones and away from home without transcoding. Create one on the <a href="{{ url_for('library_page') }}#extra-copies">Extra copies</a> section of the Library.</p>{% endif %}
     {% for f in copies.files %}
     <div class="border-top pt-2 mt-2">
         <div class="d-flex flex-wrap justify-content-between gap-2">

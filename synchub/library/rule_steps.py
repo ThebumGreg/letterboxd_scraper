@@ -80,9 +80,8 @@ def quality_facts(conn, rec, plans=()):
     if kbps:
         klass = size_policy.picture_class(width, height)
         movie = (rec.get("media_type") or "").lower().startswith("movie")
-        if size.mode == "bitrate":
-            ceiling = size.caps_mbps[klass] * (1 if movie else size.tv_cap_share)
-            out.update(mbps=round(kbps / 1000, 1), ceiling_mbps=round(ceiling, 1), picture=klass, trigger_mbps=round(size_policy.trigger_kbps(size, klass, movie) / 1000, 1))
+        ceiling = size.caps_mbps[klass] * (1 if movie else size.tv_cap_share)
+        out.update(mbps=round(kbps / 1000, 1), ceiling_mbps=round(ceiling, 1), picture=klass, trigger_mbps=round(size_policy.trigger_kbps(size, klass, movie) / 1000, 1))
     decision = size_policy.decide(rec, list(plans), size)
     out["action"] = decision.action
     if decision.action in (size_policy.COMPRESS, size_policy.REVIEW) and decision.numbers.get("target_gb"):

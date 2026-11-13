@@ -1,7 +1,7 @@
-<!-- synchub/web/templates/_originals_tab.html: the Originals tab of the Media page -->
+<!-- synchub/web/templates/_originals_tab.html: the Cleanup tab of the Media page -->
 <div class="mb-3">
-    <h3 class="visually-hidden">Originals</h3>
-    <p class="text-body-secondary mb-0">When a worker replaces a file with a converted one, it keeps the original for a while: renamed next to the new file on the share (<code>.synchub-original</code>, which Radarr, Sonarr and Jellyfin ignore), or on the worker PC when the share cannot rename. Restore puts the original back under its old name (the converted file is set aside for 7 days, not deleted); Keep longer pushes back the date it is removed; Delete now frees the space.
+    <h3 class="visually-hidden">Cleanup</h3>
+    <p class="text-body-secondary mb-0">When a worker replaces a file with a converted one, it keeps the original for a while: renamed next to the new file on the share (<code>.synchub-original</code>, which Radarr, Sonarr and Jellyfin ignore), or on the worker PC when the share cannot rename. Restore puts the original back under its old name (the converted file is set aside for 7 days, not deleted); Keep longer pushes back the date it is removed; Delete now frees the space. To see what fills a worker's disk, open <a href="{{ url_for('workers_page') }}">Workers</a> and press Work drive.
         {% if items %}<strong>{{ items|length }}</strong> held, {{ '%.1f'|format(bytes / 1073741824) }} GB in total.{% endif %}</p>
 </div>
 <div id="originalsMessage" class="alert d-none" role="status"></div>

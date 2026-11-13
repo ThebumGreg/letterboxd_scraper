@@ -60,7 +60,7 @@ A flagged file is **held** (below the minimum resolution, a current score under 
 - **One page.** A held file leaves Ready, Suggested, Worth a look, Format conversion and Done and lives only on the Below minimum quality page. Files already Queued (a job exists), Rejected or Needs you keep their place there, with a badge on this page.
 - **Rename and move only** (button on each row) approves a rename inside the share (a file already on the destination share) or a byte for byte copy to the right folder. The picture, audio and tracks are never touched.
 - **Everything else on a row:** Request better copy, Show releases, Damage check, Check again and **Accept as is**. Accept as is is the only way back to normal conversion; there is no Convert anyway button.
-- **Enforced on the server.** Approving a held file (one, bulk, review one by one) only makes a copy or rename; a request to keep fewer tracks or use a converting profile is refused with a sentence. The Versions tab and the download pipeline skip held files (a held new import is brought in and left as it is).
+- **Enforced on the server.** Approving a held file (one, bulk, review one by one) only makes a copy or rename; a request to keep fewer tracks or use a converting profile is refused with a sentence. The Extra copies section of the Library tab and the download pipeline skip held files (a held new import is brought in and left as it is).
 - **A job that already exists keeps running.** If its file becomes held afterwards, the Library record shows a warning; cancel the job on the Jobs page if you do not want it.
 - **Unchecked files** are held only for their resolution, since there is no score yet. Run the Library pass (and the damage check pass) before a bulk conversion so score and damage holds exist.
 
@@ -74,7 +74,7 @@ For a film that Jellyfin knows, the movie page lists every file in the film's fo
 
 - **Full quality copy**: the best file (largest picture, not an extra version).
 - **Remote copy**: a smaller extra version (for example `Heat (1995) - 1080p.mkv`).
-- **No smaller copy for remote viewing**: the full copy is above 1080p, extra versions are on and none exists. The Versions tab makes one.
+- **No smaller copy for remote viewing**: the full copy is above 1080p, extra versions are on and none exists. The Extra copies section of the Library tab makes one.
 
 The film is matched to its files through every Jellyfin item linked to it: the item's path and the share's *Jellyfin path* (and *other mounts*) on the Storage page. Any other Library file whose cleaned name starts with the film's title and year is found too, wherever it sits, and says "found by name". A film at the top of a share matches only itself, because its neighbours are other films. When Jellyfin's path is not covered by any share, the card names it. Two mappings with the same Jellyfin path: the one that names a folder wins, and the Storage page warns when you save.
 

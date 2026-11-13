@@ -191,5 +191,10 @@
     </form>
 </div>
 
-{% if qual %}{% include "_quality_settings.html" %}{% endif %}
-{% if ai %}{% include "_quality_ai.html" %}{% endif %}
+{% if qual %}
+<div class="mb-3 mt-4" id="qualitySection">
+    <h4 class="h5 mb-1">Quality</h4>
+    <p class="small text-body-secondary mb-0">Four checks look after picture quality, and each answers a different question. <strong>Below minimum</strong>: is this file too small a picture to be worth converting (it is held, not converted). <strong>VMAF score</strong>: after a compression, does the new file still look like the original (set under Conversion above). <strong>Quality check</strong>: does a film that already exists look good, judged from sampled parts without a reference. <strong>Damage check</strong>: is the file complete and playable. The AI test further down is only a comparison tool and changes nothing.</p>
+</div>
+{% include "_quality_settings.html" %}{% endif %}
+{% if ai %}<details class="mb-4"><summary class="small fw-bold mb-2">AI quality test (a comparison tool; off unless you run it)</summary>{% include "_quality_ai.html" %}</details>{% endif %}
