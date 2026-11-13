@@ -27,6 +27,9 @@
                         <select class="form-select form-select-sm" id="setDownloads">{% for m, label in [('off', 'Leave alone'), ('review', 'Ask me first'), ('auto', 'Replace when safe')] %}<option value="{{ m }}"{% if m == download_summary.mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
                     <div class="col-5"><label for="setOriginals" class="form-label small mb-1">Keep originals (days)</label><input type="number" min="0" max="3650" class="form-control form-control-sm" id="setOriginals" value="{{ originals_days }}" title="0 drops the original once the replacement is verified"></div>
                 </div>
+                <div class="mb-2"><label for="setOriginalsWhere" class="form-label small mb-1">Where a replaced original goes</label>
+                    <select class="form-select form-select-sm" id="setOriginalsWhere">{% for m, label in [('share', 'On the share, renamed (.synchub-original)'), ('worker', 'On the worker PC')] %}<option value="{{ m }}"{% if m == originals_where %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+                    <div class="form-text">On the share, the original is renamed next to the new file (no extra copy, nothing stored on the worker); Radarr, Sonarr and Jellyfin ignore it. If the rename is not possible the worker keeps it instead.</div></div>
                 <div class="fw-bold small mb-1">What happens to each file</div>
                 <div class="mb-2"><label for="setProfile" class="form-label small mb-1">Convert with (default profile)</label>
                     <select class="form-select form-select-sm" id="setProfile">{% for p in profiles %}<option value="{{ p.id }}"{% if p.id == default_profile_id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select>

@@ -33,6 +33,11 @@ def mode(conn=None):
     return value if value in PIPELINE_MODES else "off"
 
 
+def originals_where(conn=None):
+    """Where a replaced original is kept: 'share' (renamed next to the new file) or 'worker' (the old behaviour)."""
+    return "worker" if settings.get("originals_where", conn=conn) == "worker" else "share"
+
+
 def retention_days(conn=None):
     try:
         return max(0, int(settings.get("originals_retention_days", conn=conn)))
@@ -287,7 +292,7 @@ def queue(conn, intake_id, by, now=None):
         dest_rel = os.path.splitext(dest_rel)[0] + extension
     now = now or db.now()
     plan = {"op": "convert", "replace": True, "change": change, "revision": rec["source_revision"], "duration": rec.get("duration_seconds"),
-            "source_size": rec["size_bytes"], "source_mtime": rec["mtime"], "originals_retention_days": retention_days(conn), "import": row["id"]}
+            "source_size": rec["size_bytes"], "source_mtime": rec["mtime"], "originals_retention_days": retention_days(conn), "originals_where": originals_where(conn), "import": row["id"]}
     if change.get("audio_add") or any(isinstance(c, dict) and c.get("kbps") for c in (change.get("audio_convert") or {}).values()):
         plan["needs"] = ["audio_add"]
     if size.profile is not None:                         # compress (or a quality-floor review the person has just accepted by approving)

@@ -98,6 +98,18 @@ def queue_delete(conn, record_id, now=None):
     return job_id
 
 
+def delete_now(conn, record_id, by):
+    """Queues the deletion of this file's source right away (the same job, with the same checks, as when the timer runs out). Returns the job id."""
+    rec = store.get_record(conn, record_id)
+    if rec is None or rec["migration_status"] != "completed" or rec.get("migrated_how") not in ("copy", "convert") or rec["source_delete_status"] in ("queued", "deleted"):
+        raise ValueError("There is no original left to delete for this file.")
+    store._update(conn, record_id, {"source_delete_status": "waiting", "source_delete_due_at": db.now(), "source_delete_message": f"Deleting now, asked by {by}."})
+    job_id = queue_delete(conn, record_id)
+    if job_id is None:
+        raise ValueError("The source cannot be deleted: the destination of the copy is not recorded.")
+    return job_id
+
+
 def hold(conn, record_id, by):
     """Keeps this file's source for good (until released)."""
     rec = store.get_record(conn, record_id)

@@ -4,6 +4,13 @@
 
 Migrations 044 and 045. Update SyncHub first, then the workers.
 
+**Replaced originals now stay on the share, renamed (no migration).** Update SyncHub, then the workers.
+- When a Radarr/Sonarr download or a Dolby Vision 7 file is replaced, the original is renamed next to the new file (`Film (2020).mkv.synchub-original`) instead of being copied to the worker. It is one instant rename on the share: nothing is stored on the worker's disk, and Radarr, Sonarr and Jellyfin ignore the unknown extension. Subtitles and `.nfo` files keep matching because the new file has the old name. It uses share space (original plus new file) until the original is deleted.
+- Safe order as before: the new file is made, copied and checked first; only then is the original renamed and the new file put in place. If putting it in place fails, the rename is undone. If a job stops in between, the next attempt puts the original back first. The new file is never discarded on a failure.
+- **Setting:** Library settings > "Where a replaced original goes": on the share (default) or on the worker PC (the old way). Keep days stay as they were (30 unless you changed them; 0 keeps nothing). If the share will not rename, or the `.synchub-original` name is already taken, that file is kept on the worker instead and the job log says so.
+- **Originals page:** shows where each original is kept, with Restore (two renames; the new file is set aside as `.synchub-converted` for 7 days), Keep longer and Delete now. The expiry sweep deletes a renamed original only while the new file is still on the share. A second list shows every Library conversion whose original is still on its source share, with a **Delete original** button (the same checked deletion as the timer). Originals already held on workers stay listed and work as before.
+- Needs a real-share check on `wtwo`: replace one small file and look for the `.synchub-original` file beside it.
+
 **Worker health: temperatures, history, alerts, a cool-down guard and drive health (migration 045).** Update SyncHub, then the workers.
 - **Temperatures.** The worker reads the PC's sensors (CPU, drives, GPU where exposed) and the integrated GPU's clock; the Workers page shows them, and a "Hot" or "Cooling down" badge when it matters.
 - **History.** One point every five minutes for 14 days (CPU, hottest temperature, free work space, jobs running, GPU encodes). **Stats** on each worker draws them as charts for 6 hours up to 14 days.

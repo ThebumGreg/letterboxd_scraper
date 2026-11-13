@@ -289,7 +289,7 @@ def dv_plan(conn, rec, extra=None):
         dest = os.path.splitext(dest)[0] + ".mkv"
     days = downloads.retention_days(conn)
     plan = {"op": "convert", "replace": True, "change": change, "needs": ["dovi"], "revision": rec["source_revision"], "duration": rec.get("duration_seconds"),
-            "source_size": rec["size_bytes"], "source_mtime": rec["mtime"], "originals_retention_days": days}
+            "source_size": rec["size_bytes"], "source_mtime": rec["mtime"], "originals_retention_days": days, "originals_where": downloads.originals_where(conn)}
     if extra:
         extra_dest, extra_plan = extra
         plan["extra"] = {"rel": extra_dest, "label": extra_plan["variant"]["label"], "height": extra_plan["variant"]["height"], "change": extra_plan["change"], "profile": extra_plan["profile"]}

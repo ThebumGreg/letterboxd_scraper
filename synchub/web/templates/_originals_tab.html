@@ -1,7 +1,7 @@
 <!-- synchub/web/templates/_originals_tab.html: the Originals tab of the Media page -->
 <div class="mb-3">
     <h3 class="visually-hidden">Originals</h3>
-    <p class="text-body-secondary mb-0">When a worker replaces a file with a converted one, it keeps the original on its own disk for a while. Restore puts the original back under its old name (the converted file is set aside for 7 days, not deleted); Keep longer pushes back the date it is removed; Delete now frees the space.
+    <p class="text-body-secondary mb-0">When a worker replaces a file with a converted one, it keeps the original for a while: renamed next to the new file on the share (<code>.synchub-original</code>, which Radarr, Sonarr and Jellyfin ignore), or on the worker PC when the share cannot rename. Restore puts the original back under its old name (the converted file is set aside for 7 days, not deleted); Keep longer pushes back the date it is removed; Delete now frees the space.
         {% if items %}<strong>{{ items|length }}</strong> held, {{ '%.1f'|format(bytes / 1073741824) }} GB in total.{% endif %}</p>
 </div>
 <div id="originalsMessage" class="alert d-none" role="status"></div>
@@ -10,12 +10,12 @@
 {% else %}
 <div class="table-responsive">
     <table class="table table-sm align-middle">
-        <thead><tr><th>File</th><th>Worker</th><th class="text-end">Size</th><th>Goes in</th><th class="text-end"></th></tr></thead>
+        <thead><tr><th>File</th><th>Kept on</th><th class="text-end">Size</th><th>Goes in</th><th class="text-end"></th></tr></thead>
         <tbody>
         {% for o in items %}
             <tr>
                 <td><div class="fw-semibold text-break">{{ o.name or o.id }}</div><div class="small text-body-secondary text-break">{{ o.root }}:{{ o.rel }}{% if o.kind == 'converted' %} &middot; converted copy set aside by a restore{% endif %}</div></td>
-                <td>{{ o.worker }}{% if not o.online %} <span class="badge bg-secondary">offline</span>{% endif %}</td>
+                <td>{% if o.where == 'share' %}the share{% else %}{{ o.worker }}{% endif %}{% if not o.online %} <span class="badge bg-secondary">offline</span>{% endif %}</td>
                 <td class="text-end">{{ '%.2f'|format((o.size or 0) / 1073741824) }} GB</td>
                 <td>{% if o.days_left is none %}&ndash;{% elif o.days_left < 0 %}due{% else %}{{ '%g'|format(o.days_left) }} day{{ '' if o.days_left == 1 else 's' }}{% endif %}</td>
                 <td class="text-end text-nowrap">
@@ -26,6 +26,29 @@
                         <button type="button" class="btn btn-sm btn-outline-danger" data-original-action="purge" data-worker="{{ o.worker_id }}" data-id="{{ o.id }}" data-name="{{ o.name or o.id }}">Delete now</button>
                     {% endif %}
                 </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+<div class="mt-4 mb-2"><h4 class="h6 mb-1">Conversions that left the original on its share</h4>
+    <p class="text-body-secondary small mb-0">Files converted into another share keep their original where it was (hidden from Jellyfin). When you trust the conversions, delete the originals here, one at a time, or turn on automatic deletion under Library settings (Delete originals after).
+        {% if conversions['items'] %}<strong>{{ conversions['items']|length }}</strong> file(s), {{ '%.1f'|format(conversions.bytes / 1073741824) }} GB.{% endif %}</p></div>
+{% if not conversions['items'] %}
+<p class="text-body-secondary">No converted file has its original left on a share.</p>
+{% else %}
+<div class="table-responsive">
+    <table class="table table-sm align-middle">
+        <thead><tr><th>Original</th><th>Converted copy</th><th class="text-end">Size</th><th>Original goes</th><th class="text-end"></th></tr></thead>
+        <tbody>
+        {% for c in conversions['items'] %}
+            <tr>
+                <td><div class="fw-semibold text-break">{{ c.file_name }}</div><div class="small text-body-secondary text-break">{{ c.root_name }}:{{ c.relative_path }}</div></td>
+                <td class="small text-break">{{ c.migration_destination_path }}</td>
+                <td class="text-end">{{ '%.2f'|format((c.size_bytes or 0) / 1073741824) }} GB</td>
+                <td class="small">{% if c.source_delete_status == 'waiting' %}{{ c.source_delete_due_at }}{% elif c.source_delete_status == 'held' %}kept on purpose{% elif c.source_delete_status == 'queued' %}being deleted{% elif c.source_delete_status == 'failed' %}failed: {{ c.source_delete_message }}{% else %}not scheduled{% endif %}</td>
+                <td class="text-end text-nowrap">{% if c.source_delete_status != 'queued' %}<button type="button" class="btn btn-sm btn-outline-danger" data-delete-source="{{ c.id }}" data-name="{{ c.file_name }}">Delete original</button>{% endif %}</td>
             </tr>
         {% endfor %}
         </tbody>

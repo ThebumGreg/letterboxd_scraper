@@ -91,7 +91,7 @@ def overview(conn, max_age=0):
     return {"quality_box": quality.counts(conn, max_age), "loose_by_group": loose_by_group, "loose_count": sum(n for _, _, n in loose_by_group), "cfg": cfg, "groups": groups, "total": len(rows), "shares": shares_summary(conn, cfg), "runs": runs, "active": any(r["active"] for r in runs) or bool(migration["queued"] or migration["running"]) or bool(downloads.summary(conn)["working"]), "options": options,
             "roots": [r["name"] for r in storage.list_all(conn)], "migration": migration,
             "downloads": _with_previews(conn, downloads.recent(conn, 15)), "preview_summary": previews.summary(conn), "review_first": previews.review_first(conn), "trust_after": previews.trust_after(conn),
-            "preview_seconds": previews.clip_seconds(conn), "preview_keep_days": previews.keep_days(conn), "preview_auto": previews.auto_make(conn), "download_summary": downloads.summary(conn), "originals_days": downloads.retention_days(conn), "size": size_policy.load(conn), "lookups": {"confidence": CONFIDENCE_FLOORS},
+            "preview_seconds": previews.clip_seconds(conn), "preview_keep_days": previews.keep_days(conn), "preview_auto": previews.auto_make(conn), "download_summary": downloads.summary(conn), "originals_days": downloads.retention_days(conn), "originals_where": downloads.originals_where(conn), "size": size_policy.load(conn), "lookups": {"confidence": CONFIDENCE_FLOORS},
             "profiles": profiles.all_profiles(conn), "default_profile_id": profiles.default(conn)["id"], "cleanup": cleanup.summary(conn), "attention": migrate.attention(conn), "missing_count": store.count_missing(conn),
             "rule_defaults": profile_rules.defaults(conn), "versions_config": dataclasses.asdict(versions.load(conn)), "heights": (480, 720, 1080, 1440),
             "profile_options": {"codecs": profiles.VIDEO_CODECS, "presets": profiles.PRESETS, "subtitles": profiles.SUBTITLE_LABELS}}
@@ -296,6 +296,9 @@ def register(app):
                 elif action in ("hide-source", "show-source"):
                     hide.request(conn, record_id, undo=action == "show-source")
                     message = "A worker will hide the original from Jellyfin shortly." if action == "hide-source" else "A worker will make the original visible to Jellyfin again shortly."
+                elif action == "delete-source-now":
+                    cleanup.delete_now(conn, record_id, by)
+                    message = "Queued: a worker checks the converted copy and then deletes the original."
                 elif action == "release-source":
                     cleanup.release(conn, record_id, by)
                     message = "The source will be deleted when the waiting time is over."
@@ -314,7 +317,7 @@ def register(app):
 
     @app.route("/api/library/record/<int:record_id>/<action>", methods=["POST"])
     def api_library_decide(record_id, action):
-        if action not in ("approve", "reject", "undo", "tested", "requeue", "redo", "forget", "exclude-folder", "keep-source", "release-source", "hide-source", "show-source"):
+        if action not in ("approve", "reject", "undo", "tested", "requeue", "redo", "forget", "exclude-folder", "keep-source", "release-source", "delete-source-now", "hide-source", "show-source"):
             return _fail("Unknown action.", 404)
         return _decide(record_id, action)
 
@@ -441,7 +444,7 @@ def register(app):
     @app.route("/api/library/settings", methods=["POST"])
     def api_library_settings():
         data = request.get_json(silent=True) or {}
-        keys = ("library_destination_root", "library_tv_folder", "library_movie_folder", "library_integrity_mode", "library_tail_seconds", "library_exclude_folders", "download_pipeline", "originals_retention_days",
+        keys = ("library_destination_root", "library_tv_folder", "library_movie_folder", "library_integrity_mode", "library_tail_seconds", "library_exclude_folders", "download_pipeline", "originals_retention_days", "originals_where",
                 "size_policy", "size_mode", "cap_mbps_2160", "cap_mbps_1080", "cap_mbps_720", "cap_mbps_sd", "size_trigger_factor", "trigger_mbps_2160", "trigger_mbps_1080", "trigger_mbps_720", "trigger_mbps_sd", "rate_mode", "safety_gb_2160", "safety_gb_1080", "tv_cap_share",
                 "naming_style", "audio_mode", "clean_names", "naming_tmdb_ids", "versions_on", "variant_min_gb", "variant_height", "variant_label", "variant_crf", "variant_maxrate_kbps", "variant_audio_kbps", "variant_stereo", "dv7_remux", "size_crf", "tv_size_policy", "gpu_encoding", "vmaf_mode", "dolby_vision_profile_5", "dolby_vision_profile_7_8",
                 "review_first", "trust_after", "preview_seconds", "preview_keep_days", "preview_auto",

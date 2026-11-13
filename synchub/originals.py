@@ -47,6 +47,21 @@ def listing(conn, now=None):
     return {"items": out, "bytes": held, "workers": [w["name"] for w in workers.list_all(conn) if w["originals"]]}
 
 
+def conversions(conn):
+    """Library conversions (a copy converted onto another share) whose original is still on its source share: the cleanup list for when the conversions are trusted.
+    Each row says whether the original is waiting for its timer, kept on purpose, being deleted, or failed."""
+    rows = conn.execute("SELECT id, root_name, relative_path, file_name, size_bytes, migration_destination_path, migrated_dest_size, source_delete_status, source_delete_due_at, source_delete_message "
+                        "FROM library_file WHERE migration_status = 'completed' AND migrated_how = 'convert' AND source_deleted_at IS NULL "
+                        "AND COALESCE(source_delete_status, '') != 'deleted' AND migration_destination_path IS NOT NULL ORDER BY id DESC LIMIT 500").fetchall()
+    out = []
+    for r in rows:
+        r = dict(r)
+        if r["migration_destination_path"] == f"{r['root_name']}:{r['relative_path']}":
+            continue
+        out.append(r)
+    return {"items": out, "bytes": sum(int(r["size_bytes"] or 0) for r in out)}
+
+
 def queue(conn, worker_id, folder, action, days=None, now=None):
     """Queues one action for one original. Returns the job id."""
     if action not in ACTIONS:

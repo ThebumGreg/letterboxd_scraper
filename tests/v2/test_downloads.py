@@ -101,7 +101,7 @@ def test_review_mode_waits_for_approval_then_queues_an_in_place_job(pipe):
     job = jobs.get(pipe, job_id)
     assert job["kind"] == "download" and (job["source_root"], job["source_rel"]) == ("media", "Heat (1995)/Heat.1995.avi")
     assert job["dest_rel"] == "Heat (1995)/Heat.1995.mkv"                    # same base name, new container
-    assert job["plan"]["replace"] is True and job["plan"]["op"] == "convert" and job["plan"]["originals_retention_days"] == 30
+    assert job["plan"]["replace"] is True and job["plan"]["op"] == "convert" and job["plan"]["originals_retention_days"] == 30 and job["plan"]["originals_where"] == "share"
     assert job["plan"]["source_size"] == 1_000_000 and job["policy"] == {"originals_retention_days": 30}
     assert status(pipe, made) == "queued"
 
@@ -238,3 +238,5 @@ def test_the_page_lists_imports_and_takes_decisions(app, client, conn):
     assert client.post("/api/library/settings", json={"download_pipeline": "auto", "originals_retention_days": "7"}).get_json()["ok"] is True
     assert (settings.get("download_pipeline"), settings.get("originals_retention_days")) == ("auto", "7")
     assert client.post("/api/library/settings", json={"download_pipeline": "bogus"}).get_json()["ok"] is False
+    assert settings.get("originals_where") == "share" and client.post("/api/library/settings", json={"originals_where": "worker"}).get_json()["ok"] is True and settings.get("originals_where") == "worker"
+    assert client.post("/api/library/settings", json={"originals_where": "nowhere"}).get_json()["ok"] is False
