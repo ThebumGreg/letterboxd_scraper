@@ -1,12 +1,12 @@
 <!-- synchub/web/templates/_versions_tab.html: the Versions tab of the Media page -->
 <div class="mb-3">
     <h3 class="visually-hidden">Versions</h3>
-    <p class="text-body-secondary mb-0">Two things for films that are already in the library. A <strong>smaller extra copy</strong> (for phones and remote viewing) is saved next to the film, and Jellyfin shows it as another version of the same film; the original is never touched. A <strong>Dolby Vision 7 to 8.1</strong> conversion fixes big 4K files that almost nothing can play directly, without re-encoding the picture. Nothing happens until you approve it. The list comes from the Library scan, so scan the share first.</p>
+    <p class="text-body-secondary mb-0">A <strong>smaller extra copy</strong> (for phones and remote viewing) is saved next to a film that is already in the library, and Jellyfin shows it as another version of the same film; the original is never touched. Nothing happens until you approve it. The list comes from the Library scan, so scan the share first. Dolby Vision 7 to 8.1 is part of the normal conversion (Library and new downloads), not a separate step here.</p>
 </div>
 <div id="versionsMessage" class="alert d-none" role="status"></div>
 
 <p class="small text-body-secondary mb-4">
-    Extra copies are {{ 'recommended' if config.on else 'off' }}{% if config.on %} for films over {{ '%g'|format(config.min_gb) }} GB, as {{ config.height }}p copies named &ldquo;{{ config.label }}&rdquo;{% endif %}; Dolby Vision 7 conversion is {{ 'recommended' if config.dv7 else 'off' }}.
+    Extra copies are {{ 'recommended' if config.on else 'off' }}{% if config.on %} for films over {{ '%g'|format(config.min_gb) }} GB, as {{ config.height }}p copies named &ldquo;{{ config.label }}&rdquo;{% endif %}.
     Change these in <a href="{{ url_for('library_options_page') }}">Options</a>, or per conversion profile.
 </p>
 
@@ -27,7 +27,7 @@
     {% else %}
     <div class="table-responsive">
         <table class="table table-sm align-middle">
-            <thead><tr><th style="width:2rem"><input type="checkbox" class="form-check-input" data-select-all aria-label="Select all"></th><th>Film</th><th class="text-end">Size</th><th>Picture</th>{% if withHeight %}<th>Height</th>{% endif %}{% if kind == 'dv_remux' %}<th>Also make the copy</th>{% endif %}<th></th></tr></thead>
+            <thead><tr><th style="width:2rem"><input type="checkbox" class="form-check-input" data-select-all aria-label="Select all"></th><th>Film</th><th class="text-end">Size</th><th>Picture</th>{% if withHeight %}<th>Height</th>{% endif %}<th></th></tr></thead>
             <tbody>
             {% for e in entries %}
                 <tr data-id="{{ e.id }}">
@@ -41,7 +41,6 @@
                     <td class="text-end text-nowrap">{{ e.size_gb }} GB</td>
                     <td class="text-nowrap">{{ e.picture }}{% if e.resolution %}<div class="small text-body-secondary">{{ e.resolution }}</div>{% endif %}</td>
                     {% if withHeight %}<td><select class="form-select form-select-sm" data-height style="width:6rem" {% if not e.can_approve %}disabled{% endif %}>{% for h in heights %}<option value="{{ h }}" {% if h == e.height %}selected{% endif %}>{{ h }}p</option>{% endfor %}</select></td>{% endif %}
-                    {% if kind == 'dv_remux' %}<td>{% if e.also_copy %}<div class="form-check"><input type="checkbox" class="form-check-input" data-with-copy checked aria-label="Also make the {{ e.height }}p copy of {{ e.title }}"><label class="form-check-label small">{{ e.height }}p</label></div>{% else %}<span class="small text-body-secondary">-</span>{% endif %}</td>{% endif %}
                     <td class="text-end text-nowrap"><button type="button" class="btn btn-sm btn-outline-secondary" data-skip>Not this one</button></td>
                 </tr>
             {% endfor %}
@@ -52,7 +51,6 @@
 </section>
 {% endmacro %}
 
-{{ rec_list('dv_remux', 'Dolby Vision 7 to 8.1', 'Almost no phone, Roku or Google TV plays profile 7 directly, so your server would have to convert it live. This changes the file in place, fast, without re-encoding the picture, so it takes minutes and the size stays about the same. The Dolby Vision enhancement layer is dropped (HDR10 and Dolby Vision 8.1 keep working). The original is kept on the worker for the retention period and can be restored from the Originals tab.', recommended.dv_remux, false) }}
 {{ rec_list('variant', 'Smaller extra copy', 'Saved next to the film as “Film (Year) - ' ~ config.label ~ '.mkv”. Change the height for a film in its row, or untick it to leave it out. It is made on a worker, on the CPU for HDR films, so a long film takes hours.', recommended.variant, true) }}
 
 <section class="mb-4">
@@ -80,7 +78,7 @@
 <details class="mb-4">
     <summary class="fw-semibold">Declined ({{ declined|length }})</summary>
     <ul class="list-unstyled mt-2">
-        {% for e in declined %}<li class="d-flex align-items-center gap-2 py-1"><span class="text-break">{{ e.title }} <span class="small text-body-secondary">{{ 'Dolby Vision 7 to 8.1' if e.kind == 'dv_remux' else 'extra copy' }}</span></span>
+        {% for e in declined %}<li class="d-flex align-items-center gap-2 py-1"><span class="text-break">{{ e.title }} <span class="small text-body-secondary">extra copy</span></span>
             <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" data-restore="{{ e.kind }}" data-id="{{ e.id }}">Bring back</button></li>{% endfor %}
     </ul>
 </details>

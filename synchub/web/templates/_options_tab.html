@@ -24,8 +24,9 @@
                 <textarea class="form-control form-control-sm mb-2" id="setExclude" rows="4">{{ options.exclude_text }}</textarea>
                 <div class="row g-2 mb-2">
                     <div class="col-7"><label for="setDownloads" class="form-label small mb-1">New Radarr/Sonarr downloads</label>
-                        <select class="form-select form-select-sm" id="setDownloads">{% for m, label in [('off', 'Leave alone'), ('review', 'Ask me first'), ('auto', 'Replace when safe')] %}<option value="{{ m }}"{% if m == download_summary.mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-                    <div class="col-5"><label for="setOriginals" class="form-label small mb-1">Keep originals (days)</label><input type="number" min="0" max="3650" class="form-control form-control-sm" id="setOriginals" value="{{ originals_days }}" title="0 drops the original once the replacement is verified"></div>
+                        <select class="form-select form-select-sm" id="setDownloads">{% for m, label in [('off', 'Do nothing'), ('review', 'Ask me first'), ('auto', 'Convert automatically when safe')] %}<option value="{{ m }}"{% if m == download_summary.mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+                    <div class="col-5"><label for="setOriginals" class="form-label small mb-1">Delete the replaced original</label>
+                        <select class="form-select form-select-sm" id="setOriginals">{% set cur = originals_days|string %}{% for d, label in [('0', 'Right away (not kept)'), ('7', 'After 7 days'), ('30', 'After 30 days'), ('3650', 'Never')] + ([(cur, 'After ' ~ cur ~ ' days')] if cur not in ('0', '7', '30', '3650') else []) %}<option value="{{ d }}"{% if d == cur %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
                 </div>
                 <div class="mb-2"><label for="setOriginalsWhere" class="form-label small mb-1">Where a replaced original goes</label>
                     <select class="form-select form-select-sm" id="setOriginalsWhere">{% for m, label in [('share', 'On the share, renamed (.synchub-original)'), ('worker', 'On the worker PC')] %}<option value="{{ m }}"{% if m == originals_where %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
@@ -35,8 +36,8 @@
                     <select class="form-select form-select-sm" id="setProfile">{% for p in profiles %}<option value="{{ p.id }}"{% if p.id == default_profile_id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select>
                     <div class="form-text">Used for every file unless you pick another when approving it. Profiles are listed below.</div></div>
                 <div class="row g-2 mb-2">
-                    <div class="col-12"><label for="setSourceDelete" class="form-label small mb-1">Delete the source after a verified migration</label>
-                        <select class="form-select form-select-sm" id="setSourceDelete">{% for d, label in [('0', 'Never (off)'), ('7', 'After 7 days'), ('14', 'After 14 days'), ('30', 'After 30 days')] %}<option value="{{ d }}"{% if d == cleanup.days|string %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+                    <div class="col-12"><label for="setSourceDelete" class="form-label small mb-1">Delete the original after a library conversion</label>
+                        <select class="form-select form-select-sm" id="setSourceDelete">{% for d, label in [('0', 'Never'), ('7', 'After 7 days'), ('14', 'After 14 days'), ('30', 'After 30 days')] if d != '14' or cleanup.days == 14 %}<option value="{{ d }}"{% if d == cleanup.days|string %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
                         <div class="form-text">A worker deletes the source only after checking the library copy is still whole and the source is unchanged. You can keep any file's source on its page. Switching this off stops pending deletions.</div></div>
                     <div class="col-12"><div class="form-check"><input class="form-check-input" type="checkbox" id="setHideSource"{% if cleanup.hide_source %} checked{% endif %}><label class="form-check-label small" for="setHideSource">Hide the original from Jellyfin after a verified copy to another share</label></div>
                         <div class="form-text">A worker puts an empty <code>.ignore</code> file in the original film's folder so Jellyfin lists only the new copy. Nothing is deleted. Undo it on the film's page. Only films that have a folder to themselves are hidden.</div>
@@ -106,7 +107,7 @@
                     <div class="form-text">A compatible track is E-AC-3 5.1 (AAC stereo for stereo sources), placed first and set as the default, so players that cannot decode TrueHD or DTS-HD pick it. Jellyfin does not choose a track by codec. A conversion profile can change any of these.</div>
                 </div>
                 <div class="border rounded p-2 mb-2">
-                    <div class="fw-bold small mb-1">Extra copies and Dolby Vision 7 (default for every profile)</div>
+                    <div class="fw-bold small mb-1">Extra copies (default for every profile)</div>
                     <div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" id="vOn"{% if versions_config.on %} checked{% endif %}><label class="form-check-label small" for="vOn">Offer a smaller extra copy (a 1080p version of 4K films)</label></div>
                     <div class="row g-2 mb-2">
                         <div class="col-6 col-md-3"><label class="form-label small mb-1" for="vMinGb">Only films over (GB, 0 = every 4K film)</label><input class="form-control form-control-sm" id="vMinGb" type="number" min="0" step="1" value="{{ '%g'|format(versions_config.min_gb) }}"></div>
@@ -118,7 +119,6 @@
                         <div class="col-6 col-md-4"><label class="form-label small mb-1" for="vAudio">Audio bitrate (kbps)</label><input class="form-control form-control-sm" id="vAudio" type="number" min="64" max="640" value="{{ versions_config.audio_kbps }}"></div>
                         <div class="col-12 col-md-4 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" id="vStereo"{% if versions_config.stereo %} checked{% endif %}><label class="form-check-label small" for="vStereo">Stereo audio in the copy</label></div></div>
                     </div>
-                    <div class="form-check"><input class="form-check-input" type="checkbox" id="vDv7"{% if versions_config.dv7 %} checked{% endif %}><label class="form-check-label small" for="vDv7">Recommend converting Dolby Vision profile 7 to 8.1</label></div>
                     <div class="form-text">The copy keeps HDR10 when the film is HDR and never goes bigger than the original. A conversion profile can turn the extra copy on or off and change these values.</div>
                 </div>
                 <div class="border rounded p-2 mb-2">

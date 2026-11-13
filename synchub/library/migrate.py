@@ -95,6 +95,10 @@ def plan_for(rec, cfg, profile=None, mode=None, size=None, rules=None, held=Fals
         change, audio_note = audio.apply(rec, change, rules.get("audio_mode"))
     if change is not None and _changes_nothing(change):
         change = None
+    if size is not None and size_policy.dv7_remux_wanted(rec, size):             # Dolby Vision 7 becomes 8.1 in this conversion; nothing is re-encoded
+        plan.update(op="convert", change=change or {})
+        plan, dest_rel = size_policy.with_dv_remux(plan, dest_rel)
+        return cfg.destination_root, dest_rel, plan
     decision = size_policy.decide(rec, [change] if change else [], size) if size is not None else None
     compress = decision is not None and decision.action == size_policy.COMPRESS
     if decision is not None and decision.action in (size_policy.REVIEW, size_policy.BLOCKED):

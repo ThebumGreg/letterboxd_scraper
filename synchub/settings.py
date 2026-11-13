@@ -26,7 +26,7 @@ DEFAULTS = {
     "dolby_vision_profile_5": "review", "dolby_vision_profile_7_8": "remux",
     # extra versions of a film (a smaller copy beside the original, shown by Jellyfin as another version) and Dolby Vision profile 7 to 8.1 (docs/DESIGN_ENCODING.md 13)
     "versions_on": "1", "variant_min_gb": "0", "variant_height": "1080", "variant_label": "1080p", "variant_crf": "23", "variant_maxrate_kbps": "8000", "variant_audio_kbps": "192",
-    "variant_stereo": "1", "dv7_remux": "1",
+    "variant_stereo": "1",
     # compression by video bitrate (Mbps) per picture height, how far over the ceiling a file must be before it is touched, a size that is compressed whatever the bitrate,
     # whether names are cleaned while files are brought in, and what happens to audio (keep, add_compatible, compatible_only); a conversion profile can override all of them
     "size_mode": "bitrate", "cap_mbps_2160": "35", "cap_mbps_1080": "12", "cap_mbps_720": "4", "cap_mbps_sd": "2", "tv_cap_share": "0.5", "size_trigger_factor": "1.5", "safety_gb_2160": "0", "safety_gb_1080": "0",

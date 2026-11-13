@@ -248,7 +248,7 @@ def decide(conn, row, rec, now=None):
         return _set(conn, row["id"], now, record_id=rec["id"], status="nothing_to_do", message="Held from conversion: low quality or damaged. It stays as it is; ask for a better copy or accept it.", finished_at=now)
     plans, profile, cfg = _plans(conn, rec)
     size = size_policy.decide(rec, plans, cfg)
-    if not plans and size.action != size_policy.COMPRESS and size.action != size_policy.REVIEW:
+    if not plans and not size_policy.dv7_remux_wanted(rec, cfg) and size.action != size_policy.COMPRESS and size.action != size_policy.REVIEW:
         if size.action == size_policy.BLOCKED:
             return _set(conn, row["id"], now, record_id=rec["id"], status="blocked", message=size.summary)
         return _set(conn, row["id"], now, record_id=rec["id"], status="nothing_to_do", message="Nothing to change: the tracks and format are already fine.", finished_at=now)
@@ -283,7 +283,8 @@ def queue(conn, intake_id, by, now=None):
         raise ValueError("This file is held from conversion (low quality or damaged), so it is not converted. Accept it as is first to convert it.")
     plans, profile, cfg = _plans(conn, rec)
     size = size_policy.decide(rec, plans, cfg)
-    if not plans and size.profile is None:
+    dv = size_policy.dv7_remux_wanted(rec, cfg)
+    if not plans and size.profile is None and not dv:
         raise ValueError("There is nothing to change in this file.")
     change = plans[0] if plans else {}
     dest_rel = row["relative_path"]
@@ -299,6 +300,8 @@ def queue(conn, intake_id, by, now=None):
         if profile["video_codec"] == "hevc":              # the profile's own quality and speed, with the size cap on top
             plan["profile"] = profiles.for_plan(profile)
         plan, dest_rel = size_policy.apply(plan, size, dest_rel)
+    if dv:                                               # Dolby Vision 7 becomes 8.1 in this replacement; the picture is not re-encoded
+        plan, dest_rel = size_policy.with_dv_remux(plan, dest_rel)
     job_id = jobs.create(conn, "download", title=f"Replace: {rec['file_name']}", ref=(REF, row["id"]), source=(row["root_name"], row["relative_path"]), dest=(row["root_name"], dest_rel),
                          plan=plan, policy={"originals_retention_days": plan["originals_retention_days"]}, need_bytes=(rec["size_bytes"] or 0) * 2 + WORK_MARGIN_BYTES)
     _set(conn, row["id"], now, status="queued", job_id=job_id, decided_by=by, message="Queued for a worker.")
@@ -354,7 +357,19 @@ def sync(conn, job_id, now=None):
     else:
         values.update(message="Queued for a worker.", finished_at=None)
     _set(conn, row["id"], now, **values)
+    if target == "replaced":
+        _rescan_folder(conn, row, job)
     return target == "replaced"
+
+
+def _rescan_folder(conn, row, job):
+    """Scans the folder of a file that was just replaced, so the Library's file report shows the new file and not the one it replaced. Never raises: a scan that
+    cannot start now (one is already running, no worker) only leaves the old report until the next scan."""
+    rel = job.get("dest_rel") or row["relative_path"]
+    try:
+        scan.start_scan(conn, row["root_name"], posixpath.dirname(rel), by="downloads")
+    except v.LibraryError:
+        pass
 
 
 def sync_active(conn):

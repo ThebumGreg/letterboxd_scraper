@@ -35,7 +35,11 @@ def for_record(conn, rec, plans, cache=None):
         headlines.append("Add a compatible audio track")
         kinds.append("audio")
     decision = size_policy.decide(rec, [change] if change else [], size)
-    if decision.action == size_policy.COMPRESS:
+    if size_policy.dv7_remux_wanted(rec, size):                                   # the picture is not re-encoded; the Dolby data becomes 8.1
+        steps.append("Convert Dolby Vision 7 to 8.1 (no re-encode)")
+        headlines.insert(0, "Convert Dolby Vision 7 to 8.1")
+        kinds.append("dv")
+    elif decision.action == size_policy.COMPRESS:
         steps.append(decision.summary)
         notes += decision.notes
         headlines.insert(0, "Compress to HEVC")
@@ -45,14 +49,6 @@ def for_record(conn, rec, plans, cache=None):
         steps.append("Ask before compressing: " + " ".join(decision.reasons))
         headlines.insert(0, "Compress (needs a look)")
         kinds.append("review")
-    elif decision.notes and "8.1" in " ".join(decision.notes):
-        steps.append("Convert Dolby Vision 7 to 8.1 (no re-encode)")
-        headlines.insert(0, "Convert Dolby Vision 7 to 8.1")
-        kinds.append("dv")
-    elif versions.dv_entry(rec, extras):
-        steps.append("Convert Dolby Vision 7 to 8.1 (no re-encode)")
-        headlines.insert(0, "Convert Dolby Vision 7 to 8.1")
-        kinds.append("dv")
     entry = versions.variant_entry(rec, extras)
     if entry and entry["can_approve"]:
         steps.append(f"Make a {entry['height']}p copy named “{extras.label}”")

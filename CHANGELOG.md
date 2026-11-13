@@ -4,6 +4,12 @@
 
 Migrations 044 and 045. Update SyncHub first, then the workers.
 
+**Polish, part 1: Dolby Vision in the conversion, retention choices, clearer names (no migration).** Update SyncHub, then the workers.
+- **Dolby Vision 7 to 8.1 is a step of the conversion, not a separate job.** When "Dolby Vision 7 becomes 8.1" is the rule (Options, or a profile's rule), a profile 7 file is remuxed to 8.1 (no re-encode) whenever it goes through a Library conversion or a Radarr/Sonarr replacement. The Versions tab no longer lists Dolby Vision files and the `dv7_remux` setting is gone; there is one setting. A file converted this way keeps every track: track clean-ups and a compatible audio track planned for it are not applied in the same pass, and the file report says so.
+- **Originals retention is a choice:** "Delete the replaced original" for Radarr/Sonarr replacements (right away, after 7 days, after 30 days, never) and "Delete the original after a library conversion" (never, 7 or 30 days) are separate settings.
+- **After a Radarr/Sonarr replacement finishes, SyncHub scans the folder** so the Library file report shows the new file.
+- Option names say what happens: Do nothing / Ask me first / Convert automatically when safe.
+
 **Originals page: file names open the file's report.** Click a name in either list to open that file's report in the Library, where you approved it. No migration.
 
 **Work drive: see what uses a worker's disk, and delete old job files (no migration).** Update SyncHub, then the workers.
