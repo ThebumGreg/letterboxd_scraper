@@ -1,9 +1,13 @@
 """Pages for the worker fleet: the Workers page, its live fragment and the actions behind its buttons."""
+import logging
+
 from flask import jsonify, render_template, request
 
 from synchub import __version__, buildinfo
-from synchub import db, jobs, protect, settings, storage, versions, webhooks, workers
+from synchub import db, jobs, protect, settings, storage, versions, webhooks, workdrive, workers
 from synchub.library import cleanup, migrate
+
+logger = logging.getLogger(__name__)
 
 # What each worker button does: setting, new value.
 WORKER_ACTIONS = {"pause": ("paused", True), "resume": ("paused", False), "drain": ("draining", True),
@@ -384,6 +388,29 @@ def register(app):
             needs = [r["need_bytes"] for r in conn.execute("SELECT need_bytes FROM job WHERE status = 'queued' AND need_bytes > 0 ORDER BY need_bytes DESC LIMIT 5")]
             return jsonify(ok=True, name=worker["name"], work_dir=workers.setting(worker, "work_dir"), disks=workers.disks_of(conn, worker_id),
                            report=workers.workdir_report(conn, worker_id), asking=settings.get(workers.DISKS_WANT_KEY.format(worker_id), "", conn=conn) == "1", queued_needs=needs)
+
+    @app.route("/api/workers/<int:worker_id>/work")
+    def api_worker_work(worker_id):
+        """What is using the worker's work folder (the Work drive window)."""
+        with db.connection() as conn:
+            worker = workers.get(conn, worker_id)
+            if worker is None:
+                return _fail("That worker no longer exists.", 404)
+            return jsonify(ok=True, name=worker["name"], online=worker["online"], **workdrive.overview(conn, worker_id))
+
+    @app.route("/api/workers/<int:worker_id>/purge", methods=["POST"])
+    def api_worker_purge(worker_id):
+        """Deletes job folders on the worker: {ids: [...]} or {which: 'finished' | 'failed_old'}."""
+        data = request.get_json(silent=True) or {}
+        try:
+            with db.connection() as conn:
+                if workers.get(conn, worker_id) is None:
+                    return _fail("That worker no longer exists.", 404)
+                done = workdrive.request(conn, worker_id, data.get("ids"), data.get("which"))
+        except workdrive.WorkDriveError as exc:
+            return _fail(str(exc), 400)
+        logger.info(f"[workers] deleting {done['count']} job folder(s) on worker {worker_id} ({done['bytes']} bytes), asked in SyncHub")
+        return jsonify(ok=True, message=f"Asked the worker to delete {done['count']} job folder(s), about {done['bytes'] / 1073741824:.1f} GB. It does it at its next check-in.", **done)
 
     @app.route("/api/workers/<int:worker_id>/history")
     def api_worker_history(worker_id):

@@ -130,6 +130,21 @@
     </div>
 </div>
 
+<!-- What uses a worker's work drive -->
+<div class="modal fade" id="workerWorkModal" tabindex="-1" aria-labelledby="workerWorkTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title" id="workerWorkTitle">Work drive</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+            <div class="modal-body">
+                <div id="workMessage" class="alert d-none" role="status"></div>
+                <div id="workBody"></div>
+                <div class="small text-body-secondary mt-3">The worker measures its work folder every five minutes. Only job folders are ever deleted here: a running job and a result SyncHub has not received yet are protected, and anything in the folder that is not SyncHub's is listed as Other and left alone. If a failed job is retried after its files are deleted, the file is copied to the worker again. Kept originals are managed on the Originals page.</div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- A worker's health over time -->
 <div class="modal fade" id="workerStatsModal" tabindex="-1" aria-labelledby="workerStatsTitle" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">

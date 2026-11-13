@@ -129,6 +129,25 @@ def hash_file(path, upto=None, check=None):
     return digest.hexdigest()
 
 
+def folder_bytes(path):
+    """The total size of the files under a folder (symlinks are not followed). Unreadable entries count as 0."""
+    total, stack = 0, [path]
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        else:
+                            total += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+    return total
+
+
 KEPT_SUFFIXES = (".synchub-original", ".synchub-converted")       # what a replaced original (or a converted file set aside by a restore) is renamed to on the share
 
 
@@ -3316,6 +3335,7 @@ class Agent:
         self.lock = threading.Lock()
         self.capabilities = None
         self._originals_digest, self._originals_sent = None, 0.0
+        self._usage, self._usage_at, self._usage_sent, self._usage_busy = None, -1e9, None, False         # the measured work folder (see measure_work)
         self.started = time.monotonic()
         self.poll_seconds, self.registered, self.roots_hash = 5.0, False, None
         self._cpu_sample = None
@@ -3457,6 +3477,90 @@ class Agent:
                 self.log.info(f"Removed the kept original {meta.get('rel')} (retention of {meta.get('retention_days')} day(s) is over)")
         return removed
 
+    USAGE_EVERY = 300.0                                 # seconds between two measurements of the work folder
+
+    def measure_work(self):
+        """What is using the work folder: each job folder (biggest 40, with its state), the kept originals, the logs and anything else in there that is not SyncHub's.
+        Read-only. Runs on its own thread, at most every few minutes, so a big disk never slows a poll."""
+        try:
+            with self.lock:
+                active = set(self.active)
+            jobs, total_jobs, now = [], 0, time.time()
+            for job_id, folder in self.store.folders():
+                size = folder_bytes(folder)
+                total_jobs += size
+                manifest = self.store.read(folder) or {}
+                if job_id in active:
+                    state = "running"
+                elif not manifest:
+                    state = "leftover"
+                elif manifest.get("outcome") == "done":
+                    state = "finished"
+                elif manifest.get("outcome") in ("failed", "cancelled", "review"):
+                    state = manifest["outcome"]
+                else:
+                    state = "interrupted"
+                held = bool(manifest.get("report")) and not (manifest.get("report") or {}).get("sent")
+                try:
+                    age = max(0.0, (now - os.path.getmtime(folder)) / 86400)
+                except OSError:
+                    age = 0.0
+                jobs.append({"job_id": job_id, "bytes": size, "state": state, "title": str(manifest.get("title") or "")[:120], "age_days": round(age, 1),
+                             "keep_until": manifest.get("keep_until"), "unreported": held})
+            jobs.sort(key=lambda j: -j["bytes"])
+            originals = sum(folder_bytes(folder) for folder, meta in self.originals())
+            logs = folder_bytes(self.cfg.logs_dir)
+            work = self.cfg.work_dir
+            other = 0
+            try:
+                skip = {os.path.realpath(self.cfg.jobs_dir), os.path.realpath(self.cfg.originals_dir), os.path.realpath(self.cfg.logs_dir)}
+                for name in os.listdir(work):
+                    full = os.path.join(work, name)
+                    if os.path.realpath(full) not in skip:
+                        other += folder_bytes(full) if os.path.isdir(full) and not os.path.islink(full) else (os.lstat(full).st_size if os.path.lexists(full) else 0)
+            except OSError:
+                pass
+            try:
+                disk = shutil.disk_usage(work)
+                total, used = disk.total, disk.used
+            except OSError:
+                total = used = None
+            self._usage = {"at": iso(), "total_bytes": total, "used_bytes": used, "jobs_bytes": total_jobs, "jobs_count": len(jobs), "originals_bytes": originals,
+                           "logs_bytes": logs, "other_bytes": other, "jobs": jobs[:40], "jobs_unlisted": max(len(jobs) - 40, 0)}
+            self._usage_at = time.monotonic()
+        except Exception:                                                  # noqa: BLE001  (a measuring problem must never stop the agent)
+            self.log.exception("Could not measure the work folder")
+        finally:
+            self._usage_busy = False
+
+    def work_usage_due(self):
+        """The latest measurement when it is new since the last poll, else None; starts a new measurement when the last is old."""
+        if not self._usage_busy and time.monotonic() - self._usage_at > self.USAGE_EVERY:
+            self._usage_busy = True
+            threading.Thread(target=self.measure_work, name="measure-work", daemon=True).start()
+        if self._usage is not None and self._usage != self._usage_sent:
+            return self._usage
+        return None
+
+    def purge_folder(self, job_id):
+        """Deletes one job folder because a person asked in SyncHub. Never a running job, and never a finished one whose report SyncHub has not received yet."""
+        if job_id in self.active:
+            self.log.warning(f"Not deleting the files of job {job_id}: it is running", extra={"fields": {"job": job_id}})
+            return False
+        done = False
+        for folder in self.folder_for(job_id):
+            manifest = self.store.read(folder) or {}
+            report = manifest.get("report") or {}
+            if report and not report.get("sent"):
+                self.log.warning(f"Not deleting the files of job {job_id}: SyncHub has not received its result yet", extra={"fields": {"job": job_id}})
+                continue
+            self.store.remove(folder)
+            done = True
+            self.log.info(f"Deleted the files of job {job_id} on request from SyncHub", extra={"fields": {"job": job_id}})
+        if done:
+            self._usage_at = -1e9                                          # measure again soon, so the page shows the space back
+        return done
+
     def work_free(self):
         try:
             return shutil.disk_usage(self.cfg.work_dir).free
@@ -3472,10 +3576,18 @@ class Agent:
         digest = hashlib.sha1(json.dumps(listing, sort_keys=True).encode("utf-8")).hexdigest()
         if digest != self._originals_digest or time.monotonic() - self._originals_sent > 600:        # the list rides along when it changes, and now and then so SyncHub's copy stays fresh
             body["originals"] = listing
+        usage = self.work_usage_due()
+        if usage is not None:
+            body["work_usage"] = usage
         answer = self.api.post("/poll", body)
         self.apply_settings(answer)
         if "originals" in body:
             self._originals_digest, self._originals_sent = digest, time.monotonic()
+        if "work_usage" in body:
+            self._usage_sent = body["work_usage"]
+        for job_id in answer.get("purge") or []:
+            if isinstance(job_id, int):
+                self.purge_folder(job_id)
         for job_id in answer.get("cancel") or []:
             runner = self.active.get(job_id)
             if runner:

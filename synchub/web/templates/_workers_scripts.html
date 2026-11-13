@@ -226,6 +226,45 @@
         modal('workerStatsModal').show(); statsLoad();
     });
 
+    // Work drive: what uses the worker's work folder, with buttons to delete job folders
+    const work = { id: null };
+    const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const sizeText = (n) => (n >= 1e9 ? (n / 1e9).toFixed(1) + ' GB' : Math.round((n || 0) / 1e6) + ' MB');
+    const STATE = { running: 'running', finished: 'finished', failed: 'failed', cancelled: 'cancelled', review: 'waiting for you', interrupted: 'stopped part-way', leftover: 'leftover' };
+    async function workLoad() {
+        const body = document.getElementById('workBody');
+        const res = await fetch(`/api/workers/${work.id}/work`); const d = await res.json();
+        if (!d.ok) { body.textContent = d.message || 'Could not load.'; return; }
+        if (!d.known) { body.innerHTML = '<p class="text-body-secondary mb-0">This worker has not measured its work folder yet. It does so every five minutes once it runs the latest version; reload in a moment.</p>'; return; }
+        const total = d.total_bytes || 0, free = Math.max(total - (d.used_bytes || 0), 0);
+        const parts = [['Job folders', d.jobs_bytes, 'primary'], ['Kept originals', d.originals_bytes, 'warning'], ['Logs', d.logs_bytes, 'secondary'], ['Other', d.other_bytes, 'danger']];
+        const bar = parts.filter(([, n]) => n > 0 && total).map(([label, n, c]) => `<div class="progress-bar bg-${c}" style="width:${Math.max(n / total * 100, 0.5)}%" title="${label}: ${sizeText(n)}"></div>`).join('');
+        let html = `<div class="progress mb-2" style="height:1.25rem">${bar}</div><div class="small mb-3">${parts.map(([l, n, c]) => `<span class="me-3"><span class="badge bg-${c}">&nbsp;</span> ${l} ${sizeText(n)}`).join('</span>')}</span><span>Free ${sizeText(free)} of ${sizeText(total)}</span></div>`;
+        const fin = d.bulk.finished, old = d.bulk.failed_old;
+        html += `<div class="d-flex flex-wrap gap-2 mb-3"><button class="btn btn-sm btn-outline-danger" data-work-bulk="finished"${fin.count ? '' : ' disabled'}>Delete all finished (${fin.count}, ${sizeText(fin.bytes)})</button>`
+              + `<button class="btn btn-sm btn-outline-danger" data-work-bulk="failed_old"${old.count ? '' : ' disabled'}>Delete failed older than ${d.failed_days} days (${old.count}, ${sizeText(old.bytes)})</button></div>`;
+        if (!d.jobs.length) html += '<p class="text-body-secondary">No job folders on this worker.</p>';
+        else html += '<div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>Job</th><th>State</th><th class="text-end">Size</th><th>Age</th><th>Goes</th><th></th></tr></thead><tbody>'
+            + d.jobs.map((j) => `<tr><td class="text-break">#${j.job_id} ${esc(j.title)}</td><td>${STATE[j.state] || esc(j.state)}</td><td class="text-end">${sizeText(j.bytes)}</td><td>${j.age_days < 1 ? 'today' : Math.round(j.age_days) + ' d'}</td>`
+            + `<td class="small">${j.keep_until ? 'on ' + esc(String(j.keep_until).slice(0, 10)) : '&ndash;'}</td><td class="text-end">${j.deleting ? '<span class="badge bg-info text-dark">deleting</span>' : j.can_delete ? `<button class="btn btn-sm btn-outline-danger" data-work-delete="${j.job_id}">Delete files</button>` : `<span class="small text-body-secondary">${esc(j.why_not)}</span>`}</td></tr>`).join('')
+            + '</tbody></table></div>' + (d.jobs_unlisted ? `<div class="small text-body-secondary">${d.jobs_unlisted} smaller folder(s) are not listed.</div>` : '');
+        body.innerHTML = html;
+    }
+    const workSay = (ok, text) => { const b = document.getElementById('workMessage'); b.className = 'alert alert-' + (ok ? 'success' : 'danger'); b.textContent = text; };
+    document.addEventListener('click', async (e) => {
+        const open = e.target.closest('[data-worker-work]');
+        if (open) { work.id = open.dataset.workerWork; document.getElementById('workerWorkTitle').textContent = `Work drive of ${open.dataset.name}`; document.getElementById('workMessage').className = 'alert d-none'; modal('workerWorkModal').show(); workLoad(); return; }
+        const one = e.target.closest('[data-work-delete]'), bulk = e.target.closest('[data-work-bulk]');
+        if (!one && !bulk) return;
+        const body = one ? { ids: [Number(one.dataset.workDelete)] } : { which: bulk.dataset.workBulk };
+        const text = one ? `Delete the files of job #${one.dataset.workDelete}? If it is retried later the file is copied to the worker again.` : bulk.textContent.trim() + '? This cannot be undone.';
+        if (!confirm(text)) return;
+        (one || bulk).disabled = true;
+        const data = await post(`/api/workers/${work.id}/purge`, body);
+        workSay(data.ok, data.message);
+        setTimeout(workLoad, 1500);
+    });
+
     // Add or edit a worker
     let editing = null;
     // The PC's drives (the update helper on the PC lists them; SyncHub never formats or mounts anything)
