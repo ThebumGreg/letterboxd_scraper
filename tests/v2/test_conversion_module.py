@@ -715,3 +715,36 @@ def test_the_record_page_shows_removed_tracks_after_approval_and_can_redo(client
     assert r.get_json()["ok"] and rec_of(conn, record_id)["approval_status"] == "pending"
     page = client.get(f"/library/record/{record_id}").get_data(as_text=True)
     assert 'data-remove="2"' in page and "Do it again with other settings" not in page
+
+
+# ---------------------------------------------------------------- Dolby Vision 7 to 8.1 as a step of the conversion
+DV7_INFO = {"hdr": "dv", "dv_profile": 7, "dv_compat": 6, "bit_depth": 10, "width": 3840, "height": 2160}
+
+
+def test_a_dolby_vision_7_file_is_converted_to_8_1_by_the_library_conversion_when_the_setting_says_so(conn):
+    from synchub.library import size_policy
+    record_id = subs_record(conn)
+    conn.execute("UPDATE library_file SET video_info_json = ? WHERE id = ?", (json.dumps(DV7_INFO), record_id))
+    conn.commit()
+    rec = store.get_record(conn, record_id)
+    size = size_policy.load(conn, profiles.get(conn, 1))
+    assert size_policy.dv7_remux_wanted(rec, size)
+    _, rel, plan_ = migrate.plan_for(rec, CFG, profiles.get(conn, 1), size=size)
+    assert plan_["change"] == {"op": "convert", "container": "matroska", "video": {"action": "copy", "dv": "p8_1"}} and "dovi" in plan_["needs"]
+    assert "profile" not in plan_ and "dv_note" in plan_                                  # the planned track clean-up is not applied in the same pass
+    settings.set_value("dolby_vision_profile_7_8", "leave", conn=conn)
+    assert not size_policy.dv7_remux_wanted(rec, size_policy.load(conn, profiles.get(conn, 1)))
+
+
+def test_other_files_are_not_touched_by_the_dolby_vision_step(conn):
+    from synchub.library import size_policy
+    record_id = subs_record(conn)
+    conn.execute("UPDATE library_file SET video_info_json = ? WHERE id = ?", (json.dumps({**DV7_INFO, "dv_profile": 8}), record_id))
+    conn.commit()
+    assert not size_policy.dv7_remux_wanted(store.get_record(conn, record_id), size_policy.load(conn, profiles.get(conn, 1)))
+
+
+def test_with_dv_remux_gives_an_mp4_the_mkv_extension():
+    from synchub.library import size_policy
+    plan_, rel = size_policy.with_dv_remux({"op": "convert", "change": {}, "needs": ["profiles"], "profile": {"name": "x"}}, "Movies/Heat (1995)/Heat (1995).mp4")
+    assert rel.endswith(".mkv") and plan_["change"]["target_extension"] == ".mkv" and plan_["needs"] == ["dovi"] and "profile" not in plan_

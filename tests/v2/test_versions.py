@@ -27,7 +27,7 @@ def film(conn, rel=REL, info=FOUR_K, size_gb=60, name="Heat (1995).mkv", audio=N
 
 def kinds(conn):
     found = versions.recommendations(conn)
-    return {k: [e["id"] for e in found[k]] for k in ("variant", "dv_remux", "declined")}
+    return {k: [e["id"] for e in found[k]] for k in ("variant", "declined")}
 
 
 def finish_job(conn, job_id, status="done", result=None, error=None):
@@ -42,7 +42,7 @@ def test_a_big_4k_film_is_recommended_a_smaller_copy_and_nothing_else_is(conn):
     film(conn, rel="Movies/Hd (2001)/Hd (2001).mkv", info={**FOUR_K, "width": 1920, "height": 1080})        # already 1080p
     film(conn, rel="TV Shows/Show/Season 01/S01E01.mkv", media_type="TV Episode", show="Show", season=1)     # films only
     film(conn, rel="Movies/Heat (1995)/Heat (1995) - 1080p.mkv", name="Heat (1995).mkv")                     # an extra version is not copied again
-    assert kinds(conn) == {"variant": [big, small], "dv_remux": [], "declined": []}
+    assert kinds(conn) == {"variant": [big, small], "declined": []}
 
 
 def test_the_size_limit_and_the_height_come_from_the_settings(conn):
@@ -65,14 +65,12 @@ def test_a_film_that_is_not_in_a_folder_named_like_it_cannot_get_a_copy(conn):
     assert entry["can_approve"] is False and "folder" in entry["why_not"]
 
 
-def test_dolby_vision_profile_5_is_never_offered_a_copy_and_profile_7_is_offered_the_conversion(conn):
+def test_dolby_vision_profile_5_is_never_offered_a_copy_and_there_is_no_standalone_conversion(conn):
     five = film(conn, info={**DV7, "dv_profile": 5}, rel="Movies/Five (2001)/Five (2001).mkv")
     seven = film(conn, info=DV7, rel="Movies/Seven (2002)/Seven (2002).mkv")
     found = versions.recommendations(conn)
-    assert [e["id"] for e in found["dv_remux"]] == [seven]
+    assert "dv_remux" not in found
     assert {e["id"]: e["can_approve"] for e in found["variant"]} == {five: False, seven: True}
-    settings.set_value("dv7_remux", "0", conn=conn)
-    assert kinds(conn)["dv_remux"] == []
 
 
 def test_a_file_named_like_another_version_is_left_alone_by_the_library(conn):
@@ -114,34 +112,18 @@ def test_a_person_can_choose_another_height_for_one_film(conn):
         versions.approve(conn, "variant", film(conn, rel="Movies/B (2000)/B (2000).mkv"), "Greg", height=100)
 
 
-def test_approving_the_conversion_replaces_the_file_in_place_and_needs_a_worker_with_the_tools(conn):
-    record_id = film(conn, info=DV7)
-    job = jobs.get(conn, versions.approve(conn, "dv_remux", record_id, "Greg", with_copy=False))
-    plan = job["plan"]
-    assert job["dest_rel"] == REL and plan["replace"] is True and plan["needs"] == ["dovi"] and plan["change"]["video"] == {"action": "copy", "dv": "p8_1"}
-    assert plan["source_size"] == 60 * GIB and plan["originals_retention_days"] == 30 and job["policy"] == {"originals_retention_days": 30}
-
-
-def test_a_conversion_of_an_mp4_ends_in_mkv(conn):
-    record_id = film(conn, info=DV7, rel="Movies/Heat (1995)/Heat (1995).mp4")
-    job = jobs.get(conn, versions.approve(conn, "dv_remux", record_id, "Greg"))
-    assert job["dest_rel"] == "Movies/Heat (1995)/Heat (1995).mkv" and job["plan"]["change"]["target_extension"] == ".mkv"
-
-
 def test_the_same_film_cannot_be_queued_twice_or_by_two_kinds_at_once(conn):
     record_id = film(conn, info=DV7)
     versions.approve(conn, "variant", record_id, "Greg")
     with pytest.raises(versions.VersionError, match="already queued"):
         versions.approve(conn, "variant", record_id, "Greg")
-    with pytest.raises(versions.VersionError, match="Another job"):
-        versions.approve(conn, "dv_remux", record_id, "Greg")
 
 
 def test_a_film_that_does_not_qualify_is_refused_with_the_reason(conn):
     record_id = film(conn, info={**DV7, "dv_profile": 5})
     with pytest.raises(versions.VersionError, match="profile 5"):
         versions.approve(conn, "variant", record_id, "Greg")
-    with pytest.raises(versions.VersionError, match="does not apply|not something"):
+    with pytest.raises(versions.VersionError):
         versions.approve(conn, "dv_remux", record_id, "Greg")
 
 
@@ -158,7 +140,7 @@ def test_bulk_approval_queues_what_it_can_and_says_what_it_could_not(conn):
 def test_a_declined_film_stays_off_the_list_until_it_is_brought_back(conn):
     record_id = film(conn)
     versions.skip(conn, "variant", record_id, "Greg")
-    assert kinds(conn) == {"variant": [], "dv_remux": [], "declined": [record_id]}
+    assert kinds(conn) == {"variant": [], "declined": [record_id]}
     versions.restore(conn, "variant", record_id)
     assert kinds(conn)["variant"] == [record_id]
 
@@ -197,7 +179,7 @@ def test_a_failed_job_shows_its_reason_and_the_film_comes_back_with_a_retry_note
 
 
 def test_a_cancelled_job_counts_as_failed_so_it_can_be_tried_again(conn):
-    job_id = versions.approve(conn, "dv_remux", film(conn, info=DV7), "Greg")
+    job_id = versions.approve(conn, "variant", film(conn, info=DV7), "Greg")
     jobs.cancel(conn, job_id, "Greg")
     versions.sync(conn, job_id)
     assert versions.get(conn, 1)["status"] == "failed" and "Cancelled" in versions.get(conn, 1)["message"]
@@ -215,10 +197,10 @@ def test_the_versions_tab_renders_and_its_buttons_queue_and_decline(client, conn
     page = client.get("/versions")
     assert page.status_code == 200
     html = page.get_data(as_text=True)
-    assert "Smaller extra copy" in html and "Dolby Vision 7 to 8.1" in html and "Heat (1995)" in html
+    assert "Smaller extra copy" in html and "Heat (1995)" in html
     sent = client.post("/api/library/versions/approve", json={"kind": "variant", "items": [{"id": big, "height": 720}]})
     assert sent.get_json()["ok"] and sent.get_json()["queued"] == 1
-    assert client.post("/api/library/versions/skip", json={"kind": "dv_remux", "id": seven}).get_json()["ok"]
+    assert client.post("/api/library/versions/skip", json={"kind": "variant", "id": seven}).get_json()["ok"]
     assert client.post("/api/library/versions/approve", json={"kind": "nope", "items": [{"id": 1}]}).status_code == 400
     assert client.post("/api/library/versions/approve", json={"kind": "variant", "items": []}).status_code == 400
     page = client.get("/versions").get_data(as_text=True)
@@ -228,40 +210,5 @@ def test_the_versions_tab_renders_and_its_buttons_queue_and_decline(client, conn
 def test_the_settings_are_checked_and_saved(client, conn):
     assert client.post("/api/library/versions/settings", json={"variant_height": "10"}).status_code == 400
     assert client.post("/api/library/versions/settings", json={"variant_label": "a/b"}).status_code == 400
-    ok = client.post("/api/library/versions/settings", json={"variant_height": "720", "variant_label": "720p", "variant_stereo": "0", "dv7_remux": "0"})
-    assert ok.get_json()["ok"] and settings.get("variant_height") == "720" and settings.get("dv7_remux") == "0"
-
-
-# ---------------------------------------------------------------- one job, two outputs
-def test_a_dolby_vision_job_carries_the_smaller_copy_as_a_second_output(conn):
-    record_id = film(conn, info=DV7, size_gb=60)
-    job_id = versions.approve(conn, "dv_remux", record_id, "Greg")
-    conn.commit()
-    plan = jobs.get(conn, job_id)["plan"]
-    assert plan["extra"]["rel"].endswith("Heat (1995) - 1080p.mkv") and plan["extra"]["height"] == 1080 and plan["extra"]["profile"]["max_height"] == 1080
-    assert {"dovi", "scale", "two_outputs"} <= set(plan["needs"])
-    rows = {(r["kind"], r["label"]): r for r in conn.execute("SELECT * FROM library_action")}
-    assert rows[("variant", "1080p")]["job_id"] == job_id == rows[("dv_remux", "")]["job_id"]
-    assert kinds(conn)["variant"] == []                                                         # the copy is not offered a second time
-
-
-def test_the_smaller_copy_can_be_left_out_of_the_conversion(conn):
-    record_id = film(conn, info=DV7, size_gb=60)
-    job_id = versions.approve(conn, "dv_remux", record_id, "Greg", with_copy=False)
-    assert "extra" not in jobs.get(conn, job_id)["plan"] and conn.execute("SELECT COUNT(*) FROM library_action WHERE kind = 'variant'").fetchone()[0] == 0
-
-
-def test_both_rows_follow_the_job_and_a_missing_copy_is_reported_not_hidden(conn):
-    record_id = film(conn, info=DV7, size_gb=60)
-    job_id = versions.approve(conn, "dv_remux", record_id, "Greg")
-    conn.commit()
-    finish_job(conn, job_id, result={"kept_original": True, "extra": {"bytes": 5 * GIB, "rel": "x"}})
-    rows = {r["kind"]: dict(r) for r in conn.execute("SELECT * FROM library_action")}
-    assert rows["dv_remux"]["status"] == "done" and rows["variant"]["status"] == "done" and "5.0 GB" in rows["variant"]["message"]
-    other = film(conn, rel="Movies/Alien (1979)/Alien (1979).mkv", name="Alien (1979).mkv", info=DV7, size_gb=60)
-    job2 = versions.approve(conn, "dv_remux", other, "Greg")
-    conn.commit()
-    finish_job(conn, job2, result={"kept_original": True, "extra": {"error": "not enough room"}})
-    rows = {(r["path_key"], r["kind"]): dict(r) for r in conn.execute("SELECT * FROM library_action")}
-    second = [v for k, v in rows.items() if "alien" in k[0].lower()]
-    assert {r["kind"]: r["status"] for r in second} == {"dv_remux": "done", "variant": "failed"} and "not enough room" in next(r for r in second if r["kind"] == "variant")["message"]
+    ok = client.post("/api/library/versions/settings", json={"variant_height": "720", "variant_label": "720p", "variant_stereo": "0"})
+    assert ok.get_json()["ok"] and settings.get("variant_height") == "720"

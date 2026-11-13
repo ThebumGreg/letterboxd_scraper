@@ -8,7 +8,7 @@ from flask import request
 from synchub import db, jobs, settings, versions
 from settings_validation import validate_setting
 
-SETTING_KEYS = ("versions_on", "variant_min_gb", "variant_height", "variant_label", "variant_crf", "variant_maxrate_kbps", "variant_audio_kbps", "variant_stereo", "dv7_remux")
+SETTING_KEYS = ("versions_on", "variant_min_gb", "variant_height", "variant_label", "variant_crf", "variant_maxrate_kbps", "variant_audio_kbps", "variant_stereo")
 HEIGHTS = (480, 720, 1080, 1440)
 
 

@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 _SWITCH_KEYS = {
     "disable_jellyfin_connection", "radarr_enable_library_sync", "radarr_enable_queue_addition", "radarr_dry_run",
     "sonarr_enable_library_sync", "sonarr_enable_queue_addition", "sonarr_dry_run", "enable_notifications",
-    "payload_logging_enabled", "dvr_enabled", "dvr_counts_as_library", "versions_on", "hide_source", "variant_stereo", "dv7_remux", "clean_names", "naming_tmdb_ids", "size_policy", "tv_size_policy", "gpu_encoding", "preview_auto", "quality_scan_library", "quality_paused", "quality_damage_pass", "quality_check_first", "log_service_jellyfin", "log_service_radarr", "log_service_sonarr",
+    "payload_logging_enabled", "dvr_enabled", "dvr_counts_as_library", "versions_on", "hide_source", "variant_stereo", "clean_names", "naming_tmdb_ids", "size_policy", "tv_size_policy", "gpu_encoding", "preview_auto", "quality_scan_library", "quality_paused", "quality_damage_pass", "quality_check_first", "log_service_jellyfin", "log_service_radarr", "log_service_sonarr",
     "log_service_tmdb", "log_service_dynu", "protect_enabled", "protect_verify_tls",
     "dash_enabled", "dash_close_when_left", "dash_skip_busy", "dash_sleep_after", "dash_quote_on", "unifi_net_verify_tls",
     "dash_welcome_on", "dash_welcome_quiet_on", "dash_welcome_wake", "dash_welcome_details", "dash_eve_on",

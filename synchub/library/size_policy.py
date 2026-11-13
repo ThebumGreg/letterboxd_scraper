@@ -292,6 +292,32 @@ def _fps(rec):
         return None
 
 
+def dv7_remux_wanted(rec, cfg):
+    """Whether this record is Dolby Vision profile 7 and the setting says to convert it to profile 8.1 (the one step that changes the picture's Dolby data, with no re-encode).
+    It is part of the normal conversion, for Library conversions and new downloads alike."""
+    info = _json(rec.get("video_info_json"), {})
+    return cfg.dv_profile_7_8 == "remux" and info.get("hdr") == "dv" and str(info.get("dv_profile")) == "7"
+
+
+def with_dv_remux(plan, dest_rel=None):
+    """The job plan with Dolby Vision 7 to 8.1 as its picture step: the video is copied (the Dolby data rewritten, the enhancement layer dropped), the container is
+    Matroska and every other track is kept as it is. Track clean-ups and audio changes that were planned are not applied together with it; the plan says so.
+    Returns (plan, dest_rel) - the destination gets an .mkv extension when the file needs one."""
+    out = dict(plan)
+    old = out.get("change") or {}
+    change = {"op": "convert", "container": "matroska", "video": {"action": "copy", "dv": "p8_1"}}
+    if dest_rel is not None and not dest_rel.lower().endswith(".mkv"):
+        change["target_extension"] = ".mkv"
+        dest_rel = dest_rel.rsplit(".", 1)[0] + ".mkv" if "." in dest_rel.rsplit("/", 1)[-1] else dest_rel + ".mkv"
+    if old.get("audio_add") or old.get("audio_convert") or old.get("remove_audio") or old.get("remove_subtitle"):
+        out["dv_note"] = "Track clean-ups and audio changes are not applied to a Dolby Vision 7 file in the same pass; every track is kept."
+    needs = [n for n in (out.get("needs") or []) if n not in ("audio_add", "profiles")]
+    out.pop("profile", None)
+    out.pop("size_policy", None)
+    out.update(op="convert", change=change, needs=sorted(set(needs) | {"dovi"}))
+    return out, dest_rel
+
+
 def apply(plan, decision, dest_rel=None):
     """The job plan with the compression added: the op becomes `convert`, the video is transcoded to HEVC inside Matroska and the size cap rides in the profile.
     A profile the person already chose that encodes to HEVC keeps its own quality and speed; only the cap and the HDR facts are added.

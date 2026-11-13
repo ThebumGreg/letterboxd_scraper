@@ -138,7 +138,7 @@ def test_versions_and_downloads_skip_a_held_file(conn):
     file_id = fixture_file(conn, rel="Heat (1995)/Heat (1995).mkv", size=40_000_000_000, kbps=40000, codec="hevc", resolution="3840x2160")
     low_score(conn, file_id)
     out = versions.recommendations(conn)
-    assert not out[versions.VARIANT] and not out[versions.DV_REMUX]
+    assert not out[versions.VARIANT]
     with pytest.raises(versions.VersionError, match="held from conversion"):
         versions.approve(conn, versions.VARIANT, file_id, "Greg")
 
