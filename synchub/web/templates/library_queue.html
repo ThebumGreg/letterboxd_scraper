@@ -1,12 +1,13 @@
 <!-- synchub/web/templates/library_queue.html: every Library list on one page. The Status filter chooses the queue, Below minimum quality or everything. -->
 {% extends "base.html" %}
 {% from "_quality.html" import size_text, quality_detail, quality_script with context %}
+{% from "_macros.html" import file_label_badge with context %}
 {% block title %}Library: {{ title }}{% endblock %}
 
 {% block content %}
 {% include "_media_nav.html" %}
-{% set filter_args = {'q': f.q, 'root': f.root, 'conf': f.conf, 'what': f.what, 'type': f.type, 'quality': f.quality} %}
-{% set filtered = f.q or f.root or f.conf or f.what or f.type or f.quality %}
+{% set filter_args = {'q': f.q, 'root': f.root, 'conf': f.conf, 'what': f.what, 'type': f.type, 'quality': f.quality, 'label': f.label} %}
+{% set filtered = f.q or f.root or f.conf or f.what or f.type or f.quality or f.label %}
 {% set below = status == 'below_minimum' %}
 <p class="mb-2"><a href="{{ url_for('library_page') }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> Library</a></p>
 
@@ -35,6 +36,8 @@
         <select class="form-select" id="fwhat" name="what"><option value="">Any folder</option><option value="loose"{% if f.what == 'loose' %} selected{% endif %}>Loose in a shared folder</option><option value="alone"{% if f.what == 'alone' %} selected{% endif %}>In its own folder</option></select></div>
     <div class="col-6 col-md-2"><label for="fquality" class="visually-hidden">Quality check</label>
         <select class="form-select" id="fquality" name="quality"><option value="">Any quality check</option>{% for k, label in [('waiting', 'Queued or checking'), ('unchecked', 'Not checked'), ('good', 'Good or OK'), ('poor', 'Poor, bad or low'), ('small', 'Too small')] %}<option value="{{ k }}"{% if k == f.quality %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <div class="col-6 col-md-2"><label for="flabel" class="visually-hidden">What the file is to its film</label>
+        <select class="form-select" id="flabel" name="label"><option value="">Any kind of file</option>{% for k in file_labels.FILTERS %}<option value="{{ k }}"{% if k == f.label %} selected{% endif %}>{{ file_labels.FILTER_TEXT[k] }}</option>{% endfor %}</select></div>
     <div class="col-6 col-md-2 d-flex gap-2"><button class="btn btn-outline-info" type="submit">Filter</button>{% if filtered %}<a class="btn btn-outline-secondary" href="{{ url_for('library_list', status=status) }}">Clear</a>{% endif %}</div>
 </form>
 
@@ -77,7 +80,7 @@
                         <a class="fw-bold text-decoration-none" href="{{ url_for('library_record', record_id=rec.id, group=r.group, status=status, **filter_args) }}">{{ rec.approved_name or rec.recommended_name or rec.file_name }}</a>
                         <div class="small text-body-secondary text-truncate" title="{{ rec.source_path }}">{{ rec.root_name }}: {{ rec.relative_path }}</div>
                         {% if rec.missing_since %}<span class="badge bg-warning text-dark">not found any more</span>{% endif %}
-                        {% if rec.duplicate_group %}<span class="badge bg-info text-dark">duplicate</span>{% endif %}
+                        {% if rec.file_label %}{{ file_label_badge(rec) }}{% elif rec.duplicate_group %}<span class="badge bg-info text-dark">duplicate</span>{% endif %}
                         <span class="badge bg-{{ 'primary' if rec.media_type == 'TV Episode' else 'secondary' }}">{{ 'TV episode' if rec.media_type == 'TV Episode' else 'Movie' if (rec.media_type or '').startswith('Movie') else (rec.media_type or 'Other') }}</span>
                         {% if below %}<span class="badge bg-danger">Held: low quality</span>{% endif %}
                         {% if row.loose %}<span class="badge bg-warning text-dark" title="Shares its folder with other films, or sits loose in a library folder">loose</span>{% endif %}

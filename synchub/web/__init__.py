@@ -239,6 +239,8 @@ def create_app(start_scheduler=False, csrf=True):
                 "profile_link": link("my_profile", "My profile"),
                 "max_rating": getattr(g, "max_rating", None), "app_version": __version__, "app_build": buildinfo.get()}
 
+    from synchub.library import file_labels
+    app.jinja_env.globals["file_labels"] = file_labels            # the label words, tones and hints for the badges
     from synchub.web import admin, api, fleet, library, notifications, pages, player_api, players_web, security, shares, tv, watchlist, worker_api, originals, sessions as sessions_web, versions as versions_web, quality_web, dashboard as dashboard_web, media as media_web
     for module in (pages, api, admin, fleet, library, notifications, shares, security, tv, watchlist, worker_api, player_api, players_web, originals, sessions_web, versions_web, quality_web, dashboard_web, media_web):
         module.register(app)

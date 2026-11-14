@@ -31,7 +31,7 @@ def save_film(conn, media_id, files):
     for f in keep:
         if f.get("media_link_source") != MANUAL:
             _write(conn, f["id"], media_id, AUTO)
-    for row in conn.execute("SELECT id FROM library_file WHERE media_id = ? AND media_link_source = ?", (media_id, AUTO)).fetchall():
+    for row in conn.execute("SELECT id FROM library_file WHERE media_id = ? AND media_link_source = ? AND COALESCE(dup_review, '') != 'aside'", (media_id, AUTO)).fetchall():
         if row["id"] not in ids:
             conn.execute("UPDATE library_file SET media_id = NULL, media_link_source = NULL WHERE id = ?", (row["id"],))
     file_labels.refresh(conn, [media_id])
@@ -83,7 +83,7 @@ def relink_all(conn):
             i += 1
     linked = 0
     for fid, rec in rows.items():
-        if rec.get("media_link_source") == MANUAL:
+        if rec.get("media_link_source") == MANUAL or rec.get("dup_review") == "aside":
             continue
         media_id = claimed.get(fid)
         if media_id is None:

@@ -19,7 +19,14 @@
     {% if stats.partial %}{{ stat_card('Partial', stats.partial, 'warning', '', 'partial') }}{% endif %}
 </div>
 {% if reconcile and reconcile.jellyfin_items %}
-<p class="small text-body-secondary mb-4">Jellyfin movies: {{ reconcile.jellyfin_items }} item{{ '' if reconcile.jellyfin_items == 1 else 's' }} = {{ reconcile.titles }} title{{ '' if reconcile.titles == 1 else 's' }} here{% if reconcile.duplicates %} (<a href="#" data-show-extra-versions>{{ reconcile.duplicates }} extra version{{ '' if reconcile.duplicates == 1 else 's' }}</a> of a film already counted){% endif %}{% if reconcile.unmatched %}, {{ reconcile.unmatched }} not matched yet (see Match review){% endif %}.</p>
+<p class="small text-body-secondary mb-1">Jellyfin movies: {{ reconcile.jellyfin_items }} item{{ '' if reconcile.jellyfin_items == 1 else 's' }} = {{ reconcile.titles }} title{{ '' if reconcile.titles == 1 else 's' }} here{% if reconcile.duplicates %} (<a href="#" data-show-extra-versions>{{ reconcile.duplicates }} more Jellyfin version{{ '' if reconcile.duplicates == 1 else 's' }}</a> of a film already counted){% endif %}{% if reconcile.unmatched %}, {{ reconcile.unmatched }} not matched yet (see Match review){% endif %}.</p>
+{% if file_counts and file_counts.films %}
+<p class="small text-body-secondary mb-4" id="fileBreakdown">{{ file_counts.films }} film{{ '' if file_counts.films == 1 else 's' }} with more than one file:
+    {% for k in file_labels.ORDER %}{% if file_counts.files[k] %}<a href="{{ url_for('library_list', status='all', label=k) }}" title="{{ file_labels.HINT[k] }}">{{ file_counts.files[k] }} {{ file_labels.TEXT[k]|lower }}{{ '' if file_counts.files[k] == 1 else 's' }}</a>{{ ', ' if not loop.last else '' }}{% endif %}{% endfor %}.
+    {% if file_counts.different_shares %}<a href="{{ url_for('library_list', status='all', label='different_shares') }}">{{ file_counts.different_shares }} on different shares</a>.{% endif %}
+    {% if file_counts.unlinked %}<a href="{{ url_for('library_list', status='all', label='unlinked') }}">{{ file_counts.unlinked }} movie file{{ '' if file_counts.unlinked == 1 else 's' }} not linked to a film</a>.{% endif %}
+    {% if file_counts.saved_bytes %}Conversions saved {{ '%.1f'|format(file_counts.saved_bytes / 1073741824) }} GB.{% endif %}</p>
+{% endif %}
 {% endif %}
 
 {% if resume %}
@@ -66,7 +73,8 @@
             <option value="">Any status</option>
             {% for code, label in status_options %}<option value="{{ code }}">{{ label }}</option>{% endfor %}
             <option value="in_flight">In progress (all)</option>
-            <option value="extra_versions">Has extra versions</option>
+            <option value="extra_versions">More than one version in Jellyfin</option>
+            {% if file_counts %}<optgroup label="What the extra files are">{% for k in ['many', 'mobile', 'converted', 'original', 'duplicate', 'edition', 'unexplained', 'missing_mobile', 'different_shares'] %}<option value="file_{{ k }}">{{ file_labels.FILTER_TEXT[k] }}</option>{% endfor %}</optgroup>{% endif %}
         </select>
     </div>
     {% if can_filter_watch %}
@@ -153,7 +161,7 @@
                 data-search="{{ ([r.title, r.year or '', r.certification or '', r.wanted_by|join(' '), r.watched_by|join(' ')]|join(' '))|lower }}"
                 data-watch="{{ r.watch }}" data-cert="{{ r.certification or '' }}"
                 data-kind="{{ r.kind }}" data-state="{{ r.state }}" data-state-label="{{ r.state_label }}" data-state-color="{{ r.state_color }}"
-                data-state-icon="{{ r.state_icon or '' }}" data-versions="{{ r.versions }}"
+                data-state-icon="{{ r.state_icon or '' }}" data-versions="{{ r.versions }}" data-files="{{ r.file_tokens }}"
                 data-progress="{{ r.progress_pct if r.progress_pct is not none else '' }}"
                 data-users="|{% for u in r.wanted_by + r.watched_by %}{{ u|lower }}|{% endfor %}"
                 data-added-by="{{ r.wanted_by|join(', ') }}" data-user-count="{{ r.user_count }}"

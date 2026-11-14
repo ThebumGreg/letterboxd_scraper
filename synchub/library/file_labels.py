@@ -91,7 +91,7 @@ def _set(conn, rec_id, **values):
 def refresh(conn, media_ids=None):
     """Recomputes the label of every file that has a saved film link (all films, or just `media_ids`). Returns how many films have more than one file."""
     rows = defaultdict(list)
-    sql = "SELECT * FROM library_file WHERE media_id IS NOT NULL AND missing_since IS NULL"
+    sql = "SELECT * FROM library_file WHERE media_id IS NOT NULL AND missing_since IS NULL AND COALESCE(dup_review, '') != 'aside'"
     args = []
     if media_ids is not None:
         media_ids = list(media_ids)
@@ -108,7 +108,7 @@ def refresh(conn, media_ids=None):
         for f in files:
             _set(conn, f["id"], file_label=labels[f["id"]])
     # files that are gone or lost their film keep no label
-    conn.execute("UPDATE library_file SET file_label = NULL WHERE file_label IS NOT NULL AND (missing_since IS NOT NULL OR media_id IS NULL)")
+    conn.execute("UPDATE library_file SET file_label = NULL WHERE file_label IS NOT NULL AND (missing_since IS NOT NULL OR media_id IS NULL OR dup_review = 'aside')")
     return many
 
 
@@ -139,3 +139,57 @@ def saved_for(rec, files):
                 and _dest_key(f.get("migration_destination_path")) == here and (f.get("size_bytes") or 0) > (rec.get("size_bytes") or 0):
             return f["size_bytes"] - rec["size_bytes"]
     return None
+
+
+# ---------------------------------------------------------------- Library filters and Home links
+FILTERS = ORDER + ("unlinked", "missing_mobile", "different_shares", "many", "review_later")
+FILTER_TEXT = {**TEXT, "unlinked": "Not linked to a film", "missing_mobile": "4K, no mobile copy", "different_shares": "Copies on different shares", "many": "Films with more than one file", "review_later": "Duplicates to review later"}
+FILTER_TEXT[UNEXPLAINED] = "Unexplained (possible duplicates)"
+
+
+def _height(resolution):
+    try:
+        return int(str(resolution or "").lower().split("x")[1])
+    except (IndexError, ValueError):
+        return 0
+
+
+def ids_for(conn, key):
+    """The ids of the Library files a filter matches: one label, 'many' (every file of a film with more than one), 'unlinked' (a movie file with no film),
+    'missing_mobile' (a file above 1080p whose film has no mobile copy) or 'different_shares' (files of a film that sits on more than one share)."""
+    if key in ORDER:
+        return {r["id"] for r in conn.execute("SELECT id FROM library_file WHERE file_label = ? AND missing_since IS NULL", (key,))}
+    if key == "review_later":
+        return {r["id"] for r in conn.execute("SELECT id FROM library_file WHERE dup_review = 'review_later' AND missing_since IS NULL")}
+    if key == "unlinked":
+        return {r["id"] for r in conn.execute("SELECT id FROM library_file WHERE media_id IS NULL AND missing_since IS NULL AND media_type LIKE 'Movie%'")}
+    if key == "many":
+        return {r["id"] for r in conn.execute("SELECT id FROM library_file WHERE missing_since IS NULL AND media_id IN (SELECT media_id FROM library_file WHERE media_id IS NOT NULL "
+                                              "AND missing_since IS NULL GROUP BY media_id HAVING COUNT(*) > 1)")}
+    if key == "different_shares":
+        return {r["id"] for r in conn.execute("SELECT id FROM library_file WHERE missing_since IS NULL AND media_id IN (SELECT media_id FROM library_file WHERE media_id IS NOT NULL "
+                                              "AND missing_since IS NULL GROUP BY media_id HAVING COUNT(DISTINCT root_name) > 1)")}
+    if key == "missing_mobile":
+        has_mobile = {r["media_id"] for r in conn.execute("SELECT DISTINCT media_id FROM library_file WHERE file_label = 'mobile' AND missing_since IS NULL AND media_id IS NOT NULL")}
+        return {r["id"] for r in conn.execute("SELECT id, media_id, resolution FROM library_file WHERE media_id IS NOT NULL AND missing_since IS NULL AND (file_label IS NULL OR file_label != 'mobile')")
+                if r["media_id"] not in has_mobile and _height(r["resolution"]) > 1080}
+    return set()
+
+
+def film_tokens(conn):
+    """{media id: "many mobile converted ..."} for the Home filter: the labels a film's files carry, 'many' when it has more than one file, 'different_shares' when they sit on more than
+    one share and 'missing_mobile' when its best file is above 1080p and has no mobile copy. Only films with a saved link appear."""
+    films = defaultdict(list)
+    for r in conn.execute("SELECT media_id, root_name, file_label, resolution FROM library_file WHERE media_id IS NOT NULL AND missing_since IS NULL"):
+        films[r["media_id"]].append(r)
+    out = {}
+    for media_id, files in films.items():
+        tokens = {r["file_label"] for r in files if r["file_label"]}
+        if len(files) > 1:
+            tokens.add("many")
+        if len({r["root_name"] for r in files}) > 1:
+            tokens.add("different_shares")
+        if MOBILE not in tokens and max(_height(r["resolution"]) for r in files) > 1080:
+            tokens.add("missing_mobile")
+        out[media_id] = " ".join(sorted(tokens))
+    return out

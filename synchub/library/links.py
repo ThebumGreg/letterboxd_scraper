@@ -4,7 +4,7 @@ Jobs point at their file in different ways (the record itself, a quality check, 
 link a job to its file's report, and the report back to its jobs, ask here instead of each knowing every kind."""
 
 # job.ref_type values whose ref_id is the library_file id itself
-DIRECT = ("library_file", "library_hide", "library_source")
+DIRECT = ("library_file", "library_hide", "library_source", "library_aside")
 # job.ref_type -> the SQL that turns its ref_id into a library_file id
 LOOKUPS = {
     "quality_check": "SELECT library_file_id FROM quality_check WHERE id = ?",

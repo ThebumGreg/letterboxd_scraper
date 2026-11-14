@@ -82,7 +82,7 @@
         </div>
     </div>
 </div>
-{% if copies is not none %}{{ copies_card(copies, can('library'), movie.id) }}{% endif %}
+{% if copies is not none %}{{ copies_card(copies, can('library'), movie.id, movie.jellyfin_link if movie.in_jellyfin else none) }}{% endif %}
 {% endblock %}
 
 {% block scripts %}

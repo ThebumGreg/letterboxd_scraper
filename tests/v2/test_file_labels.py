@@ -122,3 +122,84 @@ def test_the_counts_for_home_and_the_library(conn):
 def test_classify_is_pure_and_empty_for_a_single_file():
     assert file_labels.classify([{"id": 1, "root_name": "media", "relative_path": "A/A.mkv", "file_name": "A.mkv"}]) == {1: None}
     assert file_labels.text("mobile") == "Mobile copy"
+
+
+# ---------------------------------------------------------------- pages and buttons
+from synchub import jobs  # noqa: E402
+from synchub.library import aside  # noqa: E402
+
+
+def two_copies(conn):
+    media_id = film(conn)
+    a = fixture_file(conn, rel=HEAT, size=7_000_000_000)
+    b = fixture_file(conn, rel="Heat (1995)/Heat copy.mkv", size=7_000_000_000)
+    conn.execute("UPDATE library_file SET duplicate_group = 'DUP-1', duplicate_status = ?, sha256 = 'x' WHERE id = ?", (v.DUP_PRIMARY, a))
+    conn.execute("UPDATE library_file SET duplicate_group = 'DUP-1', duplicate_status = ?, sha256 = 'x' WHERE id = ?", (v.DUP_OTHER, b))
+    conn.commit()
+    return media_id, a, b
+
+
+def test_the_film_page_has_one_files_section_with_labels_and_actions(client, conn):
+    media_id, a, b = two_copies(conn)
+    page = client.get(f"/movie/{media_id}").get_data(as_text=True)
+    assert "Why more than one file?" in page and "Duplicate · keep this one" in page and "Duplicate file" in page
+    assert f'data-file-act="set-aside" data-record="{b}"' in page and f'data-file-act="set-aside" data-record="{a}"' not in page
+    assert "Play this version" not in page                      # Jellyfin has no address in the test settings
+
+
+def test_edition_main_not_this_film_and_keep_both_buttons(client, conn):
+    media_id, a, b = two_copies(conn)
+    quality.copies(conn, media_id)
+    conn.commit()
+    assert client.post(f"/api/library/file/{b}/edition", json={"on": True, "name": "Director's Cut"}).get_json()["ok"]
+    assert rec_of(conn, b)["is_edition"] == 1 and rec_of(conn, b)["file_label"] == "edition"
+    assert client.post(f"/api/library/file/{b}/main", json={"on": True}).get_json()["ok"] and rec_of(conn, b)["is_main"] == 1
+    assert client.post(f"/api/library/file/{a}/duplicate-note", json={"value": "keep_both"}).get_json()["ok"] and rec_of(conn, a)["dup_review"] == "keep_both"
+    assert not client.post(f"/api/library/file/{a}/duplicate-note", json={"value": "nonsense"}).get_json()["ok"]
+    assert client.post(f"/api/library/file/{a}/not-this-film").get_json()["ok"] and rec_of(conn, a)["media_id"] is None
+
+
+def test_a_duplicate_can_be_set_aside_and_put_back_but_never_the_kept_copy_or_the_last_one(client, conn):
+    media_id, a, b = two_copies(conn)
+    quality.copies(conn, media_id)
+    conn.commit()
+    assert not client.post(f"/api/library/file/{a}/set-aside").get_json()["ok"]                # the copy to keep
+    ok = client.post(f"/api/library/file/{b}/set-aside").get_json()
+    assert ok["ok"]
+    job = dict(conn.execute("SELECT * FROM job WHERE ref_type = 'library_aside'").fetchone())
+    plan = jobs.get(conn, job["id"])["plan"]
+    assert plan["op"] == "rename" and plan["aside"] and plan["needs"] == ["aside"]
+    assert job["dest_rel"] == "Heat (1995)/Heat copy.mkv.synchub-duplicate"
+    assert not client.post(f"/api/library/file/{b}/set-aside").get_json()["ok"]                # already being done
+    conn.execute("UPDATE job SET status = 'done', result = '{}' WHERE id = ?", (job["id"],))
+    conn.commit()
+    assert aside.sync(conn, job["id"])
+    conn.commit()
+    assert rec_of(conn, b)["dup_review"] == "aside" and rec_of(conn, b)["file_label"] is None
+    page = client.get(f"/movie/{media_id}").get_data(as_text=True)
+    assert "Set aside" in page and f'data-file-act="put-back" data-record="{b}"' in page
+    back = client.post(f"/api/library/file/{b}/put-back").get_json()
+    assert back["ok"] and conn.execute("SELECT source_rel, dest_rel FROM job WHERE ref_type = 'library_aside' ORDER BY id DESC").fetchone()[0].endswith(".synchub-duplicate")
+
+
+def test_home_and_the_library_show_the_same_counts_and_filters(client, conn):
+    media_id = film(conn)
+    fixture_file(conn, rel=HEAT, size=40_000_000_000, resolution="3840x2160")
+    mobile = fixture_file(conn, rel=MOBILE, size=4_000_000_000)
+    film_link.relink_all(conn)
+    conn.commit()
+    home = client.get("/").get_data(as_text=True)
+    assert "1 film with more than one file" in home and "1 mobile copy" in home and 'value="file_mobile"' in home and f"1 film" in home
+    listing = client.get("/library/queue?status=all&label=mobile").get_data(as_text=True)
+    assert "Heat (1995) - 1080p.mkv" in listing and "Heat (1995).mkv<" not in listing.split("queueTable")[-1].replace("Heat (1995) - 1080p.mkv", "")
+    assert mobile and client.post("/api/library/links/refresh").get_json()["ok"]
+
+
+def test_the_record_page_shows_the_label_and_the_other_files_of_the_film(client, conn):
+    media_id = film(conn)
+    a = fixture_file(conn, rel=HEAT, size=40_000_000_000)
+    b = fixture_file(conn, rel=MOBILE, size=4_000_000_000)
+    film_link.relink_all(conn)
+    conn.commit()
+    page = client.get(f"/library/record/{b}").get_data(as_text=True)
+    assert "Mobile copy" in page and f"/movie/{media_id}" in page and "other files of this film" in page and a

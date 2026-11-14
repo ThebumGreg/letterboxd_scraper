@@ -849,11 +849,12 @@ def copies(conn, media_id):
     1080p, extra versions are switched on and no smaller copy exists. Saves the film-to-file links and labels it finds (library/film_link.py)."""
     from synchub.library import file_labels, film_link
     found, unmapped = find_movie_files(conn, media_id)
-    found = film_link.save_film(conn, media_id, found)
+    found = film_link.save_film(conn, media_id, [f for f in found if f.get("dup_review") != "aside"])
+    aside = [dict(r) for r in conn.execute("SELECT id, root_name, relative_path, file_name, size_bytes FROM library_file WHERE media_id = ? AND dup_review = 'aside' ORDER BY id", (media_id,))]
     labels = file_labels.classify(found)
     files = [describe_file(conn, r, labels.get(r["id"]), found) for r in found]
     if not files:
-        return {"files": [], "main": None, "remote": [], "missing_remote": False, "full_label": None, "unmapped": unmapped, "why": None, "shares": []}
+        return {"files": [], "main": None, "remote": [], "missing_remote": False, "full_label": None, "unmapped": unmapped, "why": None, "shares": [], "aside": aside}
     ranked = sorted(files, key=lambda f: ((f["height"] or 0), f["role"] != "original", f["size_bytes"] or 0), reverse=True)   # the converted copy outranks its own original
     chosen = next((f for f in ranked if f["is_main_choice"]), None)
     main = chosen or next((f for f in ranked if not f["is_extra"]), ranked[0])
@@ -862,7 +863,7 @@ def copies(conn, media_id):
     missing = bool((main["height"] or 0) > 1080 and not remote and extra_versions.load(conn).on)
     label = f"{main['height']}p {main['picture']}" if main["height"] else main["picture"]
     shares = sorted({f["root"] for f in files if f["root"]})
-    return {"files": ranked, "main": main, "remote": remote, "missing_remote": missing, "full_label": label, "unmapped": unmapped, "why": why_two_files(files), "shares": shares}
+    return {"files": ranked, "main": main, "remote": remote, "missing_remote": missing, "full_label": label, "unmapped": unmapped, "why": why_two_files(files), "shares": shares, "aside": aside}
 
 
 _SHOW_ORDER = {"mobile": 0, "converted": 1, "original": 2, "duplicate": 3, "edition": 4, "unexplained": 5}

@@ -2,6 +2,9 @@
 {# Hidden CSRF input. Renders nothing until Flask-WTF CSRFProtect is enabled. #}
 {% macro csrf_field() %}{% if csrf_token is defined %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}{% endmacro %}
 
+{# What a file is to its film: Mobile copy, Converted copy, Original, Duplicate file, Different edition or Unexplained. `rec` is a Library file record (file_label, dup_review, ...). #}
+{% macro file_label_badge(rec, link=none) %}{% if rec.file_label %}{% set tone = file_labels.TONE.get(rec.file_label, 'secondary') %}<span class="badge bg-{{ tone }}{% if tone in ('info', 'warning') %} text-dark{% endif %}" title="{{ file_labels.HINT.get(rec.file_label, '') }}">{{ file_labels.text(rec.file_label, rec) }}</span>{% endif %}{% endmacro %}
+
 {# Dashboard stat card. Pass f_type and/or f_status to make it a clickable filter preset. #}
 {# The Watch now button. watch.js turns this into a menu (This device / each TV); the plain link inside is what shows without it. #}
 {# `resume`: where this person stopped ("at 42:10"), when they are part-way through it; the button then reads Resume and a TV picks up from there. #}

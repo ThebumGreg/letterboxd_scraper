@@ -1,6 +1,7 @@
 <!-- synchub/web/templates/library_record.html -->
 {% extends "base.html" %}
 {% from "_quality.html" import quality_detail, quality_script with context %}
+{% from "_macros.html" import file_label_badge with context %}
 {% block title %}Library: {{ final_name or rec.file_name }}{% endblock %}
 
 {% macro badge(level) %}<span class="badge bg-{{ {'high': 'success', 'medium': 'warning', 'low': 'danger'}[level] }}{% if level == 'medium' %} text-dark{% endif %}">{{ level }} confidence</span>{% endmacro %}
@@ -8,7 +9,7 @@
 {% block content %}
 {% include "_media_nav.html" %}
 {% set decided = rec.approval_status != 'pending' %}
-{% set nav = dict(status=back_status, q=f.q, root=f.root, conf=f.conf, what=f.what, type=f.type, quality=f.quality) %}
+{% set nav = dict(status=back_status, q=f.q, root=f.root, conf=f.conf, what=f.what, type=f.type, quality=f.quality, label=f.label) %}
 {% set net_path = rec.source_path if rec.source_path and rec.source_path != rec.root_name ~ ':' ~ rec.relative_path else none %}
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
     <span><a href="{{ url_for('library_list', **nav) }}" id="navBack"><i class="bi bi-arrow-left" aria-hidden="true"></i> {{ back_title }}</a>
@@ -22,11 +23,14 @@
 <div class="d-flex flex-wrap gap-1 mb-2" id="recordChips">
     <span class="badge bg-secondary" title="The list this file is in">{{ group_titles.get(r.group, r.group) }}</span>
     {{ badge(r.confidence) }}
+    {{ file_label_badge(rec) }}
     {% if r.held %}<span class="badge bg-danger" title="Never converted. It may be renamed and moved.">Held: low quality</span>{% endif %}
     {% if rec.media_type %}<span class="badge text-bg-dark border">{{ rec.media_type }}</span>{% endif %}
     {% if rec.resolution %}<span class="badge text-bg-dark border">{{ rec.resolution }}</span>{% endif %}
     {% if size and not rec.unreadable_reason %}<span class="badge text-bg-dark border">{{ size }}</span>{% endif %}
 </div>
+{% if film %}<p class="small mb-2" id="recordFilm"><i class="bi bi-film" aria-hidden="true"></i> File of <a href="{{ url_for('movie_details', media_id=film.id) }}">{{ film.title }}{% if film.year %} ({{ film.year }}){% endif %}</a>{% if film_files %}; other files of this film:
+    {% for x in film_files %}<a href="{{ url_for('library_record', record_id=x.id, group=group) }}">{{ x.root_name }}: {{ x.file_name }}</a>{% if x.file_label %} <span class="badge bg-{{ file_labels.TONE.get(x.file_label, 'secondary') }}{% if file_labels.TONE.get(x.file_label) in ('info', 'warning') %} text-dark{% endif %}">{{ file_labels.text(x.file_label, x) }}</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p>{% endif %}
 <div class="small text-body-secondary mb-3" style="overflow-wrap: anywhere;">{{ rec.root_name }}: {{ rec.relative_path }}{% if net_path %}
     <details class="d-inline-block align-top ms-1"><summary class="d-inline" style="cursor: pointer;">network path</summary> <span title="How a computer on the network opens it">{{ net_path }}</span></details>{% endif %}</div>
 <div id="libMessage" class="alert d-none" role="status"></div>
