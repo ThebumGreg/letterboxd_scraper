@@ -363,6 +363,8 @@ def fstab_lines(roots):
     for root in roots:
         opts = [o for o in root["options"].split(",") if o]
         if root["protocol"] == "smb":
+            if not any(o in ("serverino", "noserverino") for o in opts):
+                opts.append("noserverino")    # Unraid user shares hand out file ids that change; with serverino the folder then fails with "Stale file handle"
             out.append(f"//{root['host']}/{_fstab_escape(root['share'])}  {root['mount_point']}  cifs  {','.join(['credentials=/etc/synchub-smb.cred', *opts, '_netdev', 'nofail'])}  0  0")
         elif root["protocol"] == "nfs":
             out.append(f"{root['host']}:{_fstab_escape(root['share'])}  {root['mount_point']}  nfs  {','.join([*opts, '_netdev', 'nofail'])}  0  0")

@@ -17,7 +17,7 @@ MARKER = ".synchub-root"
 SHIMS = {
     "logger": "true",
     # `ls` fails for a folder flagged stale (a stale handle or a hung share); umount clears the flag
-    "ls": 'for a; do :; done; [ ! -f "$SHIM_STATE/stale_$(printf "%s" "$a" | tr / _)" ]',
+    "ls": 'for a; do :; done; if [ -f "$SHIM_STATE/stale_$(printf "%s" "$a" | tr / _)" ]; then echo "ls: cannot access $a: Stale file handle" >&2; exit 1; fi',
     "findmnt": 'f="$SHIM_STATE/net_$(printf "%s" "$5" | tr / _)"; [ -f "$f" ] && echo cifs; true',
     "umount": 'echo "umount $*" >> "$SHIM_LOG"; for a; do :; done; k="$(printf "%s" "$a" | tr / _)"; rm -f "$SHIM_STATE/net_$k" "$SHIM_STATE/stale_$k"',
     "mount": 'echo "mount $*" >> "$SHIM_LOG"; mp="$2"\n'
@@ -49,7 +49,7 @@ def box(tmp_path):
     def run(*args, **env_extra):
         env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "SHIM_STATE": str(state), "SHIM_LOG": str(log),
                "SYNCHUB_WATCHDOG_CONF": str(tmp_path / "none.conf"), "SYNCHUB_MOUNT_PATHS": " ".join(str(p) for p in shares.values()),
-               "SYNCHUB_WATCHDOG_LOCK": str(tmp_path / "lock"), "SYNCHUB_WATCHDOG_STAMP": str(tmp_path / "stamp"),
+               "SYNCHUB_WATCHDOG_LOCK": str(tmp_path / "lock"), "SYNCHUB_WATCHDOG_STAMP": str(tmp_path / "stamp"), "SYNCHUB_WATCHDOG_STATE": str(tmp_path / "wstate"),
                "SYNCHUB_SETTLE_SECONDS": "2", **env_extra}
         done = subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, text=True, env=env, timeout=60)
         return done.returncode, done.stdout + done.stderr, log.read_text()
@@ -117,6 +117,40 @@ def test_a_container_that_cannot_see_the_markers_is_restarted_once(box):
     code, out, calls = box(SHIM_BLIND="1")
     assert calls.count("docker restart synchub-worker") == 1, "a second restart within ten minutes"
     assert "not again" in out
+
+
+def test_a_remounted_share_restarts_the_container_even_if_it_can_still_read_the_marker(box):
+    media = box.shares["Media"]
+    box.mounted(box.shares["TFiles"])
+    box.mounted(media)
+    (box.state / f"stale_{str(media).replace('/', '_')}").touch()
+    code, out, calls = box()                                   # the container's test -f passes (SHIM_BLIND unset)
+    assert code == 0, out
+    assert calls.count("docker restart synchub-worker") == 1
+    assert "a share was just mounted again" in out
+
+
+def test_the_real_error_of_a_stale_share_is_logged(box):
+    media = box.shares["Media"]
+    box.mounted(box.shares["TFiles"])
+    box.mounted(media)
+    (box.state / f"stale_{str(media).replace('/', '_')}").touch()
+    code, out, calls = box()
+    assert "Stale file handle" in out
+
+
+def test_useless_remounts_back_off(box):
+    media = box.shares["Media"]
+    box.mounted(box.shares["TFiles"])
+    for _ in range(3):                                         # the mount keeps failing: three tries, one a minute
+        code, out, calls = box(SHIM_FAIL_MOUNT="1")
+        assert f"mount -- {media}" in calls
+    count = calls.count(f"mount -- {media}")
+    code, out, calls = box(SHIM_FAIL_MOUNT="1")
+    assert code == 1 and "trying again only every 10 minutes" in out
+    assert calls.count(f"mount -- {media}") == count, "it mounted again during the wait"
+    code, out, calls = box(SHIM_FAIL_MOUNT="1", SYNCHUB_BACKOFF_SECONDS="0")   # the wait is over: it tries again
+    assert calls.count(f"mount -- {media}") == count + 1
 
 
 def test_a_container_that_failed_to_start_is_started(box):
