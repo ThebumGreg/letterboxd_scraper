@@ -106,6 +106,13 @@ def _rating_info(conn):
             for r in conn.execute("SELECT kind, tmdb_id, certification, vote_average FROM title_rating")}
 
 
+def _version_counts(conn):
+    """{media_id: number of Jellyfin movie items linked to it} for films that have more than one (versions or editions of one film)."""
+    return {r["entity_id"]: r["n"] for r in conn.execute(
+        """SELECT l.entity_id, COUNT(*) AS n FROM link l JOIN src_jellyfin_item i ON i.item_id = l.source_key AND i.type = 'movie' AND i.removed_at IS NULL
+           JOIN media m ON m.id = l.entity_id AND m.kind = 'movie' WHERE l.source = 'jellyfin' AND l.entity_type = 'media' GROUP BY l.entity_id HAVING COUNT(*) > 1""")}
+
+
 def list_catalog(conn, today=None, only=None, max_rating=None):
     """One row per movie/show for the dashboard, with state, requesters and links. `only` limits the rows to a set of media IDs.
     `max_rating` (0-3, see synchub.ratings) hides what the person may not see; None shows everything."""
@@ -118,6 +125,7 @@ def list_catalog(conn, today=None, only=None, max_rating=None):
                           _active_links(conn, "radarr", "src_radarr_movie", "radarr_id"),
                           _active_links(conn, "sonarr", "src_sonarr_series", "sonarr_id"))
     rollups = _show_rollups(conn, today)
+    versions = _version_counts(conn)
     added = _added_dates(conn)
     movie_states = {r["target_id"]: (r["state_code"], r["progress"]) for r in conn.execute("SELECT * FROM item_state WHERE target_type = 'movie'")}
     episode_counts = {r["media_id"]: r["n"] for r in conn.execute("SELECT media_id, COUNT(*) AS n FROM episode WHERE season_number <> 0 GROUP BY media_id")}
@@ -145,6 +153,7 @@ def list_catalog(conn, today=None, only=None, max_rating=None):
             "state": state, "state_label": info["label"], "state_color": info["color"], "state_icon": info.get("icon"),
             "progress": progress, "progress_pct": round(progress * 100) if progress is not None else None,
             "wanted_by": d["wanted_by"], "watched_by": d["watched_by"], "user_count": len(d["wanted_by"]),
+            "versions": versions.get(m["id"], 1),
             "in_jellyfin": m["id"] in jf, "in_radarr": m["id"] in radarr, "in_sonarr": m["id"] in sonarr,
             "jellyfin_link": _jellyfin_link(base, jf.get(m["id"])),
             "jellyfin_item_id": jf.get(m["id"]),

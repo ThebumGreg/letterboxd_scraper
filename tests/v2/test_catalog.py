@@ -84,6 +84,7 @@ def test_jellyfin_movie_reconcile(conn):
     conn.execute("INSERT INTO src_jellyfin_item (item_id, type, first_seen, last_seen, removed_at) VALUES ('jf5', 'movie', ?, ?, ?)", (NOW, NOW, NOW))
     link(conn, "jellyfin", "jf1", a); link(conn, "jellyfin", "jf2", a)      # two editions of one film; jf3/jf4 unmatched
     assert catalog.jellyfin_movie_reconcile(conn) == {"jellyfin_items": 4, "titles": 1, "duplicates": 1, "unmatched": 2}
+    assert catalog.list_catalog(conn, TODAY)[0]["versions"] == 2          # the Library status filter "Has extra versions" uses this
 
 
 def test_media_detail(conn):
