@@ -14,8 +14,11 @@
 #   - a mount point with no network file system on it is mounted from /etc/fstab.
 #   - a share that IS mounted but has no marker is left alone and logged: it was not set up yet (run --init-roots), or it is the wrong share.
 #     The watchdog never creates a marker.
-#   - once every share is fine, a running worker container that cannot see the markers is restarted (at most once in 10 minutes), and a
-#     container that failed to start because a share was missing is started.
+#   - a stale share's real error (e.g. "Stale file handle") is written to the log, so the cause can be read later.
+#   - after 3 remounts in a row that did not help, a share is retried only every 10 minutes instead of every minute.
+#   - once every share is fine, a running worker container that cannot see the markers, or that was running while a share was just
+#     remounted (its bind mount may still point at the old mount), is restarted (at most once in 10 minutes), and a container that
+#     failed to start because a share was missing is started.
 # Settings (optional) are read from /etc/synchub-mount-watchdog.conf, a shell file:
 #   SYNCHUB_MOUNT_PATHS="/mnt/tower/Media /mnt/tower/TFiles"   SYNCHUB_CONTAINER=synchub-worker   SYNCHUB_MARKER=.synchub-root
 # Log: journalctl -t synchub-watchdog
@@ -30,6 +33,9 @@ SETTLE="${SYNCHUB_SETTLE_SECONDS:-20}"
 RESTART_GAP="${SYNCHUB_RESTART_GAP_SECONDS:-600}"
 LOCK="${SYNCHUB_WATCHDOG_LOCK:-/run/synchub-mount-watchdog.lock}"
 STAMP="${SYNCHUB_WATCHDOG_STAMP:-/run/synchub-mount-watchdog.restarted}"
+STATE_DIR="${SYNCHUB_WATCHDOG_STATE:-/run/synchub-mount-watchdog.d}"     # per share: how many remounts in a row did not help, and when
+BACKOFF_AFTER="${SYNCHUB_BACKOFF_AFTER:-3}"                              # after this many useless remounts in a row ...
+BACKOFF_SECONDS="${SYNCHUB_BACKOFF_SECONDS:-600}"                        # ... try again only this often
 BIN="${SYNCHUB_WATCHDOG_BIN:-/usr/local/bin/synchub-mount-watchdog}"
 UNIT_DIR="${SYNCHUB_UNIT_DIR:-/etc/systemd/system}"
 
@@ -128,26 +134,56 @@ settle() {
     [ "$(probe "$p")" = ok ]
 }
 
+# Why a share is stale, in the system's own words (first line only).
+why() { timeout 10 ls -- "$1" 2>&1 >/dev/null | head -n1; }
+
+# Remount bookkeeping: $STATE_DIR/<path with / as _> holds "<useless remounts in a row> <time of the last one>".
+state_file() { printf '%s/%s' "$STATE_DIR" "$(printf '%s' "$1" | tr / _)"; }
+backed_off() {   # true when this share's remounts did not help several times in a row and the last try was recent
+    local f count last now; f="$(state_file "$1")"
+    [ -f "$f" ] || return 1
+    read -r count last < "$f" 2>/dev/null || return 1
+    now="$(date +%s)"
+    [ "${count:-0}" -ge "$BACKOFF_AFTER" ] && [ $((now - ${last:-0})) -lt "$BACKOFF_SECONDS" ]
+}
+note_failure() {
+    local f count=0 last; f="$(state_file "$1")"
+    mkdir -p "$STATE_DIR" 2>/dev/null || return 0
+    [ -f "$f" ] && read -r count last < "$f" 2>/dev/null
+    echo "$(( ${count:-0} + 1 )) $(date +%s)" > "$f" 2>/dev/null || true
+}
+note_success() { rm -f "$(state_file "$1")" 2>/dev/null || true; }
+
 if { exec 9>"$LOCK"; } 2>/dev/null; then flock -n 9 || exit 0; fi
 
 failed=0
+remounted=0
 for p in $PATHS; do
     state="$(probe "$p")"
     case "$state" in
-        ok) ;;
+        ok) note_success "$p" ;;
         unmarked)
             log "WARNING $p is mounted but has no $MARKER file: not touching it. If it is the right share, run the worker's --init-roots; if not, check /etc/fstab."
             failed=1 ;;
         stale|unmounted)
-            log "$p is $state: mounting it again"
+            if backed_off "$p"; then
+                log "WARNING $p is still $state; remounting did not help the last few times, so trying again only every $((BACKOFF_SECONDS / 60)) minutes"
+                failed=1
+                continue
+            fi
+            if [ "$state" = stale ]; then log "$p is stale ($(why "$p")): mounting it again"; else log "$p is $state: mounting it again"; fi
             [ "$state" = stale ] && { timeout 30 umount -f -l -- "$p" 2>/dev/null || true; }
             if ! out="$(timeout 60 mount -- "$p" 2>&1)"; then
                 log "WARNING mounting $p failed: $out"
+                note_failure "$p"
                 failed=1
             elif settle "$p"; then
                 log "$p is mounted again"
+                note_success "$p"
+                remounted=1
             else
-                log "WARNING $p mounted but its marker $MARKER is still not readable (state: $(probe "$p"))"
+                log "WARNING $p mounted but its marker $MARKER is still not readable (state: $(probe "$p"); $(why "$p"))"
+                note_failure "$p"
                 failed=1
             fi ;;
     esac
@@ -157,18 +193,22 @@ done
 if [ "$failed" = 0 ] && command -v docker >/dev/null 2>&1; then
     status="$(docker inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null)" || status=""
     if [ "$status" = running ]; then
-        blind=0
+        # A share that was just mounted again is a new mount: the container's bind mount can still point at the old one (and then reports
+        # "Stale file handle"), so it gets a restart even if the marker test still passes.
+        blind=$remounted
+        [ "$blind" = 1 ] && reason="a share was just mounted again" || reason="it cannot see the markers although the host can"
         for p in $PATHS; do
             timeout 20 docker exec "$CONTAINER" test -f "$p/$MARKER" >/dev/null 2>&1 || blind=1
+            timeout 20 docker exec "$CONTAINER" ls -- "$p" >/dev/null 2>&1 || blind=1
         done
         if [ "$blind" = 1 ]; then
             now="$(date +%s)"; last="$(cat "$STAMP" 2>/dev/null || echo 0)"
             if [ $((now - last)) -ge "$RESTART_GAP" ]; then
                 echo "$now" > "$STAMP" 2>/dev/null || true
-                log "Container $CONTAINER cannot see the markers although the host can: restarting it"
+                log "Container $CONTAINER: restarting it ($reason)"
                 docker restart "$CONTAINER" >/dev/null 2>&1 || log "WARNING could not restart $CONTAINER"
             else
-                log "WARNING container $CONTAINER still cannot see the markers; it was restarted less than $((RESTART_GAP / 60)) minutes ago, so not again. Are the paths inside the container the same as on the host?"
+                log "WARNING container $CONTAINER still cannot see the shares; it was restarted less than $((RESTART_GAP / 60)) minutes ago, so not again. Are the paths inside the container the same as on the host?"
             fi
         fi
     elif [ -n "$status" ] && [ -n "$(docker inspect -f '{{.State.Error}}' "$CONTAINER" 2>/dev/null)" ]; then
