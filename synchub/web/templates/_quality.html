@@ -123,6 +123,7 @@
         </dl>
         {% if f.hide_message and f.role == 'original' %}<div class="small text-body-secondary">{{ f.hide_message }}</div>{% endif %}
         <div class="d-flex flex-wrap gap-2 mt-1">
+            {% if act %}<a class="btn btn-outline-secondary btn-sm" href="{{ url_for('library_record', record_id=f.id) }}" title="This file's record in the Library"><i class="bi bi-file-earmark-text" aria-hidden="true"></i> Open record</a>{% endif %}
             {% if f.windows_path %}<button type="button" class="btn btn-outline-secondary btn-sm" data-copy-path="{{ f.windows_path }}" title="Paste it into the Windows Explorer address bar">Copy Windows folder path</button>
             {% elif f.unix_path %}<button type="button" class="btn btn-outline-secondary btn-sm" data-copy-path="{{ f.unix_path }}" title="This share is not SMB, so there is no Windows path; this is its name and folder">Copy folder path</button>{% endif %}
             {% if f.can_hide and not f.hidden %}<button type="button" class="btn btn-outline-secondary btn-sm" data-hide-source="hide-source" data-record="{{ f.id }}">Hide from Jellyfin</button>{% endif %}

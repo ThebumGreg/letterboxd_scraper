@@ -36,11 +36,11 @@
             else { fresh.textContent = old.textContent; document.body.appendChild(fresh); }
         }
     };
-    document.querySelectorAll('#mediaTabs [data-bs-toggle="tab"]').forEach((el) => {
-        el.addEventListener('show.bs.tab', async () => {
-            const holder = document.querySelector(el.dataset.bsTarget + ' [data-lazy-pane]');
-            if (!holder || holder.dataset.loading) return;
-            holder.dataset.loading = '1';
+    const loading = {};
+    const fill = (holder) => {
+        if (!holder) return Promise.resolve();
+        const key = holder.dataset.lazyPane;
+        if (!loading[key]) loading[key] = (async () => {
             try {
                 const res = await fetch(holder.dataset.lazyUrl, { headers: { Accept: 'application/json' } });
                 const data = await res.json();
@@ -49,9 +49,15 @@
                 await run(data.scripts);
             } catch (e) {
                 holder.textContent = `${e.message} Reload the page to try again.`;
-                delete holder.dataset.loading;
+                delete loading[key];
             }
-        });
+        })();
+        return loading[key];
+    };
+    // A tab can ask for another one to be built (the Jobs tab's dialogs and buttons live in the Workers tab). Resolves when it is in place.
+    window.loadMediaPane = (key) => loading[key] || fill(document.querySelector(`[data-lazy-pane="${key}"]`));
+    document.querySelectorAll('#mediaTabs [data-bs-toggle="tab"]').forEach((el) => {
+        el.addEventListener('show.bs.tab', () => fill(document.querySelector(el.dataset.bsTarget + ' [data-lazy-pane]')));
     });
     // The address follows the tab, so a reload or a shared link opens the same one. Pollers on a hidden tab stand down.
     document.querySelectorAll('#mediaTabs [data-bs-toggle="tab"]').forEach((el) => {

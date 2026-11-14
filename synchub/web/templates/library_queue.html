@@ -3,6 +3,7 @@
 {% block title %}Library: {{ title }}{% endblock %}
 
 {% block content %}
+{% include "_media_nav.html" %}
 {% set filter_args = {'q': f.q, 'root': f.root, 'conf': f.conf, 'what': f.what, 'type': f.type, 'quality': f.quality} %}
 <nav aria-label="Queues" class="mb-3"><ul class="nav nav-pills flex-wrap gap-1">
     <li class="nav-item"><a class="nav-link" href="{{ url_for('library_page') }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> Library</a></li>

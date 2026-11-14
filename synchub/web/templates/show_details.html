@@ -1,5 +1,6 @@
 <!-- synchub/web/templates/show_details.html -->
 {% extends "base.html" %}
+{% from "_poor_quality.html" import poor_buttons, poor_panel, poor_script with context %}
 {% from "_macros.html" import rating_facts, state_badge, watchlist_button, watch_now, watch_unlinked with context %}
 
 {% block title %}{{ show.title }} - Details{% endblock %}
@@ -108,8 +109,10 @@
                     play_item=go.item_id if go else none) }}
                 {% endif %}
                 <button type="button" class="btn btn-outline-secondary" id="refreshBtn"><i class="bi bi-arrow-repeat"></i> Refresh details</button>
+                {{ poor_buttons(poor) }}
             </div>
             <div id="actionResult" class="small mt-2" role="status"></div>
+            {{ poor_panel(poor, show.title) }}
         </div>
     </div>
 </div>
@@ -166,9 +169,11 @@
 {% endblock %}
 
 {% block scripts %}
+{% if poor and poor.available %}{{ poor_script(show.id, show.title) }}{% endif %}
 <script>
 (() => {
     const mediaId = {{ show.id }};
+    const showTitle = {{ show.title|tojson }};
     const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
     const out = document.getElementById('actionResult');
     const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -219,7 +224,11 @@
                 : `<div class="small mt-1" data-watch-state="in_progress"><span class="badge bg-info text-dark">${esc(w.state_label)}</span> <span class="text-body-secondary">${esc(w.position_label)}${w.runtime_label ? ' of ' + esc(w.runtime_label) : ''}${w.percent ? ' (' + esc(w.percent) + '%)' : ''}</span></div>`;
             const resume = w && w.state === 'in_progress' && w.resume_label ? ` data-resume="at ${esc(w.resume_label)}"` : '';
             const src = (ep.sources || []);
-            const srcRow = src.length ? `<tr class="sd-ep-src d-none"><td></td><td colspan="3" class="small text-body-secondary pt-0 pb-2">${src.map(esc).join('<br>')}</td></tr>` : '';
+            const code = `S${String(data.season).padStart(2, '0')}E${String(ep.episode_number).padStart(2, '0')}`;
+            const flag = ep.can_flag ? `<div class="mt-1 d-flex flex-wrap gap-2" data-poor-episode="${esc(ep.id)}" data-label="${esc(showTitle + ' ' + code + (ep.title ? ' “' + ep.title + '”' : ''))}">
+                <button type="button" class="btn btn-sm btn-outline-warning py-0" data-poor-mode="request" title="Blocks the release Sonarr grabbed for this episode and gets the best other one on offer">Poor quality</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary py-0" data-poor-mode="releases" title="Lists what the indexers have for this episode. Changes nothing until you pick one.">Show releases</button></div>` : '';
+            const srcRow = src.length ? `<tr class="sd-ep-src d-none"><td></td><td colspan="3" class="small text-body-secondary pt-0 pb-2">${src.map(esc).join('<br>')}${flag}</td></tr>` : '';
             return `<tr class="${rowClass}${src.length ? ' sd-ep-clickable' : ''}"${src.length ? ' style="cursor: pointer;" title="Click to see where this episode came from"' : ''}>
                 <td class="text-center fw-bold text-body-secondary">${esc(ep.episode_number)}</td>
                 <td class="sd-ep-title-cell">
@@ -237,6 +246,10 @@
         container.querySelectorAll('tr.sd-ep-clickable').forEach((row) => row.addEventListener('click', (ev) => {
             if (ev.target.closest('a, button')) return;
             row.nextElementSibling.classList.toggle('d-none');
+        }));
+        container.querySelectorAll('[data-poor-episode] [data-poor-mode]').forEach((b) => b.addEventListener('click', () => {
+            const holder = b.closest('[data-poor-episode]');
+            if (window.poorQuality) window.poorQuality.open(b.dataset.poorMode, { episode_id: parseInt(holder.dataset.poorEpisode, 10), label: holder.dataset.label });
         }));
         container.querySelectorAll('[data-request-episode]').forEach((b) => b.addEventListener('click', () =>
             post(`/api/request/show/${mediaId}/episodes`, { episode_ids: [parseInt(b.dataset.requestEpisode, 10)] }, b, true)));

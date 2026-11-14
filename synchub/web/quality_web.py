@@ -1,7 +1,7 @@
 """Quality checks on the web: the Low quality page (what is flagged, what is waiting, the settings), and the buttons that check or accept a file."""
 from flask import Response, jsonify, render_template, request
 
-from synchub import ai_test, better_copy, db, jobs, quality, settings, storage
+from synchub import ai_test, better_copy, db, jobs, poor_quality, quality, settings, storage
 from synchub.library import recommend as rc, report, scan
 from settings_validation import validate_setting
 
@@ -159,6 +159,46 @@ def register(app):
             return jsonify(ok=True, **better_copy.grab(file_id, str(data["guid"]), data["indexer_id"], by=who))
         except better_copy.BetterCopyError as exc:
             return _fail(str(exc))
+
+    # ---- Poor quality on a movie or show page: the same request, started from the title instead of from a file
+    def _poor(media_id, action):
+        from synchub.web import title_allowed
+        data = request.get_json(silent=True) or {}
+
+        def number(key):
+            value = data.get(key)
+            return int(value) if isinstance(value, int) or str(value or "").lstrip("-").isdigit() else None
+        scope = {"season_number": number("season"), "episode_id": number("episode_id")}
+        with db.connection() as conn:
+            if not title_allowed(conn, media_id):
+                return _fail("That title is not available for your profile.", 403)
+            who = _who(conn)
+        note = str(data.get("note") or "")
+        try:
+            if action == "releases":
+                return jsonify(ok=True, **poor_quality.releases(media_id, **scope))
+            if action == "grab":
+                if not data.get("guid") or data.get("indexer_id") in (None, ""):
+                    return _fail("Choose a release from the list.")
+                return jsonify(ok=True, **poor_quality.grab(media_id, str(data["guid"]), data["indexer_id"], note=note, by=who, **scope))
+            return jsonify(ok=True, **poor_quality.request(media_id, note=note, by=who, **scope))
+        except poor_quality.PoorQualityError as exc:
+            return _fail(str(exc))
+
+    @app.route("/api/library/poor/<int:media_id>/releases", methods=["POST"])
+    def api_library_poor_releases(media_id):
+        """Read only: what the indexers have for this film, episode or season. Changes nothing."""
+        return _poor(media_id, "releases")
+
+    @app.route("/api/library/poor/<int:media_id>/request", methods=["POST"])
+    def api_library_poor_request(media_id):
+        """Flags the title as poor quality: blocks the release that was grabbed and grabs the best one on offer."""
+        return _poor(media_id, "request")
+
+    @app.route("/api/library/poor/<int:media_id>/grab", methods=["POST"])
+    def api_library_poor_grab(media_id):
+        """Blocks the release that was grabbed and sends one release from the list to the download client."""
+        return _poor(media_id, "grab")
 
     @app.route("/api/library/quality/stop-all", methods=["POST"])
     def api_library_quality_stop_all():

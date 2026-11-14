@@ -6,6 +6,7 @@
 {% macro badge(level) %}<span class="badge bg-{{ {'high': 'success', 'medium': 'warning', 'low': 'danger'}[level] }}{% if level == 'medium' %} text-dark{% endif %}">{{ level }} confidence</span>{% endmacro %}
 
 {% block content %}
+{% include "_media_nav.html" %}
 {% set decided = rec.approval_status != 'pending' %}
 <p class="mb-2"><a href="{{ url_for('library_queue', group=group, q=f.q, root=f.root, conf=f.conf) }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> {{ group_title }}</a>
     <span class="text-body-secondary small ms-2">record #{{ rec.id }}</span></p>
@@ -156,6 +157,13 @@
         {% if reasons or warnings or errors %}
         <div class="panel p-3 mb-3"><h6>Why</h6>
             <ul class="small mb-0">{% for c, t in reasons %}<li><span class="text-body-secondary">{{ c }}:</span> {{ t }}</li>{% endfor %}{% for w in warnings if not reasons %}<li>{{ w }}</li>{% endfor %}{% for e in errors %}<li class="text-danger">{{ e }}</li>{% endfor %}</ul></div>
+        {% endif %}
+        {% if file_jobs %}
+        <div class="panel p-3 mb-3" id="fileJobs"><h6>Jobs for this file</h6>
+            <ul class="small list-unstyled mb-0">{% for j in file_jobs %}{% set jc = {'done': 'success', 'failed': 'danger', 'running': 'primary', 'needs_review': 'warning'}.get(j.status, 'secondary') %}
+                <li class="mb-1">{% if can('workers') %}<a href="{{ url_for('jobs_page', job=j.id) }}">#{{ j.id }} {{ j.title or j.kind }}</a>{% else %}#{{ j.id }} {{ j.title or j.kind }}{% endif %}
+                    <span class="badge bg-{{ jc }}{% if jc == 'warning' %} text-dark{% endif %}">{{ {'done': 'completed', 'needs_review': 'needs you'}.get(j.status, j.status) }}</span>
+                    <span class="text-body-secondary">{{ (j.finished_at or j.created_at)[:16] }}</span></li>{% endfor %}</ul></div>
         {% endif %}
         <div class="panel p-3 mb-3"><h6>History</h6>
             <ul class="small list-unstyled mb-0">{% for e in events %}<li>{{ e.created_at[:16] }} &middot; <strong>{{ e.detail.by if e.detail and e.detail.get('by') else e.actor }}</strong> &middot; {{ e.event_type.replace('_', ' ') }}{% if e.detail and e.detail.get('note') %} &middot; {{ e.detail.note }}{% endif %}</li>{% else %}<li class="text-body-secondary">Nothing yet.</li>{% endfor %}</ul></div>

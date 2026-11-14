@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+Migration 046 is new. Update SyncHub. Workers need no update for the navigation and Poor quality changes; the share fix below is on the workers.
+
+**Getting from one page to the file's record, and Poor quality on the movie and show pages (migration 046).**
+- **Jobs open the file's record.** A job's details have an **Open record** button, and each row of the Jobs list has a small **Record** link. It works for conversions, hiding or deleting an original, quality and damage checks, previews, Radarr/Sonarr replacements and extra copies. A scan, a test copy and a worker's own work have no single file, so no button.
+- **A record lists its jobs** ("Jobs for this file"), and each one opens that job on the Jobs page (`/jobs?job=12`).
+- **New downloads:** the file name opens its record, or the film's or show's page while the file has no record yet.
+- **Movie page:** **Open record** (the main file; every file under Your copies has its own), **Poor quality** and **Show releases**.
+- **Show page:** **Poor quality** and **Show releases** for a season (a season pack), and the same two buttons on each episode (click the episode). This is new: until now a better copy could only be asked for a film.
+- **Poor quality** asks what is wrong (optional), puts the release that was grabbed on the blocklist and sends the best other release on offer to the download client. If nothing better is on offer nothing is blocked and nothing is grabbed. The old file is kept; Radarr or Sonarr replaces it on import. The page shows who flagged it, when and why. It needs the Library permission.
+- **DVR recordings are never included.** A film that is only a recording, and an episode that is only a recording or that Sonarr did not download, has no buttons and is refused by the server; a season request skips them.
+- **The Media tabs stay on the queue, record, review and preview pages**, so Jobs, Workers and the rest are one tap away.
+- Fixed: on the Jobs tab opened by its own address, a job's details and its Cancel, Retry and Decide buttons did nothing until the Workers tab had been opened.
+- Not run against a live Sonarr from here (the calls are Sonarr v3's documented `history/series`, `history/failed/{id}` and `release`); each step says what happened.
 **Media share no longer drops overnight (no migration).** Update workers (re-run `setup-worker.sh`, or add the option by hand on a hand-made setup).
 - **CIFS shares are mounted with `noserverino`** in the generated /etc/fstab lines and the example. With an Unraid user share the server's file ids change, and the share's top folder then fails with "Stale file handle" while the marker file still reads fine. On a hand-made worker add `,noserverino` to the share's line in /etc/fstab, then `sudo umount -f -l <mount point>; sudo mount <mount point>` and restart the worker container.
 - **The mount watchdog** writes the real error ("Stale file handle") to its log, restarts the worker container after any remount (the container's bind mount can keep pointing at the old mount), also checks that the container can list each share, and retries a share every 10 minutes instead of every minute once three remounts in a row did not help.

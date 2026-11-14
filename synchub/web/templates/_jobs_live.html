@@ -32,6 +32,7 @@
                 <tr data-job="{{ j.id }}">
                     <td class="ps-4">
                         <a href="#" class="fw-bold text-decoration-none" data-job-details="{{ j.id }}">#{{ j.id }} {{ j.title or j.kind }}</a>
+                        {% if j.record_id and can('library') %}<a class="ms-1 small text-decoration-none" href="{{ url_for('library_record', record_id=j.record_id) }}" title="Open this file's record in the Library" aria-label="Open the record of job {{ j.id }}"><i class="bi bi-file-earmark-text" aria-hidden="true"></i> Record</a>{% endif %}
                         <div class="small text-body-secondary">{{ j.kind }}<span class="d-md-none"> &middot; {{ j.updated }}{% if j.worker_name %} &middot; {{ j.worker_name }}{% endif %}</span></div>
                     </td>
                     <td><span class="badge bg-{{ color }}{% if color == 'warning' %} text-dark{% endif %}">{{ j.lifecycle.label }}</span></td>
