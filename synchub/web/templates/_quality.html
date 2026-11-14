@@ -194,8 +194,11 @@
             const hide = ev.target.closest('[data-hide-source]');
             if (hide) {
                 hide.disabled = true;
-                const d = await post('/api/library/record/' + hide.dataset.record + '/' + hide.dataset.hideSource);
-                hide.textContent = d.message || d.error || 'Done';
+                try {
+                    const r = await fetch('/api/library/record/' + hide.dataset.record + '/' + hide.dataset.hideSource, { method: 'POST', headers: { 'X-CSRFToken': token() } });
+                    const d = await r.json();
+                    hide.textContent = d.message || d.error || 'Done';
+                } catch (e) { hide.textContent = 'Could not reach SyncHub'; }
                 return;
             }
             const act = ev.target.closest('[data-file-act]');
