@@ -89,55 +89,100 @@
 </script>
 {% endmacro %}
 
-{# "Your copies" on the movie page. `copies` comes from quality.copies(). #}
-{% macro copies_card(copies, act, media_id) %}
+{# "Files" on the movie page: one section, one row per file. `copies` comes from quality.copies(); `jf_link` is the film's page in Jellyfin (or none). #}
+{% macro copies_card(copies, act, media_id, jf_link=none) %}
 <div class="panel p-3 p-md-4 mb-4" id="yourCopies">
-    <h5 class="mb-3">Your copies</h5>
+    <h5 class="mb-2">Files{% if copies.files %} <span class="small text-body-secondary fw-normal">{{ copies.files|length }} file{{ '' if copies.files|length == 1 else 's' }} for this film</span>{% endif %}</h5>
     {% if not copies.files %}
     <p class="small text-body-secondary mb-0">No file of this film is in the Library yet. Scan its folder on the Library page, and check that the share's Jellyfin path (or its other Jellyfin mounts) is set on the Storage page.</p>
     {% if copies.unmapped %}<p class="small text-warning mt-2 mb-0">Jellyfin has this film at {% for p in copies.unmapped %}<code>{{ p }}</code>{% if not loop.last %}, {% endif %}{% endfor %}, but no share on the Storage page covers that path. Add it under “Jellyfin: other mounts of this share”.</p>{% endif %}
     {% else %}
-    <div class="d-flex flex-wrap gap-2 mb-3">
+    <div class="d-flex flex-wrap gap-2 mb-2" id="filesStatus">
         <span class="badge bg-success"><i class="bi bi-film" aria-hidden="true"></i> Full quality copy: {{ copies.full_label }}</span>
         {% if copies.remote %}<span class="badge bg-info text-dark"><i class="bi bi-phone" aria-hidden="true"></i> Remote copy: {{ copies.remote[0].height }}p, {{ size_text(copies.remote[0].size_bytes) }}</span>
         {% elif copies.missing_remote %}<span class="badge bg-warning text-dark"><i class="bi bi-phone" aria-hidden="true"></i> No smaller copy for remote viewing</span>
         {% else %}<span class="badge bg-secondary"><i class="bi bi-phone" aria-hidden="true"></i> No separate remote copy</span>{% endif %}
+        {% if copies.shares|length > 1 %}<span class="badge bg-warning text-dark" title="The files of this film are on more than one share"><i class="bi bi-exclamation-triangle" aria-hidden="true"></i> Files are on {{ copies.shares|length }} shares ({{ copies.shares|join(', ') }})</span>{% endif %}
     </div>
+    {% if copies.why %}<p class="small mb-2" id="whyTwoFiles"><strong>Why more than one file?</strong> {{ copies.why }}</p>{% endif %}
     {% if copies.missing_remote %}<p class="small text-body-secondary">The full copy is above 1080p. A smaller copy plays on phones and away from home without transcoding. Create one on the <a href="{{ url_for('library_page') }}#extra-copies">Extra copies</a> section of the Library.</p>{% endif %}
+    {% if copies.files|length > 1 %}<p class="small text-body-secondary">Jellyfin lists these as versions of the film. SyncHub cannot make a phone or TV pick one: to prefer the mobile copy automatically, lower the maximum streaming quality in the Jellyfin app on that device.</p>{% endif %}
     {% for f in copies.files %}
-    <div class="border-top pt-2 mt-2">
+    <div class="border-top pt-2 mt-2" id="file-{{ f.id }}" data-file="{{ f.id }}">
         <div class="d-flex flex-wrap justify-content-between gap-2">
             <strong style="overflow-wrap: anywhere;">{{ f.name }}</strong>
-            <span class="text-body-secondary small">
-                {% if f.role == 'original' %}<span class="badge bg-secondary">Original{% if f.hidden %} · hidden from Jellyfin{% else %} · visible in Jellyfin{% endif %}</span>
-                {% elif f.role == 'converted' %}<span class="badge bg-success">Converted copy</span>
-                {% elif f.role == 'remote' or f.is_extra %}<span class="badge bg-info text-dark">1080p remote copy</span>
-                {% elif f is sameas copies.main %}full copy{% endif %}{% if f.found_by == 'name' %} · found by name{% endif %}</span>
+            <span class="small">
+                {% if f is sameas copies.main %}<span class="badge bg-success" title="{{ 'You chose this as the main file' if f.is_main_choice else 'The best file of the film' }}">MAIN</span>{% endif %}
+                {% if f.label %}<span class="badge bg-{{ f.label_tone }}{% if f.label_tone in ('info', 'warning') %} text-dark{% endif %}" title="{{ f.label_hint }}">{{ f.label_text }}</span>{% endif %}
+                {% if f.role == 'original' %}<span class="badge bg-secondary">{% if f.hidden %}hidden from Jellyfin{% else %}visible in Jellyfin{% endif %}</span>{% endif %}
+                {% if f.found_by == 'name' %}<span class="text-body-secondary">found by name</span>{% endif %}</span>
         </div>
-        <dl class="sd-facts small mb-1">
-            <div><dt>Picture</dt><dd>{% if f.width and f.height %}{{ f.width }}×{{ f.height }}{% else %}unknown size{% endif %} · {{ f.picture }}{% if f.bit_depth %} · {{ f.bit_depth }}-bit{% endif %}</dd></div>
-            <div><dt>Video</dt><dd>{{ (f.codec or 'unknown')|upper }}{% if f.video_kbps %} · {{ '%.1f'|format(f.video_kbps / 1000) }} Mbps{% endif %}{% if f.bits_per_pixel is not none %} · {{ '%.3f'|format(f.bits_per_pixel) }} bits/pixel{% endif %}{% if f.fps %} · {{ '%g'|format(f.fps) }} fps{% endif %}</dd></div>
-            <div><dt>File</dt><dd>{{ size_text(f.size_bytes) }}{% if f.container %} · {{ f.container }}{% endif %}{% if f.integrity %} · file check: {{ f.integrity }}{% endif %}</dd></div>
-            <div><dt>Audio</dt><dd>{{ f.audio or 'unknown' }}{% if f.audio_languages %} ({{ f.audio_languages }}){% endif %}</dd></div>
-            {% if f.subtitles %}<div><dt>Subtitles</dt><dd>{{ f.subtitles }}</dd></div>{% endif %}
-        </dl>
+        <div class="small text-body-secondary">{% if f.height %}{{ f.height }}p{% else %}unknown size{% endif %} · {{ (f.codec or 'unknown')|upper }} · {{ f.picture }} · {{ size_text(f.size_bytes) }} · {{ f.root }}{% if f.saved_bytes %} · <span class="text-success">saved {{ size_text(f.saved_bytes) }}</span>{% endif %}</div>
         {% if f.hide_message and f.role == 'original' %}<div class="small text-body-secondary">{{ f.hide_message }}</div>{% endif %}
         <div class="d-flex flex-wrap gap-2 mt-1">
-            {% if act %}<a class="btn btn-outline-secondary btn-sm" href="{{ url_for('library_record', record_id=f.id) }}" title="This file's record in the Library"><i class="bi bi-file-earmark-text" aria-hidden="true"></i> Open record</a>{% endif %}
+            {% if jf_link and f.role != 'original' %}<a class="btn btn-primary btn-sm" href="{{ jf_link }}" target="_blank" rel="noopener" data-play-version="{{ f.version_name }}" title="Opens the film in Jellyfin. {% if copies.files|length > 1 %}Choose the version “{{ f.version_name }}” there.{% endif %}"><i class="bi bi-play-fill" aria-hidden="true"></i> Play this version</a>{% endif %}
+            {% if act %}<a class="btn btn-outline-secondary btn-sm" href="{{ url_for('library_record', record_id=f.id) }}" title="This file's record in the Library"><i class="bi bi-file-earmark-text" aria-hidden="true"></i> Open record</a>
+            {% if copies.files|length > 1 and f is not sameas copies.main %}<button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="main" data-record="{{ f.id }}" title="SyncHub's own screens (quality check, better copy) then treat this as the main file. Jellyfin and Radarr are not changed.">Set as main file</button>
+            {% elif f.is_main_choice %}<button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="main-off" data-record="{{ f.id }}">Let SyncHub choose the main file</button>{% endif %}{% endif %}
             {% if f.windows_path %}<button type="button" class="btn btn-outline-secondary btn-sm" data-copy-path="{{ f.windows_path }}" title="Paste it into the Windows Explorer address bar">Copy Windows folder path</button>
-            {% elif f.unix_path %}<button type="button" class="btn btn-outline-secondary btn-sm" data-copy-path="{{ f.unix_path }}" title="This share is not SMB, so there is no Windows path; this is its name and folder">Copy folder path</button>{% endif %}
+            {% elif f.unix_path %}<button type="button" class="btn btn-outline-secondary btn-sm" data-copy-path="{{ f.unix_path }}" title="This share is not SMB, so there is no Windows path; this is its path on the server">Copy folder path</button>{% endif %}
             {% if f.can_hide and not f.hidden %}<button type="button" class="btn btn-outline-secondary btn-sm" data-hide-source="hide-source" data-record="{{ f.id }}">Hide from Jellyfin</button>{% endif %}
             {% if f.can_hide and f.hidden %}<button type="button" class="btn btn-outline-secondary btn-sm" data-hide-source="show-source" data-record="{{ f.id }}">Show in Jellyfin again</button>{% endif %}
+            {% if act and f.is_duplicate and f.dup_review != 'aside' %}
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="keep-both" data-record="{{ f.id }}"{% if f.dup_review == 'keep_both' %} disabled{% endif %}>Keep both</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="review-later" data-record="{{ f.id }}"{% if f.dup_review == 'review_later' %} disabled{% endif %}>{{ 'Marked: review later' if f.dup_review == 'review_later' else 'Review later' }}</button>
+            {% if not f.is_primary_duplicate %}<button type="button" class="btn btn-outline-warning btn-sm" data-file-act="set-aside" data-record="{{ f.id }}" title="Renames the file on the share so Jellyfin, Radarr and Sonarr ignore it. Nothing is deleted; you can put it back.">Set this duplicate aside</button>{% endif %}
+            {% endif %}
+            {% if act and f.dup_review == 'aside' %}<button type="button" class="btn btn-outline-warning btn-sm" data-file-act="put-back" data-record="{{ f.id }}">Put it back</button>{% endif %}
         </div>
-        {{ quality_detail(f.id, f.quality, act) }}
+        <details class="mt-2" data-details="{{ f.id }}">
+            <summary class="small" style="cursor: pointer;">Details</summary>
+            <dl class="sd-facts small mb-1 mt-2">
+                <div><dt>Picture</dt><dd>{% if f.width and f.height %}{{ f.width }}×{{ f.height }}{% else %}unknown size{% endif %} · {{ f.picture }}{% if f.bit_depth %} · {{ f.bit_depth }}-bit{% endif %}{% if f.fps %} · {{ '%g'|format(f.fps) }} fps{% endif %}</dd></div>
+                <div><dt>Video</dt><dd>{{ (f.codec or 'unknown')|upper }}{% if f.video_kbps %} · {{ '%.1f'|format(f.video_kbps / 1000) }} Mbps{% endif %}{% if f.bits_per_pixel is not none %} · {{ '%.3f'|format(f.bits_per_pixel) }} bits per pixel{% endif %}</dd></div>
+                <div><dt>File</dt><dd>{{ size_text(f.size_bytes) }}{% if f.container %} · {{ f.container }}{% endif %}{% if f.integrity %} · file check: {{ f.integrity }}{% endif %}</dd></div>
+                <div><dt>Audio</dt><dd>{{ f.audio or 'unknown' }}{% if f.audio_languages %} ({{ f.audio_languages }}){% endif %}</dd></div>
+                {% if f.subtitles %}<div><dt>Subtitles</dt><dd>{{ f.subtitles }}</dd></div>{% endif %}
+                <div><dt>Where</dt><dd class="text-break">{{ f.root }}: {{ f.path }}</dd></div>
+            </dl>
+            {% if act %}
+            <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+                <input type="text" class="form-control form-control-sm" style="max-width: 220px;" maxlength="60" placeholder="Edition name, e.g. Director's Cut" value="{{ f.edition_name or '' }}" data-edition-name="{{ f.id }}" aria-label="Edition name">
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="edition" data-record="{{ f.id }}">{{ 'Save edition name' if f.is_edition else 'This is a different edition' }}</button>
+                {% if f.is_edition %}<button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="edition-off" data-record="{{ f.id }}">Not an edition</button>{% endif %}
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="not-this-film" data-record="{{ f.id }}" title="Stop counting this file as part of this film. A scan will not add it back.">Not this film</button>
+            </div>
+            {% endif %}
+            {{ quality_detail(f.id, f.quality, act) }}
+        </details>
     </div>
     {% endfor %}
     {% endif %}
+    {% if copies.aside %}<div class="border-top pt-2 mt-2" id="asideFiles"><div class="small fw-bold">Set aside <span class="fw-normal text-body-secondary">(renamed on the share so Jellyfin ignores them; nothing is deleted)</span></div>
+        {% for a in copies.aside %}<div class="d-flex flex-wrap align-items-center gap-2 small mt-1"><span class="text-break">{{ a.root_name }}: {{ a.relative_path }}.synchub-duplicate · {{ size_text(a.size_bytes) }}</span>{% if act %}<button type="button" class="btn btn-outline-warning btn-sm" data-file-act="put-back" data-record="{{ a.id }}">Put it back</button>{% endif %}</div>{% endfor %}</div>{% endif %}
+    <div id="fileActResult" class="small mt-2" role="status"></div>
     <script>
     (() => {
         const card = document.getElementById('yourCopies');
         if (!card || card.dataset.wired) return;
         card.dataset.wired = '1';
+        const token = () => document.querySelector('meta[name="csrf-token"]')?.content || '';
+        const out = document.getElementById('fileActResult');
+        const say = (text, ok) => { out.className = 'small mt-2 ' + (ok ? 'text-success' : 'text-danger'); out.textContent = text; };
+        const post = async (url, body) => {
+            try {
+                const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token() }, body: JSON.stringify(body || {}) });
+                return await r.json().catch(() => ({ ok: false, message: 'SyncHub gave an unreadable answer.' }));
+            } catch (e) { return { ok: false, message: 'Could not reach SyncHub.' }; }
+        };
+        // Each file's Details stay open or closed the way you left them
+        try {
+            const open = JSON.parse(localStorage.getItem('fileDetailsOpen') || '{}');
+            card.querySelectorAll('details[data-details]').forEach((d) => {
+                if (open[d.dataset.details]) d.open = true;
+                d.addEventListener('toggle', () => { try { const now = JSON.parse(localStorage.getItem('fileDetailsOpen') || '{}'); if (d.open) now[d.dataset.details] = 1; else delete now[d.dataset.details]; localStorage.setItem('fileDetailsOpen', JSON.stringify(now)); } catch (e) { /* no storage */ } });
+            });
+        } catch (e) { /* no storage: Details start closed */ }
         card.addEventListener('click', async (ev) => {
             const copy = ev.target.closest('[data-copy-path]');
             if (copy) {
@@ -150,11 +195,27 @@
             if (hide) {
                 hide.disabled = true;
                 try {
-                    const r = await fetch('/api/library/record/' + hide.dataset.record + '/' + hide.dataset.hideSource, { method: 'POST', headers: { 'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || '' } });
+                    const r = await fetch('/api/library/record/' + hide.dataset.record + '/' + hide.dataset.hideSource, { method: 'POST', headers: { 'X-CSRFToken': token() } });
                     const d = await r.json();
                     hide.textContent = d.message || d.error || 'Done';
                 } catch (e) { hide.textContent = 'Could not reach SyncHub'; }
+                return;
             }
+            const act = ev.target.closest('[data-file-act]');
+            if (!act) return;
+            const id = act.dataset.record, kind = act.dataset.fileAct;
+            const routes = {
+                'main': ['main', { on: true }], 'main-off': ['main', { on: false }], 'not-this-film': ['not-this-film', {}],
+                'keep-both': ['duplicate-note', { value: 'keep_both' }], 'review-later': ['duplicate-note', { value: 'review_later' }],
+                'set-aside': ['set-aside', {}], 'put-back': ['put-back', {}],
+                'edition': ['edition', { on: true, name: (card.querySelector('[data-edition-name="' + id + '"]') || {}).value || '' }], 'edition-off': ['edition', { on: false }],
+            };
+            const [path, body] = routes[kind];
+            if (kind === 'set-aside' && !window.confirm('Rename this file on the share so Jellyfin, Radarr and Sonarr ignore it? Nothing is deleted and you can put it back.')) return;
+            act.disabled = true;
+            const d = await post('/api/library/file/' + id + '/' + path, body);
+            say(d.message || (d.ok ? 'Done.' : 'Failed.'), !!d.ok);
+            if (d.ok) setTimeout(() => location.reload(), 900); else act.disabled = false;
         });
     })();
     </script>

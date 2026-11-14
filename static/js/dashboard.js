@@ -159,7 +159,7 @@
             return words.every((w) => d.search.includes(w))
                 && (!type || d.kind === type)
                 && (!user || d.users.includes("|" + user + "|"))
-                && (!status || (status === "in_flight" ? IN_FLIGHT.includes(d.state) : status === "extra_versions" ? parseInt(d.versions, 10) > 1 : d.state === status))
+                && (!status || (status === "in_flight" ? IN_FLIGHT.includes(d.state) : status === "extra_versions" ? parseInt(d.versions, 10) > 1 : status.startsWith("file_") ? (d.files || "").split(" ").includes(status.slice(5)) : d.state === status))
                 && (!seen || d.watch === seen)
                 && (!cert || d.cert === cert)
                 && (isNaN(from) || (year && year >= from))

@@ -46,6 +46,13 @@
         librarySay(data.message || (data.ok ? 'Done.' : 'Failed.'), data.ok);
         refresh();
     });
+    $('linksBtn').addEventListener('click', async (e) => {
+        e.currentTarget.disabled = true;
+        const data = await libraryPost('/api/library/links/refresh');
+        librarySay(data.message || (data.ok ? 'Done.' : 'Failed.'), data.ok);
+        e.currentTarget.disabled = false;
+        if (data.ok) refresh();
+    });
     $('dupBtn').addEventListener('click', async () => {
         const data = await libraryPost('/api/library/duplicates');
         librarySay(data.message || (data.ok ? 'Done.' : 'Failed.'), data.ok);

@@ -44,14 +44,14 @@ try:
 except ImportError:                        # pragma: no cover - exercised by tests that remove the module
     media_analysis = None
 
-__version__ = "1.6.0"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
+__version__ = "1.6.1"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
 IGNORE_FILE = ".ignore"           # an empty file with this name makes Jellyfin skip the folder
 GENERIC_ARTWORK = re.compile(r"^(poster|folder|cover|fanart|backdrop|banner|landscape|thumb|clearlogo|clearart|logo|disc)\.(jpg|jpeg|png|webp|tbn)$", re.I)
 VIDEO_EXTENSIONS = (".mkv", ".mp4", ".m4v", ".avi", ".mov", ".ts", ".m2ts", ".wmv", ".iso")
 OPS = ["copy", "rename", "delete_source", "hide_source", "unhide_source", "originals"]     # the operations (plan.op) every agent can do; scan, hash and convert are added when the analysis module and ffmpeg are there
-FEATURES = ["profiles", "scale", "audio_add", "benchmark", "two_outputs"]   # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run). "dovi" is added when dovi_tool and mkvmerge work
+FEATURES = ["profiles", "scale", "audio_add", "benchmark", "two_outputs", "aside"]   # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run). "dovi" is added when dovi_tool and mkvmerge work
 MANIFEST_VERSION = 1
 HASH_BUFFER = 8 * 1024 * 1024
 GPU_BUSY_MODES = ("smart", "wait", "cpu")
@@ -2088,7 +2088,7 @@ class JobRunner(threading.Thread):
         if os.path.exists(dst) and not case_only:
             raise JobFailure("dest_exists", f"{dest['rel']} already exists, so nothing was renamed.", retryable=False)
         self.report_progress("publish", 0.2, "Renaming", force=True)
-        pairs = self.sidecars(src, dst)
+        pairs = [] if plan.get("aside") else self.sidecars(src, dst)      # a duplicate set aside (or put back) moves alone: its subtitles are not renamed
         try:
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             if case_only:                                   # a share that ignores case needs a step in between

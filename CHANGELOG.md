@@ -1,8 +1,19 @@
 # Changelog
 
-## Unreleased
+## 1.6.1
 
-Migration 046 and 047 are new. Update SyncHub first, then the workers: the power buttons and the GPU numbers below need the new worker code.
+Migrations 046, 047 and 048 are new. Update SyncHub first, then the workers: the power buttons, the GPU numbers and "Set this duplicate aside" below need the new worker code. After updating, open **Library, Refresh links** once (or run Match & update) so every film's files are linked and labelled.
+
+**One clear answer to "why does this film have two files?" (migration 048).**
+- **Five labels, one definition.** Every file of a film with more than one file is now a *Mobile copy* (the 1080p extra copy), a *Converted copy*, an *Original* (what a conversion came from), a *Duplicate file* (same content as another; the one to keep says *keep this one*), a *Different edition* (you mark it) or *Unexplained*. Home, the Library, the film page and the record page use the same words and the same numbers.
+- **Home** shows "N films with more than one file: ..." with each number linking to the Library list for that label, plus films on different shares, movie files not linked to a film, and the space conversions saved. The Home status filter has one entry per label; the old "Has extra versions" is now "More than one version in Jellyfin" (Jellyfin's own count).
+- **Library** lists have a new filter, *Any kind of file* (the five labels, films with more than one file, not linked to a film, 4K with no mobile copy, copies on different shares, duplicates to review later) and a badge on each row.
+- **The film-to-file link is saved.** SyncHub still finds a film's files by the Jellyfin path, the folder and the name, but now remembers the result, so the counts no longer guess. It is refreshed by Match & update, by every Library scan and by *Refresh links*. A file you mark **Not this film** stays out of it.
+- **Film page: one Files section** instead of a badge row plus a long card. One row per file: label, MAIN badge, a one-line summary (picture, codec, size, share, space saved) and the buttons; the facts, quality check and edition tools sit under *Details*, which stays open or closed as you left it. It starts with *Why more than one file?* and warns when the files are on different shares. The film's top block now has a Back that returns to where you came from, the files count, one line for Wanted by and Watched by, and a link on the IMDb id. Open record moved to each file's row.
+- **Play this version** on each row opens the film in Jellyfin and names the version to choose in its Version menu. SyncHub cannot make a phone or TV choose a version.
+- **Set as main file, Edition name, Not this film, Keep both, Review later** on the file rows. The main file only changes SyncHub's own screens (quality check, better copy); nothing changes in Jellyfin or Radarr.
+- **Set this duplicate aside / Put it back.** For an exact duplicate that is not the copy to keep, a worker renames the file to `name.synchub-duplicate` (Jellyfin, Radarr and Sonarr ignore it). Nothing is deleted; the last copy of a film is never touched. Needs the new worker (it lists the feature "aside").
+- **Record page:** the label badge and a line with the film and its other files.
 
 **Record, Workers and Library follow-ups.**
 - **Converted files are checked.** After a conversion has replaced a file (or written a new one), the quality check runs on the result (Options, Quality tools: *After converting*, on by default; it waits while someone is watching). The Record page shows *Before and after the conversion* (size and score) and *Related files* (original, converted copy, extra versions).

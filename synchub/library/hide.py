@@ -82,6 +82,9 @@ def request(conn, record_id, undo=False):
 def sync(conn, job_id, now=None):
     """Makes the record follow its hide/unhide job. Returns True when Jellyfin should be asked to scan."""
     job = jobs.get(conn, job_id)
+    if job is not None and job["ref_type"] == "library_aside":      # a duplicate set aside or put back (aside.py) follows its job here too
+        from synchub.library import aside
+        return aside.sync(conn, job_id, now)
     if job is None or job["ref_type"] != REF:
         return False
     rec = store.get_record(conn, job["ref_id"])

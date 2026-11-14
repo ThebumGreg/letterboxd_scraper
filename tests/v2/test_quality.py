@@ -251,7 +251,7 @@ def test_the_movie_page_shows_the_card_and_the_buttons_work(client, conn):
     media_id = film(conn)
     file_id = fixture_file(conn, rel="Heat (1995)/Heat (1995).mkv", size=40_000_000_000, kbps=40000, codec="hevc", resolution="3840x2160")
     page = client.get(f"/movie/{media_id}").get_data(as_text=True)
-    assert "Your copies" in page and "Full quality copy: 2160p" in page and "No smaller copy for remote viewing" in page and f'data-quality-check="{file_id}"' in page
+    assert "Files" in page and "Full quality copy: 2160p" in page and "No smaller copy for remote viewing" in page and f'data-quality-check="{file_id}"' in page
     ok = client.post("/api/library/quality/check", json={"file_id": file_id}).get_json()
     assert ok["ok"] and conn.execute("SELECT COUNT(*) FROM quality_check").fetchone()[0] == 1
     assert not client.post("/api/library/quality/check", json={"file_id": 99999}).get_json()["ok"]

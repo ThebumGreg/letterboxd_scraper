@@ -815,10 +815,17 @@ def role_of(conn, rec):
     return None
 
 
-def describe_file(conn, rec):
-    """One file as the movie page shows it."""
+def _version_name(rec):
+    """How Jellyfin names this file in the film's Version menu: the part of the file name after the film's name (`Heat (1995) - 1080p.mkv` is `1080p`), else the name."""
+    stem = os.path.splitext(rec.get("file_name") or "")[0]
+    after = stem.split(" - ", 1)[1] if " - " in stem else ""
+    return after or stem
+
+
+def describe_file(conn, rec, label=None, siblings=()):
+    """One file as the movie page shows it. `label` is the file's label among the film's files (file_labels), `siblings` the film's other file records."""
     from synchub import storage
-    from synchub.library import hide
+    from synchub.library import file_labels, hide
     width, height, fps, kbps, codec = _facts(rec)
     role = role_of(conn, rec)
     root = storage.by_name(conn, rec.get("root_name") or "")
@@ -829,19 +836,49 @@ def describe_file(conn, rec):
             "audio": rec.get("audio_codecs"), "audio_languages": rec.get("audio_languages"), "subtitles": rec.get("subtitle_languages"), "integrity": rec.get("integrity_status"),
             "is_extra": extra_versions.is_version_file(rec["file_name"]), "found_by": rec.get("found_by"), "root": rec.get("root_name"), "path": rec.get("relative_path"), "analysed": rec["analysis_status"] == v.ANALYSIS_COMPLETED, "quality": state_for(conn, rec),
             "role": role, "hidden": bool(rec.get("source_hidden_at")), "hide_message": rec.get("source_hide_message"), "windows_path": hide.windows_path(root, folder),
-            "unix_path": f"{rec.get('root_name')}:{folder}" if folder else None, "can_hide": role == "original" and len(str(rec.get("relative_path") or "").split("/")) >= 3}
+            "unix_path": f"{rec.get('root_name')}:{folder}" if folder else None, "can_hide": role == "original" and len(str(rec.get("relative_path") or "").split("/")) >= 3,
+            "label": label, "label_text": file_labels.text(label, rec) if label else None, "label_tone": file_labels.TONE.get(label), "label_hint": file_labels.HINT.get(label),
+            "is_edition": bool(rec.get("is_edition")), "edition_name": rec.get("edition_name"), "is_main_choice": bool(rec.get("is_main")), "dup_review": rec.get("dup_review"),
+            "is_duplicate": bool(rec.get("duplicate_group")), "is_primary_duplicate": rec.get("duplicate_status") == v.DUP_PRIMARY,
+            "saved_bytes": file_labels.saved_for(rec, siblings) if label == file_labels.CONVERTED else None,
+            "version_name": _version_name(rec)}
 
 
 def copies(conn, media_id):
-    """For the movie page: every file of the film, the full quality copy (the best file) and any smaller remote copies. `missing_remote` is true when the full copy is above
-    1080p, extra versions are switched on and no smaller copy exists."""
+    """For the movie page: every file of the film, the full quality copy (the best file, or the one a person chose) and any smaller remote copies. `missing_remote` is true when the full copy is above
+    1080p, extra versions are switched on and no smaller copy exists. Saves the film-to-file links and labels it finds (library/film_link.py)."""
+    from synchub.library import file_labels, film_link
     found, unmapped = find_movie_files(conn, media_id)
-    files = [describe_file(conn, r) for r in found]
+    found = film_link.save_film(conn, media_id, [f for f in found if f.get("dup_review") != "aside"])
+    aside = [dict(r) for r in conn.execute("SELECT id, root_name, relative_path, file_name, size_bytes FROM library_file WHERE media_id = ? AND dup_review = 'aside' ORDER BY id", (media_id,))]
+    labels = file_labels.classify(found)
+    files = [describe_file(conn, r, labels.get(r["id"]), found) for r in found]
     if not files:
-        return {"files": [], "main": None, "remote": [], "missing_remote": False, "full_label": None, "unmapped": unmapped}
+        return {"files": [], "main": None, "remote": [], "missing_remote": False, "full_label": None, "unmapped": unmapped, "why": None, "shares": [], "aside": aside}
     ranked = sorted(files, key=lambda f: ((f["height"] or 0), f["role"] != "original", f["size_bytes"] or 0), reverse=True)   # the converted copy outranks its own original
-    main = next((f for f in ranked if not f["is_extra"]), ranked[0])
+    chosen = next((f for f in ranked if f["is_main_choice"]), None)
+    main = chosen or next((f for f in ranked if not f["is_extra"]), ranked[0])
+    ranked = [main] + sorted((f for f in ranked if f is not main), key=lambda f: (_SHOW_ORDER.get(f["label"], 9), -(f["size_bytes"] or 0)))
     remote = [f for f in ranked if f is not main and (f["is_extra"] or (f["height"] or 0) <= 1080) and (f["size_bytes"] or 0) < (main["size_bytes"] or 0)]
     missing = bool((main["height"] or 0) > 1080 and not remote and extra_versions.load(conn).on)
     label = f"{main['height']}p {main['picture']}" if main["height"] else main["picture"]
-    return {"files": ranked, "main": main, "remote": remote, "missing_remote": missing, "full_label": label, "unmapped": unmapped}
+    shares = sorted({f["root"] for f in files if f["root"]})
+    return {"files": ranked, "main": main, "remote": remote, "missing_remote": missing, "full_label": label, "unmapped": unmapped, "why": why_two_files(files), "shares": shares, "aside": aside}
+
+
+_SHOW_ORDER = {"mobile": 0, "converted": 1, "original": 2, "duplicate": 3, "edition": 4, "unexplained": 5}
+
+
+def why_two_files(files):
+    """One plain sentence about a film with more than one file ("one is the original, one is a 1080p mobile copy"), or None for a single file."""
+    from synchub.library import file_labels
+    if len(files) < 2:
+        return None
+    names = {"mobile": "a mobile copy", "converted": "a converted copy", "original": "the original of a conversion", "duplicate": "an exact duplicate",
+             "edition": "a different edition", "unexplained": "a file SyncHub cannot explain"}
+    counts = {}
+    for f in files:
+        if f["label"]:
+            counts[f["label"]] = counts.get(f["label"], 0) + 1
+    parts = [names[k] if counts[k] == 1 else f"{counts[k]} x {names[k]}" for k in file_labels.ORDER if counts.get(k)]
+    return f"{len(files)} files: " + ", ".join(parts) + "."

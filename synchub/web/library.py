@@ -11,14 +11,14 @@ from datetime import datetime, timezone
 from flask import Response, jsonify, redirect, render_template, request, send_file, url_for
 
 from synchub import db, downloads, jobs, previews, quality, settings, storage, versions
-from synchub.library import cleanup, findings, hide, links, loose, migrate, profiles, recommend as rc, rules as profile_rules, report, rule_steps, scan, size_policy, store
+from synchub.library import aside, cleanup, file_labels, film_link, findings, hide, links, loose, migrate, profiles, recommend as rc, rules as profile_rules, report, rule_steps, scan, size_policy, store
 from synchub.library import vocab as v
 from settings_validation import validate_setting
 
 PAGE_SIZE = 100
 POLL_MAX_AGE = 10
 CONFIDENCE_FLOORS = {"high": rc.HIGH, "medium": rc.MEDIUM}
-FILTER_KEYS = ("q", "root", "conf", "what", "type", "quality")
+FILTER_KEYS = ("q", "root", "conf", "what", "type", "quality", "label")
 
 
 def _who(conn):
@@ -213,6 +213,9 @@ def rows_in_queue(conn, classified, group, f):
         rows = [(rec, r) for rec, r in rows if str(rec.get("media_type") or "").startswith("Movie")]
     elif f["type"] == "tv":
         rows = [(rec, r) for rec, r in rows if rec.get("media_type") == "TV Episode"]
+    if f["label"] in file_labels.FILTERS:
+        wanted = file_labels.ids_for(conn, f["label"])
+        rows = [(rec, r) for rec, r in rows if rec["id"] in wanted]
     if f["quality"] in QUALITY_FILTERS:
         rows = [(rec, r) for rec, r in rows if _quality_matches(quality.state_for(conn, rec), f["quality"])]
     return rows
@@ -288,6 +291,11 @@ def register(app):
             data["quality_state"] = quality.state_for(conn, rec)
             data["compare"] = quality.compare(conn, rec)
             data["related"] = quality.related(conn, rec)
+            data["film"], data["film_files"] = None, []
+            if rec.get("media_id"):
+                data["film"] = conn.execute("SELECT id, title, year FROM media WHERE id = ? AND kind = 'movie'", (rec["media_id"],)).fetchone()
+                data["film_files"] = [dict(x) for x in conn.execute("SELECT id, root_name, file_name, file_label, dup_review, edition_name, duplicate_status FROM library_file WHERE media_id = ? AND id != ? "
+                                                                    "AND missing_since IS NULL ORDER BY size_bytes DESC", (rec["media_id"], record_id))]
             data["quality"] = rule_steps.quality_facts(conn, rec, previews.plans_of(rec, approved=rec["approval_status"] == v.APPROVAL_APPROVED))
             file_jobs = links.jobs_for_record(conn, record_id)
         preview_info = {"summary": size.summary or "The size rules would compress this file; watch a short window first.", "latest": previews.describe(latest) if latest else None} if size.profile is not None else None
@@ -381,6 +389,85 @@ def register(app):
         with db.connection() as conn:
             count = hide.backfill(conn)
         return jsonify(ok=True, message=f"Queued {count} original(s) to be hidden from Jellyfin." if count else "There are no visible originals to hide.")
+
+    # ---- what a file is to its film (labels, edition, main file, "not this film", duplicates a person has looked at)
+    def _film_file(conn, record_id):
+        rec = conn.execute("SELECT * FROM library_file WHERE id = ?", (record_id,)).fetchone()
+        if rec is None:
+            raise v.LibraryError("That file is not in the Library.")
+        return dict(rec)
+
+    @app.route("/api/library/file/<int:record_id>/edition", methods=["POST"])
+    def api_library_file_edition(record_id):
+        data = request.get_json(silent=True) or {}
+        name = str(data.get("name") or "").strip()[:60]
+        on = bool(data.get("on", True))
+        try:
+            with db.connection() as conn:
+                rec = _film_file(conn, record_id)
+                conn.execute("UPDATE library_file SET is_edition = ?, edition_name = ? WHERE id = ?", (1 if on else 0, (name or None) if on else None, record_id))
+                file_labels.refresh(conn, [rec["media_id"]] if rec["media_id"] else None)
+        except v.LibraryError as exc:
+            return _fail(str(exc), 404)
+        return jsonify(ok=True, message="Marked as a different edition." if on else "No longer marked as an edition.")
+
+    @app.route("/api/library/file/<int:record_id>/main", methods=["POST"])
+    def api_library_file_main(record_id):
+        data = request.get_json(silent=True) or {}
+        try:
+            with db.connection() as conn:
+                rec = _film_file(conn, record_id)
+                if not rec["media_id"]:
+                    return _fail("This file is not linked to a film yet.")
+                conn.execute("UPDATE library_file SET is_main = 0 WHERE media_id = ?", (rec["media_id"],))
+                if data.get("on", True):
+                    conn.execute("UPDATE library_file SET is_main = 1 WHERE id = ?", (record_id,))
+        except v.LibraryError as exc:
+            return _fail(str(exc), 404)
+        return jsonify(ok=True, message="SyncHub now treats this as the main file of the film." if data.get("on", True) else "SyncHub picks the main file by itself again.")
+
+    @app.route("/api/library/file/<int:record_id>/not-this-film", methods=["POST"])
+    def api_library_file_not_this_film(record_id):
+        try:
+            with db.connection() as conn:
+                rec = _film_file(conn, record_id)
+                film_link.not_this_film(conn, record_id)
+                file_labels.refresh(conn, [rec["media_id"]] if rec["media_id"] else None)
+        except v.LibraryError as exc:
+            return _fail(str(exc), 404)
+        return jsonify(ok=True, message="Saved: this file is no longer counted as part of that film.")
+
+    @app.route("/api/library/file/<int:record_id>/duplicate-note", methods=["POST"])
+    def api_library_file_duplicate_note(record_id):
+        value = str((request.get_json(silent=True) or {}).get("value") or "")
+        if value not in ("", "keep_both", "review_later"):
+            return _fail("Unknown choice.")
+        try:
+            with db.connection() as conn:
+                rec = _film_file(conn, record_id)
+                if rec["dup_review"] == "aside":
+                    return _fail("This file is set aside: put it back first.")
+                conn.execute("UPDATE library_file SET dup_review = ? WHERE id = ?", (value or None, record_id))
+        except v.LibraryError as exc:
+            return _fail(str(exc), 404)
+        return jsonify(ok=True, message={"keep_both": "Both copies are kept.", "review_later": "Marked to review later.", "": "Back to undecided."}[value])
+
+    @app.route("/api/library/file/<int:record_id>/<action>", methods=["POST"])
+    def api_library_file_aside(record_id, action):
+        if action not in ("set-aside", "put-back"):
+            return _fail("Unknown action.", 404)
+        try:
+            with db.connection() as conn:
+                aside.request(conn, record_id, undo=action == "put-back")
+        except aside.AsideError as exc:
+            return _fail(str(exc))
+        return jsonify(ok=True, message="A worker will rename the file shortly. Nothing is deleted." if action == "set-aside" else "A worker will put the file back shortly.")
+
+    @app.route("/api/library/links/refresh", methods=["POST"])
+    def api_library_links_refresh():
+        with db.connection() as conn:
+            result = film_link.relink_all(conn)
+        return jsonify(ok=True, message=f"Linked {result['files']} file(s) to {result['films']} film(s); {result['with_more_than_one']} film(s) have more than one file.")
 
     @app.route("/api/library/record/<int:record_id>/<action>", methods=["POST"])
     def api_library_decide(record_id, action):
