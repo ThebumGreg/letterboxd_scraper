@@ -446,10 +446,18 @@ def _build(version, commit):
     return f"{version} ({commit})" if version and commit else (version or commit or "unknown")
 
 
-HOST_REQUESTS = ("update", "restart", "relay")
-TASK_OF_HOST_REQUEST = ("update", "restart", "relay")      # every request to the PC shows as a row on the Jobs page
+HOST_REQUESTS = ("update", "restart", "relay", "shutdown", "shutdown_now", "reboot")
+TASK_OF_HOST_REQUEST = HOST_REQUESTS                        # every request to the PC shows as a row on the Jobs page
+WAITS_FOR_IDLE = ("update", "relay", "shutdown", "reboot")  # these wait until the worker has no running job; "restart" and "shutdown_now" go at once
+TASK_KIND = {"shutdown_now": "shutdown"}                    # a forced shutdown is the same kind of task as a waiting one
 HOST_SEEN_KEY = "worker_host_seen:{}"
 HOST_SEEN_SECONDS = 300           # the PC's timer asks every minute; this long without it and the buttons say it is not installed
+
+
+WAITING_FOR = {"update": "updating", "relay": "setting up the relay", "shutdown": "shutting the PC down", "reboot": "restarting the PC"}
+HANDED_OVER = {"restart": "Handed to the PC's helper, which restarts the worker within a minute", "relay": "Handed to the PC's helper, which sets up the camera relay",
+               "shutdown": "Handed to the PC's helper, which shuts the PC down within a minute or two", "shutdown_now": "Handed to the PC's helper, which shuts the PC down within a minute or two, whatever is running",
+               "reboot": "Handed to the PC's helper, which restarts the PC within a minute or two"}
 
 
 def request_host(conn, worker_id, what, by=None):
@@ -459,7 +467,7 @@ def request_host(conn, worker_id, what, by=None):
     if conn.execute("UPDATE worker SET host_request = ? WHERE id = ? AND revoked_at IS NULL", (what, worker_id)).rowcount != 1:
         raise WorkerError("That worker no longer exists or its token is revoked.")
     if what in TASK_OF_HOST_REQUEST:
-        task_open(conn, worker_id, what, "Waiting for the PC's helper to check in (it asks every minute)", by=by)
+        task_open(conn, worker_id, TASK_KIND.get(what, what), "Waiting for the PC's helper to check in (it asks every minute)", by=by)
 
 
 def host_check(conn, worker_id, now=None):
@@ -469,16 +477,16 @@ def host_check(conn, worker_id, now=None):
     w = get(conn, worker_id)
     running = idle(conn, worker_id)
     request = w["host_request"] if w else None
-    if request in ("update", "relay") and running:
-        task_note(conn, worker_id, request, f"Waiting for the worker to finish {running} job(s) before {'updating' if request == 'update' else 'setting up the relay'}", now=now)
+    kind = TASK_KIND.get(request, request)
+    if request in WAITS_FOR_IDLE and running:
+        task_note(conn, worker_id, kind, f"Waiting for the worker to finish {running} job(s) before {WAITING_FOR[request]}", now=now)
         request = None                                              # it stays requested until the worker is idle
     if request:
         conn.execute("UPDATE worker SET host_request = NULL WHERE id = ? AND host_request = ?", (worker_id, request))
         if request == "update":
             task_note(conn, worker_id, "update", "The PC is checking for new code", running=True, now=now)
         else:                                                       # the helper does not report back for these: handing it over is the last thing SyncHub sees
-            task_finish(conn, worker_id, request, "done", "Handed to the PC's helper, which restarts the worker within a minute" if request == "restart"
-                        else "Handed to the PC's helper, which sets up the camera relay", now=now)
+            task_finish(conn, worker_id, kind, "done", HANDED_OVER[request], now=now)
     from synchub import protect
     want_log = settings.get(UPDATER_WANT_KEY.format(worker_id), "", conn=conn) == "1"
     if want_log:
@@ -607,7 +615,7 @@ def last_benchmark(conn, worker_id):
 
 
 # ---------------------------------------------------------------- updates and benchmarks as tasks (shown on the Jobs page)
-TASK_EXPIRES_MINUTES = {"update": 30, "benchmark": 45, "restart": 15, "relay": 15}       # an open task nobody reported on for this long is closed as failed
+TASK_EXPIRES_MINUTES = {"update": 30, "benchmark": 45, "restart": 15, "relay": 15, "shutdown": 240, "reboot": 240}       # an open task nobody reported on for this long is closed as failed
 TASK_KEEP = 200
 TASK_LOG_CHARS = 6000
 

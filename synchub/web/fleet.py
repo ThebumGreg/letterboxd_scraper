@@ -104,8 +104,13 @@ def describe_host(w):
         "temps": " · ".join(f"{label} {t:.0f} °C" for label, t in (("CPU", temps.get("cpu")), ("Drive", temps.get("nvme")), ("GPU", temps.get("gpu")), ("Other", temps.get("other")))
                             if isinstance(t, (int, float)) and not isinstance(t, bool)) or None,
         "temp_cpu": temps.get("cpu") if isinstance(temps.get("cpu"), (int, float)) else None,
-        "gpu_clock": (f"{_whole(dynamic.get('gpu_mhz'))} of {_whole(dynamic.get('gpu_max_mhz'))} MHz" if _whole(dynamic.get("gpu_mhz")) is not None and _whole(dynamic.get("gpu_max_mhz")) else
-                      f"{_whole(dynamic.get('gpu_percent'))}% busy" if _whole(dynamic.get("gpu_percent")) is not None else None),
+        "gpu_clock": " · ".join(x for x in (f"{_whole(dynamic.get('gpu_mhz'))} of {_whole(dynamic.get('gpu_max_mhz'))} MHz" if _whole(dynamic.get("gpu_mhz")) is not None and _whole(dynamic.get("gpu_max_mhz")) else None,
+                                            f"{_whole(dynamic.get('gpu_percent'))}% busy" if _whole(dynamic.get("gpu_percent")) is not None else None,
+                                            f"encoder {_whole(dynamic.get('gpu_encoder_percent'))}%" if _whole(dynamic.get("gpu_encoder_percent")) is not None else None,
+                                            f"{_whole(dynamic.get('gpu_vram_used_mb'))} of {_whole(dynamic.get('gpu_vram_total_mb'))} MB memory" if _whole(dynamic.get("gpu_vram_used_mb")) is not None and _whole(dynamic.get("gpu_vram_total_mb")) else None,
+                                            f"{_whole(dynamic.get('gpu_power_w'))} W" if _whole(dynamic.get("gpu_power_w")) is not None else None,
+                                            f"{_whole(dynamic.get('gpu_temp_c'))} °C" if _whole(dynamic.get("gpu_temp_c")) is not None else None) if x) or None,
+        "gpu_busy": _whole(dynamic.get("gpu_percent")),
         "gpu_encodes": _whole(live.get("gpu_encodes")),
         "container": container, "host_uptime": _duration(dynamic.get("host_uptime_seconds")), "agent_uptime": _duration(live.get("uptime_seconds")),
         "python": _text(caps.get("python"), 20), "ffmpeg": _text(caps.get("ffmpeg"), 120), "ffprobe": _text(caps.get("ffprobe"), 120),
@@ -210,7 +215,7 @@ def describe_job(j):
 TASK_LABELS = {"queued": ("Queued", "secondary"), "running": ("Running", "primary"), "done": ("Completed", "success"), "failed": ("Failed", "danger"), "cancelled": ("Cancelled", "secondary")}
 
 
-TASK_TITLES = {"update": "Update worker", "benchmark": "Benchmark worker", "restart": "Restart worker", "relay": "Set up camera relay on"}
+TASK_TITLES = {"update": "Update worker", "benchmark": "Benchmark worker", "restart": "Restart worker", "relay": "Set up camera relay on", "shutdown": "Shut down PC of", "reboot": "Restart PC of"}
 
 
 def describe_task(t):
@@ -346,6 +351,15 @@ def register(app):
                     online = workers.get(conn, worker_id)["online"]
                     return jsonify(ok=True, online=online, message="Asked the worker for its log." if online
                                    else "Asked. The worker is offline, so the log arrives when it is back.")
+                if action in ("host_shutdown", "host_shutdown_now", "host_reboot"):
+                    what = action[len("host_"):]
+                    workers.request_host(conn, worker_id, what, by=_who(conn))
+                    busy = workers.idle(conn, worker_id)
+                    note = "" if workers.host_seen(conn, worker_id) else " The update timer on that PC has not checked in recently, so this waits until it does."
+                    word = "restart" if what == "reboot" else "shut down"
+                    if what == "shutdown_now":
+                        return jsonify(ok=True, message="Asked the PC to shut down now, whatever is running. It happens within a minute or two; unfinished jobs resume when the PC is started again." + note)
+                    return jsonify(ok=True, message=(f"Asked the PC to {word}. It is running {busy} job(s), so it happens when the worker is idle." if busy else f"Asked the PC to {word}. It happens within a minute or two.") + note)
                 if action in ("host_update", "host_restart"):
                     what = action.split("_", 1)[1]
                     workers.request_host(conn, worker_id, what, by=_who(conn))

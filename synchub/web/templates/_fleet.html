@@ -1,6 +1,6 @@
 <!-- The workers and what each machine can do: rendered with the page and swapped in every few seconds. Jobs are their own tab. -->
-<h4 class="mb-3">Registered workers <small class="text-body-secondary">({{ workers|length }})</small></h4>
-<div class="panel p-0 overflow-hidden mb-5">
+<h4 class="mb-3"><button type="button" class="btn btn-link text-reset text-decoration-none p-0 fs-4 fw-semibold" data-fleet-toggle="workers" aria-expanded="true"><i class="bi bi-chevron-down" aria-hidden="true"></i> Registered workers</button> <small class="text-body-secondary">({{ workers|length }})</small></h4>
+<div class="panel p-0 mb-5" data-section="workers">
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0 stack-sm" id="workerTable">
             <thead class="table-light">
@@ -50,6 +50,9 @@
                             <ul class="dropdown-menu dropdown-menu-end">
                                 <li><button type="button" class="dropdown-item" data-edit-worker="{{ w.id }}" data-name="{{ w.name }}" data-tags="{{ w.tags|join(' ') }}" data-slots="{{ w.slots }}" data-settings='{{ w.remote.settings|tojson }}'>Edit name, tags, settings</button></li>
                                 <li><button type="button" class="dropdown-item" data-worker-action="host_restart" data-id="{{ w.id }}" data-confirm="Restart {{ w.name }}'s worker container? Running jobs resume afterwards."{% if w.remote.request == 'restart' %} disabled{% endif %}>Restart worker</button></li>
+                                <li><button type="button" class="dropdown-item" data-worker-action="host_reboot" data-id="{{ w.id }}" data-confirm="Restart {{ w.name }}'s whole PC? It waits until the worker has no running job."{% if w.remote.request == 'reboot' %} disabled{% endif %}>Restart PC (when idle)</button></li>
+                                <li><button type="button" class="dropdown-item" data-worker-action="host_shutdown" data-id="{{ w.id }}" data-confirm="Shut down {{ w.name }}'s PC? It waits until the worker has no running job. Starting it again needs the power button (or Wake-on-LAN)."{% if w.remote.request == 'shutdown' %} disabled{% endif %}>Shut down PC (when idle)</button></li>
+                                <li><button type="button" class="dropdown-item text-danger" data-worker-action="host_shutdown_now" data-id="{{ w.id }}" data-confirm="Force {{ w.name }}'s PC to shut down now? {{ w.running }} job(s) are running; they stop at once and resume when the PC is started again."{% if w.remote.request == 'shutdown_now' %} disabled{% endif %}>Force shutdown now</button></li>
                                 <li><button type="button" class="dropdown-item" data-setup-worker="{{ w.id }}">Setup files (Docker, fstab)</button></li>
                                 <li><button type="button" class="dropdown-item" data-worker-action="{{ 'enable' if not w.enabled else 'disable' }}" data-id="{{ w.id }}">{{ 'Enable' if not w.enabled else 'Disable' }}</button></li>
                                 <li><button type="button" class="dropdown-item" data-worker-action="rotate" data-id="{{ w.id }}" data-confirm="Make a new token for {{ w.name }}? The old one stops working at once.">New token</button></li>
@@ -68,13 +71,14 @@
     </div>
 </div>
 
-<h4 class="mb-3">Machines <small class="text-body-secondary">the hardware behind each worker and what it can encode</small></h4>
+<h4 class="mb-3"><button type="button" class="btn btn-link text-reset text-decoration-none p-0 fs-4 fw-semibold" data-fleet-toggle="machines" aria-expanded="true"><i class="bi bi-chevron-down" aria-hidden="true"></i> Machines</button> <small class="text-body-secondary">the hardware behind each worker and what it can encode</small></h4>
+<div data-section="machines">
 {% for w in workers %}
 {% set h = w.host %}
-<div class="panel mb-4{% if not w.online %} opacity-75{% endif %}" data-status-worker="{{ w.id }}">
-    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+<div class="panel mb-4 machine-card{% if not w.online %} opacity-75{% endif %}" data-status-worker="{{ w.id }}">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3 machine-head">
         <div>
-            <h5 class="mb-1">{{ w.name }} <span class="badge bg-{{ w.state_color }}{% if w.state_color in ['info', 'warning'] %} text-dark{% endif %} fs-6">{{ w.state }}</span>{% if w.heat.throttled %} <span class="badge bg-danger fs-6" title="Too hot: this worker is not given new jobs until it cools down. A running job carries on.">Cooling down</span>{% elif w.heat.alerted %} <span class="badge bg-warning text-dark fs-6" title="The CPU has stayed over the temperature set for this worker">Hot</span>{% endif %}</h5>
+            <h5 class="mb-1"><button type="button" class="btn btn-sm btn-outline-secondary me-1 py-0" data-machine-toggle="{{ w.id }}" aria-label="Show or hide the details of {{ w.name }}" aria-expanded="true"><i class="bi bi-chevron-down" aria-hidden="true"></i></button>{{ w.name }} <span class="badge bg-{{ w.state_color }}{% if w.state_color in ['info', 'warning'] %} text-dark{% endif %} fs-6">{{ w.state }}</span>{% if w.heat.throttled %} <span class="badge bg-danger fs-6" title="Too hot: this worker is not given new jobs until it cools down. A running job carries on.">Cooling down</span>{% elif w.heat.alerted %} <span class="badge bg-warning text-dark fs-6" title="The CPU has stayed over the temperature set for this worker">Hot</span>{% endif %}</h5>
             <div class="small text-body-secondary">{{ w.hostname or 'not connected yet' }}{% if w.os %} &middot; {{ w.os }}{% endif %}{% if w.version %} &middot; agent {{ w.version }}{% endif %} &middot; seen {{ w.seen }}{% if not w.online and h.known %} (the figures below are from then){% endif %}</div>
         </div>
         {% if not w.revoked and w.enabled %}<div class="d-flex gap-2">
@@ -135,6 +139,7 @@
             {% else %}
             <div class="small text-body-secondary">No graphics card is visible to the agent.{% if h.container %} It runs in a {{ h.container }} container, which sees a GPU only if one is passed in.{% endif %}</div>
             {% endfor %}
+            {% if h.gpu_busy is not none %}<div class="progress mt-2" style="height: 6px;" role="progressbar" aria-label="Graphics card busy" aria-valuenow="{{ h.gpu_busy }}" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar bg-info" style="width: {{ h.gpu_busy }}%"></div></div>{% endif %}
             {% if h.gpu_clock %}<div class="small text-body-secondary mt-1" title="The integrated GPU's clock (or busy share): it climbs while an encode is really using the GPU">GPU now: {{ h.gpu_clock }}{% if h.gpu_encodes %} &middot; {{ h.gpu_encodes }} GPU encode(s) running{% endif %}</div>{% endif %}
             {% if h.render_devices %}<div class="small text-body-secondary mt-1" title="/dev/dri: what VAAPI and Quick Sync encode through">Render devices: {{ h.render_devices|join(', ') }}</div>{% endif %}
         </div>
@@ -178,3 +183,4 @@
 {% else %}
 <div class="panel text-center text-body-secondary py-4">No workers yet. Add one to see its hardware here.</div>
 {% endfor %}
+</div>

@@ -8,7 +8,7 @@
 #   sudo ./agent/auto-update.sh --now            one check that updates even if the worker is busy
 #
 # Every minute the timer asks SyncHub (/update/check) for this worker's settings (automatic updates on or off, the maintenance window) and for a request
-# from the Workers page: "Restart worker" restarts the container at once; "Update" updates as soon as the worker is idle. Without a request the check
+# from the Workers page: "Restart worker" restarts the container at once; "Shut down PC", "Force shutdown" and "Restart PC" power the PC down or restart it (the first and last only when the worker is idle); "Update" updates as soon as the worker is idle. Without a request the check
 # below runs once an hour (not at all when automatic updates are off for this worker in SyncHub).
 # One check does this, and only this:
 #   1. git fetch in the checkout the worker builds from. Nothing new on origin: stop.
@@ -448,6 +448,19 @@ refresh_self
 if [ "$REQUEST" = restart ]; then
     log "SyncHub asked for a restart of the worker"
     if ( cd "$DIR" && docker compose restart ) >"$STATE/restart.out" 2>&1; then log "Restarted the worker"; else log "ERROR restarting the worker failed: $(tail -n 2 "$STATE/restart.out")"; fi
+    exit 0
+fi
+
+if [ "$REQUEST" = shutdown ] || [ "$REQUEST" = shutdown_now ] || [ "$REQUEST" = reboot ]; then
+    # SyncHub only hands these over when the worker is idle (shutdown, reboot) or when a person chose to force it (shutdown_now). SyncHub has already cleared the request,
+    # so it cannot fire again after the PC is back. `shutdown +1` leaves a minute for the answer to reach SyncHub and for the container to stop its jobs at a checkpoint.
+    if [ "$REQUEST" = reboot ]; then ACT=-r; WORD=restart; else ACT=-h; WORD="shut down"; fi
+    log "SyncHub asked the PC to $WORD ($REQUEST)"
+    if shutdown $ACT +1 "SyncHub asked this PC to $WORD" >"$STATE/power.out" 2>&1 || { [ "$REQUEST" = reboot ] && systemctl reboot >>"$STATE/power.out" 2>&1; } || { [ "$REQUEST" != reboot ] && systemctl poweroff >>"$STATE/power.out" 2>&1; }; then
+        log "The PC will $WORD in about a minute"
+    else
+        log "ERROR the PC could not $WORD: $(tail -n 2 "$STATE/power.out")"
+    fi
     exit 0
 fi
 

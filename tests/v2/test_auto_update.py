@@ -662,3 +662,28 @@ def test_the_work_folder_and_drive_requests_reach_the_helper_and_the_page(client
     assert [d["in_use"] for d in page["disks"]["disks"]] == [False, True]                    # /opt/synchub-worker/work is on the system disk
     html = client.get("/workers").get_data(as_text=True)
     assert 'id="setWorkDir"' in html and 'id="setGpuBusy"' in html and 'id="scanDisksBtn"' in html
+
+
+def test_shutdown_and_restart_pc_wait_for_idle_but_force_shutdown_does_not(client, v2):
+    wid, headers = authed(v2, "p1")
+    with v2.connection() as conn:
+        jobs.create(conn, "library", title="A job")
+        jobs.claim(conn, workers.get(conn, wid), 1)
+        workers.request_host(conn, wid, "shutdown", by="Greg")
+    assert client.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()["request"] is None       # a job is running: it waits
+    with v2.connection() as conn:
+        workers.request_host(conn, wid, "shutdown_now", by="Greg")                                                    # forced: replaces the waiting request
+    assert client.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()["request"] == "shutdown_now"
+    assert client.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()["request"] is None       # handed over once, so it cannot fire again after boot
+    with v2.connection() as conn:
+        workers.request_host(conn, wid, "reboot", by="Greg")
+        assert [(t["kind"], t["status"]) for t in conn.execute("SELECT kind, status FROM worker_task ORDER BY id").fetchall()] == [("shutdown", "done"), ("reboot", "queued")]
+        conn.execute("UPDATE job SET status = 'done' WHERE worker_id = ?", (wid,))
+    assert client.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()["request"] == "reboot"
+
+
+def test_the_workers_page_offers_the_power_buttons(client, v2):
+    authed(v2, "p2")
+    page = client.get("/workers/fragment").get_data(as_text=True)
+    assert 'data-worker-action="host_shutdown"' in page and 'data-worker-action="host_shutdown_now"' in page and 'data-worker-action="host_reboot"' in page
+    assert 'data-fleet-toggle="workers"' in page and 'data-fleet-toggle="machines"' in page

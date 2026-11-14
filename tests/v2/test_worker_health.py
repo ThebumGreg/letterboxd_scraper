@@ -211,3 +211,14 @@ def test_the_workers_page_shows_temperatures_the_guard_and_the_stats_window(clie
 def db_now():
     from synchub import db
     return db.now()
+
+
+def test_the_intel_gpu_busy_share_comes_from_the_time_it_slept(tmp_path):
+    card = tmp_path / "class" / "drm" / "card0"
+    (card / "gt" / "gt0").mkdir(parents=True)
+    (card / "gt_cur_freq_mhz").write_text("900\n")
+    (card / "gt_max_freq_mhz").write_text("1150\n")
+    (card / "gt" / "gt0" / "rc6_residency_ms").write_text("1000\n")
+    assert agent.intel_busy_percent(str(card), now=100.0) is None                          # the first sample has nothing to compare with
+    (card / "gt" / "gt0" / "rc6_residency_ms").write_text("1750\n")                        # slept 750 ms of 1000: busy a quarter of the time
+    assert agent.intel_busy_percent(str(card), now=101.0) == 25
