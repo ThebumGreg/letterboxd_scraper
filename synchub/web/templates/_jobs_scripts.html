@@ -10,5 +10,16 @@
         } catch (e) { /* the next tick tries again */ }
     }
     setInterval(refresh, 5000);
+    // The job dialog and the Cancel, Retry and Decide buttons are wired by the Workers tab. Opened on its own, the Jobs tab builds that tab quietly so they work,
+    // and a link to one job (/jobs?job=12, from a file's record) opens that job's details.
+    const ready = async () => {
+        if (window.loadMediaPane) await window.loadMediaPane('workers');
+        const wanted = new URLSearchParams(location.search).get('job');
+        if (!wanted || !/^\d+$/.test(wanted) || !document.getElementById('jobModal')) return;
+        const link = document.createElement('a');
+        link.href = '#'; link.dataset.jobDetails = wanted; link.hidden = true;
+        document.body.appendChild(link); link.click(); link.remove();
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready); else ready();
 })();
 </script>

@@ -5,7 +5,7 @@ import os
 from flask import abort, flash, g, jsonify, redirect, render_template, request, send_file, send_from_directory, url_for
 
 from config import BASE_DIR
-from synchub import access, backup, catalog, db, ddns, discover, posters, profiles, quality, ratings, search, settings, states, status, tasks, watch, watchlist, webhooks, workers
+from synchub import access, backup, catalog, db, ddns, discover, posters, poor_quality, profiles, quality, ratings, search, settings, states, status, tasks, watch, watchlist, webhooks, workers
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.tmdb import TmdbClient
 from synchub.notifications import dispatch
@@ -112,8 +112,10 @@ def register(app):
             defs = states.definitions(conn)
             progress = _progress(conn, "movie", media_id)
             on_watchlist = _on_watchlist(conn, media_id)
-            copies = quality.copies(conn, media_id) if access.allowed(getattr(g, "permissions", None), "library") else None
-        return render_template("movie_details.html", movie=movie, state=state, state_info=defs.get(state["state"], defs["missing"]), progress=progress, on_watchlist=on_watchlist, copies=copies)
+            librarian = access.allowed(getattr(g, "permissions", None), "library")
+            copies = quality.copies(conn, media_id) if librarian else None
+            poor = poor_quality.page_state(conn, media_id) if librarian else None
+        return render_template("movie_details.html", movie=movie, state=state, state_info=defs.get(state["state"], defs["missing"]), progress=progress, on_watchlist=on_watchlist, copies=copies, poor=poor)
 
     @app.route("/show/<int:media_id>")
     def show_details(media_id):
@@ -129,7 +131,8 @@ def register(app):
             me = (g.profile or {}).get("id")
             follow = {"muted": notification_store.is_muted(conn, me, media_id)} if me and access.allowed(g.permissions, "notifications") else None
             on_watchlist = _on_watchlist(conn, media_id)
-        return render_template("show_details.html", show=show, summary=summary, defs=defs, progress=progress, follow=follow, on_watchlist=on_watchlist)
+            poor = poor_quality.page_state(conn, media_id) if access.allowed(g.permissions, "library") else None
+        return render_template("show_details.html", show=show, summary=summary, defs=defs, progress=progress, follow=follow, on_watchlist=on_watchlist, poor=poor)
 
     @app.route("/healthz")
     def healthz():

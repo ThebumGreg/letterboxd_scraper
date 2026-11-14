@@ -496,6 +496,12 @@
             list.append(dt, dd);
         });
         body.appendChild(list);
+        if (job.record_id) {                       // the file this job is about: its report in the Library
+            const open = document.createElement('a');
+            open.className = 'btn btn-sm btn-outline-info mb-3'; open.href = `/library/record/${job.record_id}`;
+            open.innerHTML = '<i class="bi bi-file-earmark-text" aria-hidden="true"></i> Open record';
+            body.appendChild(open);
+        }
         if (job.decision && job.decision.action) {
             const note = document.createElement('p');
             note.className = 'small text-body-secondary';

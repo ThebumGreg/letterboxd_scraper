@@ -57,6 +57,14 @@ class _Arr:
     def add_notification(self, body):
         return self._send("AddNotification", "POST", "/api/v3/notification", body)
 
+    def mark_history_failed(self, history_id):
+        """Marks a grab as failed. The service adds that release to its blocklist, so it is not picked again for this title."""
+        return self._send("MarkHistoryFailed", "POST", f"/api/v3/history/failed/{int(history_id)}", {}, ok=(200, 201, 202, 204))
+
+    def grab_release(self, guid, indexer_id):
+        """Sends one release from `releases()` to the download client."""
+        return self._send("GrabRelease", "POST", "/api/v3/release", {"guid": guid, "indexerId": int(indexer_id)})
+
 
 class RadarrClient(_Arr):
     service, label = "radarr", "Radarr"
@@ -84,10 +92,6 @@ class RadarrClient(_Arr):
         """Radarr's history of one movie: what was grabbed and imported, newest first as Radarr returns it. Each entry has `id`, `eventType` and `sourceTitle`."""
         return self._get("GetMovieHistory", "/api/v3/history/movie", params={"movieId": int(movie_id)}, timeout=30)
 
-    def mark_history_failed(self, history_id):
-        """Marks a grab as failed. Radarr adds that release to its blocklist, so it is not picked again for this movie."""
-        return self._send("MarkHistoryFailed", "POST", f"/api/v3/history/failed/{int(history_id)}", {}, ok=(200, 201, 202, 204))
-
     def search_movie(self, movie_id):
         """Asks Radarr to search its indexers for the movie now. Radarr applies its quality profile and its blocklist."""
         return self._send("SearchMovie", "POST", "/api/v3/command", {"name": "MoviesSearch", "movieIds": [int(movie_id)]})
@@ -95,10 +99,6 @@ class RadarrClient(_Arr):
     def releases(self, movie_id):
         """What the indexers have for the movie right now (the same list as Radarr's interactive search). Slow: Radarr asks every indexer."""
         return self._get("GetReleases", "/api/v3/release", params={"movieId": int(movie_id)}, timeout=120)
-
-    def grab_release(self, guid, indexer_id):
-        """Sends one release from `releases()` to the download client."""
-        return self._send("GrabRelease", "POST", "/api/v3/release", {"guid": guid, "indexerId": int(indexer_id)})
 
     def lookup(self, tmdb_id):
         results = self._get("LookupMovie", "/api/v3/movie/lookup", params={"term": f"tmdb:{tmdb_id}"})
@@ -161,3 +161,15 @@ class SonarrClient(_Arr):
 
     def search_season(self, sonarr_id, season_number):
         return self._send("SearchSeason", "POST", "/api/v3/command", {"name": "SeasonSearch", "seriesId": int(sonarr_id), "seasonNumber": int(season_number)})
+
+    def series_history(self, series_id, season_number=None):
+        """Sonarr's history of one series (or one season of it): what was grabbed and imported. Each entry has `id`, `episodeId`, `eventType`, `sourceTitle` and `date`."""
+        params = {"seriesId": int(series_id)}
+        if season_number is not None:
+            params["seasonNumber"] = int(season_number)
+        return self._get("GetSeriesHistory", "/api/v3/history/series", params=params, timeout=30)
+
+    def releases(self, episode_id=None, series_id=None, season_number=None):
+        """What the indexers have right now for one episode, or for a whole season (season packs), the same list as Sonarr's interactive search. Slow: Sonarr asks every indexer."""
+        params = {"episodeId": int(episode_id)} if episode_id is not None else {"seriesId": int(series_id), "seasonNumber": int(season_number)}
+        return self._get("GetReleases", "/api/v3/release", params=params, timeout=120)

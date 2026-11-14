@@ -1,6 +1,7 @@
 <!-- synchub/web/templates/movie_details.html -->
 {% extends "base.html" %}
 {% from "_quality.html" import copies_card, quality_script with context %}
+{% from "_poor_quality.html" import poor_buttons, poor_panel, poor_script with context %}
 {% from "_macros.html" import rating_facts, state_badge, watchlist_button, watch_now, watch_badge, watch_unlinked with context %}
 
 {% block title %}{{ movie.title }} - Details{% endblock %}
@@ -73,8 +74,11 @@
                     {{ watch_now(movie.jellyfin_link, movie.jellyfin_item_id, movie.title, resume=('at ' ~ mine.resume_label) if mine and mine.state == 'in_progress' else none) }}
                 {% endif %}
                 <button type="button" class="btn btn-outline-secondary" id="refreshBtn"><i class="bi bi-arrow-repeat"></i> Refresh details</button>
+                {% if copies and copies.main and can('library') %}<a class="btn btn-outline-secondary" id="openRecordBtn" href="{{ url_for('library_record', record_id=copies.main.id) }}" title="This film's file in the Library: what SyncHub suggests for it, its tracks, quality and history"><i class="bi bi-file-earmark-text" aria-hidden="true"></i> Open record</a>{% endif %}
+                {{ poor_buttons(poor) }}
             </div>
             <div id="actionResult" class="small mt-2" role="status"></div>
+            {{ poor_panel(poor, movie.title) }}
         </div>
     </div>
 </div>
@@ -83,6 +87,7 @@
 
 {% block scripts %}
 {% if copies is not none %}{{ quality_script() }}{% endif %}
+{% if poor and poor.available %}{{ poor_script(movie.id, movie.title) }}{% endif %}
 <script>
 (() => {
     const token = document.querySelector('meta[name="csrf-token"]')?.content || '';

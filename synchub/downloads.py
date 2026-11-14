@@ -425,6 +425,14 @@ def recent(conn, limit=25):
         row["name"] = posixpath.basename(row["relative_path"])
         row["when"] = (row["updated_at"] or "")[:16]
         row["result"] = _result(row)
+        # Where the name leads: the file's record in the Library, or the title's own page while the file has no record yet.
+        found = conn.execute("SELECT id FROM library_file WHERE id = ? OR path_key = ? ORDER BY id = ? DESC LIMIT 1", (row["record_id"], row["path_key"], row["record_id"])).fetchone()
+        row["record_id"] = found["id"] if found else None
+        row["media"] = None
+        if not found and row["service_item_id"] is not None:
+            title = conn.execute("SELECT m.id, m.kind FROM link l JOIN media m ON m.id = l.entity_id WHERE l.source = ? AND l.entity_type = 'media' AND l.source_key = ? LIMIT 1",
+                                 (row["service"], str(row["service_item_id"]))).fetchone()
+            row["media"] = dict(title) if title else None
     return rows
 
 

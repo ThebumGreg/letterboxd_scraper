@@ -1,0 +1,5 @@
+{# The Media tab row on pages that belong to a tab (a queue, a file's record), so Jobs, Workers and the rest stay one tap away. `active` is the tab the page sits under. #}
+{% set active = active|default('library') %}
+<ul class="nav nav-tabs mb-3 media-subnav" aria-label="Media">
+    {% for t in media_tabs() %}<li class="nav-item"><a class="nav-link{% if t.key == active %} active{% endif %}" href="{{ t.href }}" title="{{ t.help }}"{% if t.key == active %} aria-current="true"{% endif %}>{{ t.label }}</a></li>{% endfor %}
+</ul>

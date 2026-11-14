@@ -78,7 +78,7 @@ For a film that Jellyfin knows, the movie page lists every file in the film's fo
 
 The film is matched to its files through every Jellyfin item linked to it: the item's path and the share's *Jellyfin path* (and *other mounts*) on the Storage page. Any other Library file whose cleaned name starts with the film's title and year is found too, wherever it sits, and says "found by name". A film at the top of a share matches only itself, because its neighbours are other films. When Jellyfin's path is not covered by any share, the card names it. Two mappings with the same Jellyfin path: the one that names a folder wins, and the Storage page warns when you save.
 
-## Request a better copy (movies, through Radarr)
+## Request a better copy (from a file, through Radarr)
 
 On a flagged file (the Library tab's Below minimum quality section, the movie page, the Library record page):
 
@@ -95,6 +95,20 @@ The old file is not deleted. When the new download arrives it goes through the n
 A film that is **not in Radarr** (or sits outside Radarr's folders, like loose files in `Old Movies/`) has no grab to block. *Request better copy* then adds the film to Radarr (its default quality profile and root folder from Settings) and starts a search, using the TMDB match Jellyfin has for the file. If Jellyfin has no match, the button says so. Radarr downloads the new copy into its own folder; the old file is never deleted by SyncHub, so delete it by hand once the new copy is in Jellyfin. *Show releases* and *Get this one* still need the film to be in Radarr first.
 
 Not run against a live Radarr from here: the calls are Radarr v3's documented ones (`history/movie`, `history/failed/{id}`, `command` MoviesSearch, `release`). If one differs on your version, the page shows Radarr's own error.
+
+## Poor quality on a movie or show page (Radarr and Sonarr)
+
+The same request can be started from the title instead of from a file, so it also works for a film whose file was never scanned and for **shows**. It needs the Library permission.
+
+- **Movie page:** **Poor quality** and **Show releases** sit next to *Refresh details*. Poor quality asks what is wrong (optional, kept with the request), then does what *Request better copy* does. The request also shows on the film's file under *Your copies*, with its download progress.
+- **Show page:** the same two buttons work on a **season**: choose the season, and SyncHub looks for a **season pack**, blocks the releases that were grabbed for that season's episodes (a pack that covered several episodes is blocked once) and grabs the pack. For **one episode**, open the season, click the episode and use its own *Poor quality* and *Show releases* buttons; an episode request never takes a season pack.
+- **What is offered.** The automatic choice keeps to the minimum resolution (Options, Quality). *Show releases* for a show lists everything on offer, because an old show may not exist any better, and you may pick a smaller one yourself.
+- **Nothing better on offer:** nothing is blocked and nothing is grabbed. For a season with no pack, use the episodes.
+- **DVR recordings are never included.** A film Jellyfin only has as a recording, and an episode that is only a recording or that Sonarr has no downloaded file for, gets no buttons and is refused by the server. A season request counts and blocks only the episodes Sonarr downloaded.
+- **History:** the page shows the last requests (who, when, the note and what happened). They are kept in `media_quality_request`.
+- A show request is not followed through Sonarr's queue yet; the episode's own state (Downloading, In Library) shows the progress.
+
+Not run against a live Sonarr from here: the calls are Sonarr v3's documented ones (`history/series`, `history/failed/{id}`, `release`). If one differs on your version, the page shows Sonarr's own error and nothing is changed by a step that failed.
 
 ## Not built yet
 

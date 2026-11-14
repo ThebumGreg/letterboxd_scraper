@@ -203,6 +203,11 @@ def create_app(start_scheduler=False, csrf=True):
 
         config["tv"], config["tv_setup"] = can("tv"), can("tv_setup")     # whether "Watch now" may offer the TVs, and a link to add one
 
+        def media_tabs():
+            """The Media page's tabs this person may open, for pages under a tab (a queue, a file's record) that keep the tab row."""
+            from synchub.web.media import TABS
+            return [{"key": key, "label": label, "href": url_for(endpoint), "help": text} for key, label, endpoint, text in TABS if can(access.required(endpoint))]
+
         def link(endpoint, label):
             return {"href": url_for(endpoint), "label": label, "endpoint": endpoint} if can(access.required(endpoint)) else None
 
@@ -230,7 +235,7 @@ def create_app(start_scheduler=False, csrf=True):
                 children = shown
                 if any("href" in c for c in children):
                     menu.append({"label": first, "children": children})
-        return {"jellyfin_app": config, "current_profile": profile, "has_profiles": getattr(g, "has_profiles", False), "can": can, "menu": menu,
+        return {"jellyfin_app": config, "current_profile": profile, "has_profiles": getattr(g, "has_profiles", False), "can": can, "media_tabs": media_tabs, "menu": menu,
                 "profile_link": link("my_profile", "My profile"),
                 "max_rating": getattr(g, "max_rating", None), "app_version": __version__, "app_build": buildinfo.get()}
 

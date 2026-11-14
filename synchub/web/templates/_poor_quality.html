@@ -1,0 +1,119 @@
+{# "Poor quality" and "Show releases" on a movie or show page. `poor` comes from poor_quality.page_state(); nothing is shown to a person without the Library permission. #}
+
+{# The two buttons, for the row of actions under the title. #}
+{% macro poor_buttons(poor) %}
+{% if poor and poor.available %}
+<button type="button" class="btn btn-outline-warning" data-poor-open="request" title="Flag this as poor quality: blocks the release that was grabbed and gets the best other one on offer. The old file is kept until the new one is imported."><i class="bi bi-hand-thumbs-down" aria-hidden="true"></i> Poor quality</button>
+<button type="button" class="btn btn-outline-secondary" data-poor-open="releases" title="Lists what the indexers have. Changes nothing until you pick one."><i class="bi bi-list-ul" aria-hidden="true"></i> Show releases</button>
+{% endif %}
+{% endmacro %}
+
+{# The panel the buttons open, the reason the buttons are missing, and the history of earlier requests. #}
+{% macro poor_panel(poor, title) %}
+{% if poor %}
+{% if not poor.available and poor.why %}<p class="small text-body-secondary mt-2 mb-0" id="poorWhy"><i class="bi bi-info-circle" aria-hidden="true"></i> {{ poor.why }}</p>{% endif %}
+{% if poor.available %}
+<div class="panel p-3 mt-3 d-none" id="poorPanel" style="max-width: 760px;">
+    <div class="d-flex justify-content-between align-items-start gap-2">
+        <h6 class="mb-2" id="poorHeading">Poor quality</h6>
+        <button type="button" class="btn-close" aria-label="Close" data-poor-close></button>
+    </div>
+    <div class="small mb-2">For: <strong id="poorFor">{{ title }}</strong></div>
+    {% if poor.kind == 'show' %}
+    <div class="mb-2" id="poorSeasonRow">
+        <label class="form-label small mb-1" for="poorSeason">Season</label>
+        <select class="form-select form-select-sm" id="poorSeason" style="max-width: 320px;">
+            {% for s in poor.seasons %}<option value="{{ s.number }}">{{ s.label }} ({{ s.episodes }} downloaded episode{{ '' if s.episodes == 1 else 's' }})</option>{% endfor %}
+        </select>
+        <div class="form-text">A whole season is replaced by a season pack. For one episode, open the season below, click the episode and use its own buttons. DVR recordings are never included.</div>
+    </div>
+    {% endif %}
+    <div id="poorRequestPart">
+        <label class="form-label small mb-1" for="poorNote">What is wrong with it? <span class="text-body-secondary">(optional)</span></label>
+        <input class="form-control form-control-sm mb-2" id="poorNote" maxlength="300" placeholder="For example: blurry, wrong language, audio out of sync">
+        <p class="small text-body-secondary mb-2">This puts the release that was downloaded on the blocklist and sends the best other release on offer to the download client. If nothing better is on offer, nothing changes. The old file stays until the new one is imported.</p>
+        <button type="button" class="btn btn-sm btn-warning" id="poorGo">Request a better copy</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="poorList">Show releases instead</button>
+    </div>
+    <div class="small mt-2" id="poorOut" role="status"></div>
+    <div class="small" id="poorReleases"></div>
+</div>
+{% endif %}
+{% if poor.requests %}
+<div class="small text-body-secondary mt-2" id="poorHistory">
+    {% for r in poor.requests[:3] %}
+    <div class="{{ 'text-danger' if r.status == 'failed' else '' }}"><i class="bi bi-hand-thumbs-down" aria-hidden="true"></i> Poor quality {{ r.created_at[:10] }}{% if r.requested_by %} by {{ r.requested_by }}{% endif %}{% if r.scope == 'season' %}, {{ 'Specials' if r.season_number == 0 else 'season ' ~ r.season_number }}{% elif r.scope == 'episode' %}, one episode{% endif %}{% if r.note %} (“{{ r.note }}”){% endif %}: {{ r.message }}</div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endif %}
+{% endmacro %}
+
+{# One handler for the panel; include once per page. Episode rows call window.poorQuality.open(mode, {episode_id, label}). #}
+{% macro poor_script(media_id, title) %}
+<script>
+(() => {
+    const panel = document.getElementById('poorPanel');
+    if (!panel) return;
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const base = '/api/library/poor/{{ media_id }}/';
+    const title = {{ title|tojson }};
+    const out = document.getElementById('poorOut'), list = document.getElementById('poorReleases'), note = document.getElementById('poorNote');
+    const season = document.getElementById('poorSeason'), seasonRow = document.getElementById('poorSeasonRow');
+    const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    let episode = null;                      // {episode_id, label} when the panel was opened from an episode row
+    const scope = () => episode ? { episode_id: episode.episode_id } : (season ? { season: parseInt(season.value, 10) } : {});
+    const say = (text, bad) => { out.className = 'small mt-2 ' + (bad ? 'text-danger' : 'text-body-secondary'); out.textContent = text; };
+    async function call(action, body) {
+        try {
+            const res = await fetch(base + action, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(body) });
+            return await res.json().catch(() => ({ ok: false, message: 'The server gave no answer.' }));
+        } catch (e) { return { ok: false, message: 'Could not reach the server.' }; }
+    }
+    async function showReleases() {
+        list.innerHTML = ''; say('Asking the indexers. This can take a minute...');
+        const data = await call('releases', scope());
+        if (!data.ok) return say(data.message || 'Failed.', true);
+        const blocked = (data.bad_releases || []).length ? 'Picking one puts ' + data.bad_releases.map((t) => '“' + t + '”').join(', ') + ' on the blocklist.' : data.service + "'s history has no grab to block.";
+        say(data.title + '. ' + blocked + ' ' + (data.message || ''));
+        list.innerHTML = (data.candidates || []).map((c) => '<div class="border-top pt-1 mt-1"><div style="overflow-wrap:anywhere">' + esc(c.title) + '</div><div class="text-body-secondary">' +
+            esc(c.quality || (c.resolution ? c.resolution + 'p' : '')) + (c.size ? ' · ' + (c.size / 1073741824).toFixed(1) + ' GB' : '') + (c.seeders != null ? ' · ' + c.seeders + ' seeders' : '') + ' · ' + esc(c.indexer || '') +
+            (c.notes && c.notes.length ? ' · ' + esc(c.notes.join('; ')) : '') + '</div><button type="button" class="btn btn-sm btn-outline-info py-0 mt-1" data-poor-grab data-guid="' + esc(c.guid) + '" data-indexer="' + esc(c.indexerId) + '">Get this one</button></div>').join('');
+    }
+    function open(mode, ep) {
+        episode = ep || null;
+        document.getElementById('poorFor').textContent = episode ? episode.label : title;
+        if (seasonRow) seasonRow.classList.toggle('d-none', !!episode);
+        document.getElementById('poorHeading').textContent = mode === 'releases' ? 'Releases on offer' : 'Poor quality';
+        document.getElementById('poorRequestPart').classList.toggle('d-none', mode === 'releases' && !(season && !episode));
+        document.getElementById('poorGo').classList.toggle('d-none', mode === 'releases');
+        document.getElementById('poorList').textContent = mode === 'releases' ? 'Show releases' : 'Show releases instead';
+        list.innerHTML = ''; say('');
+        panel.classList.remove('d-none');
+        panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        if (mode === 'releases' && (episode || !season)) showReleases();        // a show waits for the season to be chosen
+    }
+    window.poorQuality = { open };
+    document.addEventListener('click', async (e) => {
+        const opener = e.target.closest('[data-poor-open]');
+        if (opener) return open(opener.dataset.poorOpen, null);
+        if (e.target.closest('[data-poor-close]')) return panel.classList.add('d-none');
+        const grab = e.target.closest('[data-poor-grab]');
+        if (grab) {
+            grab.disabled = true; say('Sending it to the download client...');
+            const data = await call('grab', { ...scope(), guid: grab.dataset.guid, indexer_id: grab.dataset.indexer, note: note.value });
+            say(data.message || (data.ok ? 'Done.' : 'Failed.'), !data.ok);
+            if (data.ok) list.innerHTML = ''; else grab.disabled = false;
+        }
+    });
+    document.getElementById('poorList').addEventListener('click', showReleases);
+    document.getElementById('poorGo').addEventListener('click', async (e) => {
+        const button = e.currentTarget;
+        button.disabled = true; list.innerHTML = ''; say('Asking the indexers. This can take a minute...');
+        const data = await call('request', { ...scope(), note: note.value });
+        say(data.message || (data.ok ? 'Done.' : 'Failed.'), !data.ok);
+        button.disabled = false;
+    });
+})();
+</script>
+{% endmacro %}

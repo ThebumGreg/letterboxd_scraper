@@ -4,6 +4,7 @@
 {% block title %}Library: Below minimum quality{% endblock %}
 
 {% block content %}
+{% include "_media_nav.html" %}
 {% set act = true %}
 <nav aria-label="Queues" class="mb-3"><ul class="nav nav-pills flex-wrap gap-1">
     <li class="nav-item"><a class="nav-link" href="{{ url_for('library_page') }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> Library</a></li>

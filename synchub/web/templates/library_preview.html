@@ -3,6 +3,7 @@
 {% block title %}Preview: {{ p.name }}{% endblock %}
 
 {% block content %}
+{% include "_media_nav.html" %}
 {% set answered = p.decision is not none %}
 <p class="mb-2"><a href="{{ url_for('library_page') }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> Library</a>
     <span class="text-body-secondary small ms-2">preview #{{ p.id }}</span></p>

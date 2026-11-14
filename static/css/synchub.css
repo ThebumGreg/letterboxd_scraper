@@ -213,13 +213,13 @@
 }
 
 /* Media tabs: one row that scrolls sideways on a phone, so the order never changes as you tap. */
-#mediaTabs {
+#mediaTabs, .media-subnav {
     flex-wrap: nowrap;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: thin;
 }
-#mediaTabs .nav-link { white-space: nowrap; }
+#mediaTabs .nav-link, .media-subnav .nav-link { white-space: nowrap; }
 
 /* Save bar: a little shadow so cards do not look cut off under it. */
 .sticky-save { box-shadow: 0 -0.5rem 0.75rem -0.5rem rgba(0, 0, 0, 0.6); }

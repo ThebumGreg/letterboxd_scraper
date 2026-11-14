@@ -110,7 +110,7 @@
         <tbody>
         {% for d in downloads %}
             {% set color = {'replaced': 'success', 'nothing_to_do': 'secondary', 'skipped': 'secondary', 'awaiting_approval': 'warning', 'blocked': 'danger', 'failed': 'danger'}.get(d.status, 'primary') %}
-            <tr><td class="small">{{ d.name }}<div class="text-body-secondary">{{ d.service|title }}{% if d.title %}: {{ d.title }}{% endif %}</div></td>
+            <tr><td class="small">{% if d.record_id %}<a href="{{ url_for('library_record', record_id=d.record_id) }}" title="Open this file's record">{{ d.name }}</a>{% elif d.media %}<a href="{{ url_for('movie_details' if d.media.kind == 'movie' else 'show_details', media_id=d.media.id) }}" title="No record of this file yet: opens the title's page">{{ d.name }}</a>{% else %}{{ d.name }}{% endif %}<div class="text-body-secondary">{{ d.service|title }}{% if d.title %}: {{ d.title }}{% endif %}</div></td>
                 <td class="small"><span class="badge bg-{{ color }}{% if color == 'warning' %} text-dark{% endif %}">{{ d.status.replace('_', ' ') }}</span> {{ d.message or '' }}
                     {% if d.status == 'replaced' %}<div class="text-body-secondary">{{ d.rescan_message or 'Waiting to ask ' ~ d.service|title ~ ' to rescan.' }}</div>{% endif %}</td>
                 <td class="text-end text-nowrap">

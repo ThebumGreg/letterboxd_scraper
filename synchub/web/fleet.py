@@ -5,7 +5,7 @@ from flask import jsonify, render_template, request
 
 from synchub import __version__, buildinfo
 from synchub import db, jobs, protect, settings, storage, versions, webhooks, workdrive, workers
-from synchub.library import cleanup, migrate
+from synchub.library import cleanup, links, migrate
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +258,7 @@ def snapshot(conn):
     listed = [describe_job(j) for j in jobs.recent(conn, 50)]
     for j in listed:
         j["waiting_for"] = _waiting_for(j, able)
+        j["record_id"] = links.record_for_job(conn, j)
     tasks = [describe_task(t) for t in workers.recent_tasks(conn, 30)]
     return {"workers": [describe_worker(w, root_names, workers.last_update(conn, w["id"]), workers.host_seen(conn, w["id"]), workers.heat_state(conn, w["id"])) for w in raw], "jobs": listed, "tasks": tasks, "rows": merged_rows(listed, tasks), "counts": counts, "summary": summary, "root_names": root_names, "app_version": __version__, "app_build": buildinfo.get()}
 
@@ -493,6 +494,8 @@ def register(app):
     def api_job(job_id):
         with db.connection() as conn:
             job = jobs.detail(conn, job_id)
+            if job:
+                job["record_id"] = links.record_for_job(conn, job)       # the file's report in the Library, for the Open record button
         return jsonify(ok=True, job=describe_job(job)) if job else _fail("That job no longer exists.", 404)
 
     @app.route("/api/jobs/<int:job_id>/<action>", methods=["POST"])
