@@ -155,7 +155,7 @@ def test_no_login_ever_appears_in_the_generated_files():
 
 def test_fstab_lines_for_workers_without_docker():
     text = storage.fstab_lines(roots({**SMB, "share": "My Media"}, NFS, {"name": "l", "protocol": "local", "share": "/srv", "mount_point": "/mnt/l"}))
-    assert "//192.168.1.10/My\\040Media  /mnt/tower/Media  cifs  credentials=/etc/synchub-smb.cred,vers=3.0,_netdev,nofail  0  0" in text
+    assert "//192.168.1.10/My\\040Media  /mnt/tower/Media  cifs  credentials=/etc/synchub-smb.cred,vers=3.0,noserverino,_netdev,nofail  0  0" in text
     assert "tower:/mnt/user/TFiles  /mnt/tower/TFiles  nfs  nfsvers=4,hard,_netdev,nofail  0  0" in text
     assert "# l: /mnt/l is already mounted" in text and "chmod 600" in text
 

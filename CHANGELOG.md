@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+**Media share no longer drops overnight (no migration).** Update workers (re-run `setup-worker.sh`, or add the option by hand on a hand-made setup).
+- **CIFS shares are mounted with `noserverino`** in the generated /etc/fstab lines and the example. With an Unraid user share the server's file ids change, and the share's top folder then fails with "Stale file handle" while the marker file still reads fine. On a hand-made worker add `,noserverino` to the share's line in /etc/fstab, then `sudo umount -f -l <mount point>; sudo mount <mount point>` and restart the worker container.
+- **The mount watchdog** writes the real error ("Stale file handle") to its log, restarts the worker container after any remount (the container's bind mount can keep pointing at the old mount), also checks that the container can list each share, and retries a share every 10 minutes instead of every minute once three remounts in a row did not help.
+
 ## 1.6.0
 
 Migrations 044 and 045 are new since 1.5.1. Update SyncHub first, then the workers.
