@@ -45,6 +45,7 @@
                     <button type="submit" class="btn btn-success" {% if not roots %}disabled{% endif %}><i class="bi bi-search" aria-hidden="true"></i> Start scan</button>
                     <button type="button" class="btn btn-outline-danger" id="clearScanBtn" {% if not roots %}disabled{% endif %} title="Takes the undecided and rejected files of the chosen share (and folder, if typed) off the list. Files already queued, approved or converted stay. No file on the share is touched."><i class="bi bi-eraser" aria-hidden="true"></i> Clear results</button>
                     <button type="button" class="btn btn-outline-info" id="dupBtn" title="Reads files of the same size to see whether they are the same file, across every share"><i class="bi bi-files" aria-hidden="true"></i> Find duplicates</button>
+                    <button type="button" class="btn btn-outline-info" id="linksBtn" title="Finds each film's files again (Jellyfin path, folder, name) and refreshes the labels: mobile copy, converted copy, duplicate, edition"><i class="bi bi-link-45deg" aria-hidden="true"></i> Refresh links</button>
                 </div>
             </form>
         </div>
