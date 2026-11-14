@@ -823,3 +823,48 @@ def test_the_whole_file_command_finds_damage_with_real_ffmpeg(tmp_path):
         run = subprocess.run(agent.damage_command("ffmpeg", str(path), niceness=False), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         counts[name] = max(agent.parse_damage(run.stdout.splitlines())[0], 1 if run.returncode else 0)      # as the worker counts: a failed exit is at least one error
     assert counts["good"] == 0 and counts["bad"] > 0
+
+
+# ---------------------------------------------------------------- after a conversion
+def converted_in_place(conn):
+    file_id = fixture_file(conn, rel="Heat (1995)/Heat (1995).mkv", size=9_000_000_000)
+    finish_job(conn, quality.request(conn, file_id, by="Greg"))                       # the check made before the conversion
+    conn.execute("UPDATE library_file SET size_bytes = 3000000000, mtime = mtime + 100, migration_status = 'completed', migrated_how = 'convert', migrated_dest_size = 3000000000, "
+                 "migration_destination_path = 'media:Heat (1995)/Heat (1995).mkv', migration_finished_at = datetime('now') WHERE id = ?", (file_id,))
+    conn.commit()
+    return file_id
+
+
+def test_a_converted_file_is_checked_without_the_library_pass_and_can_be_switched_off(conn):
+    file_id = converted_in_place(conn)
+    settings.set_value("quality_after_convert", "0", conn=conn)
+    conn.commit()
+    assert quality.library_step(Playing(False)) == 0
+    settings.set_value("quality_after_convert", "1", conn=conn)
+    conn.commit()
+    assert quality.library_step(Playing(True)) == 0                                   # someone is watching
+    assert quality.library_step(Playing(False)) == 1 and quality.library_step(Playing(False)) == 0
+    assert quality.latest(conn, file_id)["status"] in ("queued", "running")
+
+
+def test_a_converted_file_waits_for_the_scan_to_see_its_new_size(conn):
+    file_id = converted_in_place(conn)
+    conn.execute("UPDATE library_file SET size_bytes = 9000000000 WHERE id = ?", (file_id,))      # the Library has not scanned the new file yet
+    conn.commit()
+    assert quality.converted_due(conn, 5) == []
+
+
+def test_before_and_after_a_conversion_come_from_the_two_checks(conn):
+    file_id = converted_in_place(conn)
+    finish_job(conn, quality.request(conn, file_id, by="clean-up", source="cleanup"))
+    rows = quality.compare(conn, rec_of(conn, file_id))
+    assert [r["label"] for r in rows] == ["Before the conversion", "Now (converted)"] and rows[0]["size_bytes"] == 9_000_000_000 and rows[1]["score"] == 100
+
+
+def test_related_files_name_the_original_and_the_converted_copy(conn):
+    original = fixture_file(conn, rel="Old/Heat.avi")
+    converted = fixture_file(conn, rel="Heat (1995)/Heat (1995).mkv")
+    conn.execute("UPDATE library_file SET migration_status = 'completed', migrated_how = 'convert', migration_destination_path = 'media:Heat (1995)/Heat (1995).mkv' WHERE id = ?", (original,))
+    conn.commit()
+    assert [(x["kind"], x["id"]) for x in quality.related(conn, rec_of(conn, original))] == [("converted copy", converted)]
+    assert [(x["kind"], x["id"]) for x in quality.related(conn, rec_of(conn, converted))] == [("original", original)]

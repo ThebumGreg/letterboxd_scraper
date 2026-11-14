@@ -120,6 +120,7 @@
         if (d.summary) top.appendChild(el("small", "text-success d-block text-truncate fw-bold", d.summary));
         if (d.addedBy) top.appendChild(el("small", "text-body-secondary d-block text-truncate", "Wanted by: " + d.addedBy));
         if (d.addedLabel) top.appendChild(el("small", "text-body-secondary d-block text-truncate", "Added " + d.addedLabel));
+        if (parseInt(d.versions, 10) > 1) top.appendChild(el("small", "badge bg-info text-dark", d.versions + " versions"));
         body.appendChild(top);
 
         const foot = el("div", "mt-2 text-end sse-badge-container");
@@ -158,7 +159,7 @@
             return words.every((w) => d.search.includes(w))
                 && (!type || d.kind === type)
                 && (!user || d.users.includes("|" + user + "|"))
-                && (!status || (status === "in_flight" ? IN_FLIGHT.includes(d.state) : d.state === status))
+                && (!status || (status === "in_flight" ? IN_FLIGHT.includes(d.state) : status === "extra_versions" ? parseInt(d.versions, 10) > 1 : d.state === status))
                 && (!seen || d.watch === seen)
                 && (!cert || d.cert === cert)
                 && (isNaN(from) || (year && year >= from))
@@ -247,6 +248,8 @@
 
     if (searchInput) {
         searchInput.addEventListener("input", () => { clearTimeout(debounce); debounce = setTimeout(rerenderFromStart, 150); });
+        const extra = document.querySelector("[data-show-extra-versions]");
+        if (extra) extra.addEventListener("click", (e) => { e.preventDefault(); statusSel.value = "extra_versions"; rerenderFromStart(); });
         [typeSel, userSel, statusSel, watchSel, certSel, sortSel, perSel].forEach((s) => s && s.addEventListener("change", rerenderFromStart));
         [yearFrom, yearTo].forEach((s) => s && s.addEventListener("input", () => { clearTimeout(debounce); debounce = setTimeout(rerenderFromStart, 300); }));
 

@@ -2,7 +2,12 @@
 
 ## Unreleased
 
-Migration 046 is new. Update SyncHub. Workers need no update for the navigation and Poor quality changes; the share fix below is on the workers.
+Migration 046 and 047 are new. Update SyncHub first, then the workers: the power buttons and the GPU numbers below need the new worker code.
+
+**Record, Workers and Library follow-ups.**
+- **Converted files are checked.** After a conversion has replaced a file (or written a new one), the quality check runs on the result (Options, Quality tools: *After converting*, on by default; it waits while someone is watching). The Record page shows *Before and after the conversion* (size and score) and *Related files* (original, converted copy, extra versions).
+- **Workers page:** the More menu opens on top of everything, Registered workers and Machines fold away (remembered in the browser), and each machine card folds. **Shut down PC (when idle)**, **Restart PC (when idle)** and **Force shutdown now** are in the More menu; they go through the PC's update helper (workers must be updated). The graphics card shows busy share, and for NVIDIA and AMD also encoder, memory, power and temperature.
+- **Library:** Below minimum quality uses the same table as the other lists (Quality opens the check, Accept and better-copy buttons). The Loose films card counts films below the minimum quality and has one Open list button (All files, Loose in a shared folder). Library status on the Dashboard has *Has extra versions*, with a badge on those titles.
 
 **A cleaner record page (no migration).** Everything it showed is still there; the order is new.
 - **The decision is at the top.** Approve, Reject and Skip (or Undo, or *I tested it*) sit right under the name, with **Make a preview** beside them. On a phone the bar stays on screen while you scroll.

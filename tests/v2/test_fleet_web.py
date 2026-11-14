@@ -314,7 +314,7 @@ def reporting_worker(v2, name="encoder-1", host=HOST, **status):
 def test_the_status_tab_is_one_of_the_tabs_and_shows_the_hardware(client, v2):
     worker_id = reporting_worker(v2)
     page = all_tabs(client, "/workers")
-    assert 'data-pane="status"' not in page and "<h4 class=\"mb-3\">Machines" in page      # the hardware sits under the workers list, not in a tab of its own
+    assert 'data-pane="status"' not in page and "data-fleet-toggle=\"machines\"" in page      # the hardware sits under the workers list, not in a tab of its own
     pane = status_pane(page, worker_id)
     for text in ("Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz", "6 cores, 12 threads", "4.30 GHz", "x86_64", "12%", "0.50 0.40 0.30", ">avx2<", "32.0 GB", "(20.0 GB free)", "500.0 GB free",
                  "1 d 1 h", "2 h 0 min", "NVIDIA GeForce GTX 1660", "6.0 GB", "driver 550.54", "renderD128", "6.8.0-45-generic", "docker container", "3.12.3", "copy, scan",

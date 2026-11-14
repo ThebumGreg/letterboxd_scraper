@@ -1432,20 +1432,72 @@ def read_temperatures(sysfs="/sys"):
     return {k: round(v, 1) for k, v in found.items()}
 
 
+_RC6_LAST = {}           # card -> (time, rc6 milliseconds) at the previous sample: Intel counts the time its GPU slept, so busy share = 1 - slept / elapsed
+_NVIDIA_LAST = {"at": 0.0, "stats": {}}
+
+
+def intel_busy_percent(card, now=None):
+    """How busy an Intel integrated GPU was since the last sample, from its RC6 (sleeping) residency counter. None on the first sample or when the card has no counter.
+    It needs no special permission, unlike intel_gpu_top; it counts the whole GPU, not only the video engine."""
+    now = now if now is not None else time.monotonic()
+    for sub in ("gt/gt0/rc6_residency_ms", "power/rc6_residency_ms"):
+        raw = read_file(os.path.join(card, sub), 32).strip()
+        if raw.isdigit():
+            slept, last = int(raw), _RC6_LAST.get(card)
+            _RC6_LAST[card] = (now, slept)
+            if last and now > last[0] and slept >= last[1]:
+                return max(0, min(100, round(100.0 * (1 - (slept - last[1]) / ((now - last[0]) * 1000.0)))))
+            return None
+    return None
+
+
+def read_nvidia_stats(max_age=8.0):
+    """Utilisation, video encoder utilisation, memory, temperature and power of the first NVIDIA card from nvidia-smi ({} without one). Asked at most every few seconds."""
+    if time.monotonic() - _NVIDIA_LAST["at"] < max_age:
+        return dict(_NVIDIA_LAST["stats"])
+    stats = {}
+    code, out = run_quiet(["nvidia-smi", "--query-gpu=utilization.gpu,utilization.encoder,memory.used,memory.total,temperature.gpu,power.draw", "--format=csv,noheader,nounits"], timeout=10)
+    if code == 0 and out.strip():
+        parts = [x.strip() for x in out.strip().splitlines()[0].split(",")]
+        keys = ("gpu_percent", "gpu_encoder_percent", "gpu_vram_used_mb", "gpu_vram_total_mb", "gpu_temp_c", "gpu_power_w")
+        for key, value in zip(keys, parts):
+            try:
+                stats[key] = round(float(value), 1)
+            except ValueError:
+                pass
+    _NVIDIA_LAST.update(at=time.monotonic(), stats=stats)
+    return dict(stats)
+
+
 def read_gpu_clock(sysfs="/sys"):
-    """The integrated GPU's current and highest clock in MHz (Intel i915), or its busy percent (AMD): a rough sign of whether an encode is really using it. {} when not readable."""
+    """What the graphics card is doing now: Intel (i915) clock, maximum clock and busy share; AMD busy share, memory and power; NVIDIA through nvidia-smi. {} when nothing is readable."""
+    out = {}
     try:
         import glob
         for card in sorted(glob.glob(os.path.join(sysfs, "class", "drm", "card[0-9]"))):
             cur, top = read_file(os.path.join(card, "gt_cur_freq_mhz"), 16).strip(), read_file(os.path.join(card, "gt_max_freq_mhz"), 16).strip()
             if cur.isdigit() and top.isdigit():
-                return {"gpu_mhz": int(cur), "gpu_max_mhz": int(top)}
+                out.update(gpu_mhz=int(cur), gpu_max_mhz=int(top))
+                busy = intel_busy_percent(card)
+                if busy is not None:
+                    out["gpu_percent"] = busy
+                break
             busy = read_file(os.path.join(card, "device", "gpu_busy_percent"), 16).strip()
             if busy.isdigit():
-                return {"gpu_percent": int(busy)}
+                out["gpu_percent"] = int(busy)
+                for key, name in (("gpu_vram_used_mb", "mem_info_vram_used"), ("gpu_vram_total_mb", "mem_info_vram_total")):
+                    raw = read_file(os.path.join(card, "device", name), 32).strip()
+                    if raw.isdigit():
+                        out[key] = int(raw) // (1024 * 1024)
+                break
     except Exception:                                                  # noqa: B902
         pass
-    return {}
+    if not out and shutil.which("nvidia-smi"):
+        try:
+            out.update(read_nvidia_stats())
+        except Exception:                                              # noqa: B902
+            pass
+    return out
 
 
 def live_host_stats(previous):

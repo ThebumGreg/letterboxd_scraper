@@ -41,6 +41,7 @@ Other options: `--mode native` (python3, ffmpeg and a systemd service, no Docker
 |---|---|---|
 | Update to the newest code | **Update** | Starts as soon as the worker has no running job (within a minute). Rebuilds; if anything fails the old version is put back. "Already up to date" if nothing is new. |
 | Restart | More → **Restart worker** | Restarts the container within a minute; running jobs resume. |
+| Shut down or restart the PC | More → **Shut down PC (when idle)**, **Restart PC (when idle)**, **Force shutdown now** | The first two wait until the worker has no running job; Force shutdown goes at once and running jobs resume when the PC is started again. The PC's helper runs `shutdown` about a minute later. A PC that is off must be started with its power button. |
 | Look at the log | **Logs** | Fetches the worker's own log. |
 | Compare CPU and GPU | **Run benchmark** | Times each working encoder on a 30 second clip and scores the quality; the result stays under *Last benchmark*. |
 | Follow an update or benchmark | **Media > Jobs** | Each Update, Restart, Run benchmark, camera relay setup, AI layer rebuild and automatic update appears as a row (Queued, Running, Completed or Failed) with its log; a request that has not started can be cancelled there. |

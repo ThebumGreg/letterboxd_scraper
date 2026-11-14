@@ -245,3 +245,7 @@
     .record-actions { position: sticky; top: 0; z-index: 10; box-shadow: 0 0.5rem 0.75rem -0.5rem rgba(0, 0, 0, 0.6); }
     .record-actions .btn-lg { --bs-btn-padding-y: 0.375rem; --bs-btn-padding-x: 0.75rem; --bs-btn-font-size: 1rem; }
 }
+
+/* Workers page: a folded machine card shows only its header line */
+.machine-card.is-collapsed > :not(.machine-head) { display: none; }
+.machine-card.is-collapsed .machine-head { margin-bottom: 0 !important; }

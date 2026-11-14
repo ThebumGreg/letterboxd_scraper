@@ -26,6 +26,52 @@
     }
     setInterval(refresh, 5000);
 
+    // Worker menus sit on <body> while they are open: the table's scroll box and the panels below it would otherwise clip or cover them (worst on a phone).
+    const homes = new Map();
+    fleet.addEventListener('show.bs.dropdown', (e) => {
+        const menu = e.target.parentElement.querySelector('.dropdown-menu');
+        if (!menu) return;
+        homes.set(e.target, menu);
+        document.body.appendChild(menu);
+        menu.style.zIndex = '1090';
+    });
+    fleet.addEventListener('hidden.bs.dropdown', (e) => {
+        const menu = homes.get(e.target);
+        if (menu && e.target.parentElement) { e.target.parentElement.appendChild(menu); homes.delete(e.target); }
+    });
+
+    // Collapsing: the two sections and each machine card. What was folded is remembered in this browser and put back after every refresh of the page's fragment.
+    const FOLD_KEY = 'synchub-fleet-folded';
+    const folded = () => { try { return new Set(JSON.parse(localStorage.getItem(FOLD_KEY) || '[]')); } catch (e) { return new Set(); } };
+    const saveFolded = (set) => { try { localStorage.setItem(FOLD_KEY, JSON.stringify([...set])); } catch (e) { /* no storage: it just opens again next time */ } };
+    function applyFolds() {
+        const set = folded();
+        fleet.querySelectorAll('[data-fleet-toggle]').forEach((b) => {
+            const hide = set.has(b.dataset.fleetToggle);
+            const body = fleet.querySelector('[data-section="' + b.dataset.fleetToggle + '"]');
+            if (body) body.classList.toggle('d-none', hide);
+            b.setAttribute('aria-expanded', hide ? 'false' : 'true');
+            b.firstElementChild.className = 'bi ' + (hide ? 'bi-chevron-right' : 'bi-chevron-down');
+        });
+        fleet.querySelectorAll('[data-machine-toggle]').forEach((b) => {
+            const hide = set.has('machine-' + b.dataset.machineToggle);
+            b.closest('.machine-card').classList.toggle('is-collapsed', hide);
+            b.setAttribute('aria-expanded', hide ? 'false' : 'true');
+            b.firstElementChild.className = 'bi ' + (hide ? 'bi-chevron-right' : 'bi-chevron-down');
+        });
+    }
+    fleet.addEventListener('click', (e) => {
+        const t = e.target.closest('[data-fleet-toggle], [data-machine-toggle]');
+        if (!t) return;
+        const key = t.dataset.fleetToggle || ('machine-' + t.dataset.machineToggle);
+        const set = folded();
+        if (set.has(key)) set.delete(key); else set.add(key);
+        saveFolded(set);
+        applyFolds();
+    });
+    new MutationObserver(applyFolds).observe(fleet, { childList: true });
+    applyFolds();
+
     // Setup files. Right after a token is made they hold it; nothing keeps them once the dialog closes.
     const NOTES = {
         'setup-worker.sh': 'Run these on the worker PC. The script does everything on the other tabs for you; those files are here to read, or to set up by hand.',

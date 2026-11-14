@@ -58,38 +58,19 @@
         {% for x in recent %}<div class="small"><a href="{{ url_for('library_record', record_id=x.file_id) }}" class="text-decoration-none">{{ x.file_name }}</a> · {{ x.message }}</div>{% endfor %}{% endif %}
     </div>
 </details>
+{% endif %}
 
-<div class="panel p-3 p-md-4 mb-4" id="belowList">
-    {% for row in rows %}
-    {% set d = row.rec %}{% set r = row.r %}
-    <div class="{% if not loop.first %}border-top pt-2 mt-2{% endif %}" data-record="{{ d.id }}">
-        <div class="d-flex flex-wrap justify-content-between gap-2">
-            <strong style="overflow-wrap: anywhere;"><a class="text-decoration-none" href="{{ url_for('library_record', record_id=d.id, status=status, **filter_args) }}">{{ d.approved_name or d.recommended_name or d.file_name }}</a>
-                <span class="badge bg-danger ms-1">Held: low quality</span>
-                {% if r.group != 'held' %}<span class="badge bg-secondary ms-1" title="This file is also on another list because of its decision or state.">{{ titles.get(r.group, r.group) }}</span>{% endif %}</strong>
-            <span class="text-body-secondary small">{{ d.resolution or '' }} · {{ size_text(d.size_bytes) }}{% if row.quality and row.quality.result and row.quality.current and row.quality.result.score is not none %} · score {{ row.quality.result.score|round|int }}{% endif %}</span>
-        </div>
-        <div class="small text-body-secondary" style="overflow-wrap: anywhere;">{{ d.root_name }}: {{ d.relative_path }}</div>
-        <div class="small mt-1"><i class="bi bi-folder2-open" aria-hidden="true"></i> {{ r.headline }}{% if r.steps %}<span class="text-body-secondary"> — {{ r.steps[0] }}</span>{% endif %}
-            {% if r.can_approve %}<button type="button" class="btn btn-sm btn-success py-0 ms-1" data-organize="{{ d.id }}" title="Renames inside its share or copies it unchanged to the right folder. The picture, audio and tracks are never touched.">Rename and move only</button>{% endif %}</div>
-        {{ quality_detail(d.id, row.quality, true) }}
-    </div>
-    {% else %}
-    <p class="small text-body-secondary mb-0">Nothing is flagged{% if filtered %} with this filter{% endif %}. {% if not quality_counts.waiting and not quality_counts.running and not recent %}No file has been checked yet: press <em>Check quality</em> on a film's page, or turn on the Library pass in Quality tools above.{% endif %}</p>
-    {% endfor %}
-</div>
-{% else %}
 <div class="panel p-0 overflow-hidden mb-3">
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0" id="queueTable">
-            <thead class="table-light"><tr><th class="ps-4">File</th>{% if status == 'all' %}<th>Status</th>{% endif %}<th style="min-width: 220px;">What we suggest</th><th>Quality check</th><th>Confidence</th><th class="text-end">Size</th><th class="pe-4 text-end">Decide</th></tr></thead>
+            <thead class="table-light"><tr><th class="ps-4">File</th>{% if status in ('all', 'below_minimum') %}<th>Status</th>{% endif %}<th style="min-width: 220px;">What we suggest</th><th>Quality check</th><th>Confidence</th><th class="text-end">Size</th><th class="pe-4 text-end">Decide</th></tr></thead>
             <tbody>
             {% set ns = namespace(show=None, season=None) %}
             {% for row in rows %}
                 {% set rec = row.rec %}{% set r = row.r %}
                 {% if rec.media_type == 'TV Episode' and (rec.show_title != ns.show or rec.season_number != ns.season) %}
                     {% set ns.show = rec.show_title %}{% set ns.season = rec.season_number %}
-                    <tr class="table-active"><td colspan="{{ 7 if status == 'all' else 6 }}" class="ps-4 small fw-bold">{{ rec.show_title }}{% if rec.season_number is not none %} &middot; Season {{ rec.season_number }}{% endif %}</td></tr>
+                    <tr class="table-active"><td colspan="{{ 7 if status in ('all', 'below_minimum') else 6 }}" class="ps-4 small fw-bold">{{ rec.show_title }}{% if rec.season_number is not none %} &middot; Season {{ rec.season_number }}{% endif %}</td></tr>
                 {% elif rec.media_type != 'TV Episode' and ns.show is not none %}{% set ns.show = None %}{% set ns.season = None %}{% endif %}
                 <tr data-record="{{ rec.id }}">
                     <td class="ps-4" style="max-width: 360px;">
@@ -98,9 +79,10 @@
                         {% if rec.missing_since %}<span class="badge bg-warning text-dark">not found any more</span>{% endif %}
                         {% if rec.duplicate_group %}<span class="badge bg-info text-dark">duplicate</span>{% endif %}
                         <span class="badge bg-{{ 'primary' if rec.media_type == 'TV Episode' else 'secondary' }}">{{ 'TV episode' if rec.media_type == 'TV Episode' else 'Movie' if (rec.media_type or '').startswith('Movie') else (rec.media_type or 'Other') }}</span>
+                        {% if below %}<span class="badge bg-danger">Held: low quality</span>{% endif %}
                         {% if row.loose %}<span class="badge bg-warning text-dark" title="Shares its folder with other films, or sits loose in a library folder">loose</span>{% endif %}
                     </td>
-                    {% if status == 'all' %}<td class="small"><a class="badge bg-{{ 'danger' if r.group == 'held' else 'secondary' }} text-decoration-none" href="{{ url_for('library_list', status='below_minimum' if r.group == 'held' else r.group) }}">{{ titles.get(r.group, r.group) }}</a></td>{% endif %}
+                    {% if status in ('all', 'below_minimum') %}<td class="small"><a class="badge bg-{{ 'danger' if r.group == 'held' else 'secondary' }} text-decoration-none" href="{{ url_for('library_list', status='below_minimum' if r.group == 'held' else r.group) }}">{{ titles.get(r.group, r.group) }}</a></td>{% endif %}
                     <td class="small">{{ r.headline }}{% if r.steps and r.steps != ['Copy as is'] %}<div class="text-body-secondary">{{ r.steps[:2]|join('; ') }}{% if r.steps|length > 2 %}; &hellip;{% endif %}</div>{% endif %}</td>
                     <td class="small text-nowrap">{% set q = row.quality %}{% if q %}<span class="badge bg-{{ 'danger' if q.low else 'primary' if q.check and q.check.status in ('queued', 'running') else 'success' if q.result and q.result.grade in ('good', 'ok') else 'secondary' }}">{{ q.label }}{% if q.result and q.result.score is not none and q.current %} {{ q.result.score|round|int }}{% endif %}</span>{% else %}-{% endif %}</td>
                     <td><span class="badge bg-{{ {'high': 'success', 'medium': 'warning', 'low': 'danger'}[r.confidence] }}{% if r.confidence == 'medium' %} text-dark{% endif %}">{{ r.confidence }}</span></td>
@@ -111,16 +93,20 @@
                         {% elif r.can_approve and not r.needs_name %}
                             <button type="button" class="btn btn-sm btn-success" data-decide="approve" data-id="{{ rec.id }}">{{ 'Skip this copy' if r.kind == 'skip_duplicate' else 'Approve' }}</button>
                         {% else %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('library_record', record_id=rec.id, group=r.group, status=status, **filter_args) }}">Open</a>{% endif %}
+                        {% if below %}<button type="button" class="btn btn-sm btn-outline-info ms-1" data-bs-toggle="collapse" data-bs-target="#qrow{{ rec.id }}" aria-expanded="false" aria-controls="qrow{{ rec.id }}">Quality</button>{% endif %}
                     </td>
                 </tr>
+                {% if below %}<tr class="collapse" id="qrow{{ rec.id }}"><td colspan="7" class="ps-4 pe-4 pb-3">
+                    {% if r.can_approve %}<div class="mb-2"><button type="button" class="btn btn-sm btn-success" data-organize="{{ rec.id }}" title="Renames inside its share or copies it unchanged to the right folder. The picture, audio and tracks are never touched.">Rename and move only</button></div>{% endif %}
+                    {{ quality_detail(rec.id, row.quality, true) }}
+                </td></tr>{% endif %}
             {% else %}
-                <tr><td colspan="{{ 7 if status == 'all' else 6 }}" class="text-center text-body-secondary py-4">Nothing here{% if filtered %} with this filter{% endif %}.</td></tr>
+                <tr><td colspan="{{ 7 if status in ('all', 'below_minimum') else 6 }}" class="text-center text-body-secondary py-4">{% if below %}Nothing is flagged{% if filtered %} with this filter{% endif %}. {% if not quality_counts.waiting and not quality_counts.running and not recent %}No file has been checked yet: press <em>Check quality</em> on a film's page, or turn on the Library pass in Quality tools above.{% endif %}{% else %}Nothing here{% if filtered %} with this filter{% endif %}.{% endif %}</td></tr>
             {% endfor %}
             </tbody>
         </table>
     </div>
 </div>
-{% endif %}
 
 {% if pages > 1 %}
 <nav aria-label="Pages"><ul class="pagination justify-content-center flex-wrap">
