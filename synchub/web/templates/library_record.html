@@ -8,20 +8,56 @@
 {% block content %}
 {% include "_media_nav.html" %}
 {% set decided = rec.approval_status != 'pending' %}
-<p class="mb-2"><a href="{{ url_for('library_list', status=back_status, q=f.q, root=f.root, conf=f.conf, what=f.what, type=f.type, quality=f.quality) }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> {{ back_title }}</a>
-    <span class="text-body-secondary small ms-2">record #{{ rec.id }}</span></p>
+{% set nav = dict(status=back_status, q=f.q, root=f.root, conf=f.conf, what=f.what, type=f.type, quality=f.quality) %}
+{% set net_path = rec.source_path if rec.source_path and rec.source_path != rec.root_name ~ ':' ~ rec.relative_path else none %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+    <span><a href="{{ url_for('library_list', **nav) }}" id="navBack"><i class="bi bi-arrow-left" aria-hidden="true"></i> {{ back_title }}</a>
+        <span class="text-body-secondary small ms-2">record #{{ rec.id }}</span></span>
+    <span class="btn-group btn-group-sm" role="group" aria-label="Move through {{ back_title }}">
+        <a class="btn btn-outline-secondary" id="navPrev" href="{{ url_for('library_record_step', record_id=rec.id, direction='previous', **nav) }}" title="The file before this one in {{ back_title }} (key p)"><i class="bi bi-chevron-left" aria-hidden="true"></i> Previous</a>
+        <a class="btn btn-outline-secondary" id="navNext" href="{{ url_for('library_record_step', record_id=rec.id, direction='next', **nav) }}" title="The file after this one in {{ back_title }} (key n)">Next <i class="bi bi-chevron-right" aria-hidden="true"></i></a>
+    </span>
+</div>
 <h2 class="mb-1" style="overflow-wrap: anywhere;">{{ final_name or rec.file_name }}</h2>
-<div class="small text-body-secondary mb-3" style="overflow-wrap: anywhere;">{{ rec.root_name }}: {{ rec.relative_path }}{% if rec.source_path and rec.source_path != rec.root_name ~ ':' ~ rec.relative_path %} &middot; <span title="How a computer on the network opens it">{{ rec.source_path }}</span>{% endif %}</div>
+<div class="d-flex flex-wrap gap-1 mb-2" id="recordChips">
+    <span class="badge bg-secondary" title="The list this file is in">{{ group_titles.get(r.group, r.group) }}</span>
+    {{ badge(r.confidence) }}
+    {% if r.held %}<span class="badge bg-danger" title="Never converted. It may be renamed and moved.">Held: low quality</span>{% endif %}
+    {% if rec.media_type %}<span class="badge text-bg-dark border">{{ rec.media_type }}</span>{% endif %}
+    {% if rec.resolution %}<span class="badge text-bg-dark border">{{ rec.resolution }}</span>{% endif %}
+    {% if size and not rec.unreadable_reason %}<span class="badge text-bg-dark border">{{ size }}</span>{% endif %}
+</div>
+<div class="small text-body-secondary mb-3" style="overflow-wrap: anywhere;">{{ rec.root_name }}: {{ rec.relative_path }}{% if net_path %}
+    <details class="d-inline-block align-top ms-1"><summary class="d-inline" style="cursor: pointer;">network path</summary> <span title="How a computer on the network opens it">{{ net_path }}</span></details>{% endif %}</div>
 <div id="libMessage" class="alert d-none" role="status"></div>
 {% if missing %}<div class="alert alert-warning">This file was not found at its place when the share was last scanned ({{ rec.missing_since }}).</div>{% endif %}
 {% if rec.unreadable_reason %}<div class="alert alert-danger">The file could not be read: {{ rec.unreadable_reason }}</div>{% endif %}
 
+    <div class="panel p-3 mb-3 record-actions" id="actions">
+        {% if decided and rec.migration_status == 'pending' %}
+            <button type="button" class="btn btn-outline-secondary" data-act="undo">Undo this decision</button>
+        {% elif r.can_approve or r.needs_name %}
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+                <button type="button" class="btn btn-success btn-lg" id="act-approve" data-act="approve">{{ 'Skip this duplicate' if r.kind == 'skip_duplicate' else 'Approve' if not r.needs_name else 'Approve with this name' }} <kbd class="ms-1">a</kbd></button>
+                <button type="button" class="btn btn-outline-danger" id="act-reject" data-act="reject">Reject <kbd class="ms-1">r</kbd></button>
+                <a class="btn btn-outline-secondary" id="act-skip" href="{{ url_for('library_review', group=group, after=rec.id, q=f.q, root=f.root, conf=f.conf) }}">Skip <kbd class="ms-1">s</kbd></a>
+            </div>
+        {% elif r.override_allowed %}
+            <p class="mb-2"><strong>Played it and it is fine?</strong> Say what you tested and approve it as it is. Otherwise reject it.</p>
+            <div class="row g-2"><div class="col-md-8"><label for="testNote" class="visually-hidden">What you tested</label><input class="form-control" id="testNote" placeholder="Played it start to end on the TV, no problems" maxlength="500"></div>
+                <div class="col-md-4 d-flex gap-2"><button type="button" class="btn btn-success" data-act="tested">I tested it</button><button type="button" class="btn btn-outline-danger" data-act="reject">Reject</button></div></div>
+        {% elif r.group not in ('done', 'queued') %}
+            <div class="d-flex gap-2"><button type="button" class="btn btn-outline-danger" data-act="reject">Reject</button><a class="btn btn-outline-secondary" href="{{ url_for('library_review', group=group, after=rec.id) }}">Skip</a></div>
+        {% else %}<p class="text-body-secondary mb-0">Nothing to decide here.</p>{% endif %}
+    {% if preview_info %}<div class="mt-2"><button type="button" class="btn btn-sm btn-outline-secondary" id="makePreview" title="{{ preview_info.summary }}"><i class="bi bi-play-btn" aria-hidden="true"></i> Make a preview</button>
+        {% if preview_info.latest %}<a class="btn btn-sm btn-outline-primary ms-1" href="{{ url_for('library_preview', preview_id=preview_info.latest.id) }}">{{ 'Watch the latest preview' if preview_info.latest.status == 'ready' else 'Latest preview (' ~ preview_info.latest.status ~ ')' }}</a>{% endif %}</div>{% endif %}
+</div>
+
 <div class="row g-3">
     <div class="col-lg-7">
+        <h6 class="text-body-secondary text-uppercase small mb-2">What SyncHub suggests</h6>
         <div class="panel p-3 p-md-4 mb-3" id="recommendation">
-            <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
-                <h4 class="mb-0">{{ r.headline }}</h4><span>{% if r.held %}<span class="badge bg-danger me-1" title="Never converted. It may be renamed and moved.">Held: low quality</span>{% endif %}{{ badge(r.confidence) }}</span>
-            </div>
+            <h4 class="mb-2">{{ r.headline }}</h4>
             {% if rec.approval_status == 'approved' %}<div class="alert alert-success py-2 small mb-2">Approved by {{ rec.approval_decided_by }} on {{ rec.approval_decided_at[:10] }}{% if rec.approval_note %}: {{ rec.approval_note }}{% endif %}.</div>
             {% elif rec.approval_status == 'rejected' %}<div class="alert alert-secondary py-2 small mb-2">Rejected by {{ rec.approval_decided_by }} on {{ rec.approval_decided_at[:10] }}{% if rec.approval_note %}: {{ rec.approval_note }}{% endif %}.</div>{% endif %}
             {% if r.steps %}<ul class="mb-2">{% for step in r.steps %}<li>{{ step }}</li>{% endfor %}</ul>{% endif %}
@@ -29,8 +65,6 @@
             {% if in_place %}<p class="small mb-0"><i class="bi bi-check2-circle text-success" aria-hidden="true"></i> This file is already at its place in the library.</p>
             {% elif r.path %}<p class="small mb-0">It will be placed at <code>{{ r.path }}</code> in the destination share.</p>{% endif %}
         </div>
-
-        <div class="panel p-3 mb-3" id="qualityPanel"><h6 class="mb-2">Picture quality{% if r.held %} <a class="small fw-normal ms-2" href="{{ url_for('library_list', status='below_minimum') }}">All files below minimum quality</a>{% endif %}</h6>{{ quality_detail(rec.id, quality_state, can('library')) }}</div>
 
         {% if (r.can_approve or r.needs_name) and r.kind not in ('skip_duplicate',) and not decided %}
         <div class="panel p-3 p-md-4 mb-3" id="handling">
@@ -41,8 +75,16 @@
             {% endif %}
             <div class="form-check mb-2"><input class="form-check-input" type="radio" name="handling" id="hProfile" value="profile"{% if r.mode != 'rename_only' or not rename_to %} checked{% endif %}>
                 <label class="form-check-label" for="hProfile">Bring it into <strong>{{ cfg.destination_root }}</strong> with a conversion profile</label></div>
-            <select class="form-select form-select-sm w-auto ms-4" id="profilePick" aria-label="Conversion profile">{% for p in profiles %}<option value="{{ p.id }}"{% if p.id == chosen_profile.id %} selected{% endif %}>{{ p.name }}: {{ p.summary }}</option>{% endfor %}</select>
+            <select class="form-select form-select-sm w-auto ms-4" style="max-width: calc(100% - 1.5rem);" id="profilePick" aria-label="Conversion profile">{% for p in profiles %}<option value="{{ p.id }}"{% if p.id == chosen_profile.id %} selected{% endif %}>{{ p.name }}: {{ p.summary }}</option>{% endfor %}</select>
             {% if source_cleanup %}<p class="small text-body-secondary mt-2 mb-0">The source file is deleted {{ source_cleanup }} days after the copy is verified (you can keep it afterwards).</p>{% endif %}
+        </div>
+        {% endif %}
+
+        {% if r.can_approve or r.needs_name %}
+        <div class="panel p-3 p-md-4 mb-3">
+            <label for="newName" class="form-label small mb-1">File name{% if r.needs_name %} <span class="text-danger">(a valid name is needed)</span>{% endif %}</label>
+            <input class="form-control" id="newName" value="{{ '' if r.needs_name else final_name }}" maxlength="255" autocomplete="off" aria-describedby="nameHelp">
+            <div class="form-text" id="nameHelp">Suggested: <code>{{ rec.recommended_name }}</code>. The extension stays. Press <kbd>e</kbd> to edit.</div>
         </div>
         {% endif %}
 
@@ -67,69 +109,30 @@
             {% if rec.arr_status %}<p class="small mb-0"><i class="bi bi-arrow-repeat" aria-hidden="true"></i> Radarr/Sonarr: <span class="badge bg-{{ {'waiting': 'secondary', 'due': 'primary', 'done': 'success', 'skipped': 'secondary', 'failed': 'danger'}[rec.arr_status] }}">{{ rec.arr_status }}</span> {{ rec.arr_message or '' }}</p>{% endif %}
         </div>
         {% endif %}
-
-        {% if r.can_approve or r.needs_name %}
-        <div class="panel p-3 p-md-4 mb-3">
-            <label for="newName" class="form-label small mb-1">File name{% if r.needs_name %} <span class="text-danger">(a valid name is needed)</span>{% endif %}</label>
-            <input class="form-control" id="newName" value="{{ '' if r.needs_name else final_name }}" maxlength="255" autocomplete="off" aria-describedby="nameHelp">
-            <div class="form-text" id="nameHelp">Suggested: <code>{{ rec.recommended_name }}</code>. The extension stays. Press <kbd>e</kbd> to edit.</div>
+        {% if rec.approval_status != 'approved' and rec.migration_status == 'pending' %}
+        <div class="d-flex flex-wrap gap-2 align-items-center mb-3" id="moreActions">
+            {% if rec.missing_since %}<button type="button" class="btn btn-sm btn-outline-secondary" data-act="forget" title="Removes this record from the list. No file is touched.">Take off the list</button>{% endif %}
+            <button type="button" class="btn btn-sm btn-outline-secondary" data-act="exclude-folder" title="Later scans skip this folder, and the undecided files from it leave the list. No file is touched.">Leave this folder out of scans</button>
         </div>
         {% endif %}
-
-        {% if streams and plans %}
-        <div class="panel p-0 overflow-hidden mb-3">
-            <div class="p-3 pb-2"><h6 class="mb-1">Tracks</h6><p class="small text-body-secondary mb-0">{% if decided or rec.migration_status != 'pending' %}This is what the approved job does with each track{% if chosen_profile %} (conversion profile: {{ chosen_profile.name }}){% endif %}.{% else %}Untick <em>Remove</em> to keep a track anyway. You can keep more than we suggest, never remove more.{% endif %}</p></div>
-            <div class="table-responsive"><table class="table table-sm align-middle mb-0" id="tracks">
-                <thead class="table-light"><tr><th class="ps-3">#</th><th>Type</th><th>Language</th><th>Codec</th><th>Notes</th><th class="pe-3 text-end">{{ 'Result' if streams and streams[0].state else 'Remove' }}</th></tr></thead>
-                <tbody>{% for s in streams %}<tr>
-                    <td class="ps-3">{{ s.index }}</td><td>{{ s.type }}</td><td>{{ s.language_name }}{% if s.lang_source %} <span class="text-body-secondary" title="Worked out from the track's title">(inferred)</span>{% endif %}</td><td>{{ s.codec }}{% if s.channels and s.type == 'audio' %} {{ s.channels }}ch{% endif %}</td>
-                    <td class="small text-body-secondary">{{ ['default' if s.default, 'forced' if s.forced, 'SDH' if s.hearing_impaired, 'commentary' if s.comment, s.title]|select|join(', ') }}</td>
-                    <td class="pe-3 text-end">{% if s.remove %}<input type="checkbox" class="form-check-input" data-remove="{{ s.index }}" aria-label="Remove track {{ s.index }}" checked{% if s.locked %} disabled title="MKV cannot hold this subtitle format"{% endif %}>{% elif s.state == 'removed' %}<span class="badge bg-danger">removed</span>{% elif s.state == 'dropped' %}<span class="badge bg-secondary" title="MKV cannot hold this subtitle format">dropped</span>{% else %}<span class="text-body-secondary">keep</span>{% endif %}</td></tr>{% endfor %}</tbody>
-            </table></div>
-        </div>
-        {% endif %}
-
-        <div class="panel p-3 p-md-4 mb-3" id="actions">
-            {% if decided and rec.migration_status == 'pending' %}
-                <button type="button" class="btn btn-outline-secondary" data-act="undo">Undo this decision</button>
-            {% elif r.can_approve or r.needs_name %}
-                <div class="d-flex flex-wrap gap-2 align-items-center">
-                    <button type="button" class="btn btn-success btn-lg" id="act-approve" data-act="approve">{{ 'Skip this duplicate' if r.kind == 'skip_duplicate' else 'Approve' if not r.needs_name else 'Approve with this name' }} <kbd class="ms-1">a</kbd></button>
-                    <button type="button" class="btn btn-outline-danger" id="act-reject" data-act="reject">Reject <kbd class="ms-1">r</kbd></button>
-                    <a class="btn btn-outline-secondary" id="act-skip" href="{{ url_for('library_review', group=group, after=rec.id, q=f.q, root=f.root, conf=f.conf) }}">Skip <kbd class="ms-1">s</kbd></a>
-                </div>
-            {% elif r.override_allowed %}
-                <p class="mb-2"><strong>Played it and it is fine?</strong> Say what you tested and approve it as it is. Otherwise reject it.</p>
-                <div class="row g-2"><div class="col-md-8"><label for="testNote" class="visually-hidden">What you tested</label><input class="form-control" id="testNote" placeholder="Played it start to end on the TV, no problems" maxlength="500"></div>
-                    <div class="col-md-4 d-flex gap-2"><button type="button" class="btn btn-success" data-act="tested">I tested it</button><button type="button" class="btn btn-outline-danger" data-act="reject">Reject</button></div></div>
-            {% elif r.group not in ('done', 'queued') %}
-                <div class="d-flex gap-2"><button type="button" class="btn btn-outline-danger" data-act="reject">Reject</button><a class="btn btn-outline-secondary" href="{{ url_for('library_review', group=group, after=rec.id) }}">Skip</a></div>
-            {% else %}<p class="text-body-secondary mb-0">Nothing to decide here.</p>{% endif %}
-            {% if rec.approval_status != 'approved' and rec.migration_status == 'pending' %}
-            <div class="d-flex flex-wrap gap-2 align-items-center border-top pt-3 mt-3">
-                {% if rec.missing_since %}<button type="button" class="btn btn-sm btn-outline-secondary" data-act="forget" title="Removes this record from the list. No file is touched.">Take off the list</button>{% endif %}
-                <button type="button" class="btn btn-sm btn-outline-secondary" data-act="exclude-folder" title="Later scans skip this folder, and the undecided files from it leave the list. No file is touched.">Leave this folder out of scans</button>
-            </div>
-            {% endif %}
-        </div>
     </div>
 
     <div class="col-lg-5">
+        <h6 class="text-body-secondary text-uppercase small mb-2">About this file</h6>
         <div class="panel p-3 mb-3">
             <h6>Playback in Jellyfin</h6>
             <div class="d-flex flex-wrap gap-1">{% for b in r.badges %}<span class="badge bg-{{ 'success' if b.ok else 'warning text-dark' }}" title="{{ b.hint }}">{{ b.label }}</span>{% endfor %}</div>
         </div>
-        {% if quality and (quality.mbps or quality.vmaf or quality.vmaf_skipped or quality.to_gb) %}
-        <div class="panel p-3 mb-3" id="qualityFacts">
-            <h6>Picture quality</h6>
-            <dl class="row small mb-0">
+        <div class="panel p-3 mb-3" id="qualityPanel"><h6 class="mb-2">Picture quality{% if r.held %} <a class="small fw-normal ms-2" href="{{ url_for('library_list', status='below_minimum') }}">All files below minimum quality</a>{% endif %}</h6>{{ quality_detail(rec.id, quality_state, can('library')) }}
+            {% if quality and (quality.mbps or quality.vmaf or quality.vmaf_skipped or quality.to_gb) %}
+            <dl class="row small mb-0 mt-3 pt-3 border-top" id="qualityFacts">
                 {% if quality.mbps %}<dt class="col-5 text-body-secondary fw-normal">Video bitrate</dt><dd class="col-7">{{ quality.mbps }} Mbps <span class="text-body-secondary">(ceiling {{ quality.ceiling_mbps }} Mbps for {{ {'2160': '4K', '1080': '1080p', '720': '720p', 'sd': 'smaller'}[quality.picture] }}; compressed only above {{ quality.trigger_mbps }})</span></dd>{% endif %}
                 <dt class="col-5 text-body-secondary fw-normal">Compression</dt><dd class="col-7">{% if quality.to_gb %}{{ 'Would compress' if quality.action == 'compress' else 'Needs a look before compressing' }}: {{ quality.from_gb }} GB to about {{ quality.to_gb }} GB <span class="text-body-secondary">({{ quality.profile }})</span>{% else %}Left as it is <span class="text-body-secondary">({{ quality.profile }})</span>{% endif %}</dd>
                 {% if quality.vmaf %}<dt class="col-5 text-body-secondary fw-normal">Quality score (VMAF)</dt><dd class="col-7"><span class="badge bg-{{ 'success' if quality.vmaf.floor is none or quality.vmaf.mean >= quality.vmaf.floor else 'warning text-dark' }}">{{ quality.vmaf.mean }}</span> <span class="text-body-secondary">worst part {{ quality.vmaf.min }}{% if quality.vmaf.floor %}, floor {{ quality.vmaf.floor }}{% endif %}</span></dd>
                 {% elif quality.vmaf_skipped %}<dt class="col-5 text-body-secondary fw-normal">Quality score (VMAF)</dt><dd class="col-7 text-body-secondary">Not scored: {{ quality.vmaf_skipped }}</dd>{% endif %}
             </dl>
+            {% endif %}
         </div>
-        {% endif %}
         <div class="panel p-3 mb-3">
             <h6>About the file</h6>
             <dl class="row small mb-0">
@@ -141,19 +144,30 @@
                 <dt class="col-5 text-body-secondary fw-normal">{{ label }}</dt><dd class="col-7" style="overflow-wrap: anywhere;">{{ value }}</dd>{% endfor %}
             </dl>
         </div>
-        {% if preview_info %}
-        <div class="panel p-3 mb-3"><h6>Preview the compression</h6>
-            <p class="small mb-2">{{ preview_info.summary }}</p>
-            <div class="d-flex flex-wrap gap-2">
-                {% if preview_info.latest %}<a class="btn btn-sm btn-outline-primary" href="{{ url_for('library_preview', preview_id=preview_info.latest.id) }}">{{ 'Watch the latest preview' if preview_info.latest.status == 'ready' else 'Latest preview (' ~ preview_info.latest.status ~ ')' }}</a>{% endif %}
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="makePreview">Make a preview</button>
-            </div>
-        </div>
-        {% endif %}
-        {% if siblings %}
-        <div class="panel p-3 mb-3"><h6>Identical copies</h6>
-            <ul class="small mb-0 list-unstyled">{% for s in siblings %}<li><a href="{{ url_for('library_record', record_id=s.id, group=group) }}">{{ s.root_name }}: {{ s.relative_path }}</a><span class="text-body-secondary"> &middot; {{ s.duplicate_status.replace('Exact duplicate ', '') }}{% if s.approval_status != 'pending' %} &middot; {{ s.approval_status }}{% endif %}</span></li>{% endfor %}</ul></div>
-        {% endif %}
+    </div>
+</div>
+
+{% set n_audio = streams|selectattr('type', 'equalto', 'audio')|list|length %}{% set n_subs = streams|selectattr('type', 'equalto', 'subtitle')|list|length %}
+{% set first_tab = 'tracks' if streams else 'history' %}
+<ul class="nav nav-tabs mt-2 mb-3 media-subnav" id="recordTabs" role="tablist">
+    {% if streams %}<li class="nav-item" role="presentation"><button class="nav-link active" id="tab-tracks" data-bs-toggle="tab" data-bs-target="#pane-tracks" type="button" role="tab" aria-controls="pane-tracks" aria-selected="true">Tracks <span class="badge bg-secondary">{{ n_audio }} audio, {{ n_subs }} subtitle{{ '' if n_subs == 1 else 's' }}</span></button></li>{% endif %}
+    <li class="nav-item" role="presentation"><button class="nav-link{% if first_tab == 'history' %} active{% endif %}" id="tab-history" data-bs-toggle="tab" data-bs-target="#pane-history" type="button" role="tab" aria-controls="pane-history" aria-selected="{{ 'true' if first_tab == 'history' else 'false' }}">Why and history{% if file_jobs %} <span class="badge bg-secondary">{{ file_jobs|length }} job{{ '' if file_jobs|length == 1 else 's' }}</span>{% endif %}</button></li>
+    {% if siblings or preview_info %}<li class="nav-item" role="presentation"><button class="nav-link" id="tab-copies" data-bs-toggle="tab" data-bs-target="#pane-copies" type="button" role="tab" aria-controls="pane-copies" aria-selected="false">Copies and preview{% if siblings %} <span class="badge bg-secondary">{{ siblings|length }}</span>{% endif %}</button></li>{% endif %}
+</ul>
+<div class="tab-content" id="recordPanes">
+    {% if streams %}<div class="tab-pane show active" id="pane-tracks" role="tabpanel" aria-labelledby="tab-tracks" tabindex="0">
+    <div class="panel p-0 overflow-hidden mb-3">
+        <div class="p-3 pb-2"><p class="small text-body-secondary mb-0">{% if not plans and not decided and rec.migration_status == 'pending' %}Every track in the file. Nothing is suggested for removal.{% elif decided or rec.migration_status != 'pending' %}This is what the approved job does with each track{% if chosen_profile %} (conversion profile: {{ chosen_profile.name }}){% endif %}.{% else %}Untick <em>Remove</em> to keep a track anyway. You can keep more than we suggest, never remove more.{% endif %}</p></div>
+        <div class="table-responsive"><table class="table table-sm align-middle mb-0" id="tracks">
+            <thead class="table-light"><tr><th class="ps-3">#</th><th>Type</th><th>Language</th><th>Codec</th><th>Notes</th><th class="pe-3 text-end">{{ 'Result' if streams and streams[0].state else 'Remove' }}</th></tr></thead>
+            <tbody>{% for s in streams %}<tr>
+                <td class="ps-3">{{ s.index }}</td><td>{{ s.type }}</td><td>{{ s.language_name }}{% if s.lang_source %} <span class="text-body-secondary" title="Worked out from the track's title">(inferred)</span>{% endif %}</td><td>{{ s.codec }}{% if s.channels and s.type == 'audio' %} {{ s.channels }}ch{% endif %}</td>
+                <td class="small text-body-secondary">{{ ['default' if s.default, 'forced' if s.forced, 'SDH' if s.hearing_impaired, 'commentary' if s.comment, s.title]|select|join(', ') }}</td>
+                <td class="pe-3 text-end">{% if s.remove %}<input type="checkbox" class="form-check-input" data-remove="{{ s.index }}" aria-label="Remove track {{ s.index }}" checked{% if s.locked %} disabled title="MKV cannot hold this subtitle format"{% endif %}>{% elif s.state == 'removed' %}<span class="badge bg-danger">removed</span>{% elif s.state == 'dropped' %}<span class="badge bg-secondary" title="MKV cannot hold this subtitle format">dropped</span>{% else %}<span class="text-body-secondary">keep</span>{% endif %}</td></tr>{% endfor %}</tbody>
+        </table></div>
+    </div>
+    </div>{% endif %}
+    <div class="tab-pane{% if first_tab == 'history' %} show active{% endif %}" id="pane-history" role="tabpanel" aria-labelledby="tab-history" tabindex="0"><div class="row g-3"><div class="col-lg-6">
         {% if reasons or warnings or errors %}
         <div class="panel p-3 mb-3"><h6>Why</h6>
             <ul class="small mb-0">{% for c, t in reasons %}<li><span class="text-body-secondary">{{ c }}:</span> {{ t }}</li>{% endfor %}{% for w in warnings if not reasons %}<li>{{ w }}</li>{% endfor %}{% for e in errors %}<li class="text-danger">{{ e }}</li>{% endfor %}</ul></div>
@@ -165,9 +179,21 @@
                     <span class="badge bg-{{ jc }}{% if jc == 'warning' %} text-dark{% endif %}">{{ {'done': 'completed', 'needs_review': 'needs you'}.get(j.status, j.status) }}</span>
                     <span class="text-body-secondary">{{ (j.finished_at or j.created_at)[:16] }}</span></li>{% endfor %}</ul></div>
         {% endif %}
+    </div><div class="col-lg-6">
         <div class="panel p-3 mb-3"><h6>History</h6>
             <ul class="small list-unstyled mb-0">{% for e in events %}<li>{{ e.created_at[:16] }} &middot; <strong>{{ e.detail.by if e.detail and e.detail.get('by') else e.actor }}</strong> &middot; {{ e.event_type.replace('_', ' ') }}{% if e.detail and e.detail.get('note') %} &middot; {{ e.detail.note }}{% endif %}</li>{% else %}<li class="text-body-secondary">Nothing yet.</li>{% endfor %}</ul></div>
-    </div>
+    </div></div></div>
+    {% if siblings or preview_info %}<div class="tab-pane" id="pane-copies" role="tabpanel" aria-labelledby="tab-copies" tabindex="0">
+        {% if preview_info %}
+        <div class="panel p-3 mb-3"><h6>Preview the compression</h6>
+            <p class="small mb-0">{{ preview_info.summary }} Use <strong>Make a preview</strong> at the top of the page.</p>
+        </div>
+        {% endif %}
+        {% if siblings %}
+        <div class="panel p-3 mb-3"><h6>Identical copies</h6>
+            <ul class="small mb-0 list-unstyled">{% for s in siblings %}<li><a href="{{ url_for('library_record', record_id=s.id, group=group) }}">{{ s.root_name }}: {{ s.relative_path }}</a><span class="text-body-secondary"> &middot; {{ s.duplicate_status.replace('Exact duplicate ', '') }}{% if s.approval_status != 'pending' %} &middot; {{ s.approval_status }}{% endif %}</span></li>{% endfor %}</ul></div>
+        {% endif %}
+    </div>{% endif %}
 </div>
 {% endblock %}
 
@@ -200,16 +226,16 @@
         }
         if (kind === 'redo') { body.dest_removed = !!document.getElementById('redoDest')?.checked; body.rescan = !!document.getElementById('redoScan')?.checked; }
         if (kind === 'tested') body.note = document.getElementById('testNote')?.value || '';
-        document.querySelectorAll('#actions button, #redo button').forEach((b) => { b.disabled = true; });
+        document.querySelectorAll('[data-act]').forEach((b) => { b.disabled = true; });
         const data = await libraryPost(`/api/library/record/${id}/${kind}`, body);
-        if (!data.ok) { librarySay(data.message || 'Failed.', false); document.querySelectorAll('#actions button, #redo button').forEach((b) => { b.disabled = false; }); return; }
+        if (!data.ok) { librarySay(data.message || 'Failed.', false); document.querySelectorAll('[data-act]').forEach((b) => { b.disabled = false; }); return; }
         if (['undo', 'requeue', 'redo', 'keep-source', 'release-source'].includes(kind)) { location.reload(); return; }
         next();
     }
     document.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => act(b.dataset.act)));
     document.addEventListener('keydown', (e) => {
         if (e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) return;
-        const map = { a: 'act-approve', r: 'act-reject', s: 'act-skip' };
+        const map = { a: 'act-approve', r: 'act-reject', s: 'act-skip', n: 'navNext', p: 'navPrev' };
         if (map[e.key]) { document.getElementById(map[e.key])?.click(); e.preventDefault(); }
         if (e.key === 'e') { const n = document.getElementById('newName'); if (n) { n.focus(); n.select(); e.preventDefault(); } }
     });

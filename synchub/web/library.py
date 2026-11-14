@@ -291,7 +291,22 @@ def register(app):
             file_jobs = links.jobs_for_record(conn, record_id)
         preview_info = {"summary": size.summary or "The size rules would compress this file; watch a short window first.", "latest": previews.describe(latest) if latest else None} if size.profile is not None else None
         data.update(preview_info=preview_info, cfg=cfg, profiles=all_profiles, chosen_profile=chosen, rename_to=rc.rename_path(rec, cfg), source_cleanup=cleanup.source_days())
-        return render_template("library_record.html", group=group, group_title=rc.GROUP_TITLES.get(group, group), events=events, siblings=siblings, f=_filters(), file_jobs=file_jobs, back_status=back_status, back_title=back_title, **data)
+        return render_template("library_record.html", group=group, group_titles=rc.GROUP_TITLES, group_title=rc.GROUP_TITLES.get(group, group), events=events, siblings=siblings, f=_filters(), file_jobs=file_jobs, back_status=back_status, back_title=back_title, **data)
+
+    @app.route("/library/record/<int:record_id>/step/<direction>")
+    def library_record_step(record_id, direction):
+        """Previous or Next on a record page: the neighbour in the list the record was opened from, with the same filters. Worked out on the click, so opening
+        a record does not have to sort the whole library. Past either end, or when the record has left that list, it goes back to the list."""
+        f = _filters()
+        keep = {k: x for k, x in f.items() if x}
+        status = status_of(request.args.get("status") or request.args.get("group"))
+        with db.connection() as conn:
+            cfg = scan.config(conn)
+            ids = [rec["id"] for rec, _ in rows_for_status(conn, rc.classify(conn, cfg, f["q"] or None, f["root"] or None), status, f)]
+        at = ids.index(record_id) + (-1 if direction == "previous" else 1) if record_id in ids else -1
+        if not 0 <= at < len(ids):
+            return redirect(url_for("library_list", status=status, **keep))
+        return redirect(url_for("library_record", record_id=ids[at], status=status, **keep))
 
     # ---- decisions
     def _decide(record_id, action):

@@ -4,6 +4,14 @@
 
 Migration 046 is new. Update SyncHub. Workers need no update for the navigation and Poor quality changes; the share fix below is on the workers.
 
+**A cleaner record page (no migration).** Everything it showed is still there; the order is new.
+- **The decision is at the top.** Approve, Reject and Skip (or Undo, or *I tested it*) sit right under the name, with **Make a preview** beside them. On a phone the bar stays on screen while you scroll.
+- **Header.** The name once, then small labels for the list the file is in, the confidence, Held, the type, the picture size and the file size. One path line; the network path opens on a tap.
+- **Previous and Next** (keys `p` and `n`) walk the list the record was opened from, with its filters. Past the last file they return to the list.
+- **Two columns:** *What SyncHub suggests* (the plan, how to handle it, the file name, redo) and *About this file* (playback, picture quality with the bitrate and score in the same card, the file's facts).
+- **Tabs below:** **Tracks** (now listed for every file, not only when a removal is suggested), **Why and history** (reasons, jobs for this file, history) and **Copies and preview**.
+- Fixed: the conversion profile picker ran off the side of its card on a phone.
+
 **One Library list page with a Status filter (no migration).**
 - **`/library/queue` is one page for every list.** The row of queue buttons (Ready to approve, Suggested changes, ... Rejected) is replaced by a **Status** filter beside Share, Confidence, Type, Folder and Quality check. Choosing a status opens that list at once and shows how many files each holds. **All files** is new: everything the Library knows, with a Status column.
 - **Below minimum quality is one of the statuses** (`?status=below_minimum`) instead of its own page. Its rows keep Accept as is, Request better copy, Show releases and Rename and move only. The settings, Stop all checks, Clear quality results and the AI test sit in a closed **Quality tools** panel on that status (they also stay on Options).
