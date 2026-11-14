@@ -377,3 +377,53 @@ def test_a_list_can_be_filtered_by_type_and_where_the_film_sits_and_shows_the_qu
     assert "Quality check" in page and "Not checked" in row_for(page, alone) and "loose" in row_for(page, loose_a) and "loose" not in row_for(page, alone).replace("Loose", "")
     assert "TV episode" in row_for(page, show) and "Loose films" in client.get("/library/fragment").get_data(as_text=True)
     assert "what=loose" in client.get("/library/fragment").get_data(as_text=True)         # the box links to the list each loose film is in
+
+
+# ---------------------------------------------------------------- one list page with a Status filter
+def test_one_page_lists_every_status_and_the_old_addresses_show_the_same_page(client, conn):
+    shares(conn)
+    ready = add(conn, root="tfiles", rel="Downloads/Heat.mkv", name="Heat (1995).mkv")
+    weak = add(conn, root="tfiles", rel="Downloads/Weak.mkv", name="Weak (2000).mkv", naming_label="Medium", reasons=[("naming", "Naming confidence 0.7: No release year")])
+    ids = lambda url: set(int(i) for i in re.findall(r'data-record="(\d+)"', client.get(url).get_data(as_text=True)))      # noqa: E731
+    assert ids("/library/queue") == {ready, weak} == ids("/library/queue?status=all") == ids("/library/queue?status=nonsense")
+    assert ids("/library/queue?status=ready") == {ready} == ids("/library/queue/ready") and ids("/library/queue?status=suggested") == {weak}
+    assert ids("/library/queue?status=all&q=heat") == {ready} and ids("/library/queue?status=all&conf=medium") == {weak}
+    page = client.get("/library/queue?status=ready").get_data(as_text=True)
+    assert '<option value="ready" selected>Ready to approve (1)</option>' in page and '<option value="all">All files (2)</option>' in page
+    assert '<option value="below_minimum">Below minimum quality (0)</option>' in page
+    assert "nav-pills" not in page                                                         # the row of queue buttons is gone: the Status filter replaces it
+    assert "Review one by one" in page and "Approve together" in page
+    everything = client.get("/library/queue?status=all").get_data(as_text=True)
+    assert "Review one by one" not in everything and "Approve together" not in everything  # those work through one queue
+    assert "<th>Status</th>" in everything and 'href="/library/queue?status=suggested"' in row_for(everything, weak)
+    assert f'/library/record/{ready}?group=ready&amp;status=all' in everything             # the record remembers the list it was opened from
+    record = client.get(f"/library/record/{ready}?group=ready&status=all&q=heat").get_data(as_text=True)
+    assert 'href="/library/queue?status=all&amp;q=heat' in record and "All files</a>" in record
+
+
+def test_below_minimum_quality_is_a_status_with_its_tools_folded_away(client, conn):
+    from synchub import quality
+    shares(conn)
+    small = add(conn, root="tfiles", rel="Movies/Old (1980)/Old (1980).mkv", name="Old (1980).mkv")
+    fine = add(conn, root="tfiles", rel="Movies/Heat (1995)/Heat (1995).mkv", name="Heat (1995).mkv")
+    conn.execute("UPDATE library_file SET resolution = '720x480' WHERE id = ?", (small,))
+    conn.execute("UPDATE library_file SET resolution = '1920x1080' WHERE id = ?", (fine,))
+    conn.commit()
+    assert [d["id"] for d in quality._flagged(conn)] == [small]
+    ids = lambda url: set(int(i) for i in re.findall(r'data-record="(\d+)"', client.get(url).get_data(as_text=True)))      # noqa: E731
+    assert ids("/library/queue?status=below_minimum") == {small} == ids("/library/quality") and ids("/library/queue?status=below_minimum&q=heat") == set()
+    page = client.get("/library/queue?status=below_minimum").get_data(as_text=True)
+    assert '<option value="below_minimum" selected>Below minimum quality (1)</option>' in page and "Held: low quality" in page and "Accept as is" in page
+    assert '<details class="panel p-3 mb-3" id="qualityTools">' in page and 'id="qSave"' in page and 'id="aiTest"' in page     # settings and the AI test, closed until opened
+    assert "/api/library/quality/accept" in page and "/api/library/quality/settings" in page          # the buttons and the settings are wired on this page
+    assert 'id="qualityTools"' not in client.get("/library/queue?status=ready").get_data(as_text=True)
+    overview = client.get("/library").get_data(as_text=True)
+    assert 'href="/library/queue?status=below_minimum"' in overview and 'href="/library/queue?status=ready"' in overview       # Open list applies the filter
+    assert ids("/library/queue?status=all") == {small, fine}                              # a held file is still part of everything
+    assert "Below minimum quality</a>" in row_for(client.get("/library/queue?status=all").get_data(as_text=True), small)
+
+
+def test_a_show_page_opens_its_files_in_the_list(client, conn):
+    media_id = conn.execute("INSERT INTO media (kind, title, tmdb_id, tvdb_id) VALUES ('show', 'Cold Case', '4', '5')").lastrowid
+    conn.commit()
+    assert 'href="/library/queue?status=all&amp;q=Cold+Case&amp;type=tv"' in client.get(f"/show/{media_id}").get_data(as_text=True)

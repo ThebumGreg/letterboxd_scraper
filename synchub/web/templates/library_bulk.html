@@ -4,7 +4,7 @@
 
 {% block content %}
 {% include "_media_nav.html" %}
-<p><a href="{{ url_for('library_queue', group=group, q=f.q, root=f.root) }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> {{ title }}</a></p>
+<p><a href="{{ url_for('library_list', status=group, q=f.q, root=f.root) }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> {{ title }}</a></p>
 <h2 class="mb-2">Approve together</h2>
 <div id="libMessage" class="alert d-none" role="status"></div>
 {% if not candidates %}
@@ -32,7 +32,7 @@
     <p class="small text-body-secondary mb-3">Approving records a decision and nothing else: no file is copied or changed. Each approval can be undone on the list.</p>
     <div class="d-flex gap-2">
         <button type="button" class="btn btn-success" id="confirmBulk">Approve {{ candidates }} file{{ 's' if candidates != 1 }}</button>
-        <a class="btn btn-outline-secondary" href="{{ url_for('library_queue', group=group, q=f.q, root=f.root) }}">Cancel</a>
+        <a class="btn btn-outline-secondary" href="{{ url_for('library_list', status=group, q=f.q, root=f.root) }}">Cancel</a>
     </div>
 </div>
 <h5 class="mb-2">A sample{% if candidates > sample|length %} (the first {{ sample|length }}){% endif %}</h5>
@@ -53,7 +53,7 @@ document.getElementById('confirmBulk')?.addEventListener('click', async (e) => {
     const data = await libraryPost({{ url_for('api_library_bulk', group=group)|tojson }}, { profile_id: {{ (chosen_profile or '')|tojson }}, conf: {{ ('high' if floor == 'high' else 'medium')|tojson }}, q: {{ f.q|tojson }}, root: {{ f.root|tojson }} });
     if (!data.ok) { librarySay(data.message || 'Failed.', false); e.target.disabled = false; return; }
     sessionStorage.setItem('libraryFlash', data.message);
-    location.href = {{ url_for('library_queue', group=group, q=f.q, root=f.root)|tojson }};
+    location.href = {{ url_for('library_list', status=group, q=f.q, root=f.root)|tojson }};
 });
 </script>
 {% endblock %}

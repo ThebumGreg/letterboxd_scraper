@@ -44,22 +44,10 @@ def overview(conn, full=True):
 def register(app):
     @app.route("/library/quality")
     def library_quality_page():
-        """Below minimum quality: files that are too small, scored low or are damaged. Held from conversion; they may only be renamed and moved."""
-        q, root = (request.args.get("q") or "").strip(), (request.args.get("root") or "").strip()
-        page = int(request.args["page"]) if (request.args.get("page") or "").isdigit() and int(request.args["page"]) > 0 else 1
-        with db.connection() as conn:
-            cfg, cache = scan.config(conn), {}
-            total = len(quality._flagged(conn, q or None, root or None))
-            rows = quality.low_quality(conn, PAGE_SIZE, q or None, root or None, (page - 1) * PAGE_SIZE)
-            for d in rows:
-                d["quality_state"] = quality.state_for(conn, d)
-                d["r"] = rc.recommend(d, rc.cfg_for(conn, d, cfg, cache), held=True)
-                d["where"] = d["r"].group                  # held, unless a decision or a problem keeps it on another page (queued, rejected, needs you)
-            data = overview(conn, full=True)
-            roots = [r["name"] for r in storage.list_all(conn)]
-        return render_template("library_quality.html", rows=rows, total=total, page=page, pages=max((total + PAGE_SIZE - 1) // PAGE_SIZE, 1), f={"q": q, "root": root}, roots=roots,
-                               qual=data, counts=data["counts"], values=data["values"], flag_below=data["flag_below"], version=data["version"], waiting=data["waiting"], recent=data["recent"],
-                               titles=rc.GROUP_TITLES)
+        """Below minimum quality: files that are too small, scored low or are damaged. Held from conversion; they may only be renamed and moved.
+        It is the Library list page with that status chosen (/library/queue?status=below_minimum); this older address keeps working."""
+        from synchub.web import library
+        return library.queue_view(library.STATUS_BELOW)
 
     @app.route("/library/quality/export")
     def library_quality_export():

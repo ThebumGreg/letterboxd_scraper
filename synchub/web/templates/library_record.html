@@ -8,7 +8,7 @@
 {% block content %}
 {% include "_media_nav.html" %}
 {% set decided = rec.approval_status != 'pending' %}
-<p class="mb-2"><a href="{{ url_for('library_queue', group=group, q=f.q, root=f.root, conf=f.conf) }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> {{ group_title }}</a>
+<p class="mb-2"><a href="{{ url_for('library_list', status=back_status, q=f.q, root=f.root, conf=f.conf, what=f.what, type=f.type, quality=f.quality) }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> {{ back_title }}</a>
     <span class="text-body-secondary small ms-2">record #{{ rec.id }}</span></p>
 <h2 class="mb-1" style="overflow-wrap: anywhere;">{{ final_name or rec.file_name }}</h2>
 <div class="small text-body-secondary mb-3" style="overflow-wrap: anywhere;">{{ rec.root_name }}: {{ rec.relative_path }}{% if rec.source_path and rec.source_path != rec.root_name ~ ':' ~ rec.relative_path %} &middot; <span title="How a computer on the network opens it">{{ rec.source_path }}</span>{% endif %}</div>
@@ -30,7 +30,7 @@
             {% elif r.path %}<p class="small mb-0">It will be placed at <code>{{ r.path }}</code> in the destination share.</p>{% endif %}
         </div>
 
-        <div class="panel p-3 mb-3" id="qualityPanel"><h6 class="mb-2">Picture quality{% if r.held %} <a class="small fw-normal ms-2" href="{{ url_for('library_quality_page') }}">All files below minimum quality</a>{% endif %}</h6>{{ quality_detail(rec.id, quality_state, can('library')) }}</div>
+        <div class="panel p-3 mb-3" id="qualityPanel"><h6 class="mb-2">Picture quality{% if r.held %} <a class="small fw-normal ms-2" href="{{ url_for('library_list', status='below_minimum') }}">All files below minimum quality</a>{% endif %}</h6>{{ quality_detail(rec.id, quality_state, can('library')) }}</div>
 
         {% if (r.can_approve or r.needs_name) and r.kind not in ('skip_duplicate',) and not decided %}
         <div class="panel p-3 p-md-4 mb-3" id="handling">

@@ -1,26 +1,30 @@
-<!-- synchub/web/templates/library_queue.html -->
+<!-- synchub/web/templates/library_queue.html: every Library list on one page. The Status filter chooses the queue, Below minimum quality or everything. -->
 {% extends "base.html" %}
+{% from "_quality.html" import size_text, quality_detail, quality_script with context %}
 {% block title %}Library: {{ title }}{% endblock %}
 
 {% block content %}
 {% include "_media_nav.html" %}
 {% set filter_args = {'q': f.q, 'root': f.root, 'conf': f.conf, 'what': f.what, 'type': f.type, 'quality': f.quality} %}
-<nav aria-label="Queues" class="mb-3"><ul class="nav nav-pills flex-wrap gap-1">
-    <li class="nav-item"><a class="nav-link" href="{{ url_for('library_page') }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> Library</a></li>
-    {% for g in groups %}<li class="nav-item"><a class="nav-link{% if g == group %} active{% endif %}" href="{{ url_for('library_queue', group=g, q=f.q, root=f.root) }}">{{ titles[g] }} <span class="badge bg-secondary ms-1">{{ table[g].total }}</span></a></li>{% endfor %}
-</ul></nav>
+{% set filtered = f.q or f.root or f.conf or f.what or f.type or f.quality %}
+{% set below = status == 'below_minimum' %}
+<p class="mb-2"><a href="{{ url_for('library_page') }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> Library</a></p>
 
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
-    <div><h2 class="mb-1">{{ title }}</h2><p class="text-body-secondary mb-0">{{ hint }}</p></div>
+    <div><h2 class="mb-1">{{ title }} <small class="text-body-secondary fs-6">{{ total }} file{{ '' if total == 1 else 's' }}</small></h2><p class="text-body-secondary mb-0">{{ hint }}</p>
+    {% if below %}<p class="small mb-0 mt-2"><strong>These files are held from conversion.</strong> Nothing in them is changed: no re-encode, remux or track removal. <em>Rename and move only</em> still puts one in the right folder. Ask for a better copy, or <em>Accept as is</em> to send the file back to its normal queue. The limits are a picture under {{ values.quality_min_height }}p (0 means no minimum) or a check under {{ flag_below }} out of 100.</p>{% endif %}</div>
     <div class="d-flex flex-wrap gap-2">
-        {% if total and group not in ('done', 'queued') %}<a class="btn btn-success" href="{{ url_for('library_review', group=group, **filter_args) }}">Review one by one</a>{% endif %}
-        <a class="btn btn-outline-secondary" href="{{ url_for('library_export', group=group, q=f.q, root=f.root) }}"><i class="bi bi-download" aria-hidden="true"></i> Export this list</a>
+        {% if group and total and group not in ('done', 'queued') %}<a class="btn btn-success" href="{{ url_for('library_review', group=group, **filter_args) }}">Review one by one</a>{% endif %}
+        {% if below %}<a class="btn btn-outline-secondary" href="{{ url_for('library_quality_export', q=f.q, root=f.root) }}"><i class="bi bi-download" aria-hidden="true"></i> Export this list</a>
+        {% elif group %}<a class="btn btn-outline-secondary" href="{{ url_for('library_export', group=group, q=f.q, root=f.root) }}"><i class="bi bi-download" aria-hidden="true"></i> Export this list</a>{% endif %}
     </div>
 </div>
 <div id="libMessage" class="alert d-none" role="status"></div>
 
-<form class="row g-2 mb-3" method="get" action="{{ url_for('library_queue', group=group) }}">
-    <div class="col-md-4"><label for="fq" class="visually-hidden">Search</label><input class="form-control" id="fq" name="q" value="{{ f.q }}" placeholder="Search a name or a path, for example a show"></div>
+<form class="row g-2 mb-3" method="get" action="{{ url_for('library_list') }}" id="queueFilters">
+    <div class="col-12 col-md-4"><label for="fstatus" class="visually-hidden">Status</label>
+        <select class="form-select fw-semibold" id="fstatus" name="status" aria-label="Status">{% for key, label, n in statuses %}<option value="{{ key }}"{% if key == status %} selected{% endif %}>{{ label }} ({{ n }})</option>{% endfor %}</select></div>
+    <div class="col-12 col-md-8"><label for="fq" class="visually-hidden">Search</label><input class="form-control" id="fq" name="q" value="{{ f.q }}" placeholder="Search a name or a path, for example a show"></div>
     <div class="col-6 col-md-2"><label for="froot" class="visually-hidden">Share</label>
         <select class="form-select" id="froot" name="root"><option value="">Every share</option>{% for r in roots %}<option value="{{ r }}"{% if r == f.root %} selected{% endif %}>{{ r }}</option>{% endfor %}</select></div>
     <div class="col-6 col-md-2"><label for="fconf" class="visually-hidden">Confidence</label>
@@ -29,12 +33,12 @@
         <select class="form-select" id="ftype" name="type">{% for k, label in [('', 'Movies and shows'), ('movies', 'Movies only'), ('tv', 'TV shows only')] %}<option value="{{ k }}"{% if k == f.type %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
     <div class="col-6 col-md-2"><label for="fwhat" class="visually-hidden">Where it sits</label>
         <select class="form-select" id="fwhat" name="what"><option value="">Any folder</option><option value="loose"{% if f.what == 'loose' %} selected{% endif %}>Loose in a shared folder</option><option value="alone"{% if f.what == 'alone' %} selected{% endif %}>In its own folder</option></select></div>
-    <div class="col-6 col-md-3"><label for="fquality" class="visually-hidden">Quality check</label>
+    <div class="col-6 col-md-2"><label for="fquality" class="visually-hidden">Quality check</label>
         <select class="form-select" id="fquality" name="quality"><option value="">Any quality check</option>{% for k, label in [('waiting', 'Queued or checking'), ('unchecked', 'Not checked'), ('good', 'Good or OK'), ('poor', 'Poor, bad or low'), ('small', 'Too small')] %}<option value="{{ k }}"{% if k == f.quality %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-    <div class="col-6 col-md-3 d-flex gap-2"><button class="btn btn-outline-info" type="submit">Filter</button>{% if f.q or f.root or f.conf or f.what or f.type or f.quality %}<a class="btn btn-outline-secondary" href="{{ url_for('library_queue', group=group) }}">Clear</a>{% endif %}</div>
+    <div class="col-6 col-md-2 d-flex gap-2"><button class="btn btn-outline-info" type="submit">Filter</button>{% if filtered %}<a class="btn btn-outline-secondary" href="{{ url_for('library_list', status=status) }}">Clear</a>{% endif %}</div>
 </form>
 
-{% if high_medium and not (f.type or f.quality) %}
+{% if group and high_medium and not (f.type or f.quality) %}
 <div class="panel p-3 mb-3 d-flex flex-wrap align-items-center gap-2">
     <div class="me-auto small"><strong>Approve together.</strong> Low-confidence files and duplicates are never included: they are decided one at a time.</div>
     <a class="btn btn-success btn-sm" href="{{ url_for('library_bulk', group=group, conf='medium', q=f.q, root=f.root, what=f.what) }}">Approve {{ high_medium }} (high and medium)&hellip;</a>
@@ -42,27 +46,61 @@
 </div>
 {% endif %}
 
+{% if below %}
+<details class="panel p-3 mb-3" id="qualityTools">
+    <summary class="fw-semibold">Quality tools <span class="small fw-normal text-body-secondary">settings, stop or clear the checks, the AI test &middot; {{ quality_counts.waiting }} waiting, {{ quality_counts.running }} being checked</span></summary>
+    <div class="mt-3">
+        {% include "_quality_settings.html" %}
+        {% if ai %}{% include "_quality_ai.html" %}{% endif %}
+        {% if waiting %}<h6>Waiting or running</h6>
+        {% for w in waiting %}<div class="small"><a href="{{ url_for('library_record', record_id=w.file_id) }}" class="text-decoration-none">{{ w.file_name }}</a> · {{ w.status }} · {{ w.source }}{% if w.message %} · {{ w.message }}{% endif %}</div>{% endfor %}{% endif %}
+        {% if recent %}<h6 class="mt-3">Latest results</h6>
+        {% for x in recent %}<div class="small"><a href="{{ url_for('library_record', record_id=x.file_id) }}" class="text-decoration-none">{{ x.file_name }}</a> · {{ x.message }}</div>{% endfor %}{% endif %}
+    </div>
+</details>
+
+<div class="panel p-3 p-md-4 mb-4" id="belowList">
+    {% for row in rows %}
+    {% set d = row.rec %}{% set r = row.r %}
+    <div class="{% if not loop.first %}border-top pt-2 mt-2{% endif %}" data-record="{{ d.id }}">
+        <div class="d-flex flex-wrap justify-content-between gap-2">
+            <strong style="overflow-wrap: anywhere;"><a class="text-decoration-none" href="{{ url_for('library_record', record_id=d.id, status=status, **filter_args) }}">{{ d.approved_name or d.recommended_name or d.file_name }}</a>
+                <span class="badge bg-danger ms-1">Held: low quality</span>
+                {% if r.group != 'held' %}<span class="badge bg-secondary ms-1" title="This file is also on another list because of its decision or state.">{{ titles.get(r.group, r.group) }}</span>{% endif %}</strong>
+            <span class="text-body-secondary small">{{ d.resolution or '' }} · {{ size_text(d.size_bytes) }}{% if row.quality and row.quality.result and row.quality.current and row.quality.result.score is not none %} · score {{ row.quality.result.score|round|int }}{% endif %}</span>
+        </div>
+        <div class="small text-body-secondary" style="overflow-wrap: anywhere;">{{ d.root_name }}: {{ d.relative_path }}</div>
+        <div class="small mt-1"><i class="bi bi-folder2-open" aria-hidden="true"></i> {{ r.headline }}{% if r.steps %}<span class="text-body-secondary"> — {{ r.steps[0] }}</span>{% endif %}
+            {% if r.can_approve %}<button type="button" class="btn btn-sm btn-success py-0 ms-1" data-organize="{{ d.id }}" title="Renames inside its share or copies it unchanged to the right folder. The picture, audio and tracks are never touched.">Rename and move only</button>{% endif %}</div>
+        {{ quality_detail(d.id, row.quality, true) }}
+    </div>
+    {% else %}
+    <p class="small text-body-secondary mb-0">Nothing is flagged{% if filtered %} with this filter{% endif %}. {% if not quality_counts.waiting and not quality_counts.running and not recent %}No file has been checked yet: press <em>Check quality</em> on a film's page, or turn on the Library pass in Quality tools above.{% endif %}</p>
+    {% endfor %}
+</div>
+{% else %}
 <div class="panel p-0 overflow-hidden mb-3">
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0" id="queueTable">
-            <thead class="table-light"><tr><th class="ps-4">File</th><th>What we suggest</th><th>Quality check</th><th>Confidence</th><th class="text-end">Size</th><th class="pe-4 text-end">Decide</th></tr></thead>
+            <thead class="table-light"><tr><th class="ps-4">File</th>{% if status == 'all' %}<th>Status</th>{% endif %}<th style="min-width: 220px;">What we suggest</th><th>Quality check</th><th>Confidence</th><th class="text-end">Size</th><th class="pe-4 text-end">Decide</th></tr></thead>
             <tbody>
             {% set ns = namespace(show=None, season=None) %}
             {% for row in rows %}
                 {% set rec = row.rec %}{% set r = row.r %}
                 {% if rec.media_type == 'TV Episode' and (rec.show_title != ns.show or rec.season_number != ns.season) %}
                     {% set ns.show = rec.show_title %}{% set ns.season = rec.season_number %}
-                    <tr class="table-secondary"><td colspan="6" class="ps-4 small fw-bold">{{ rec.show_title }}{% if rec.season_number is not none %} &middot; Season {{ rec.season_number }}{% endif %}</td></tr>
+                    <tr class="table-active"><td colspan="{{ 7 if status == 'all' else 6 }}" class="ps-4 small fw-bold">{{ rec.show_title }}{% if rec.season_number is not none %} &middot; Season {{ rec.season_number }}{% endif %}</td></tr>
                 {% elif rec.media_type != 'TV Episode' and ns.show is not none %}{% set ns.show = None %}{% set ns.season = None %}{% endif %}
                 <tr data-record="{{ rec.id }}">
                     <td class="ps-4" style="max-width: 360px;">
-                        <a class="fw-bold text-decoration-none" href="{{ url_for('library_record', record_id=rec.id, group=group, q=f.q, root=f.root, conf=f.conf) }}">{{ rec.approved_name or rec.recommended_name or rec.file_name }}</a>
+                        <a class="fw-bold text-decoration-none" href="{{ url_for('library_record', record_id=rec.id, group=r.group, status=status, **filter_args) }}">{{ rec.approved_name or rec.recommended_name or rec.file_name }}</a>
                         <div class="small text-body-secondary text-truncate" title="{{ rec.source_path }}">{{ rec.root_name }}: {{ rec.relative_path }}</div>
                         {% if rec.missing_since %}<span class="badge bg-warning text-dark">not found any more</span>{% endif %}
                         {% if rec.duplicate_group %}<span class="badge bg-info text-dark">duplicate</span>{% endif %}
                         <span class="badge bg-{{ 'primary' if rec.media_type == 'TV Episode' else 'secondary' }}">{{ 'TV episode' if rec.media_type == 'TV Episode' else 'Movie' if (rec.media_type or '').startswith('Movie') else (rec.media_type or 'Other') }}</span>
                         {% if row.loose %}<span class="badge bg-warning text-dark" title="Shares its folder with other films, or sits loose in a library folder">loose</span>{% endif %}
                     </td>
+                    {% if status == 'all' %}<td class="small"><a class="badge bg-{{ 'danger' if r.group == 'held' else 'secondary' }} text-decoration-none" href="{{ url_for('library_list', status='below_minimum' if r.group == 'held' else r.group) }}">{{ titles.get(r.group, r.group) }}</a></td>{% endif %}
                     <td class="small">{{ r.headline }}{% if r.steps and r.steps != ['Copy as is'] %}<div class="text-body-secondary">{{ r.steps[:2]|join('; ') }}{% if r.steps|length > 2 %}; &hellip;{% endif %}</div>{% endif %}</td>
                     <td class="small text-nowrap">{% set q = row.quality %}{% if q %}<span class="badge bg-{{ 'danger' if q.low else 'primary' if q.check and q.check.status in ('queued', 'running') else 'success' if q.result and q.result.grade in ('good', 'ok') else 'secondary' }}">{{ q.label }}{% if q.result and q.result.score is not none and q.current %} {{ q.result.score|round|int }}{% endif %}</span>{% else %}-{% endif %}</td>
                     <td><span class="badge bg-{{ {'high': 'success', 'medium': 'warning', 'low': 'danger'}[r.confidence] }}{% if r.confidence == 'medium' %} text-dark{% endif %}">{{ r.confidence }}</span></td>
@@ -72,20 +110,21 @@
                             <button type="button" class="btn btn-sm btn-outline-secondary" data-decide="undo" data-id="{{ rec.id }}">Undo</button>
                         {% elif r.can_approve and not r.needs_name %}
                             <button type="button" class="btn btn-sm btn-success" data-decide="approve" data-id="{{ rec.id }}">{{ 'Skip this copy' if r.kind == 'skip_duplicate' else 'Approve' }}</button>
-                        {% else %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('library_record', record_id=rec.id, group=group, q=f.q, root=f.root, conf=f.conf) }}">Open</a>{% endif %}
+                        {% else %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('library_record', record_id=rec.id, group=r.group, status=status, **filter_args) }}">Open</a>{% endif %}
                     </td>
                 </tr>
             {% else %}
-                <tr><td colspan="6" class="text-center text-body-secondary py-4">Nothing here{% if f.q or f.root or f.conf %} with this filter{% endif %}.</td></tr>
+                <tr><td colspan="{{ 7 if status == 'all' else 6 }}" class="text-center text-body-secondary py-4">Nothing here{% if filtered %} with this filter{% endif %}.</td></tr>
             {% endfor %}
             </tbody>
         </table>
     </div>
 </div>
+{% endif %}
 
 {% if pages > 1 %}
-<nav aria-label="Pages"><ul class="pagination justify-content-center">
-    {% for n in range(1, pages + 1) %}<li class="page-item{% if n == page %} active{% endif %}"><a class="page-link" href="{{ url_for('library_queue', group=group, page=n, q=f.q, root=f.root, conf=f.conf) }}">{{ n }}</a></li>{% endfor %}
+<nav aria-label="Pages"><ul class="pagination justify-content-center flex-wrap">
+    {% for n in range(1, pages + 1) %}<li class="page-item{% if n == page %} active{% endif %}"><a class="page-link" href="{{ url_for('library_list', status=status, page=n, **filter_args) }}">{{ n }}</a></li>{% endfor %}
 </ul></nav>
 <p class="text-center small text-body-secondary">{{ total }} files in this list</p>
 {% endif %}
@@ -93,7 +132,18 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/library.js') }}"></script>
+{% if status == 'below_minimum' %}{{ quality_script() }}{% include "_quality_tools_scripts.html" %}{% endif %}
 <script>
+// Choosing a status opens that list at once; the other filters wait for the Filter button.
+document.getElementById('fstatus').addEventListener('change', (e) => e.target.form.submit());
+document.addEventListener('click', async (e) => {
+    const organize = e.target.closest('[data-organize]');
+    if (!organize) return;
+    organize.disabled = true;
+    const data = await libraryPost(`/api/library/record/${organize.dataset.organize}/approve`, {});
+    librarySay(data.message || (data.ok ? 'Done.' : 'Failed.'), !!data.ok);
+    if (data.ok) setTimeout(() => location.reload(), 900); else organize.disabled = false;
+});
 (() => { try { const flash = sessionStorage.getItem('libraryFlash'); if (flash) { librarySay(flash, true); sessionStorage.removeItem('libraryFlash'); } } catch (e) { /* no storage: no message */ } })();
 document.addEventListener('click', async (e) => {
     const button = e.target.closest('[data-decide]');
