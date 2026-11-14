@@ -469,7 +469,56 @@ def someone_watching(client=None):
 def library_step(client=None):
     """One turn of the Library clean-up passes: queues a few unchecked files (and, when its own pass is on, a few whole-file damage checks), but not while anyone is
     watching, not while paused and not when a pass is off. Returns how many were queued."""
-    return _pass("quality", client) + _pass("damage", client)
+    return _pass("quality", client) + _pass("damage", client) + _after_convert_pass(client)
+
+
+def after_convert(conn=None):
+    """Is a file checked again once a conversion has replaced it? On unless switched off in Options."""
+    return settings.get("quality_after_convert", conn=conn) != "0"
+
+
+def converted_due(conn, limit, days=14):
+    """Recently converted files that have no current check yet. A converted file is the record itself when it replaced the original in place (once the Library has
+    scanned the new file: its size matches what the conversion wrote), or the record found at the new path when the conversion wrote to another folder or share."""
+    rows = conn.execute("SELECT * FROM library_file WHERE migration_status = ? AND migrated_how = 'convert' AND migration_finished_at > datetime('now', ?) AND migration_destination_path IS NOT NULL "
+                        "ORDER BY migration_finished_at DESC LIMIT 200", (v.MIGRATION_COMPLETED, f"-{int(days)} days")).fetchall()
+    out = []
+    for row in rows:
+        rec = dict(row)
+        root, _, rel = (rec["migration_destination_path"] or "").partition(":")
+        if root == rec["root_name"] and v.clean_relative(rel).casefold() == v.clean_relative(rec["relative_path"]).casefold():
+            target = rec if rec.get("migrated_dest_size") and rec["size_bytes"] == rec["migrated_dest_size"] else None
+        else:
+            found = conn.execute("SELECT * FROM library_file WHERE root_name = ? AND lower(relative_path) = lower(?) AND missing_since IS NULL", (root, v.clean_relative(rel))).fetchone()
+            target = dict(found) if found else None
+        if not target or target["analysis_status"] != "completed" or not target.get("video_codec") or below_minimum(target, min_height(conn)):
+            continue
+        busy = conn.execute("SELECT 1 FROM quality_check WHERE library_file_id = ? AND mode = 'quality' AND (status IN ('queued', 'running') OR (status = 'done' AND size_bytes = ? AND mtime = ? AND check_version = ?)) LIMIT 1",
+                            (target["id"], target["size_bytes"], target["mtime"], CHECK_VERSION)).fetchone()
+        if not busy:
+            out.append(target)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _after_convert_pass(client=None):
+    """Checks the files a conversion just made, so the Record page can show the quality of the result next to the original's. Needs no Library pass; stops while paused or watched."""
+    with db.connection() as conn:
+        if paused(conn) or not after_convert(conn):
+            return 0
+        room = CLEANUP_IN_FLIGHT - waiting_cleanup(conn, "quality")
+    if room <= 0 or someone_watching(client):
+        return 0
+    queued = 0
+    with db.connection() as conn:
+        for rec in converted_due(conn, room):
+            try:
+                request(conn, rec["id"], by="clean-up", source="cleanup", mode="quality")
+                queued += 1
+            except (QualityError, jobs.JobError) as exc:
+                logger.info(f"[quality] skipped {rec['file_name']}: {exc}")
+    return queued
 
 
 def _pass(mode, client=None):
@@ -707,6 +756,50 @@ def find_movie_files(conn, media_id):
             if r["id"] not in found and _title_key(_stem(r["relative_path"])).startswith(wanted):
                 found[r["id"]] = dict(r, found_by="name")
     return sorted(found.values(), key=lambda r: -(r["size_bytes"] or 0)), unmapped
+
+
+def _score_line(check):
+    return {"score": round(check["score"]), "grade": check["grade"], "when": (check.get("finished_at") or check.get("created_at") or "")[:10]} if check and check.get("score") is not None else None
+
+
+def compare(conn, rec):
+    """Before and after a conversion, for the Record page: [{label, size_bytes, score, grade, when, where}] or []. The file as it was comes from the last finished check made
+    while it was a different file (same record, other size or time); a conversion that wrote to another folder or share has the original and the new file as two records."""
+    rows = []
+    now = latest(conn, rec["id"], done_only=True)
+    older = conn.execute("SELECT * FROM quality_check WHERE library_file_id = ? AND mode = 'quality' AND status = 'done' AND score IS NOT NULL AND (size_bytes != ? OR mtime != ?) ORDER BY id DESC LIMIT 1",
+                         (rec["id"], rec["size_bytes"], rec["mtime"])).fetchone()
+    if older is not None and rec.get("migration_status") == v.MIGRATION_COMPLETED and rec.get("migrated_how") == "convert":
+        old = _present(older)
+        rows.append({"label": "Before the conversion", "size_bytes": old["size_bytes"], "where": "this record, earlier file", **(_score_line(old) or {})})
+        rows.append({"label": "Now (converted)", "size_bytes": rec["size_bytes"], "current": is_current(now, rec), "where": "this record", **(_score_line(now) or {})})
+    return rows
+
+
+def related(conn, rec):
+    """The other files of the same film that this one came from or became: [{kind, id, root, path, size_bytes, score}]. Kinds: original, converted, extra version."""
+    out = []
+    dest = rec.get("migration_destination_path") or ""
+    if rec.get("migration_status") == v.MIGRATION_COMPLETED and ":" in dest and rec.get("migrated_how") in ("copy", "convert"):
+        root, rel = dest.split(":", 1)
+        if not (root == rec.get("root_name") and v.clean_relative(rel).casefold() == v.clean_relative(rec["relative_path"]).casefold()):
+            other = conn.execute("SELECT * FROM library_file WHERE root_name = ? AND lower(relative_path) = lower(?)", (root, v.clean_relative(rel))).fetchone()
+            if other:
+                out.append((rec.get("migrated_how") == "convert" and "converted copy" or "copy", dict(other)))
+    here = f"{rec.get('root_name')}:{rec.get('relative_path')}"
+    for row in conn.execute("SELECT * FROM library_file WHERE lower(migration_destination_path) = lower(?) AND migration_status = ? AND id != ?", (here, v.MIGRATION_COMPLETED, rec["id"])):
+        out.append(("original", dict(row)))
+    if not extra_versions.is_version_file(rec["file_name"]):
+        stem = os.path.dirname(rec["relative_path"])
+        for row in conn.execute("SELECT * FROM library_file WHERE root_name = ? AND missing_since IS NULL AND id != ? AND relative_path LIKE ?", (rec["root_name"], rec["id"], (stem + "/%") if stem else "%")):
+            r = dict(row)
+            if os.path.dirname(r["relative_path"]) == stem and extra_versions.is_version_file(r["file_name"]):
+                out.append(("extra version", r))
+    result = []
+    for kind, r in out:
+        c = latest(conn, r["id"], done_only=True)
+        result.append({"kind": kind, "id": r["id"], "root": r["root_name"], "path": r["relative_path"], "size_bytes": r["size_bytes"], "score": _score_line(c) if c and is_current(c, r) else None})
+    return result
 
 
 def role_of(conn, rec):

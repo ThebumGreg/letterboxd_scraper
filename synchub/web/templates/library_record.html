@@ -123,6 +123,16 @@
             <h6>Playback in Jellyfin</h6>
             <div class="d-flex flex-wrap gap-1">{% for b in r.badges %}<span class="badge bg-{{ 'success' if b.ok else 'warning text-dark' }}" title="{{ b.hint }}">{{ b.label }}</span>{% endfor %}</div>
         </div>
+        {% if compare or related %}
+        <div class="panel p-3 mb-3" id="relatedFiles">
+            {% if compare %}<h6 class="mb-2">Before and after the conversion</h6>
+            <div class="table-responsive"><table class="table table-sm align-middle small mb-3"><thead><tr><th>File</th><th class="text-end">Size</th><th>Quality check</th></tr></thead><tbody>
+            {% for c in compare %}<tr><td>{{ c.label }}</td><td class="text-end text-nowrap">{{ (c.size_bytes / 1073741824)|round(2) }} GB</td><td>{% if c.score is defined %}<span class="badge bg-{{ 'success' if c.grade in ('good', 'ok') else 'secondary' }}">{{ c.score }} {{ c.grade }}</span> <span class="text-body-secondary">{{ c.when }}</span>{% elif c.current is defined %}<span class="text-body-secondary">Not checked yet: it is queued after a conversion unless switched off in Options</span>{% else %}-{% endif %}</td></tr>{% endfor %}
+            </tbody></table></div>{% endif %}
+            {% if related %}<h6 class="mb-2">Related files <small class="text-body-secondary fw-normal">other files of this film that this one came from or became</small></h6>
+            <ul class="small list-unstyled mb-0">{% for x in related %}<li class="mb-1"><span class="badge bg-secondary">{{ x.kind }}</span> <a href="{{ url_for('library_record', record_id=x.id, group=group) }}">{{ x.root }}: {{ x.path }}</a> <span class="text-body-secondary">{{ (x.size_bytes / 1073741824)|round(2) }} GB{% if x.score %} &middot; score {{ x.score.score }} {{ x.score.grade }}{% endif %}</span></li>{% endfor %}</ul>{% endif %}
+        </div>
+        {% endif %}
         <div class="panel p-3 mb-3" id="qualityPanel"><h6 class="mb-2">Picture quality{% if r.held %} <a class="small fw-normal ms-2" href="{{ url_for('library_list', status='below_minimum') }}">All files below minimum quality</a>{% endif %}</h6>{{ quality_detail(rec.id, quality_state, can('library')) }}
             {% if quality and (quality.mbps or quality.vmaf or quality.vmaf_skipped or quality.to_gb) %}
             <dl class="row small mb-0 mt-3 pt-3 border-top" id="qualityFacts">
