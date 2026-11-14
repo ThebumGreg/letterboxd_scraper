@@ -4,6 +4,22 @@
 
 Migration 046 is new. Update SyncHub. Workers need no update for the navigation and Poor quality changes; the share fix below is on the workers.
 
+**A cleaner record page (no migration).** Everything it showed is still there; the order is new.
+- **The decision is at the top.** Approve, Reject and Skip (or Undo, or *I tested it*) sit right under the name, with **Make a preview** beside them. On a phone the bar stays on screen while you scroll.
+- **Header.** The name once, then small labels for the list the file is in, the confidence, Held, the type, the picture size and the file size. One path line; the network path opens on a tap.
+- **Previous and Next** (keys `p` and `n`) walk the list the record was opened from, with its filters. Past the last file they return to the list.
+- **Two columns:** *What SyncHub suggests* (the plan, how to handle it, the file name, redo) and *About this file* (playback, picture quality with the bitrate and score in the same card, the file's facts).
+- **Tabs below:** **Tracks** (now listed for every file, not only when a removal is suggested), **Why and history** (reasons, jobs for this file, history) and **Copies and preview**.
+- Fixed: the conversion profile picker ran off the side of its card on a phone.
+
+**One Library list page with a Status filter (no migration).**
+- **`/library/queue` is one page for every list.** The row of queue buttons (Ready to approve, Suggested changes, ... Rejected) is replaced by a **Status** filter beside Share, Confidence, Type, Folder and Quality check. Choosing a status opens that list at once and shows how many files each holds. **All files** is new: everything the Library knows, with a Status column.
+- **Below minimum quality is one of the statuses** (`?status=below_minimum`) instead of its own page. Its rows keep Accept as is, Request better copy, Show releases and Rename and move only. The settings, Stop all checks, Clear quality results and the AI test sit in a closed **Quality tools** panel on that status (they also stay on Options).
+- **The Library cards are unchanged**; **Open list** opens the page with that status chosen, and the loose-file buttons add the folder filter.
+- **Old addresses keep working:** `/library/queue/<name>` and `/library/quality` show the same page with that status.
+- **A record's back link returns to the list it was opened from** with every filter kept (before, only the search, share and confidence came along).
+- **Show page: Open records** lists the show's files (All files, searched by the show's name, TV only).
+
 **Getting from one page to the file's record, and Poor quality on the movie and show pages (migration 046).**
 - **Jobs open the file's record.** A job's details have an **Open record** button, and each row of the Jobs list has a small **Record** link. It works for conversions, hiding or deleting an original, quality and damage checks, previews, Radarr/Sonarr replacements and extra copies. A scan, a test copy and a worker's own work have no single file, so no button.
 - **A record lists its jobs** ("Jobs for this file"), and each one opens that job on the Jobs page (`/jobs?job=12`).
@@ -15,6 +31,7 @@ Migration 046 is new. Update SyncHub. Workers need no update for the navigation 
 - **The Media tabs stay on the queue, record, review and preview pages**, so Jobs, Workers and the rest are one tap away.
 - Fixed: on the Jobs tab opened by its own address, a job's details and its Cancel, Retry and Decide buttons did nothing until the Workers tab had been opened.
 - Not run against a live Sonarr from here (the calls are Sonarr v3's documented `history/series`, `history/failed/{id}` and `release`); each step says what happened.
+
 **Media share no longer drops overnight (no migration).** Update workers (re-run `setup-worker.sh`, or add the option by hand on a hand-made setup).
 - **CIFS shares are mounted with `noserverino`** in the generated /etc/fstab lines and the example. With an Unraid user share the server's file ids change, and the share's top folder then fails with "Stale file handle" while the marker file still reads fine. On a hand-made worker add `,noserverino` to the share's line in /etc/fstab, then `sudo umount -f -l <mount point>; sudo mount <mount point>` and restart the worker container.
 - **The mount watchdog** writes the real error ("Stale file handle") to its log, restarts the worker container after any remount (the container's bind mount can keep pointing at the old mount), also checks that the container can list each share, and retries a share every 10 minutes instead of every minute once three remounts in a row did not help.

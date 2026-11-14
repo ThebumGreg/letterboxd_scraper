@@ -239,3 +239,9 @@
     .stack-sm tbody td[data-label]::before { content: attr(data-label) ": "; color: var(--bs-secondary-color); }
     .stack-sm tbody td[colspan] { text-align: center !important; }
 }
+
+/* Record page: the decision bar stays in reach on a phone while the rest scrolls under it. */
+@media (max-width: 991.98px) {
+    .record-actions { position: sticky; top: 0; z-index: 10; box-shadow: 0 0.5rem 0.75rem -0.5rem rgba(0, 0, 0, 0.6); }
+    .record-actions .btn-lg { --bs-btn-padding-y: 0.375rem; --bs-btn-padding-x: 0.75rem; --bs-btn-font-size: 1rem; }
+}

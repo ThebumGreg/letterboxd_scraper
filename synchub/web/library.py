@@ -141,12 +141,71 @@ def _quality_matches(state, wanted):
     return (state["low"] and not state["small"]) or grade in ("poor", "bad")
 
 
+# The one list page (/library/queue): every queue of the Library card, the files below minimum quality and everything at once, chosen with the Status filter.
+STATUS_BELOW, STATUS_ALL = "below_minimum", "all"
+STATUS_TITLES = {STATUS_BELOW: "Below minimum quality", STATUS_ALL: "All files"}
+STATUS_HINTS = {STATUS_ALL: "Every file the Library knows, whatever its state. Choose a status to work through one list."}
+
+
+def status_of(value):
+    """The list a `status` value names; anything unknown shows everything."""
+    value = (value or "").strip()
+    if value in rc.GROUP_ORDER or value == STATUS_BELOW:
+        return value
+    return STATUS_BELOW if value in (rc.G_HELD, "quality") else STATUS_ALL
+
+
+def rows_for_status(conn, classified, status, f):
+    """The (record, recommendation) rows of one status after the filters. Below minimum quality is the flagged list (worst first), which is not one of the
+    classifier's groups: a flagged file somebody approved or rejected sits in another group and is still listed here."""
+    if status == STATUS_BELOW:
+        order = {d["id"]: n for n, d in enumerate(quality._flagged(conn))}
+        rows = sorted(((rec, r) for rec, r in classified if rec["id"] in order), key=lambda row: order[row[0]["id"]])
+        return rows_in_queue(conn, rows, None, f)
+    return rows_in_queue(conn, classified, None if status == STATUS_ALL else status, f)
+
+
+def queue_view(status):
+    """The list page for one status, with the filters and the page number from the address."""
+    from synchub.web import quality_web
+    f = _filters()
+    page = max(int(request.args.get("page") or 1), 1) if (request.args.get("page") or "1").isdigit() else 1
+    group = status if status in rc.GROUP_ORDER else None
+    below = status == STATUS_BELOW
+    with db.connection() as conn:
+        cfg = scan.config(conn)
+        everything = rc.classify(conn, cfg, f["q"] or None, f["root"] or None)
+        all_rows = rows_for_status(conn, everything, status, f)
+        table = rc.counts(conn, cfg, everything)
+        flagged = len(quality._flagged(conn, f["q"] or None, f["root"] or None))
+        candidates = [(rec, r) for rec, r in all_rows if r.can_approve and not r.needs_name and r.confidence in (rc.HIGH, rc.MEDIUM) and r.kind not in ("keep_duplicate", "skip_duplicate")] if group else []
+        roots = [r["name"] for r in storage.list_all(conn)]
+    shown = all_rows[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
+    extra = {}
+    with db.connection() as conn:
+        loose_set = loose.loose_ids(conn)
+        quality_state = {rec["id"]: quality.state_for(conn, rec) for rec, _ in shown if below or str(rec.get("media_type") or "").startswith("Movie")}
+        if below:
+            from synchub import ai_test
+            data = quality_web.overview(conn, full=True)
+            extra = {"qual": data, "ai": ai_test.overview(conn), "values": data["values"], "flag_below": data["flag_below"], "version": data["version"],
+                     "waiting": data["waiting"], "recent": data["recent"], "quality_counts": data["counts"]}
+    rows = [{"rec": rec, "r": r, "size": _size(rec["size_bytes"]) if not rec.get("unreadable_reason") else None, "loose": rec["id"] in loose_set,
+             "quality": quality_state.get(rec["id"])} for rec, r in shown]
+    statuses = [(STATUS_ALL, "All files", len(everything))] + [(g, rc.GROUP_TITLES[g], table[g]["total"]) for g in rc.GROUP_ORDER] + [(STATUS_BELOW, STATUS_TITLES[STATUS_BELOW], flagged)]
+    return render_template("library_queue.html", status=status, group=group, title=STATUS_TITLES.get(status) or rc.GROUP_TITLES[status],
+                           hint=STATUS_HINTS.get(status) or rc.GROUP_HINTS.get(rc.G_HELD if below else status, ""), rows=rows, total=len(all_rows), page=page,
+                           pages=max((len(all_rows) + PAGE_SIZE - 1) // PAGE_SIZE, 1), f=f, statuses=statuses, titles=rc.GROUP_TITLES, table=table,
+                           high=sum(1 for _, r in candidates if r.confidence == rc.HIGH), high_medium=len(candidates), roots=roots, **extra)
+
+
 def queue_rows(conn, cfg, group, f):
     return rows_in_queue(conn, rc.classify(conn, cfg, f["q"] or None, f["root"] or None), group, f)
 
 
 def rows_in_queue(conn, classified, group, f):
-    rows = [(rec, r) for rec, r in classified if r.group == group]
+    """The rows of one group (every row when `group` is None), narrowed by the filters."""
+    rows = [(rec, r) for rec, r in classified if group is None or r.group == group]
     floor = CONFIDENCE_FLOORS.get(f["conf"])
     if floor:
         rows = [(rec, r) for rec, r in rows if r.confidence == floor]
@@ -178,28 +237,17 @@ def register(app):
         return render_template("_library_live.html", **data)
 
     # ---- the queues
+    @app.route("/library/queue")
+    def library_list():
+        """Every Library list on one page: `?status=` chooses the queue, Below minimum quality or everything."""
+        return queue_view(status_of(request.args.get("status")))
+
     @app.route("/library/queue/<group>")
     def library_queue(group):
+        """The older address of one queue; it shows the same page with that status chosen."""
         if group not in rc.GROUP_ORDER:
             return redirect(url_for("library_page"))
-        f = _filters()
-        page = max(int(request.args.get("page") or 1), 1) if (request.args.get("page") or "1").isdigit() else 1
-        with db.connection() as conn:
-            cfg = scan.config(conn)
-            everything = rc.classify(conn, cfg, f["q"] or None, f["root"] or None)
-            all_rows = rows_in_queue(conn, everything, group, f)
-            table = rc.counts(conn, cfg, everything)
-            candidates = [(rec, r) for rec, r in all_rows if r.can_approve and not r.needs_name and r.confidence in (rc.HIGH, rc.MEDIUM) and r.kind not in ("keep_duplicate", "skip_duplicate")]
-            roots = [r["name"] for r in storage.list_all(conn)]
-        shown = all_rows[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
-        with db.connection() as conn:
-            loose_set = loose.loose_ids(conn)
-            quality_state = {rec["id"]: quality.state_for(conn, rec) for rec, _ in shown if str(rec.get("media_type") or "").startswith("Movie")}
-        rows = [{"rec": rec, "r": r, "size": _size(rec["size_bytes"]) if not rec.get("unreadable_reason") else None, "loose": rec["id"] in loose_set,
-                 "quality": quality_state.get(rec["id"])} for rec, r in shown]
-        return render_template("library_queue.html", group=group, title=rc.GROUP_TITLES[group], hint=rc.GROUP_HINTS[group], rows=rows, total=len(all_rows), page=page,
-                               pages=max((len(all_rows) + PAGE_SIZE - 1) // PAGE_SIZE, 1), f=f, counts=table[group], groups=rc.GROUP_ORDER, titles=rc.GROUP_TITLES, table=table,
-                               high=sum(1 for _, r in candidates if r.confidence == rc.HIGH), high_medium=len(candidates), roots=roots)
+        return queue_view(group)
 
     @app.route("/library/review/<group>")
     def library_review(group):
@@ -232,6 +280,8 @@ def register(app):
             chosen = migrate.profile_for(conn, rec)
             all_profiles = profiles.all_profiles(conn)
         group = request.args.get("group") or rcm.group
+        back_status = status_of(request.args.get("status") or group)             # the list the person came from: its filters come along in `f`
+        back_title = STATUS_TITLES.get(back_status) or rc.GROUP_TITLES.get(back_status, back_status)
         data = describe_record(rec, rcm, cfg, chosen)
         with db.connection() as conn:
             size = size_policy.decide(rec, previews.plans_of(rec, approved=rec["approval_status"] == v.APPROVAL_APPROVED), size_policy.load(conn, chosen))
@@ -241,7 +291,22 @@ def register(app):
             file_jobs = links.jobs_for_record(conn, record_id)
         preview_info = {"summary": size.summary or "The size rules would compress this file; watch a short window first.", "latest": previews.describe(latest) if latest else None} if size.profile is not None else None
         data.update(preview_info=preview_info, cfg=cfg, profiles=all_profiles, chosen_profile=chosen, rename_to=rc.rename_path(rec, cfg), source_cleanup=cleanup.source_days())
-        return render_template("library_record.html", group=group, group_title=rc.GROUP_TITLES.get(group, group), events=events, siblings=siblings, f=_filters(), file_jobs=file_jobs, **data)
+        return render_template("library_record.html", group=group, group_titles=rc.GROUP_TITLES, group_title=rc.GROUP_TITLES.get(group, group), events=events, siblings=siblings, f=_filters(), file_jobs=file_jobs, back_status=back_status, back_title=back_title, **data)
+
+    @app.route("/library/record/<int:record_id>/step/<direction>")
+    def library_record_step(record_id, direction):
+        """Previous or Next on a record page: the neighbour in the list the record was opened from, with the same filters. Worked out on the click, so opening
+        a record does not have to sort the whole library. Past either end, or when the record has left that list, it goes back to the list."""
+        f = _filters()
+        keep = {k: x for k, x in f.items() if x}
+        status = status_of(request.args.get("status") or request.args.get("group"))
+        with db.connection() as conn:
+            cfg = scan.config(conn)
+            ids = [rec["id"] for rec, _ in rows_for_status(conn, rc.classify(conn, cfg, f["q"] or None, f["root"] or None), status, f)]
+        at = ids.index(record_id) + (-1 if direction == "previous" else 1) if record_id in ids else -1
+        if not 0 <= at < len(ids):
+            return redirect(url_for("library_list", status=status, **keep))
+        return redirect(url_for("library_record", record_id=ids[at], status=status, **keep))
 
     # ---- decisions
     def _decide(record_id, action):

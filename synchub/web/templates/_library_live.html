@@ -21,7 +21,7 @@
             <p class="small text-body-secondary flex-grow-1">{{ g.hint }}</p>
             <div class="d-flex gap-2 flex-wrap">
                 {% if g.total and g.key not in ('done', 'queued') %}<a class="btn btn-sm btn-success" href="{{ url_for('library_review', group=g.key) }}">Review one by one</a>{% endif %}
-                <a class="btn btn-sm btn-outline-secondary{% if not g.total %} disabled{% endif %}" href="{{ url_for('library_queue', group=g.key) }}"{% if not g.total %} aria-disabled="true" tabindex="-1"{% endif %}>Open list</a>
+                <a class="btn btn-sm btn-outline-secondary{% if not g.total %} disabled{% endif %}" href="{{ url_for('library_list', status=g.key) }}"{% if not g.total %} aria-disabled="true" tabindex="-1"{% endif %}>Open list</a>
                 {% if g.key == 'needs' and missing_count %}<button type="button" class="btn btn-sm btn-outline-danger" data-forget-missing="{{ missing_count }}" title="Removes the records of files that are gone from their share. No file is touched.">Clear {{ missing_count }} missing</button>{% endif %}
             </div>
         </div>
@@ -36,7 +36,7 @@
             </div>
             <p class="small text-body-secondary flex-grow-1">Films that share a folder with other films, or sit loose in a library folder. Open the list they are in: Approving their suggested move puts each in its own Title (Year) folder inside the same library folder (Old Movies stays Old Movies), then Jellyfin is told.</p>
             <div class="d-flex gap-2 flex-wrap">
-                {% for key, title, n in loose_by_group %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('library_queue', group=key, what='loose') }}">{{ title }} ({{ n }})</a>{% else %}<span class="small text-body-secondary">None waiting.</span>{% endfor %}
+                {% for key, title, n in loose_by_group %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('library_list', status=key, what='loose') }}">{{ title }} ({{ n }})</a>{% else %}<span class="small text-body-secondary">None waiting.</span>{% endfor %}
             </div>
         </div>
     </div>
@@ -54,7 +54,7 @@
             </div>
             <p class="small text-body-secondary flex-grow-1">Too small, scored low or damaged. These files are held: never converted, but they can still be renamed and moved. Ask for a better copy or accept them as they are.</p>
             <div class="d-flex gap-2 flex-wrap">
-                <a class="btn btn-sm btn-outline-secondary{% if not quality_box.low %} disabled{% endif %}" href="{{ url_for('library_quality_page') }}"{% if not quality_box.low %} aria-disabled="true" tabindex="-1"{% endif %}>Open list</a>
+                <a class="btn btn-sm btn-outline-secondary{% if not quality_box.low %} disabled{% endif %}" href="{{ url_for('library_list', status='below_minimum') }}"{% if not quality_box.low %} aria-disabled="true" tabindex="-1"{% endif %}>Open list</a>
             </div>
         </div>
     </div>

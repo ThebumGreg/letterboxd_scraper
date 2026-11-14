@@ -111,7 +111,10 @@ class Rig:
 
     def joblog(self, job_id):
         for folder in (self.work / "jobs").glob(f"{job_id}-*"):
-            return [json.loads(line) for line in (folder / "job.log").read_text().splitlines()]
+            try:                                         # the folder is made before the first line is written, and a line can be half written
+                return [json.loads(line) for line in (folder / "job.log").read_text().splitlines()]
+            except (OSError, ValueError):
+                return []
         return []
 
     def close(self):

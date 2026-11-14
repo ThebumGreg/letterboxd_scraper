@@ -1,0 +1,66 @@
+{# The quality settings (Save, Reset, Stop all, Clear) and the AI test card: used by the Options tab and by the queue page's Quality tools panel. #}
+<script>
+(() => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const $ = (id) => document.getElementById(id);
+    const value = (id) => $(id).value;
+    const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(body) }).then((r) => r.json().catch(() => ({})));
+    const qSay = (data, fallback) => { const out = $('qSaved'); out.className = 'small ms-2 ' + (data.ok ? 'text-success' : 'text-danger'); out.textContent = data.message || (data.ok ? 'Done.' : fallback); };
+    if ($('qReset')) $('qReset').addEventListener('click', () => { for (const id of ['qSamples', 'qSlice', 'qMin', 'qBelow']) $(id).value = $(id).dataset.recommended; $('qSaved').textContent = 'Recommended numbers filled in. Press Save to keep them.'; $('qSaved').className = 'small ms-2 text-body-secondary'; });
+    for (const [id, url] of [['qStopAll', '/api/library/quality/stop-all'], ['qClear', '/api/library/quality/clear']]) {
+        if ($(id)) $(id).addEventListener('click', async () => {
+            if (!confirm($(id).dataset.confirm)) return;
+            try { qSay(await post(url, {}), 'Failed.'); } catch (e) { qSay({ ok: false }, 'Could not reach the server.'); }
+        });
+    }
+    if ($('qSave')) $('qSave').addEventListener('click', async () => {
+        const out = $('qSaved');
+        const body = { quality_samples: value('qSamples'), quality_slice_seconds: value('qSlice'), quality_flag_below: value('qBelow'), quality_min_height: value('qMin'), quality_on_download: value('qDownload'), quality_scan_library: value('qPass'), quality_scan_order: value('qOrder'), quality_paused: value('qPaused'), quality_damage_pass: value('qDamage'), quality_check_first: value('qFirst') };
+        try {
+            const data = await post('/api/library/quality/settings', body);
+            out.className = 'small ms-2 ' + (data.ok ? 'text-success' : 'text-danger');
+            out.textContent = data.message || (data.ok ? 'Saved.' : 'Failed.');
+        } catch (e) { out.className = 'small ms-2 text-danger'; out.textContent = 'Could not reach the server.'; }
+    });
+    // The AI test card: pick a file, choose Standard / AI / Both, run, and watch the results table.
+    if (!$('aiTest')) return;
+    let picked = null, names = {}, typing = null;
+    $('aiFile').addEventListener('input', () => {
+        clearTimeout(typing);
+        const text = $('aiFile').value.trim();
+        if (names[text]) { picked = names[text]; $('aiPicked').textContent = 'Chosen: ' + text; return; }
+        picked = null; $('aiPicked').textContent = 'No file chosen.';
+        if (text.length < 2) return;
+        typing = setTimeout(async () => {
+            try {
+                const res = await fetch('/api/library/quality/ai/files?q=' + encodeURIComponent(text));
+                const data = await res.json();
+                names = {}; const list = $('aiFiles'); list.textContent = '';
+                (data.files || []).forEach((f) => { names[f.label] = f.id; const o = document.createElement('option'); o.value = f.label; list.appendChild(o); });
+                if (names[$('aiFile').value.trim()]) { picked = names[$('aiFile').value.trim()]; $('aiPicked').textContent = 'Chosen: ' + $('aiFile').value.trim(); }
+            } catch (e) { /* the next keystroke tries again */ }
+        }, 250);
+    });
+    async function refresh() {
+        if (!$('media-pane-options')?.classList.contains('active') || document.hidden) return;            // a hidden tab does not ask
+        try {
+            const res = await fetch('/library/quality/ai');
+            if (res.ok) $('aiResults').innerHTML = await res.text();
+        } catch (e) { /* next time */ }
+    }
+    setInterval(refresh, 5000);
+    $('aiRun').addEventListener('click', async () => {
+        const out = $('aiOut');
+        if (!picked) { out.className = 'small mt-1 text-danger'; out.textContent = 'Choose a file from the list first.'; return; }
+        const mode = document.querySelector('input[name="aiMode"]:checked')?.value || 'standard';
+        $('aiRun').disabled = true;
+        try {
+            const data = await post('/api/library/quality/ai/run', { file_id: picked, mode });
+            out.className = 'small mt-1 ' + (data.ok ? 'text-success' : 'text-danger');
+            out.textContent = data.message || (data.ok ? 'Started.' : 'Failed.');
+            if (data.ok) refresh();
+        } catch (e) { out.className = 'small mt-1 text-danger'; out.textContent = 'Could not reach the server.'; }
+        $('aiRun').disabled = false;
+    });
+})();
+</script>

@@ -109,6 +109,7 @@
                     play_item=go.item_id if go else none) }}
                 {% endif %}
                 <button type="button" class="btn btn-outline-secondary" id="refreshBtn"><i class="bi bi-arrow-repeat"></i> Refresh details</button>
+                {% if can('library') %}<a class="btn btn-outline-secondary" id="openRecordsBtn" href="{{ url_for('library_list', status='all', q=show.title, type='tv') }}" title="This show's files in the Library: every episode file with its status, found by the show's name"><i class="bi bi-file-earmark-text" aria-hidden="true"></i> Open records</a>{% endif %}
                 {{ poor_buttons(poor) }}
             </div>
             <div id="actionResult" class="small mt-2" role="status"></div>
