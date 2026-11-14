@@ -396,6 +396,11 @@ def reconcile_now(tmdb=None, report=lambda message, force=False: None):
         with db.connection() as conn:
             return watchlist.refresh(conn)
 
+    def files_stage():
+        from synchub.library import film_link
+        with db.connection() as conn:
+            return film_link.relink_all(conn)
+
     def state_stage():
         touched, changed = set(), set()
         with db.connection() as conn:
@@ -410,6 +415,10 @@ def reconcile_now(tmdb=None, report=lambda message, force=False: None):
     linked = _stage("Linking episodes", report, link_stage)
     result.update(linked)
     result["watchlists"] = _stage("Updating watchlists", report, watchlist_stage)
+    try:
+        result["files"] = _stage("Linking Library files to films", report, files_stage)
+    except Exception:
+        logger.warning("Could not link Library files to films.", exc_info=True)
     result.update(_stage("Working out statuses", report, state_stage))
     return result
 

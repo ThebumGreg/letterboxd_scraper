@@ -7,6 +7,7 @@ everything it already reported is kept, so only the rest is looked at.
 """
 import fnmatch
 import json
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ from synchub import db, jobs, settings, storage
 from synchub.library import duplicates, findings, store
 from synchub.library import vocab as v
 
+logger = logging.getLogger(__name__)
 RUN_REF = "library_run:"
 MAX_INVENTORY_BATCH, MAX_RECORD_BATCH = 5000, 200
 
@@ -339,6 +341,11 @@ def finish(conn, job, summary=None, now=None):
         for error in walk_errors[:5]:
             bump(conn, run_id, last_walk_error=str(error)[:300])
     groups, changed = duplicates.finish(conn, cfg, run_id, now)
+    try:
+        from synchub.library import film_link
+        film_link.relink_all(conn)               # the saved film-to-file links and the labels follow the new scan
+    except Exception:                            # never let the labels break a scan
+        logger.warning("Could not link Library files to films after the scan.", exc_info=True)
     bump(conn, run_id, groups=groups, refreshed=changed)
     conn.execute("UPDATE library_run SET finished_at = ? WHERE id = ?", (now, run_id))
     return {"groups": groups, "refreshed": changed}
