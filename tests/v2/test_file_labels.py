@@ -339,7 +339,7 @@ def test_the_files_tab_sits_after_library_with_label_pills_and_a_by_film_view(cl
     page = client.get("/library/queue?status=all").get_data(as_text=True)
     nav = page[page.index("media-subnav"):]
     assert nav.index(">Library<") < nav.index(">Files<") < nav.index(">Cleanup<") and 'aria-current="true">Files<' in nav
-    assert 'id="labelPills"' in page and "Sort out unexplained files (2)" in page and "By film" in page
+    assert 'id="labelPills"' in page and "Sort out unexplained films" in page and "By film" in page
     by_film = client.get("/library/queue?status=all&view=film").get_data(as_text=True)
     assert 'id="filmTable"' in by_film and f'data-film="{media_id}"' in by_film and f"/library/sort?media={media_id}" in by_film
     assert "Files</a>" in client.get("/library").get_data(as_text=True)

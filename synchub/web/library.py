@@ -207,7 +207,7 @@ def queue_view(status):
 
 def films_with_many_files(conn, f, page):
     """The By film list: films that have more than one visible file, narrowed by the search and the kind of file. Returns (the page's films, how many films)."""
-    ids = [r["media_id"] for r in conn.execute("SELECT media_id FROM library_file WHERE media_id IS NOT NULL AND missing_since IS NULL AND COALESCE(dup_review, '') != 'aside' "
+    ids = [r["media_id"] for r in conn.execute("SELECT media_id FROM library_file WHERE media_id IS NOT NULL AND episode_id IS NULL AND missing_since IS NULL AND COALESCE(dup_review, '') != 'aside' "
                                                 "GROUP BY media_id HAVING COUNT(*) > 1")]
     wanted = file_labels.ids_for(conn, f["label"]) if f["label"] in file_labels.FILTERS else None
     out = []
@@ -277,7 +277,7 @@ def register(app):
         skip = {int(x) for x in (request.args.get("skip") or "").split(",") if x.isdigit()}
         wanted = request.args.get("media")
         with db.connection() as conn:
-            todo = [r["media_id"] for r in conn.execute("SELECT DISTINCT media_id FROM library_file WHERE file_label = ? AND media_id IS NOT NULL AND missing_since IS NULL AND COALESCE(dup_review, '') != 'aside' ORDER BY media_id", (file_labels.UNEXPLAINED,))]
+            todo = [r["media_id"] for r in conn.execute("SELECT DISTINCT media_id FROM library_file WHERE file_label = ? AND media_id IS NOT NULL AND episode_id IS NULL AND missing_since IS NULL AND COALESCE(dup_review, '') != 'aside' ORDER BY media_id", (file_labels.UNEXPLAINED,))]
             candidates = [int(wanted)] if wanted and wanted.isdigit() else [m for m in todo if m not in skip]
             film = current = None
             files, others, left = [], [], 0
@@ -473,7 +473,10 @@ def register(app):
                 rec = _film_file(conn, record_id)
                 if not rec["media_id"]:
                     return _fail("This file is not linked to a film yet.")
-                conn.execute("UPDATE library_file SET is_main = 0 WHERE media_id = ?", (rec["media_id"],))
+                if rec.get("episode_id") is not None:
+                    conn.execute("UPDATE library_file SET is_main = 0 WHERE episode_id = ?", (rec["episode_id"],))
+                else:
+                    conn.execute("UPDATE library_file SET is_main = 0 WHERE media_id = ? AND episode_id IS NULL", (rec["media_id"],))
                 if data.get("on", True):
                     conn.execute("UPDATE library_file SET is_main = 1 WHERE id = ?", (record_id,))
         except v.LibraryError as exc:
@@ -525,10 +528,18 @@ def register(app):
                 rec = _film_file(conn, record_id)
                 if not rec["media_id"]:
                     raise aside.AsideError("This file is not linked to a film yet. Press Refresh links first.")
-                old = quality.copies(conn, rec["media_id"]).get("main")
+                episode = rec.get("episode_id")
+                if episode is not None:
+                    siblings = [dict(r) for r in conn.execute("SELECT id, is_main, resolution, size_bytes, file_label FROM library_file WHERE episode_id = ? AND missing_since IS NULL AND COALESCE(dup_review, '') != 'aside'", (episode,))]
+                    old = {"id": file_labels.main_id(siblings, {f["id"]: f["file_label"] for f in siblings})} if siblings else None
+                else:
+                    old = quality.copies(conn, rec["media_id"]).get("main")
                 if old is None or old["id"] == record_id:
                     raise aside.AsideError("This file is already the main file.")
-                conn.execute("UPDATE library_file SET is_main = 0 WHERE media_id = ?", (rec["media_id"],))
+                if episode is not None:
+                    conn.execute("UPDATE library_file SET is_main = 0 WHERE episode_id = ?", (episode,))
+                else:
+                    conn.execute("UPDATE library_file SET is_main = 0 WHERE media_id = ? AND episode_id IS NULL", (rec["media_id"],))
                 conn.execute("UPDATE library_file SET is_main = 1 WHERE id = ?", (record_id,))
                 aside.request(conn, old["id"], reason="old_version")
         except (aside.AsideError, v.LibraryError) as exc:
@@ -539,7 +550,7 @@ def register(app):
     def api_library_links_refresh():
         with db.connection() as conn:
             result = film_link.relink_all(conn)
-        return jsonify(ok=True, message=f"Linked {result['files']} file(s) to {result['films']} film(s); {result['with_more_than_one']} film(s) have more than one file.")
+        return jsonify(ok=True, message=f"Linked {result['files']} file(s) to {result['films']} film(s) and {result.get('episodes', 0)} episode file(s); {result['with_more_than_one']} film(s) or episode(s) have more than one file.")
 
     @app.route("/api/library/record/<int:record_id>/<action>", methods=["POST"])
     def api_library_decide(record_id, action):

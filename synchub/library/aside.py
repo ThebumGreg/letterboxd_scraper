@@ -31,6 +31,9 @@ def _busy(conn, record_id):
 
 def _visible_others(conn, rec):
     """The other files of the same film that are still visible (not hidden, not missing)."""
+    if rec.get("episode_id") is not None:
+        return conn.execute("SELECT COUNT(*) FROM library_file WHERE episode_id = ? AND id != ? AND missing_since IS NULL AND COALESCE(dup_review, '') != 'aside'",
+                            (rec["episode_id"], rec["id"])).fetchone()[0]
     if rec.get("media_id"):
         return conn.execute("SELECT COUNT(*) FROM library_file WHERE media_id = ? AND id != ? AND missing_since IS NULL AND COALESCE(dup_review, '') != 'aside'",
                             (rec["media_id"], rec["id"])).fetchone()[0]
@@ -68,10 +71,15 @@ def request(conn, record_id, undo=False, reason=None, now=None):
                 raise AsideError("This file is not linked to a film yet, so SyncHub cannot tell which file replaces it. Press Refresh links first.")
             if rec.get("is_main"):
                 raise AsideError("This is the main file you chose. Choose another main file first.")
-            from synchub import quality
-            main = quality.copies(conn, rec["media_id"]).get("main")
-            if main and main["id"] == record_id:
-                raise AsideError("This is the film's main file. Make another file the main file first.")
+            if rec.get("episode_id") is not None:
+                files = [dict(r) for r in conn.execute("SELECT id, is_main, resolution, size_bytes, file_label FROM library_file WHERE episode_id = ? AND missing_since IS NULL AND COALESCE(dup_review, '') != 'aside'", (rec["episode_id"],))]
+                if files and file_labels.main_id(files, {f["id"]: f["file_label"] for f in files}) == record_id:
+                    raise AsideError("This is the episode's main file. Make another file the main file first.")
+            else:
+                from synchub import quality
+                main = quality.copies(conn, rec["media_id"]).get("main")
+                if main and main["id"] == record_id:
+                    raise AsideError("This is the film's main file. Make another file the main file first.")
         if _visible_others(conn, rec) < 1:
             raise AsideError("This is the last visible file of the film, so it stays.")
         source, dest = (root, rel), (root, rel + suffix_for(why))

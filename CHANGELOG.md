@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.3
+
+Migration 050 is new. Update SyncHub first, then the workers (no new worker feature). After updating, press **Library, Refresh links** once: it now links episode files too. A show's episode list must exist (show page, **Refresh details**) for its files to be linked.
+
+**TV shows get the same Files idea as films.**
+- **Episode files are linked to their episode** (Jellyfin's episode path first, then the season and episode numbers in the file name, such as `S01E02`; a name with two episodes links to the first). A scan, Match & update and Refresh links keep the links; **Not this episode** is never overwritten.
+- **Labels per episode.** Two files of the same episode are labelled like a film's files (converted copy and original, duplicate, different edition, old version, unexplained); an episode with one file has no label. Home says "N films and M episodes with more than one file", and the Files tab, its pills and filters count episodes too. "Not linked to a film" is now "Not linked to a film or episode".
+- **Show page: a Files section** lists only the episodes that have more than one file, with the same choices as a film: Set as main file, New main hide the old one, This is an old version, Hide it, Keep both, A different edition, Not this episode. Hidden episode files wait on the Cleanup page like film files.
+- **The main file is never "unexplained".** For a film or an episode the main file (the one you chose, else the sharpest picture) now has no label; only the files next to it need an answer. Sort out unexplained films therefore asks about the right file, and the unexplained count is smaller.
+
 ## 1.6.2
 
 Migration 049 is new. Update SyncHub first, then the workers: **Delete now** and automatic deletion of hidden files need the new worker (it can do `delete_hidden`); hiding and putting back work with the 1.6.1 worker.

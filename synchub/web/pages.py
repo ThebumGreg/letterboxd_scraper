@@ -8,7 +8,7 @@ from config import BASE_DIR
 from synchub import access, backup, catalog, db, ddns, discover, posters, poor_quality, profiles, quality, ratings, search, settings, states, status, tasks, watch, watchlist, webhooks, workers
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.tmdb import TmdbClient
-from synchub.library import file_labels
+from synchub.library import episode_link, file_labels
 from synchub.notifications import dispatch
 from synchub.notifications import store as notification_store
 from synchub.web import current_limit, title_allowed
@@ -137,7 +137,8 @@ def register(app):
             follow = {"muted": notification_store.is_muted(conn, me, media_id)} if me and access.allowed(g.permissions, "notifications") else None
             on_watchlist = _on_watchlist(conn, media_id)
             poor = poor_quality.page_state(conn, media_id) if access.allowed(g.permissions, "library") else None
-        return render_template("show_details.html", show=show, summary=summary, defs=defs, progress=progress, follow=follow, on_watchlist=on_watchlist, poor=poor)
+            episode_files = episode_link.show_groups(conn, media_id) if access.allowed(g.permissions, "library") else []
+        return render_template("show_details.html", show=show, summary=summary, defs=defs, progress=progress, follow=follow, on_watchlist=on_watchlist, poor=poor, episode_files=episode_files)
 
     @app.route("/healthz")
     def healthz():

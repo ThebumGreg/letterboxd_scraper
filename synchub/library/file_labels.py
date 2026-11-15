@@ -83,7 +83,19 @@ def classify(files):
             out[f["id"]] = DUPLICATE
         else:
             out[f["id"]] = UNEXPLAINED
+    main = main_id(files, out)
+    if out.get(main) == UNEXPLAINED:
+        out[main] = None                    # the main file needs no explanation: only the files next to it do
     return out
+
+
+def main_id(files, labels=None):
+    """The id of the file SyncHub treats as the main one: the one you chose, else the sharpest picture (a conversion before its own original, then the biggest file)."""
+    for f in files:
+        if f.get("is_main"):
+            return f["id"]
+    labels = labels or {}
+    return min(files, key=lambda f: (-_height(f.get("resolution")), labels.get(f["id"]) == ORIGINAL, -(f.get("size_bytes") or 0), f["id"]))["id"]
 
 
 def _set(conn, rec_id, **values):
@@ -94,7 +106,8 @@ def _set(conn, rec_id, **values):
 
 
 def refresh(conn, media_ids=None):
-    """Recomputes the label of every file that has a saved film link (all films, or just `media_ids`). Returns how many films have more than one file."""
+    """Recomputes the label of every file that has a saved film or episode link (all, or just those of `media_ids`; a show's id covers its episodes).
+    Returns how many films and episodes have more than one file."""
     rows = defaultdict(list)
     sql = "SELECT * FROM library_file WHERE media_id IS NOT NULL AND missing_since IS NULL AND COALESCE(dup_review, '') != 'aside'"
     args = []
@@ -105,7 +118,7 @@ def refresh(conn, media_ids=None):
         sql += f" AND media_id IN ({','.join('?' * len(media_ids))})"
         args = media_ids
     for r in conn.execute(sql, args):
-        rows[r["media_id"]].append(dict(r))
+        rows[("e", r["episode_id"]) if r["episode_id"] is not None else ("m", r["media_id"])].append(dict(r))      # an episode's files are grouped by episode, a film's by film
     many = 0
     for files in rows.values():
         labels = classify(files)
@@ -117,15 +130,26 @@ def refresh(conn, media_ids=None):
     return many
 
 
+GROUP = "COALESCE('e' || episode_id, 'm' || media_id)"          # one film, or one episode: the files that explain each other
+
+
+def _groups(conn, having=""):
+    """{'m': films, 'e': episodes} that have more than one visible file (and `having`, for example more than one share)."""
+    out = {"m": 0, "e": 0}
+    for r in conn.execute(f"SELECT substr(g, 1, 1) AS kind, COUNT(*) AS n FROM (SELECT {GROUP} AS g FROM library_file WHERE media_id IS NOT NULL AND missing_since IS NULL "
+                          f"GROUP BY g HAVING COUNT(*) > 1{having}) GROUP BY kind"):
+        out[r["kind"]] = r["n"]
+    return out
+
+
 def counts(conn):
-    """For Home and the Library header: {"films": films with more than one file, "files": {label: n}, "different_shares": films whose files sit on more than one share,
-    "unlinked": Library movie files with no film, "saved_bytes": space saved by conversions}. Reads what refresh() stored."""
+    """For Home and the Files tab: {"films": films with more than one file, "episodes": episodes with more than one file, "files": {label: n}, "different_shares": films and episodes whose files
+    sit on more than one share, "unlinked": Library movie and episode files with no film or episode, "saved_bytes": space saved by conversions}. Reads what refresh() stored."""
     files = {r["file_label"]: r["n"] for r in conn.execute("SELECT file_label, COUNT(*) AS n FROM library_file WHERE file_label IS NOT NULL AND missing_since IS NULL GROUP BY file_label")}
-    films = conn.execute("SELECT COUNT(*) AS n FROM (SELECT media_id FROM library_file WHERE media_id IS NOT NULL AND missing_since IS NULL GROUP BY media_id HAVING COUNT(*) > 1)").fetchone()["n"]
-    shares = conn.execute("SELECT COUNT(*) AS n FROM (SELECT media_id FROM library_file WHERE media_id IS NOT NULL AND missing_since IS NULL GROUP BY media_id "
-                          "HAVING COUNT(*) > 1 AND COUNT(DISTINCT root_name) > 1)").fetchone()["n"]
-    unlinked = conn.execute("SELECT COUNT(*) AS n FROM library_file WHERE media_id IS NULL AND missing_since IS NULL AND media_type LIKE 'Movie%'").fetchone()["n"]
-    return {"films": films, "files": {k: files.get(k, 0) for k in ORDER}, "different_shares": shares, "unlinked": unlinked, "saved_bytes": saved_bytes(conn)}
+    many, shares = _groups(conn), _groups(conn, " AND COUNT(DISTINCT root_name) > 1")
+    unlinked = conn.execute("SELECT COUNT(*) AS n FROM library_file WHERE (media_id IS NULL OR (media_type = 'TV Episode' AND episode_id IS NULL)) AND missing_since IS NULL "
+                            "AND (media_type LIKE 'Movie%' OR media_type = 'TV Episode')").fetchone()["n"]
+    return {"films": many["m"], "episodes": many["e"], "files": {k: files.get(k, 0) for k in ORDER}, "different_shares": shares["m"] + shares["e"], "unlinked": unlinked, "saved_bytes": saved_bytes(conn)}
 
 
 def saved_bytes(conn):
@@ -148,7 +172,7 @@ def saved_for(rec, files):
 
 # ---------------------------------------------------------------- Library filters and Home links
 FILTERS = ORDER + ("unlinked", "missing_mobile", "different_shares", "many", "review_later", "hidden")
-FILTER_TEXT = {**TEXT, "unlinked": "Not linked to a film", "missing_mobile": "4K, no mobile copy", "different_shares": "Copies on different shares", "many": "Films with more than one file", "review_later": "Duplicates to review later", "hidden": "Hidden files"}
+FILTER_TEXT = {**TEXT, "unlinked": "Not linked to a film or episode", "missing_mobile": "4K, no mobile copy", "different_shares": "Copies on different shares", "many": "Films and episodes with more than one file", "review_later": "Duplicates to review later", "hidden": "Hidden files"}
 FILTER_TEXT[UNEXPLAINED] = "Unexplained (possible duplicates)"
 
 
@@ -169,16 +193,16 @@ def ids_for(conn, key):
     if key == "review_later":
         return {r["id"] for r in conn.execute("SELECT id FROM library_file WHERE dup_review = 'review_later' AND missing_since IS NULL")}
     if key == "unlinked":
-        return {r["id"] for r in conn.execute("SELECT id FROM library_file WHERE media_id IS NULL AND missing_since IS NULL AND media_type LIKE 'Movie%'")}
+        return {r["id"] for r in conn.execute("SELECT id FROM library_file WHERE (media_id IS NULL OR (media_type = 'TV Episode' AND episode_id IS NULL)) AND missing_since IS NULL AND (media_type LIKE 'Movie%' OR media_type = 'TV Episode')")}
     if key == "many":
-        return {r["id"] for r in conn.execute("SELECT id FROM library_file WHERE missing_since IS NULL AND media_id IN (SELECT media_id FROM library_file WHERE media_id IS NOT NULL "
-                                              "AND missing_since IS NULL GROUP BY media_id HAVING COUNT(*) > 1)")}
+        return {r["id"] for r in conn.execute(f"SELECT id FROM library_file WHERE missing_since IS NULL AND media_id IS NOT NULL AND {GROUP} IN (SELECT {GROUP} FROM library_file WHERE media_id IS NOT NULL "
+                                              "AND missing_since IS NULL GROUP BY 1 HAVING COUNT(*) > 1)")}
     if key == "different_shares":
-        return {r["id"] for r in conn.execute("SELECT id FROM library_file WHERE missing_since IS NULL AND media_id IN (SELECT media_id FROM library_file WHERE media_id IS NOT NULL "
-                                              "AND missing_since IS NULL GROUP BY media_id HAVING COUNT(DISTINCT root_name) > 1)")}
+        return {r["id"] for r in conn.execute(f"SELECT id FROM library_file WHERE missing_since IS NULL AND media_id IS NOT NULL AND {GROUP} IN (SELECT {GROUP} FROM library_file WHERE media_id IS NOT NULL "
+                                              "AND missing_since IS NULL GROUP BY 1 HAVING COUNT(DISTINCT root_name) > 1)")}
     if key == "missing_mobile":
-        has_mobile = {r["media_id"] for r in conn.execute("SELECT DISTINCT media_id FROM library_file WHERE file_label = 'mobile' AND missing_since IS NULL AND media_id IS NOT NULL")}
-        return {r["id"] for r in conn.execute("SELECT id, media_id, resolution FROM library_file WHERE media_id IS NOT NULL AND missing_since IS NULL AND (file_label IS NULL OR file_label != 'mobile')")
+        has_mobile = {r["media_id"] for r in conn.execute("SELECT DISTINCT media_id FROM library_file WHERE episode_id IS NULL AND file_label = 'mobile' AND missing_since IS NULL AND media_id IS NOT NULL")}
+        return {r["id"] for r in conn.execute("SELECT id, media_id, resolution FROM library_file WHERE media_id IS NOT NULL AND episode_id IS NULL AND missing_since IS NULL AND (file_label IS NULL OR file_label != 'mobile')")
                 if r["media_id"] not in has_mobile and _height(r["resolution"]) > 1080}
     return set()
 
@@ -187,7 +211,7 @@ def film_tokens(conn):
     """{media id: "many mobile converted ..."} for the Home filter: the labels a film's files carry, 'many' when it has more than one file, 'different_shares' when they sit on more than
     one share and 'missing_mobile' when its best file is above 1080p and has no mobile copy. Only films with a saved link appear."""
     films = defaultdict(list)
-    for r in conn.execute("SELECT media_id, root_name, file_label, resolution FROM library_file WHERE media_id IS NOT NULL AND missing_since IS NULL"):
+    for r in conn.execute("SELECT media_id, root_name, file_label, resolution FROM library_file WHERE media_id IS NOT NULL AND episode_id IS NULL AND missing_since IS NULL"):
         films[r["media_id"]].append(r)
     out = {}
     for media_id, files in films.items():
