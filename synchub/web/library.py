@@ -191,11 +191,38 @@ def queue_view(status):
                      "waiting": data["waiting"], "recent": data["recent"], "quality_counts": data["counts"]}
     rows = [{"rec": rec, "r": r, "size": _size(rec["size_bytes"]) if not rec.get("unreadable_reason") else None, "loose": rec["id"] in loose_set,
              "quality": quality_state.get(rec["id"])} for rec, r in shown]
+    view = "film" if request.args.get("view") == "film" else "file"
+    films, film_total = [], 0
+    with db.connection() as conn:
+        file_counts = file_labels.counts(conn)
+        hidden_count = len(file_labels.ids_for(conn, "hidden"))
+        if view == "film":
+            films, film_total = films_with_many_files(conn, f, page)
     statuses = [(STATUS_ALL, "All files", len(everything))] + [(g, rc.GROUP_TITLES[g], table[g]["total"]) for g in rc.GROUP_ORDER] + [(STATUS_BELOW, STATUS_TITLES[STATUS_BELOW], flagged)]
     return render_template("library_queue.html", status=status, group=group, title=STATUS_TITLES.get(status) or rc.GROUP_TITLES[status],
-                           hint=STATUS_HINTS.get(status) or rc.GROUP_HINTS.get(rc.G_HELD if below else status, ""), rows=rows, total=len(all_rows), page=page,
-                           pages=max((len(all_rows) + PAGE_SIZE - 1) // PAGE_SIZE, 1), f=f, statuses=statuses, titles=rc.GROUP_TITLES, table=table,
+                           hint=STATUS_HINTS.get(status) or rc.GROUP_HINTS.get(rc.G_HELD if below else status, ""), rows=rows, total=film_total if view == "film" else len(all_rows), page=page,
+                           pages=max((len(all_rows) + PAGE_SIZE - 1) // PAGE_SIZE, 1), view=view, films=films, file_counts=file_counts, hidden_count=hidden_count, f=f, statuses=statuses, titles=rc.GROUP_TITLES, table=table,
                            high=sum(1 for _, r in candidates if r.confidence == rc.HIGH), high_medium=len(candidates), roots=roots, **extra)
+
+
+def films_with_many_files(conn, f, page):
+    """The By film list: films that have more than one visible file, narrowed by the search and the kind of file. Returns (the page's films, how many films)."""
+    ids = [r["media_id"] for r in conn.execute("SELECT media_id FROM library_file WHERE media_id IS NOT NULL AND missing_since IS NULL AND COALESCE(dup_review, '') != 'aside' "
+                                                "GROUP BY media_id HAVING COUNT(*) > 1")]
+    wanted = file_labels.ids_for(conn, f["label"]) if f["label"] in file_labels.FILTERS else None
+    out = []
+    for media_id in ids:
+        m = conn.execute("SELECT title, year FROM media WHERE id = ?", (media_id,)).fetchone()
+        if m is None or (f["q"] and f["q"].lower() not in (m["title"] or "").lower()):
+            continue
+        files = [dict(r) for r in conn.execute("SELECT id, file_name, size_bytes, file_label, edition_name, dup_review FROM library_file WHERE media_id = ? AND missing_since IS NULL AND COALESCE(dup_review, '') != 'aside' ORDER BY is_main DESC, size_bytes DESC", (media_id,))]
+        if wanted is not None and not any(x["id"] in wanted for x in files):
+            continue
+        for x in files:
+            x["size"] = _size(x["size_bytes"])
+        out.append({"media_id": media_id, "title": m["title"], "year": m["year"], "files": files, "unexplained": any(x["file_label"] == file_labels.UNEXPLAINED for x in files)})
+    out.sort(key=lambda x: (not x["unexplained"], (x["title"] or "").lower()))
+    return out[(page - 1) * PAGE_SIZE: page * PAGE_SIZE], len(out)
 
 
 def queue_rows(conn, cfg, group, f):
@@ -243,6 +270,33 @@ def register(app):
     def library_list():
         """Every Library list on one page: `?status=` chooses the queue, Below minimum quality or everything."""
         return queue_view(status_of(request.args.get("status")))
+
+    @app.route("/library/sort")
+    def library_sort():
+        """Sort out a film: one unexplained file at a time next to the film's main file, with the choices that explain it. `media` names a film; `skip` lists films already passed."""
+        skip = {int(x) for x in (request.args.get("skip") or "").split(",") if x.isdigit()}
+        wanted = request.args.get("media")
+        with db.connection() as conn:
+            todo = [r["media_id"] for r in conn.execute("SELECT DISTINCT media_id FROM library_file WHERE file_label = ? AND media_id IS NOT NULL AND missing_since IS NULL AND COALESCE(dup_review, '') != 'aside' ORDER BY media_id", (file_labels.UNEXPLAINED,))]
+            candidates = [int(wanted)] if wanted and wanted.isdigit() else [m for m in todo if m not in skip]
+            film = current = None
+            files, others, left = [], [], 0
+            for n, media_id in enumerate(candidates):
+                row = conn.execute("SELECT id, title, year FROM media WHERE id = ?", (media_id,)).fetchone()
+                if row is None:
+                    continue
+                files = [dict(r) for r in conn.execute("SELECT id, file_name, root_name, relative_path, size_bytes, resolution, video_codec, file_label, is_main FROM library_file WHERE media_id = ? AND missing_since IS NULL AND COALESCE(dup_review, '') != 'aside' ORDER BY is_main DESC, size_bytes DESC", (media_id,))]
+                main = quality.copies(conn, media_id).get("main")
+                for x in files:
+                    x["is_main"] = x["is_main"] or bool(main and x["id"] == main["id"])
+                    x["size"] = _size(x["size_bytes"])
+                current = next((x for x in files if x["file_label"] == file_labels.UNEXPLAINED and not x["is_main"]), None)
+                if current is not None:
+                    film, left = row, len(candidates) - n - 1 if not wanted else len([m for m in todo if m not in skip and m != media_id])
+                    break
+        others = [x for x in files if current is not None and x["id"] != current["id"]]
+        shown = film["id"] if film else None
+        return render_template("library_sort.html", film=film, current=current, others=others, left=left, skip=",".join(str(x) for x in sorted(skip | ({shown} if shown else set()))), keep_skip=",".join(str(x) for x in sorted(skip)))
 
     @app.route("/library/queue/<group>")
     def library_queue(group):
@@ -458,10 +512,28 @@ def register(app):
             return _fail("Unknown action.", 404)
         try:
             with db.connection() as conn:
-                aside.request(conn, record_id, undo=action == "put-back")
+                aside.request(conn, record_id, undo=action == "put-back", reason=str((request.get_json(silent=True) or {}).get("reason") or "") or None)
         except aside.AsideError as exc:
             return _fail(str(exc))
         return jsonify(ok=True, message="A worker will rename the file shortly. Nothing is deleted." if action == "set-aside" else "A worker will put the file back shortly.")
+
+    @app.route("/api/library/file/<int:record_id>/replace-main", methods=["POST"])
+    def api_library_file_replace_main(record_id):
+        """This file is the new main file: the film's current main file is hidden as an old version."""
+        try:
+            with db.connection() as conn:
+                rec = _film_file(conn, record_id)
+                if not rec["media_id"]:
+                    raise aside.AsideError("This file is not linked to a film yet. Press Refresh links first.")
+                old = quality.copies(conn, rec["media_id"]).get("main")
+                if old is None or old["id"] == record_id:
+                    raise aside.AsideError("This file is already the main file.")
+                conn.execute("UPDATE library_file SET is_main = 0 WHERE media_id = ?", (rec["media_id"],))
+                conn.execute("UPDATE library_file SET is_main = 1 WHERE id = ?", (record_id,))
+                aside.request(conn, old["id"], reason="old_version")
+        except (aside.AsideError, v.LibraryError) as exc:
+            return _fail(str(exc))
+        return jsonify(ok=True, message="This is now the main file. A worker will hide the old main file shortly.")
 
     @app.route("/api/library/links/refresh", methods=["POST"])
     def api_library_links_refresh():

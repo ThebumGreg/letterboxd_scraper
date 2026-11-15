@@ -123,6 +123,7 @@
             {% if jf_link and f.role != 'original' %}<a class="btn btn-primary btn-sm" href="{{ jf_link }}" target="_blank" rel="noopener" data-play-version="{{ f.version_name }}" title="Opens the film in Jellyfin. {% if copies.files|length > 1 %}Choose the version “{{ f.version_name }}” there.{% endif %}"><i class="bi bi-play-fill" aria-hidden="true"></i> Play this version</a>{% endif %}
             {% if act %}<a class="btn btn-outline-secondary btn-sm" href="{{ url_for('library_record', record_id=f.id) }}" title="This file's record in the Library"><i class="bi bi-file-earmark-text" aria-hidden="true"></i> Open record</a>
             {% if copies.files|length > 1 and f is not sameas copies.main %}<button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="main" data-record="{{ f.id }}" title="SyncHub's own screens (quality check, better copy) then treat this as the main file. Jellyfin and Radarr are not changed.">Set as main file</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="replace-main" data-record="{{ f.id }}" title="Makes this the main file and hides the current main file as an old version. Nothing is deleted.">New main, hide the old one</button>
             {% elif f.is_main_choice %}<button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="main-off" data-record="{{ f.id }}">Let SyncHub choose the main file</button>{% endif %}{% endif %}
             {% if f.windows_path %}<button type="button" class="btn btn-outline-secondary btn-sm" data-copy-path="{{ f.windows_path }}" title="Paste it into the Windows Explorer address bar">Copy Windows folder path</button>
             {% elif f.unix_path %}<button type="button" class="btn btn-outline-secondary btn-sm" data-copy-path="{{ f.unix_path }}" title="This share is not SMB, so there is no Windows path; this is its path on the server">Copy folder path</button>{% endif %}
@@ -151,6 +152,8 @@
                 <button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="edition" data-record="{{ f.id }}">{{ 'Save edition name' if f.is_edition else 'This is a different edition' }}</button>
                 {% if f.is_edition %}<button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="edition-off" data-record="{{ f.id }}">Not an edition</button>{% endif %}
                 <button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="not-this-film" data-record="{{ f.id }}" title="Stop counting this file as part of this film. A scan will not add it back.">Not this film</button>
+                {% if f is not sameas copies.main and f.dup_review != 'aside' %}<button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="old-version" data-record="{{ f.id }}" title="An older file the main file replaced. It is renamed on the share so Jellyfin ignores it, and listed on the Cleanup page so you can delete it later.">This is an old version (hide it)</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="hide-other" data-record="{{ f.id }}" title="Hides the file for another reason. It is listed on the Cleanup page.">Hide it</button>{% endif %}
             </div>
             {% endif %}
             {{ quality_detail(f.id, f.quality, act) }}
@@ -158,8 +161,8 @@
     </div>
     {% endfor %}
     {% endif %}
-    {% if copies.aside %}<div class="border-top pt-2 mt-2" id="asideFiles"><div class="small fw-bold">Set aside <span class="fw-normal text-body-secondary">(renamed on the share so Jellyfin ignores them; nothing is deleted)</span></div>
-        {% for a in copies.aside %}<div class="d-flex flex-wrap align-items-center gap-2 small mt-1"><span class="text-break">{{ a.root_name }}: {{ a.relative_path }}.synchub-duplicate · {{ size_text(a.size_bytes) }}</span>{% if act %}<button type="button" class="btn btn-outline-warning btn-sm" data-file-act="put-back" data-record="{{ a.id }}">Put it back</button>{% endif %}</div>{% endfor %}</div>{% endif %}
+    {% if copies.aside %}<div class="border-top pt-2 mt-2" id="asideFiles"><div class="small fw-bold">Hidden files <span class="fw-normal text-body-secondary">(renamed on the share so Jellyfin ignores them; nothing is deleted) · <a href="{{ url_for('workers_originals_page') }}">Cleanup</a></span></div>
+        {% for a in copies.aside %}<div class="d-flex flex-wrap align-items-center gap-2 small mt-1"><span class="text-break">{{ a.root_name }}: {{ a.relative_path }} · {{ size_text(a.size_bytes) }} · {{ {'duplicate': 'exact duplicate', 'old_version': 'old version', 'other': 'hidden by you'}.get(a.hidden_reason or 'duplicate') }}</span>{% if act %}<button type="button" class="btn btn-outline-warning btn-sm" data-file-act="put-back" data-record="{{ a.id }}">Put it back</button>{% endif %}</div>{% endfor %}</div>{% endif %}
     <div id="fileActResult" class="small mt-2" role="status"></div>
     <script>
     (() => {
@@ -207,11 +210,12 @@
             const routes = {
                 'main': ['main', { on: true }], 'main-off': ['main', { on: false }], 'not-this-film': ['not-this-film', {}],
                 'keep-both': ['duplicate-note', { value: 'keep_both' }], 'review-later': ['duplicate-note', { value: 'review_later' }],
-                'set-aside': ['set-aside', {}], 'put-back': ['put-back', {}],
+                'set-aside': ['set-aside', { reason: 'duplicate' }], 'put-back': ['put-back', {}], 'old-version': ['set-aside', { reason: 'old_version' }], 'hide-other': ['set-aside', { reason: 'other' }],
+                'replace-main': ['replace-main', {}],
                 'edition': ['edition', { on: true, name: (card.querySelector('[data-edition-name="' + id + '"]') || {}).value || '' }], 'edition-off': ['edition', { on: false }],
             };
             const [path, body] = routes[kind];
-            if (kind === 'set-aside' && !window.confirm('Rename this file on the share so Jellyfin, Radarr and Sonarr ignore it? Nothing is deleted and you can put it back.')) return;
+            if (['set-aside', 'old-version', 'hide-other', 'replace-main'].includes(kind) && !window.confirm('Rename the file on the share so Jellyfin, Radarr and Sonarr ignore it? Nothing is deleted and you can put it back (or delete it later on the Cleanup page).')) return;
             act.disabled = true;
             const d = await post('/api/library/file/' + id + '/' + path, body);
             say(d.message || (d.ok ? 'Done.' : 'Failed.'), !!d.ok);

@@ -9,6 +9,7 @@ from synchub import access, db, storage
 # (key, label, endpoint that opens it, what it holds)
 TABS = (
     ("library", "Library", "library_page", "Every video file on your shares and what to do with it"),
+    ("files", "Files", "library_list", "Every file the Library knows, what each one is to its film, and the ones to sort out"),
     ("originals", "Cleanup", "workers_originals_page", "Original files kept after a file was replaced or converted: restore, keep longer or delete"),
     ("workers", "Workers", "workers_page", "The PCs that do the heavy work, and the hardware behind each"),
     ("jobs", "Jobs", "jobs_page", "What the workers have been asked to do and how it is going"),
@@ -57,7 +58,7 @@ def register(app):
         """One tab's content and scripts, for the page to fill in when the tab is first opened."""
         tab = next((t for t in TABS if t[0] == key), None)
         permissions = getattr(g, "permissions", None)
-        if tab is None or not access.allowed(permissions, access.required(tab[2])):
+        if tab is None or key == "files" or not access.allowed(permissions, access.required(tab[2])):
             return jsonify(ok=False, message="That tab is not available to you."), 403
         with db.connection() as conn:
             return jsonify(ok=True, **_pane(key, conn))

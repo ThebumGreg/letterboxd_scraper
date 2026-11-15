@@ -850,7 +850,7 @@ def copies(conn, media_id):
     from synchub.library import file_labels, film_link
     found, unmapped = find_movie_files(conn, media_id)
     found = film_link.save_film(conn, media_id, [f for f in found if f.get("dup_review") != "aside"])
-    aside = [dict(r) for r in conn.execute("SELECT id, root_name, relative_path, file_name, size_bytes FROM library_file WHERE media_id = ? AND dup_review = 'aside' ORDER BY id", (media_id,))]
+    aside = [dict(r) for r in conn.execute("SELECT id, root_name, relative_path, file_name, size_bytes, hidden_reason FROM library_file WHERE media_id = ? AND dup_review = 'aside' ORDER BY id", (media_id,))]
     labels = file_labels.classify(found)
     files = [describe_file(conn, r, labels.get(r["id"]), found) for r in found]
     if not files:
@@ -866,7 +866,7 @@ def copies(conn, media_id):
     return {"files": ranked, "main": main, "remote": remote, "missing_remote": missing, "full_label": label, "unmapped": unmapped, "why": why_two_files(files), "shares": shares, "aside": aside}
 
 
-_SHOW_ORDER = {"mobile": 0, "converted": 1, "original": 2, "duplicate": 3, "edition": 4, "unexplained": 5}
+_SHOW_ORDER = {"mobile": 0, "converted": 1, "original": 2, "duplicate": 3, "old_version": 4, "edition": 5, "unexplained": 6}
 
 
 def why_two_files(files):
@@ -874,7 +874,7 @@ def why_two_files(files):
     from synchub.library import file_labels
     if len(files) < 2:
         return None
-    names = {"mobile": "a mobile copy", "converted": "a converted copy", "original": "the original of a conversion", "duplicate": "an exact duplicate",
+    names = {"mobile": "a mobile copy", "converted": "a converted copy", "original": "the original of a conversion", "duplicate": "an exact duplicate", "old_version": "an old version",
              "edition": "a different edition", "unexplained": "a file SyncHub cannot explain"}
     counts = {}
     for f in files:

@@ -55,3 +55,46 @@
     </table>
 </div>
 {% endif %}
+<div class="mt-4 mb-2" id="hiddenFiles"><h4 class="h6 mb-1">Hidden files</h4>
+    <p class="text-body-secondary small mb-2">Files you hid on a film page (an exact duplicate, an old version, or any other file). They are only renamed on the share, so Jellyfin, Radarr and Sonarr ignore them. Put it back renames it again; Delete now removes it for good after a worker checks the film's other file is still there.
+        {% if hidden['items'] %}<strong>{{ hidden['items']|length }}</strong> file(s), <strong>{{ '%.1f'|format(hidden.bytes / 1073741824) }} GB</strong> could be freed.{% endif %}</p>
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <label class="small mb-0" for="hiddenDays">Delete hidden files after</label>
+        <select id="hiddenDays" class="form-select form-select-sm w-auto">
+            {% for d, t in (('0', 'Never (off)'), ('7', '7 days'), ('14', '14 days'), ('30', '30 days'), ('60', '60 days'), ('90', '90 days')) %}<option value="{{ d }}" {{ 'selected' if hidden.days|string == d }}>{{ t }}</option>{% endfor %}
+        </select>
+        <span class="small text-body-secondary">You get a notification the day before. Off by default.</span>
+    </div></div>
+{% if not hidden['items'] %}
+<p class="text-body-secondary">No file is hidden.</p>
+{% else %}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+    <button type="button" class="btn btn-sm btn-outline-primary" data-hidden-bulk="put_back" disabled>Put back selected</button>
+    <button type="button" class="btn btn-sm btn-outline-danger" data-hidden-bulk="delete" disabled>Delete selected</button>
+    <span class="small text-body-secondary" id="hiddenSelected">Nothing selected</span>
+</div>
+<div class="table-responsive">
+    <table class="table table-sm align-middle">
+        <thead><tr><th><input type="checkbox" class="form-check-input" id="hiddenAll" aria-label="Select all"></th><th>Film and file</th><th>Why</th><th class="text-end">Size</th><th>Hidden on</th>{% if hidden.days %}<th>Deleted in</th>{% endif %}<th class="text-end"></th></tr></thead>
+        <tbody>
+        {% for h in hidden['items'] %}
+            <tr>
+                <td><input type="checkbox" class="form-check-input" data-hidden-pick="{{ h.id }}" data-size="{{ h.size_bytes or 0 }}" {{ 'disabled' if h.pending }} aria-label="Select {{ h.file_name }}"></td>
+                <td><div class="fw-semibold text-break">{% if h.media_id %}<a href="/movie/{{ h.media_id }}" class="text-decoration-none">{{ h.title }}{% if h.year %} ({{ h.year }}){% endif %}</a>{% else %}{{ h.file_name }}{% endif %}</div><div class="small text-body-secondary text-break"><a href="/library/record/{{ h.id }}" class="text-decoration-none">{{ h.root_name }}:{{ h.relative_path }}</a></div></td>
+                <td>{{ h.reason_text }}</td>
+                <td class="text-end">{{ '%.2f'|format((h.size_bytes or 0) / 1073741824) }} GB</td>
+                <td class="small">{{ (h.hidden_at or '')[:10] or 'earlier' }}</td>
+                {% if hidden.days %}<td class="small">{% if h.days_left is none %}&ndash;{% elif h.days_left <= 0 %}soon{% else %}{{ '%g'|format(h.days_left) }} day{{ '' if h.days_left == 1 else 's' }}{% endif %}</td>{% endif %}
+                <td class="text-end text-nowrap">
+                    {% if h.pending %}<span class="badge bg-info text-dark">{{ h.pending.replace('_', ' ') }}</span>
+                    {% else %}
+                        <button type="button" class="btn btn-sm btn-outline-primary" data-hidden-one="put_back" data-id="{{ h.id }}">Put it back</button>
+                        <button type="button" class="btn btn-sm btn-outline-danger" data-hidden-one="delete" data-id="{{ h.id }}" data-name="{{ h.file_name }}">Delete now</button>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}

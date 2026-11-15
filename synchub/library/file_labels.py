@@ -17,16 +17,17 @@ from collections import defaultdict
 from synchub import versions
 from synchub.library import vocab as v
 
-EDITION, CONVERTED, ORIGINAL, MOBILE, DUPLICATE, UNEXPLAINED = "edition", "converted", "original", "mobile", "duplicate", "unexplained"
-ORDER = (MOBILE, CONVERTED, ORIGINAL, DUPLICATE, EDITION, UNEXPLAINED)
-TEXT = {EDITION: "Different edition", CONVERTED: "Converted copy", ORIGINAL: "Original", MOBILE: "Mobile copy", DUPLICATE: "Duplicate file", UNEXPLAINED: "Unexplained"}
-TONE = {EDITION: "primary", CONVERTED: "success", ORIGINAL: "secondary", MOBILE: "info", DUPLICATE: "warning", UNEXPLAINED: "danger"}
+EDITION, CONVERTED, ORIGINAL, MOBILE, DUPLICATE, UNEXPLAINED, OLD_VERSION = "edition", "converted", "original", "mobile", "duplicate", "unexplained", "old_version"
+ORDER = (MOBILE, CONVERTED, ORIGINAL, DUPLICATE, OLD_VERSION, EDITION, UNEXPLAINED)
+TEXT = {EDITION: "Different edition", CONVERTED: "Converted copy", ORIGINAL: "Original", MOBILE: "Mobile copy", DUPLICATE: "Duplicate file", UNEXPLAINED: "Unexplained", OLD_VERSION: "Old version"}
+TONE = {EDITION: "primary", CONVERTED: "success", ORIGINAL: "secondary", MOBILE: "info", DUPLICATE: "warning", UNEXPLAINED: "danger", OLD_VERSION: "secondary"}
 HINT = {
     EDITION: "A different cut or release of the same film that you marked.",
     CONVERTED: "The file SyncHub made by converting or copying another file of this film.",
     ORIGINAL: "The file a converted copy was made from. It may be hidden from Jellyfin or renamed .synchub-original.",
     MOBILE: "A smaller extra copy (for phones and remote viewing) kept next to the film.",
     DUPLICATE: "Exactly the same content as another file. Keep one, set the other aside.",
+    OLD_VERSION: "An older file that the main file replaced. It can be hidden from Jellyfin and deleted later from the Cleanup page.",
     UNEXPLAINED: "Another file of this film that SyncHub cannot explain. Mark it as an edition, set it aside, or say it is not this film.",
 }
 
@@ -40,6 +41,8 @@ def text(label, rec=None):
             return "Duplicate · set aside"
         if rec.get("duplicate_status") == v.DUP_PRIMARY:
             return "Duplicate · keep this one"
+    if label == OLD_VERSION and rec is not None and rec.get("dup_review") == "aside":
+        return "Old version · hidden"
     if label == EDITION and rec is not None and rec.get("edition_name"):
         return f"Edition: {rec['edition_name']}"
     return TEXT.get(label, "")
@@ -67,6 +70,8 @@ def classify(files):
         dest = str(f.get("migration_destination_path") or "")
         if f.get("is_edition"):
             out[f["id"]] = EDITION
+        elif f.get("is_old_version"):
+            out[f["id"]] = OLD_VERSION
         elif (f.get("migration_status") == v.MIGRATION_COMPLETED and f.get("migrated_how") in ("copy", "convert") and ":" in dest
               and dest.split(":", 1)[0] != f.get("root_name") and _dest_key(dest) in here):
             out[f["id"]] = ORIGINAL
@@ -142,8 +147,8 @@ def saved_for(rec, files):
 
 
 # ---------------------------------------------------------------- Library filters and Home links
-FILTERS = ORDER + ("unlinked", "missing_mobile", "different_shares", "many", "review_later")
-FILTER_TEXT = {**TEXT, "unlinked": "Not linked to a film", "missing_mobile": "4K, no mobile copy", "different_shares": "Copies on different shares", "many": "Films with more than one file", "review_later": "Duplicates to review later"}
+FILTERS = ORDER + ("unlinked", "missing_mobile", "different_shares", "many", "review_later", "hidden")
+FILTER_TEXT = {**TEXT, "unlinked": "Not linked to a film", "missing_mobile": "4K, no mobile copy", "different_shares": "Copies on different shares", "many": "Films with more than one file", "review_later": "Duplicates to review later", "hidden": "Hidden files"}
 FILTER_TEXT[UNEXPLAINED] = "Unexplained (possible duplicates)"
 
 
@@ -159,6 +164,8 @@ def ids_for(conn, key):
     'missing_mobile' (a file above 1080p whose film has no mobile copy) or 'different_shares' (files of a film that sits on more than one share)."""
     if key in ORDER:
         return {r["id"] for r in conn.execute("SELECT id FROM library_file WHERE file_label = ? AND missing_since IS NULL", (key,))}
+    if key == "hidden":
+        return {r["id"] for r in conn.execute("SELECT id FROM library_file WHERE dup_review = 'aside'")}
     if key == "review_later":
         return {r["id"] for r in conn.execute("SELECT id FROM library_file WHERE dup_review = 'review_later' AND missing_since IS NULL")}
     if key == "unlinked":

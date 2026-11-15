@@ -5,13 +5,14 @@
 {% block content %}
 <ul class="nav nav-tabs mb-4" id="mediaTabs" role="tablist">
     {% for key, label, endpoint, help in tabs %}
+    {% if key == 'files' %}<li class="nav-item"><a class="nav-link" href="{{ url_for(endpoint) }}" title="{{ help }}">{{ label }}</a></li>{% else %}
     <li class="nav-item" role="presentation">
         <a class="nav-link{% if key == active %} active{% endif %}" id="media-tab-{{ key }}" href="{{ url_for(endpoint) }}" data-bs-toggle="tab" data-bs-target="#media-pane-{{ key }}" data-media-url="{{ url_for(endpoint) }}" role="tab" aria-controls="media-pane-{{ key }}" aria-selected="{{ 'true' if key == active else 'false' }}" title="{{ help }}">{{ label }}</a>
-    </li>
+    </li>{% endif %}
     {% endfor %}
 </ul>
 <div class="tab-content">
-    {% for key, label, endpoint, help in tabs %}
+    {% for key, label, endpoint, help in tabs if key != 'files' %}
     <div class="tab-pane fade{% if key == active %} show active{% endif %}" id="media-pane-{{ key }}" role="tabpanel" aria-labelledby="media-tab-{{ key }}" tabindex="0">
         {% if key in panes %}{{ panes[key].tab|safe }}{% else %}<div class="text-body-secondary py-4" data-lazy-pane="{{ key }}" data-lazy-url="{{ url_for('media_pane', key=key) }}">Loading...</div>{% endif %}
     </div>

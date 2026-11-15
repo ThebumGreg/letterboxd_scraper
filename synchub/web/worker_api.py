@@ -10,6 +10,7 @@ from flask import Response, g, jsonify, request
 
 from synchub import downloads, db, jobs, pipeline_events, previews, protect, quality, states, storage, tasks, versions, workdrive, workers
 from synchub.library import cleanup, hide, migrate, scan
+from synchub.library import hidden as hidden_files
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +180,7 @@ def register(app):
             release = jobs.release_for(conn, data["holding"]) if isinstance(data.get("holding"), list) else []
             free_bytes = data.get("free_bytes")
             workers.benchmark_polled(conn, worker)
+            hidden_files.sweep(conn)                                             # hidden files past "delete after" get a notice, then a deletion job
             cleanup.sweep(conn)                                                  # sources whose waiting time is over get their deletion job before this claim
             claimed = jobs.claim(conn, worker, data.get("free_slots") or 0, free_bytes if isinstance(free_bytes, (int, float)) else None)
             downloads.process(conn)
