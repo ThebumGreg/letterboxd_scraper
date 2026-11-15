@@ -2,14 +2,23 @@
 {% extends "base.html" %}
 {% from "_quality.html" import size_text, quality_detail, quality_script with context %}
 {% from "_macros.html" import file_label_badge with context %}
-{% block title %}Library: {{ title }}{% endblock %}
+{% block title %}Files: {{ title }}{% endblock %}
 
 {% block content %}
-{% include "_media_nav.html" %}
+{% set active = 'files' %}{% include "_media_nav.html" %}
 {% set filter_args = {'q': f.q, 'root': f.root, 'conf': f.conf, 'what': f.what, 'type': f.type, 'quality': f.quality, 'label': f.label} %}
 {% set filtered = f.q or f.root or f.conf or f.what or f.type or f.quality or f.label %}
 {% set below = status == 'below_minimum' %}
-<p class="mb-2"><a href="{{ url_for('library_page') }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> Library</a></p>
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2" id="labelPills" aria-label="What the files are to their films">
+    <a class="badge rounded-pill text-decoration-none bg-{{ 'primary' if not f.label else 'secondary' }}" href="{{ url_for('library_list', status=status) }}">Every file</a>
+    {% for k in file_labels.ORDER %}{% if file_counts.files[k] %}<a class="badge rounded-pill text-decoration-none bg-{{ 'primary' if f.label == k else 'secondary' }}" href="{{ url_for('library_list', status='all', label=k) }}" title="{{ file_labels.HINT[k] }}">{{ file_labels.TEXT[k] }} {{ file_counts.files[k] }}</a>{% endif %}{% endfor %}
+    {% if hidden_count %}<a class="badge rounded-pill text-decoration-none bg-{{ 'primary' if f.label == 'hidden' else 'secondary' }}" href="{{ url_for('library_list', status='all', label='hidden') }}">Hidden {{ hidden_count }}</a>{% endif %}
+    {% if file_counts.files.unexplained %}<a class="btn btn-sm btn-success ms-2" href="{{ url_for('library_sort') }}">Sort out unexplained files ({{ file_counts.files.unexplained }})</a>{% endif %}
+    <span class="btn-group btn-group-sm ms-auto" role="group" aria-label="How to list">
+        <a class="btn btn-{{ 'secondary' if view != 'film' else 'outline-secondary' }}" href="{{ url_for('library_list', status=status, **filter_args) }}">By file</a>
+        <a class="btn btn-{{ 'secondary' if view == 'film' else 'outline-secondary' }}" href="{{ url_for('library_list', status=status, view='film', **filter_args) }}">By film</a>
+    </span>
+</div>
 
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
     <div><h2 class="mb-1">{{ title }} <small class="text-body-secondary fs-6">{{ total }} file{{ '' if total == 1 else 's' }}</small></h2><p class="text-body-secondary mb-0">{{ hint }}</p>
@@ -63,6 +72,20 @@
 </details>
 {% endif %}
 
+{% if view == 'film' %}
+<div class="panel p-0 overflow-hidden mb-3"><div class="table-responsive">
+    <table class="table table-hover align-middle mb-0" id="filmTable">
+        <thead class="table-light"><tr><th class="ps-4">Film</th><th>Files</th><th class="pe-4 text-end"></th></tr></thead>
+        <tbody>
+        {% for fm in films %}
+            <tr data-film="{{ fm.media_id }}"><td class="ps-4"><a class="fw-bold text-decoration-none" href="{{ url_for('movie_details', media_id=fm.media_id) }}">{{ fm.title }}{% if fm.year %} ({{ fm.year }}){% endif %}</a></td>
+                <td class="small">{% for x in fm.files %}<div class="text-break"><a class="text-decoration-none" href="{{ url_for('library_record', record_id=x.id) }}">{{ x.file_name }}</a> {{ file_label_badge(x) }} <span class="text-body-secondary">{{ x.size }}</span></div>{% endfor %}</td>
+                <td class="pe-4 text-end text-nowrap">{% if fm.unexplained %}<a class="btn btn-sm btn-success" href="{{ url_for('library_sort', media=fm.media_id) }}">Sort out</a>{% endif %} <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('movie_details', media_id=fm.media_id) }}">Open</a></td></tr>
+        {% else %}<tr><td colspan="3" class="text-center text-body-secondary py-4">No film has more than one file{% if filtered %} with this filter{% endif %}.</td></tr>{% endfor %}
+        </tbody>
+    </table>
+</div></div>
+{% else %}
 <div class="panel p-0 overflow-hidden mb-3">
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0" id="queueTable">
@@ -111,7 +134,9 @@
     </div>
 </div>
 
-{% if pages > 1 %}
+{% endif %}
+
+{% if pages > 1 and view != 'film' %}
 <nav aria-label="Pages"><ul class="pagination justify-content-center flex-wrap">
     {% for n in range(1, pages + 1) %}<li class="page-item{% if n == page %} active{% endif %}"><a class="page-link" href="{{ url_for('library_list', status=status, page=n, **filter_args) }}">{{ n }}</a></li>{% endfor %}
 </ul></nav>

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.6.2
+
+Migration 049 is new. Update SyncHub first, then the workers: **Delete now** and automatic deletion of hidden files need the new worker (it can do `delete_hidden`); hiding and putting back work with the 1.6.1 worker.
+
+**Explain a second file, hide it, and clean up later.**
+- **Old version.** A new label for a file the main file replaced. On each file's *Details*: **This is an old version (hide it)**, **Hide it** (any other reason) and, on a file that is not the main one, **New main, hide the old one**. Any file except the main file and the last visible file of a film can be hidden; it is renamed on the share (`.synchub-old`, `.synchub-hidden`, or `.synchub-duplicate` for an exact duplicate), so Jellyfin, Radarr and Sonarr ignore it. Nothing is deleted. The film page lists the hidden files with the reason.
+- **Hidden files on the Cleanup page.** What was hidden, why, where, how big and when. **Put it back**, **Delete now** (a worker first checks the film's other file is still there at the size SyncHub knew), tick several for **Put back selected** / **Delete selected** with the GB total, and the total that could be freed. Every delete asks first.
+- **Delete hidden files after N days** (Never by default; 7, 14, 30, 60 or 90). A notification goes out the day before ("Hidden files will be deleted tomorrow"), and files are deleted only after that notice. A new notification type, *Hidden files will be deleted tomorrow*, is on by default for administrators.
+
+**A Files tab (no migration).** The Library's list page is now the **Files** tab, right after Library. Open list buttons, Home's breakdown, and the show page's Open records all land on it with the filters set (the old `/library/queue` addresses still work). Label pills with counts across the top, a **By film / By file** switch, and **Sort out unexplained files**, a walkthrough that shows one unexplained file next to the film's other files and asks: an old version, a different edition, not this film, hide it, or skip.
+
 ## 1.6.1
 
 Migrations 046, 047 and 048 are new. Update SyncHub first, then the workers: the power buttons, the GPU numbers and "Set this duplicate aside" below need the new worker code. After updating, open **Library, Refresh links** once (or run Match & update) so every film's files are linked and labelled.

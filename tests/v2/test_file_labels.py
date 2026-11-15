@@ -331,3 +331,24 @@ def test_automatic_deletion_is_off_by_default_and_warns_a_day_before(client, con
     assert hidden.sweep(conn, "2026-01-08 00:00:00") == (0, 1)                                                         # a day later: deletion queued
     assert conn.execute("SELECT COUNT(*) FROM job WHERE ref_type = 'library_aside' AND plan LIKE '%delete_hidden%'").fetchone()[0] == 1
     assert hidden.sweep(conn, "2026-01-08 01:00:00") == (0, 0)                                                         # not queued twice
+
+
+# ---------------------------------------------------------------- the Files tab and Sort out
+def test_the_files_tab_sits_after_library_with_label_pills_and_a_by_film_view(client, conn):
+    media_id, new, old = old_and_new(conn)
+    page = client.get("/library/queue?status=all").get_data(as_text=True)
+    nav = page[page.index("media-subnav"):]
+    assert nav.index(">Library<") < nav.index(">Files<") < nav.index(">Cleanup<") and 'aria-current="true">Files<' in nav
+    assert 'id="labelPills"' in page and "Sort out unexplained files (2)" in page and "By film" in page
+    by_film = client.get("/library/queue?status=all&view=film").get_data(as_text=True)
+    assert 'id="filmTable"' in by_film and f'data-film="{media_id}"' in by_film and f"/library/sort?media={media_id}" in by_film
+    assert "Files</a>" in client.get("/library").get_data(as_text=True)
+    assert client.get("/media/pane/files").status_code == 403
+
+
+def test_sort_out_shows_one_unexplained_file_beside_the_main_file(client, conn):
+    media_id, new, old = old_and_new(conn)
+    page = client.get("/library/sort").get_data(as_text=True)
+    assert "What is this file?" in page and "Heat.1995.DVDRip.mkv" in page and f'data-record="{old}"' in page and "An old version" in page and "Skip for now" in page
+    client.post(f"/api/library/file/{old}/set-aside", json={"reason": "old_version"})
+    assert "Nothing left to sort out" in client.get("/library/sort").get_data(as_text=True)

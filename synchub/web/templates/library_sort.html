@@ -1,0 +1,64 @@
+<!-- synchub/web/templates/library_sort.html: "Sort out this film": one unexplained file at a time, next to the film's other files. -->
+{% extends "base.html" %}
+{% from "_macros.html" import file_label_badge with context %}
+{% block title %}Sort out a film{% endblock %}
+
+{% block content %}
+{% set active = 'files' %}{% include "_media_nav.html" %}
+<p class="mb-2"><a href="{{ url_for('library_list') }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> Files</a></p>
+{% if not film or not current %}
+<div class="panel p-4"><h2 class="h5">Nothing left to sort out</h2><p class="text-body-secondary mb-0">Every file with another file beside it has a label. Unexplained files appear here when SyncHub cannot tell what they are.</p></div>
+{% else %}
+<div id="sortMessage" class="alert d-none" role="status"></div>
+<h2 class="mb-1">{{ film.title }}{% if film.year %} <small class="text-body-secondary">({{ film.year }})</small>{% endif %}</h2>
+<p class="text-body-secondary">{{ left }} more film{{ '' if left == 1 else 's' }} after this one. Nothing is deleted: hiding a file only renames it on the share, and you can put it back or delete it later on the Cleanup page.</p>
+<div class="row g-3">
+    <div class="col-12 col-lg-6"><div class="panel p-3 h-100 border border-warning">
+        <div class="small text-body-secondary mb-1">What is this file?</div>
+        <div class="fw-semibold text-break">{{ current.file_name }}</div>
+        <div class="small text-body-secondary text-break">{{ current.root_name }}: {{ current.relative_path }}</div>
+        <div class="small mb-3">{{ current.size }}{% if current.resolution %} &middot; {{ current.resolution }}{% endif %}{% if current.video_codec %} &middot; {{ current.video_codec }}{% endif %}</div>
+        <div class="d-flex flex-wrap gap-2" id="sortChoices" data-record="{{ current.id }}" data-skip="{{ keep_skip }}">
+            <button type="button" class="btn btn-outline-warning" data-sort="old-version" title="It is an older file the main file replaced. It is hidden as an old version.">An old version (hide it)</button>
+            <button type="button" class="btn btn-outline-secondary" data-sort="edition" title="A director's cut, extended or other edition you want to keep.">A different edition</button>
+            <button type="button" class="btn btn-outline-secondary" data-sort="not-this-film" title="It was matched to the wrong film.">Not this film</button>
+            <button type="button" class="btn btn-outline-warning" data-sort="hide-other" title="Hide it for another reason.">Hide it</button>
+            <a class="btn btn-outline-secondary" href="{{ url_for('library_sort', skip=skip) }}">Skip for now</a>
+        </div>
+    </div></div>
+    <div class="col-12 col-lg-6"><div class="panel p-3 h-100">
+        <div class="small text-body-secondary mb-1">The film's other files</div>
+        {% for x in others %}<div class="mb-2"><div class="fw-semibold text-break">{{ x.file_name }} {{ file_label_badge(x) }}{% if x.is_main %} <span class="badge bg-primary">main</span>{% endif %}</div>
+            <div class="small text-body-secondary text-break">{{ x.root_name }}: {{ x.relative_path }}</div><div class="small">{{ x.size }}{% if x.resolution %} &middot; {{ x.resolution }}{% endif %}{% if x.video_codec %} &middot; {{ x.video_codec }}{% endif %}</div></div>{% endfor %}
+        <a class="small" href="{{ url_for('movie_details', media_id=film.id) }}">Open the film page</a>
+    </div></div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if film and current %}
+<script>
+(() => {
+    const box = document.getElementById('sortChoices'), csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const say = (ok, text) => { const m = document.getElementById('sortMessage'); m.className = 'alert alert-' + (ok ? 'success' : 'danger'); m.textContent = text; };
+    const routes = { 'old-version': ['set-aside', { reason: 'old_version' }], 'hide-other': ['set-aside', { reason: 'other' }], 'not-this-film': ['not-this-film', {}], 'edition': ['edition', { on: true, name: '' }] };
+    box.addEventListener('click', async (ev) => {
+        const b = ev.target.closest('[data-sort]');
+        if (!b) return;
+        const kind = b.dataset.sort, [path, body] = routes[kind];
+        if (['old-version', 'hide-other'].includes(kind) && !confirm('Rename the file on the share so Jellyfin, Radarr and Sonarr ignore it? Nothing is deleted and you can put it back.')) return;
+        let payload = body;
+        if (kind === 'edition') { const name = prompt('Name of the edition (for example Director’s Cut). You can leave it empty.', ''); if (name === null) return; payload = { on: true, name }; }
+        b.disabled = true;
+        try {
+            const res = await fetch('/api/library/file/' + box.dataset.record + '/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf }, body: JSON.stringify(payload) });
+            const data = await res.json();
+            say(data.ok, data.message || (data.ok ? 'Done.' : 'Failed.'));
+            if (data.ok) setTimeout(() => { location.href = '/library/sort?skip=' + encodeURIComponent(box.dataset.skip); }, 900); else b.disabled = false;
+        } catch (e) { say(false, 'Could not reach the server.'); b.disabled = false; }
+    });
+})();
+</script>
+{% endif %}
+{% endblock %}
