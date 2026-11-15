@@ -44,7 +44,7 @@ try:
 except ImportError:                        # pragma: no cover - exercised by tests that remove the module
     media_analysis = None
 
-__version__ = "1.6.3"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
+__version__ = "1.7.0"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
 IGNORE_FILE = ".ignore"           # an empty file with this name makes Jellyfin skip the folder
@@ -967,6 +967,25 @@ def parse_vmaf(text):
     return float(found[-1]) if found else None
 
 
+COMPRESS_TEST_CLIPS = (1, 8)              # how many clips a compression test may use, and how long each may be (seconds)
+COMPRESS_TEST_SECONDS = (5, 30)
+
+
+def compress_test_windows(duration, count, seconds, seed=0):
+    """(start, length) of the clips of a compression test: spread over the film like a quality check's parts (first and last minutes skipped on a long film)."""
+    count = max(COMPRESS_TEST_CLIPS[0], min(COMPRESS_TEST_CLIPS[1], int(count or 4)))
+    seconds = max(COMPRESS_TEST_SECONDS[0], min(COMPRESS_TEST_SECONDS[1], int(seconds or 15)))
+    return quality_windows(duration, count, seconds, seed)
+
+
+def vmaf_clip_command(ffmpeg, encoded, source, start, length, threads):
+    """Scores a test clip (a file that starts at 0) against the same window of the film. The clip was encoded with the same `-ss start -t length` read of the
+    film, so both sides show the same frames. Both are scaled to at most 1080p, the size the VMAF model was trained for."""
+    scale = "setpts=PTS-STARTPTS,scale=-2:'min(1080,ih)':flags=bicubic,format=yuv420p"
+    graph = f"[0:v:0]{scale}[d];[1:v:0]{scale}[r];[d][r]libvmaf=n_threads={max(1, int(threads))}"
+    return [ffmpeg, "-nostdin", "-hide_banner", "-v", "info", "-i", encoded, "-ss", f"{start:.3f}", "-t", f"{length:.3f}", "-i", source, "-lavfi", graph, "-f", "null", "-"]
+
+
 QUALITY_FILTERS = ("blockdetect", "blurdetect", "idet", "freezedetect")
 QUALITY_SLICE_TIMEOUT = 900             # seconds one slice may take before it is given up on
 _ERROR_WORDS = re.compile(r"error|invalid|corrupt|missing|concealing|damaged|truncated|overread|illegal|not found|non-monoton|co located", re.I)
@@ -1206,8 +1225,8 @@ def detect_capabilities(cfg):
     if code == 0:
         caps["ffprobe"] = out.splitlines()[0] if out else "ffprobe"
         if media_analysis and caps["ffmpeg"]:
-            caps["ops"].extend(["scan", "convert", "preview", "quality"])          # a scan needs ffprobe to read files and ffmpeg to check them; a conversion also runs ffmpeg, then checks the result
-            caps["features"].extend(["preview", "quality", "damage"])
+            caps["ops"].extend(["scan", "convert", "preview", "compress_test", "quality"])          # a scan needs ffprobe to read files and ffmpeg to check them; a conversion also runs ffmpeg, then checks the result
+            caps["features"].extend(["preview", "compress_test", "quality", "damage"])
             ai_ok, ai_info = ai_probe()
             if ai_ok:                                                              # the image was built with the AI layer: it can run the AI quality test
                 caps["ops"].append("quality_ai")
@@ -1784,10 +1803,10 @@ class JobRunner(threading.Thread):
         self.reporter.start()
         try:
             op = (self.job.get("plan") or {}).get("op")
-            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash, "convert": self.do_convert, "preview": self.do_preview, "quality": self.do_quality, "quality_ai": self.do_quality_ai, "rename": self.do_rename, "delete_source": self.do_delete_source, "hide_source": self.do_hide_source, "unhide_source": self.do_hide_source, "originals": self.do_originals, "delete_hidden": self.do_delete_hidden}.get(op)
-            if work is None or (op in ("scan", "hash", "convert", "preview", "quality", "quality_ai") and media_analysis is None):
+            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash, "convert": self.do_convert, "preview": self.do_preview, "compress_test": self.do_compress_test, "quality": self.do_quality, "quality_ai": self.do_quality_ai, "rename": self.do_rename, "delete_source": self.do_delete_source, "hide_source": self.do_hide_source, "unhide_source": self.do_hide_source, "originals": self.do_originals, "delete_hidden": self.do_delete_hidden}.get(op)
+            if work is None or (op in ("scan", "hash", "convert", "preview", "compress_test", "quality", "quality_ai") and media_analysis is None):
                 raise JobFailure("unsupported_job", f"This agent ({__version__}) cannot do '{op or self.job.get('kind')}' jobs. Update the agent"
-                                 + (" (media_analysis.py must be next to synchub_agent.py)." if op in ("scan", "hash", "convert", "preview", "quality", "quality_ai") else "."), retryable=False)
+                                 + (" (media_analysis.py must be next to synchub_agent.py)." if op in ("scan", "hash", "convert", "preview", "compress_test", "quality", "quality_ai") else "."), retryable=False)
             final = ("complete", {"result": work()}, "done")
         except Interrupted:
             self.log.info("Stopping for a restart or shutdown; the job resumes from its last checkpoint", stage=self.stage)
@@ -2674,6 +2693,107 @@ class JobRunner(threading.Thread):
         self.report_progress("preview", 1.0, "Preview ready", force=True)
         self.log.info(f"Preview clips sent ({human_bytes(result['encoded_bytes'])} compressed, {human_bytes(result['source_clip_bytes'])} original)")
         return result
+
+    def do_compress_test(self):
+        """The compression test (docs/QUALITY.md): a few short clips of the film are encoded with exactly the planned settings (the GPU when the plan allows it and one
+        is free, else the CPU), each is scored against the same window of the film with VMAF (CPU), and only the numbers are reported. Nothing is uploaded or kept.
+        The film is read where it is; each clip is deleted as soon as it is scored."""
+        plan = self.job["plan"]
+        if not self.job.get("source"):
+            raise JobFailure("bad_job", "A compression test needs a source.", retryable=False)
+        src = self.folder_in(self.job["source"]["root"], self.job["source"]["rel"])
+        if not os.path.isfile(src):
+            raise JobFailure("source_changed", f"The film is not there any more: {self.job['source']['rel']}")
+        if plan.get("source_size") and os.stat(src).st_size != plan["source_size"]:
+            raise JobFailure("source_changed", f"{self.job['source']['rel']} is not the file SyncHub analysed (its size differs). It will be looked at again.", retryable=False)
+        profile = clean_profile(plan.get("profile"))
+        if not profile or profile["video_codec"] == "keep":
+            raise JobFailure("bad_job", "This test has no compression settings to try.", retryable=False)
+        free = shutil.disk_usage(self.folder).free
+        if free < SPACE_MARGIN:
+            raise JobFailure("transient", f"Not enough free space on the work disk for a compression test: {human_bytes(free)} is free.")
+        work = os.path.join(self.folder, "ctest")
+        shutil.rmtree(work, ignore_errors=True)
+        os.makedirs(work)
+        settings = self.media_settings({})
+        started = time.monotonic()
+        self.report_progress("preview", 0.02, "Reading the film", force=True)
+        data = media_analysis.run_ffprobe(settings, src)
+        duration = media_duration(data) or plan.get("duration")
+        video = next((st for st in data.get("streams") or [] if isinstance(st, dict) and st.get("codec_type") == "video"), None) or {}
+        facts = media_analysis.video_facts(video, data.get("format"))
+        height = int(video.get("height") or 0)
+        windows = compress_test_windows(float(duration or 0), plan.get("clips"), plan.get("seconds"), plan.get("seed") or 0)
+        if not windows:
+            raise JobFailure("bad_job", "The film's length could not be read, so clips could not be chosen.", retryable=False)
+        profile = self.with_source_colours(settings, src, profile)
+        skipped = None
+        if not (self.agent.capabilities or {}).get("vmaf"):
+            skipped = "this worker's ffmpeg has no libvmaf"
+        elif facts["hdr"] != "sdr":
+            skipped = "VMAF is not meaningful for HDR pictures, so only the size is estimated"
+        kind = choose_encoder(profile, (self.agent.capabilities or {}).get("encoders"), self.cfg.video_encoder)
+        holding = kind != "cpu" and self.agent.gpu_take()
+        if kind != "cpu" and not holding:
+            self.log.info("The GPU is busy; this test uses the CPU encoder")
+            kind = "cpu"
+        planned = plan.get("change") if isinstance(plan.get("change"), dict) else {}
+        change = {"video": planned.get("video") or {"action": "transcode"}}
+        clips, fell_back, count = [], [], len(windows)
+        try:
+            for index, (start, length) in enumerate(windows):
+                self.guard()
+                low, band = 0.05 + 0.9 * index / count, 0.9 / count
+                out = os.path.join(work, f"clip{index}.mkv")
+                while True:
+                    command = build_chunk_command(self.cfg.ffmpeg, src, out, change, profile, kind, self.cfg.vaapi_device, start, length)
+                    self.log.info(f"Encoding test clip {index + 1} of {count} ({start:.0f} s, {length:.0f} s) with the {kind} encoder", command=shlex.join(command))
+                    try:
+                        self.run_clip(command, length, low, low + band * 0.6, f"Clip {index + 1} of {count}: compressing")
+                        break
+                    except JobFailure as exc:
+                        if kind == "cpu" or exc.error_class != "encode_failed":
+                            raise
+                        fell_back.append(f"{kind}: {exc.message[:300]}")
+                        self.log.warning(f"The {kind} GPU encoder failed on a test clip ({exc.message[:300]}); using the CPU encoder", encoder=kind)
+                        if holding:
+                            self.agent.gpu_give()
+                            holding = False
+                        kind = "cpu"
+                encoded_seconds = media_duration(media_analysis.run_ffprobe(settings, out)) or length
+                clip = {"start": round(start, 1), "length": round(length, 1), "source_kbps": round(self.video_packet_bytes(settings, src, start, length) * 8 / length / 1000),
+                        "encoded_kbps": round(self.video_packet_bytes(settings, out, 0, None) * 8 / encoded_seconds / 1000), "vmaf": None}
+                if not skipped:
+                    self.report_progress("preview", low + band * 0.6, f"Clip {index + 1} of {count}: scoring", force=True)
+                    try:
+                        done = subprocess.run(vmaf_clip_command(self.cfg.ffmpeg, out, src, start, length, min(4, os.cpu_count() or 1)), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                              text=True, errors="replace", timeout=900)
+                    except (OSError, subprocess.SubprocessError) as exc:
+                        skipped = f"the VMAF run failed ({exc})"
+                    else:
+                        score = parse_vmaf(done.stdout) if done.returncode == 0 else None
+                        if score is None:
+                            skipped = "ffmpeg could not compute a VMAF score: " + (done.stdout or "")[-300:].strip()
+                        else:
+                            clip["vmaf"] = round(score, 2)
+                    self.reporter.check()
+                self.log.info(f"Test clip {index + 1}/{count}", **clip)
+                clips.append(clip)
+                self._remove(out)
+        finally:
+            if holding:
+                self.agent.gpu_give()
+            shutil.rmtree(work, ignore_errors=True)
+        scores = [c["vmaf"] for c in clips if c["vmaf"] is not None]
+        if skipped and not scores:
+            self.log.info(f"No quality score: {skipped}")
+        elif skipped:
+            clips = [{**c, "vmaf": None} for c in clips]
+            scores = []
+        self.report_progress("preview", 1.0, "Compression test finished", force=True)
+        return {"op": "compress_test", "clips": clips, "encoder": kind, "fallback": fell_back or None, "hdr": facts["hdr"], "height": height, "floor": vmaf_floor(height), "skipped": skipped if not scores else None,
+                "mean": round(sum(scores) / len(scores), 2) if scores else None, "min": round(min(scores), 2) if scores else None, "duration": duration, "crf": profile.get("crf"),
+                "rate_mode": profile.get("rate_mode"), "elapsed": round(time.monotonic() - started, 1)}
 
     def video_packet_bytes(self, settings, path, start, seconds):
         """Bytes of video in `seconds` from `start` (the whole file when `seconds` is None), summed from the packet sizes."""

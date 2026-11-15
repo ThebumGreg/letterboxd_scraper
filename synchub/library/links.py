@@ -9,6 +9,7 @@ DIRECT = ("library_file", "library_hide", "library_source", "library_aside")
 LOOKUPS = {
     "quality_check": "SELECT library_file_id FROM quality_check WHERE id = ?",
     "quality_ai_test": "SELECT library_file_id FROM quality_ai_test WHERE id = ?",
+    "compression_test": "SELECT library_file_id FROM compression_test WHERE id = ?",
     "download_import": "SELECT record_id FROM download_import WHERE id = ?",
     "preview": """SELECT COALESCE(p.record_id, CASE WHEN p.subject_type = 'library_file' THEN p.subject_id END,
                                   (SELECT d.record_id FROM download_import d WHERE p.subject_type = 'download_import' AND d.id = p.subject_id))
@@ -40,6 +41,7 @@ def jobs_for_record(conn, record_id, limit=25):
     one = (record_id,)
     refs["quality_check"] = [r[0] for r in conn.execute("SELECT id FROM quality_check WHERE library_file_id = ?", one)]
     refs["quality_ai_test"] = [r[0] for r in conn.execute("SELECT id FROM quality_ai_test WHERE library_file_id = ?", one)]
+    refs["compression_test"] = [r[0] for r in conn.execute("SELECT id FROM compression_test WHERE library_file_id = ?", one)]
     refs["download_import"] = [r[0] for r in conn.execute("SELECT id FROM download_import WHERE record_id = ?", one)]
     refs["preview"] = [r[0] for r in conn.execute("SELECT id FROM preview WHERE record_id = ? OR (subject_type = 'library_file' AND subject_id = ?)", (record_id, record_id))]
     refs["preview"] += [r[0] for r in conn.execute("SELECT p.id FROM preview p JOIN download_import d ON d.id = p.subject_id WHERE p.subject_type = 'download_import' AND d.record_id = ?", one)]

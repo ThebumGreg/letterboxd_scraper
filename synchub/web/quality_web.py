@@ -1,12 +1,12 @@
 """Quality checks on the web: the Low quality page (what is flagged, what is waiting, the settings), and the buttons that check or accept a file."""
 from flask import Response, jsonify, render_template, request
 
-from synchub import ai_test, better_copy, db, jobs, poor_quality, quality, settings, storage
+from synchub import ai_test, better_copy, compression_test, db, jobs, poor_quality, quality, settings, storage
 from synchub.library import recommend as rc, report, scan
 from settings_validation import validate_setting
 
 PAGE_SIZE = 50
-SETTING_KEYS = ("quality_samples", "quality_slice_seconds", "quality_flag_below", "quality_min_height", "quality_on_download", "quality_scan_library", "quality_scan_order", "quality_paused", "quality_damage_pass", "quality_check_first", "quality_after_convert")
+SETTING_KEYS = ("quality_samples", "quality_slice_seconds", "quality_flag_below", "quality_min_height", "quality_on_download", "quality_scan_library", "quality_scan_order", "quality_paused", "quality_damage_pass", "quality_check_first", "quality_after_convert", "ctest_clips", "ctest_seconds", "ctest_margin")
 
 
 def _fail(message, status=400):
@@ -86,6 +86,13 @@ def register(app):
         file_id = _file_id(data)
         if file_id is None:
             return _fail("Choose a file to check.")
+        if data.get("mode") == "compress":
+            try:
+                with db.connection() as conn:
+                    compression_test.request(conn, file_id, by=_who(conn))
+            except (compression_test.CompressionTestError, jobs.JobError) as exc:
+                return _fail(str(exc))
+            return jsonify(ok=True, message="Queued. A worker will encode a few short clips with the planned settings and score them; this page does not need to stay open.")
         mode = "damage" if data.get("mode") == "damage" else "quality"
         try:
             with db.connection() as conn:
