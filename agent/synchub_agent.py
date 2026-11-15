@@ -44,7 +44,7 @@ try:
 except ImportError:                        # pragma: no cover - exercised by tests that remove the module
     media_analysis = None
 
-__version__ = "1.8.1"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
+__version__ = "1.9.0"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
 IGNORE_FILE = ".ignore"           # an empty file with this name makes Jellyfin skip the folder
@@ -980,19 +980,32 @@ def parse_vmaf(text):
 
 COMPRESS_TEST_CLIPS = (1, 8)              # how many clips a compression test may use, and how long each may be (seconds)
 COMPRESS_TEST_SECONDS = (5, 30)
+COMPRESS_TEST_CREDITS = 300.0             # a film longer than COMPRESS_TEST_CREDITS_MIN is treated as this many seconds shorter, so no clip lands in the credits
+COMPRESS_TEST_CREDITS_MIN = 3000.0
 
 
 def compress_test_windows(duration, count, seconds, seed=0):
     """(start, length) of the clips of a compression test: spread over the film like a quality check's parts (first and last minutes skipped on a long film)."""
     count = max(COMPRESS_TEST_CLIPS[0], min(COMPRESS_TEST_CLIPS[1], int(count or 4)))
     seconds = max(COMPRESS_TEST_SECONDS[0], min(COMPRESS_TEST_SECONDS[1], int(seconds or 15)))
+    if duration and duration > COMPRESS_TEST_CREDITS_MIN:
+        duration -= COMPRESS_TEST_CREDITS           # quality_windows already leaves the last 3 minutes; this leaves the end credits too (black, tiny when encoded: they skewed the size estimate)
     return quality_windows(duration, count, seconds, seed)
 
 
-def vmaf_clip_command(ffmpeg, encoded, source, start, length, threads):
+def hdr_tonemap_chain(transfer):
+    """The filters that turn an HDR picture into SDR for scoring: both sides of a comparison go through exactly this, so what is left is the compression damage. The input
+    is described explicitly (the encoded clip may carry no tags). Scaled to 1080p first: tone-mapping 4K frames is very slow."""
+    tin = "arib-std-b67" if transfer == "arib-std-b67" else "smpte2084"
+    return (f"zscale=tin={tin}:min=bt2020nc:pin=bt2020:rin=tv:t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,"
+            "zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
+
+
+def vmaf_clip_command(ffmpeg, encoded, source, start, length, threads, tonemap=None):
     """Scores a test clip (a file that starts at 0) against the same window of the film. The clip was encoded with the same `-ss start -t length` read of the
-    film, so both sides show the same frames. Both are scaled to at most 1080p, the size the VMAF model was trained for."""
-    scale = "setpts=PTS-STARTPTS,scale=-2:'min(1080,ih)':flags=bicubic,format=yuv420p"
+    film, so both sides show the same frames. Both are scaled to at most 1080p, the size the VMAF model was trained for. `tonemap` (the picture's transfer, for an HDR
+    picture) tone-maps both sides to SDR first."""
+    scale = "setpts=PTS-STARTPTS,scale=-2:'min(1080,ih)':flags=bicubic" + ("," + hdr_tonemap_chain(tonemap) if tonemap else "") + ",format=yuv420p"
     graph = f"[0:v:0]{scale}[d];[1:v:0]{scale}[r];[d][r]libvmaf=n_threads={max(1, int(threads))}"
     return [ffmpeg, "-nostdin", "-hide_banner", "-v", "info", "-i", encoded, "-ss", f"{start:.3f}", "-t", f"{length:.3f}", "-i", source, "-lavfi", graph, "-f", "null", "-"]
 
@@ -1205,7 +1218,7 @@ def parse_ffmpeg_progress(line, duration):
 def detect_capabilities(cfg):
     """What this PC can do: ffmpeg and the encoders that really work (one test frame each), cores, space and the operations the agent knows,
     and (under "host") the hardware details the Worker Status tab shows."""
-    caps = {"ops": list(OPS), "features": list(FEATURES), "cores": os.cpu_count(), "ffmpeg": None, "ffprobe": None, "encoders": [], "vmaf": False, "python": platform.python_version(),
+    caps = {"ops": list(OPS), "features": list(FEATURES), "cores": os.cpu_count(), "ffmpeg": None, "ffprobe": None, "encoders": [], "vmaf": False, "vmaf_hdr": False, "python": platform.python_version(),
             "analysis": media_analysis.LOGIC_VERSION if media_analysis else None}
     if media_analysis:
         caps["ops"].append("hash")
@@ -1232,6 +1245,7 @@ def detect_capabilities(cfg):
                                   "hwaccels": [line.strip() for line in hwaccels.splitlines() if line.strip() and not line.startswith("Hardware")][:20] if code == 0 else []}
         code, filters = run_quiet([cfg.ffmpeg, "-hide_banner", "-filters"])
         caps["vmaf"] = code == 0 and "libvmaf" in filters
+        caps["vmaf_hdr"] = bool(caps["vmaf"] and re.search(r"\bzscale\b", filters) and re.search(r"\btonemap\b", filters))          # HDR clips can be tone-mapped before scoring
     code, out = run_quiet([cfg.ffprobe, "-version"])
     if code == 0:
         caps["ffprobe"] = out.splitlines()[0] if out else "ffprobe"
@@ -2741,8 +2755,9 @@ class JobRunner(threading.Thread):
         skipped = None
         if not (self.agent.capabilities or {}).get("vmaf"):
             skipped = "this worker's ffmpeg has no libvmaf"
-        elif facts["hdr"] != "sdr":
-            skipped = "VMAF is not meaningful for HDR pictures, so only the size is estimated"
+        elif facts["hdr"] != "sdr" and not (self.agent.capabilities or {}).get("vmaf_hdr"):
+            skipped = "VMAF is not meaningful for HDR pictures without tone-mapping, and this worker's ffmpeg has no zscale and tonemap filters, so only the size is estimated"
+        tonemap = (facts.get("transfer") or "smpte2084") if facts["hdr"] != "sdr" else None
         wanted = plan.get("encoder") if plan.get("encoder") in ("cpu", "gpu") else None
         kind = encoder_choice(wanted, profile, (self.agent.capabilities or {}).get("encoders"), self.cfg.video_encoder)
         holding = kind != "cpu" and self.agent.gpu_take()
@@ -2792,7 +2807,7 @@ class JobRunner(threading.Thread):
                 if not skipped:
                     self.report_progress("preview", low + band * 0.6, f"Clip {index + 1} of {count}: scoring", force=True)
                     try:
-                        done = subprocess.run(vmaf_clip_command(self.cfg.ffmpeg, out, src, start, length, min(4, os.cpu_count() or 1)), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        done = subprocess.run(vmaf_clip_command(self.cfg.ffmpeg, out, src, start, length, min(4, os.cpu_count() or 1), tonemap), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                               text=True, errors="replace", timeout=900)
                     except (OSError, subprocess.SubprocessError) as exc:
                         skipped = f"the VMAF run failed ({exc})"
@@ -2817,7 +2832,7 @@ class JobRunner(threading.Thread):
             clips = [{**c, "vmaf": None} for c in clips]
             scores = []
         self.report_progress("preview", 1.0, "Compression test finished", force=True)
-        return {"op": "compress_test", "clips": clips, "encoder": kind, "fallback": fell_back or None, "requested_encoder": wanted, "hdr": facts["hdr"], "height": height, "floor": vmaf_floor(height), "skipped": skipped if not scores else None,
+        return {"op": "compress_test", "clips": clips, "encoder": kind, "fallback": fell_back or None, "requested_encoder": wanted, "hdr": facts["hdr"], "tonemapped": bool(tonemap and scores), "height": height, "floor": vmaf_floor(height), "skipped": skipped if not scores else None,
                 "mean": round(sum(scores) / len(scores), 2) if scores else None, "min": round(min(scores), 2) if scores else None, "duration": duration, "crf": profile.get("crf"),
                 "rate_mode": profile.get("rate_mode"), "elapsed": round(time.monotonic() - started, 1)}
 

@@ -31,6 +31,7 @@ VERDICT_TEXT = {
 }
 PRIORITY = 80                       # someone pressed a button and is waiting, but a download or a conversion still goes first
 NEED_BYTES = 2 * GIB
+QUIET_SHARE = 0.5                   # a clip whose source bitrate is under this share of the median clip's is left out of the size estimate (see atypical)
 
 
 class CompressionTestError(ValueError):
@@ -53,6 +54,15 @@ def clip_seconds(conn=None):
     return _int("ctest_seconds", 15, 10, 30, conn)
 
 
+def floor_override(conn=None):
+    """The VMAF score a film must reach, when Options sets one (blank = the worker's own floor by resolution: 93, or 95 for 4K)."""
+    try:
+        value = float(settings.get("ctest_floor", conn=conn))
+    except (TypeError, ValueError):
+        return None
+    return value if 50 <= value <= 100 else None
+
+
 def margin(conn=None):
     return _int("ctest_margin", 8, 0, 30, conn)
 
@@ -69,10 +79,21 @@ def verdict_for(mean, worst, floor, allowed=8):
     return "pass"
 
 
+def atypical(clips):
+    """The clips that say little about the whole film: one whose picture is far quieter than the rest (end credits, a black or still scene) would drag the size estimate down
+    and one far busier would push it up. Only judged with three clips or more, by the clip's source bitrate against the median of them all. Returns a set of indexes."""
+    rates = [c.get("source_kbps") or 0 for c in clips]
+    if len(clips) < 3 or not all(rates):
+        return set()
+    middle = sorted(rates)[len(rates) // 2]
+    return {i for i, rate in enumerate(rates) if rate < middle * QUIET_SHARE}
+
+
 def estimate_gb(clips, numbers, profile, video_kbps=None):
     """Whole-file size the clips predict, or None. A bitrate-targeted encode (the usual rule) lands near its target on every clip, so the clips' own bitrate is the
     estimate; a constant-quality encode scales the file's average bitrate by how much the clips shrank."""
-    done = [c for c in clips if c.get("encoded_kbps") and c.get("length")]
+    skip = atypical(clips)
+    done = [c for i, c in enumerate(clips) if c.get("encoded_kbps") and c.get("length") and i not in skip]
     duration = (numbers or {}).get("duration")
     if not done or not duration:
         return None
@@ -143,6 +164,8 @@ def request(conn, file_id, by="someone", now=None, encoder=None, force=False):
     job_id = jobs.create(conn, "scan", title=f"Compression test: {title}", ref=(REF, test_id), source=(rec["root_name"], rec["relative_path"]), plan=plan, priority=PRIORITY,
                          need_bytes=NEED_BYTES, max_attempts=2, now=now)
     conn.execute("UPDATE compression_test SET job_id = ? WHERE id = ?", (job_id, test_id))
+    from synchub.library import store
+    store.event(conn, file_id, "user", "compression_test_queued", None, {"by": by, "test": test_id, "job": job_id, "profile": profile["name"], "encoder": plan.get("encoder")}, now)
     logger.info(f"[compression_test] test {test_id} of {title} queued by {by} ({clips} clips of {seconds} s, {profile['name']})")
     return test_id
 
@@ -175,7 +198,7 @@ def sync(conn, job_id, now=None):
         else:
             plan = job["plan"] if isinstance(job.get("plan"), dict) else {}
             info = _json(rec["video_info_json"])
-            mean, worst, floor = result.get("mean"), result.get("min"), result.get("floor")
+            mean, worst, floor = result.get("mean"), result.get("min"), floor_override(conn) or result.get("floor")
             verdict = verdict_for(mean, worst, floor, row["margin"] if row["margin"] is not None else 8)
             est = estimate_gb(result["clips"], plan.get("size_policy"), plan.get("profile"), info.get("video_kbps"))
             values.update(mean_vmaf=mean, min_vmaf=worst, floor=floor, verdict=verdict, est_gb=est, result_json=json.dumps(result), finished_at=now,
@@ -185,7 +208,24 @@ def sync(conn, job_id, now=None):
     elif target == "running":
         values["message"] = job.get("message") or "A worker is testing the compression."
     conn.execute(f"UPDATE compression_test SET {', '.join(f'{k} = ?' for k in values)} WHERE id = ?", [*values.values(), row["id"]])
+    if target in ("done", "failed", "cancelled"):
+        from synchub.library import store
+        store.event(conn, row["library_file_id"], "worker", f"compression_test_{values['status']}", None,
+                    {"test": row["id"], "job": job_id, "note": values.get("message"), "est_gb": values.get("est_gb")}, now)
     return True
+
+
+def rejudge(conn):
+    """Works out the verdict of every finished test again, after the VMAF to keep or the margin changed in Options. Returns how many changed."""
+    changed, floor, allowed = 0, floor_override(conn), margin(conn)
+    for row in conn.execute("SELECT id, verdict, floor, mean_vmaf, min_vmaf, result_json FROM compression_test WHERE status = 'done' AND mean_vmaf IS NOT NULL").fetchall():
+        result = _json(row["result_json"])
+        new_floor = floor or result.get("floor") or row["floor"]
+        verdict = verdict_for(row["mean_vmaf"], row["min_vmaf"], new_floor, allowed)
+        if verdict != row["verdict"] or new_floor != row["floor"]:
+            conn.execute("UPDATE compression_test SET verdict = ?, floor = ?, margin = ? WHERE id = ?", (verdict, new_floor, allowed, row["id"]))
+            changed += 1
+    return changed
 
 
 def sync_active(conn):
@@ -221,6 +261,11 @@ def describe(conn, rec):
     result = _json(row["result_json"])
     out["parts"] = [{"at": _clock(c.get("start")), "vmaf": c.get("vmaf"), "source_mbps": round((c.get("source_kbps") or 0) / 1000, 1), "encoded_mbps": round((c.get("encoded_kbps") or 0) / 1000, 1)}
                     for c in result.get("clips") or []]
+    skip = atypical(result.get("clips") or [])
+    for i, part in enumerate(out["parts"]):
+        part["atypical"] = i in skip
+    out["atypical"] = len(skip)
+    out["tonemapped"] = bool(result.get("tonemapped"))
     scored = [p for p in out["parts"] if p["vmaf"] is not None]
     out["worst_at"] = min(scored, key=lambda p: p["vmaf"])["at"] if scored else None
     out["skipped"], out["encoder"], out["elapsed"], out["hdr"] = result.get("skipped"), result.get("encoder"), result.get("elapsed"), result.get("hdr")

@@ -465,3 +465,53 @@ def test_the_override_page_and_the_setting(client, conn, big):
     assert client.post("/api/library/quality/override", json={"file_id": big}).get_json()["ok"]
     assert client.post("/api/library/quality/settings", json={"ctest_before_convert": "0"}).get_json()["ok"]
     assert not client.post("/api/library/quality/settings", json={"ctest_before_convert": "maybe"}).get_json()["ok"]
+
+
+# ---------------------------------------------------------------- credits, HDR scoring, the VMAF to keep (1.9.0)
+def test_the_clips_stay_out_of_the_end_credits():
+    for seed in range(6):
+        windows = agent.compress_test_windows(6760.0, 4, 15, seed=seed)
+        assert len(windows) == 4 and max(start + length for start, length in windows) <= 6760 - 480 + 1
+    short = agent.compress_test_windows(2400.0, 4, 15)                      # a short film keeps the old margin: 5 minutes would leave too little
+    assert max(start + length for start, length in short) > 2400 - 480
+
+
+def test_a_quiet_clip_is_left_out_of_the_size_estimate():
+    """Baby Driver 2026-11-15: the last clip was in the credits (16.8 Mbps source, 0.4 Mbps encoded) and dragged the estimate from 14 GB to 10.9 GB."""
+    clips = [clip(180, 90.0, source=24089, encoded=11684), clip(2315, 96.9, source=24667, encoded=11683), clip(4443, 96.2, source=23715, encoded=11750), clip(6565, 97.0, source=16836 // 2, encoded=446)]
+    assert compression_test.atypical(clips) == {3}
+    numbers = {"duration": 6760, "audio_kbps": 4912, "subtitle_kbps": 109}
+    assert compression_test.estimate_gb(clips, numbers, {"rate_mode": "target"}) == compression_test.estimate_gb(clips[:3], numbers, {"rate_mode": "target"}) > 13
+    assert compression_test.atypical(clips[:2]) == set()                    # two clips cannot say which one is odd
+
+
+def test_an_hdr_picture_is_tone_mapped_for_both_sides_before_it_is_scored():
+    plain = " ".join(agent.vmaf_clip_command("ffmpeg", "/w/c.mkv", "/m/f.mkv", 10.0, 15.0, 4))
+    hdr = " ".join(agent.vmaf_clip_command("ffmpeg", "/w/c.mkv", "/m/f.mkv", 10.0, 15.0, 4, tonemap="smpte2084"))
+    assert "tonemap" not in plain and hdr.count("tonemap=tonemap=hable") == 2 and hdr.count("tin=smpte2084") == 2
+    assert "tin=arib-std-b67" in " ".join(agent.vmaf_clip_command("ffmpeg", "/w/c.mkv", "/m/f.mkv", 10.0, 15.0, 4, tonemap="arib-std-b67"))
+
+
+def test_an_hdr_score_is_marked_as_a_rough_guide(conn, big):
+    row = finish(conn, compression_test.request(conn, big), result(hdr="hdr10", tonemapped=True, floor=94.0))
+    shown = compression_test.describe(conn, dict(conn.execute("SELECT * FROM library_file WHERE id = ?", (big,)).fetchone()))
+    assert row["verdict"] == "pass" and shown["tonemapped"]
+
+
+def test_the_vmaf_to_keep_replaces_the_floor_and_judges_finished_tests_again(client, conn, big):
+    test_id = compression_test.request(conn, big)
+    row = finish(conn, test_id, result())                                # average 94.6 against the worker's floor of 93
+    assert row["verdict"] == "pass" and row["floor"] == 93.0
+    assert client.post("/api/library/quality/settings", json={"ctest_floor": "97"}).get_json()["ok"]
+    row = compression_test.get(conn, test_id)
+    assert row["floor"] == 97.0 and row["verdict"] == "fail"
+    assert client.post("/api/library/quality/settings", json={"ctest_floor": ""}).get_json()["ok"]       # blank = automatic again
+    assert compression_test.get(conn, test_id)["verdict"] == "pass" and compression_test.floor_override(conn) is None
+    assert not client.post("/api/library/quality/settings", json={"ctest_floor": "20"}).get_json()["ok"]
+
+
+def test_a_test_is_written_to_the_files_history(conn, big):
+    from synchub.library import store
+    finish(conn, compression_test.request(conn, big), result())
+    kinds = [e["event_type"] for e in store.events_for(conn, big)]
+    assert "compression_test_queued" in kinds and "compression_test_done" in kinds

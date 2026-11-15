@@ -6,7 +6,7 @@ from synchub.library import recommend as rc, report, scan
 from settings_validation import validate_setting
 
 PAGE_SIZE = 50
-SETTING_KEYS = ("quality_samples", "quality_slice_seconds", "quality_flag_below", "quality_min_height", "quality_on_download", "quality_scan_library", "quality_scan_order", "quality_paused", "quality_damage_pass", "quality_check_first", "quality_after_convert", "ctest_clips", "ctest_seconds", "ctest_margin", "ctest_before_convert")
+SETTING_KEYS = ("quality_samples", "quality_slice_seconds", "quality_flag_below", "quality_min_height", "quality_on_download", "quality_scan_library", "quality_scan_order", "quality_paused", "quality_damage_pass", "quality_check_first", "quality_after_convert", "ctest_clips", "ctest_seconds", "ctest_margin", "ctest_floor", "ctest_before_convert")
 
 
 def _fail(message, status=400):
@@ -248,4 +248,6 @@ def register(app):
         with db.connection() as conn:
             for key, value in cleaned.items():
                 settings.set_value(key, value, conn=conn)
+            if "ctest_floor" in cleaned or "ctest_margin" in cleaned:
+                compression_test.rejudge(conn)
         return jsonify(ok=True, message="Saved.")

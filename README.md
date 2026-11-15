@@ -11,6 +11,7 @@
 | Set up a small PC behind a TV as a player (first step: connect and manage it) | [docs/PLAYERS.md](docs/PLAYERS.md) |
 | Update SyncHub and see per-release notes | [docs/UPGRADE.md](docs/UPGRADE.md) and [CHANGELOG.md](CHANGELOG.md) |
 | Learn what each part of the app does | [docs/FEATURES.md](docs/FEATURES.md) |
+| Follow a file from scan to finished film | [docs/LIBRARY_FLOW.md](docs/LIBRARY_FLOW.md) |
 | Use or extend the TV remote, or add camera feeds | [docs/TV_REMOTE.md](docs/TV_REMOTE.md), [docs/CAMERAS.md](docs/CAMERAS.md) |
 | Show a morning screen (time, weather, calendars, school) on a TV | [docs/TV_DASHBOARD.md](docs/TV_DASHBOARD.md) |
 | Publish a release | [docs/RELEASING.md](docs/RELEASING.md) |

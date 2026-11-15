@@ -47,9 +47,9 @@ GROUP_TITLES = {
 }
 GROUP_HINTS = {
     G_READY: "Nothing unusual found. Approve and they are copied as they are.",
-    G_SUGGESTED: "We have a plan for each file (a name, tracks to remove, a duplicate to skip). Check and approve.",
-    G_CHECK: "A flag, such as no English audio. We suggest copying unchanged; look and approve.",
-    G_CONVERT: "Older formats Jellyfin may have to transcode. We convert the copy to MKV/H.264: a lossless remux where possible, a re-encode (slower) where needed.",
+    G_SUGGESTED: "We have a plan for each file that needs no video work: a name, tracks to remove, a compatible audio track to add, a duplicate to skip. Check and approve.",
+    G_CHECK: "Something to look at before approving: no English audio, or a compression the size rules could not decide alone. Look and approve.",
+    G_CONVERT: "Files that need video work: an older format (remux to MKV or re-encode), a compression the size rules ask for, Dolby Vision 7 to 8.1 or a smaller copy of a 4K film. A worker does it before the file is placed.",
     G_NEEDS: "These cannot be approved yet (unreadable files, incomplete scans, integrity problems), or an approved job failed or stopped and needs a person.",
     G_HELD: "Too small, scored low or damaged. Never converted; they can still be renamed and moved. Ask for a better copy, or accept one as it is.",
     G_QUEUED: "Approved. A worker is, or soon will be, doing the move or conversion.",
@@ -320,6 +320,11 @@ def recommend(rec, cfg=None, rule_steps=None, held=False) -> Recommendation:
 
     group = (G_READY if kind == "plain" else G_CHECK if kind == "check" else
              G_CONVERT if kind in ("convert", "rules") else G_SUGGESTED)
+    if kind == "rules":
+        # What the profile's rules add decides where the file waits: only an extra audio track is a light job (a remux), so it is a suggestion; a compression the size
+        # rules cannot decide alone needs a look; real video work (compress, Dolby Vision 7, a smaller copy) is Format conversion.
+        kinds = set(extra.kinds)
+        group = G_SUGGESTED if kinds <= {"audio"} else G_CHECK if "review" in kinds and not kinds & {"compress", "dv", "copy"} else G_CONVERT
     convert_plan = next((p for p in plans if p["op"] == "convert"), None)
     convert_headline = ("Re-encode to H.264 in MKV" if convert_plan and convert_plan["video"]["action"] == "transcode"
                         else "Convert audio to AAC" if convert_plan and convert_plan["audio_convert"]

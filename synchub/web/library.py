@@ -18,7 +18,7 @@ from settings_validation import validate_setting
 PAGE_SIZE = 100
 POLL_MAX_AGE = 10
 CONFIDENCE_FLOORS = {"high": rc.HIGH, "medium": rc.MEDIUM}
-FILTER_KEYS = ("q", "root", "conf", "what", "type", "quality", "label")
+FILTER_KEYS = ("q", "root", "conf", "what", "type", "quality", "label", "size", "res")
 
 
 def _who(conn):
@@ -217,7 +217,7 @@ def queue_view(status):
     statuses = [(STATUS_ALL, "All files", len(everything))] + [(g, rc.GROUP_TITLES[g], table[g]["total"]) for g in rc.GROUP_ORDER] + [(STATUS_BELOW, STATUS_TITLES[STATUS_BELOW], flagged)]
     return render_template("library_queue.html", status=status, group=group, title=STATUS_TITLES.get(status) or rc.GROUP_TITLES[status],
                            hint=STATUS_HINTS.get(status) or rc.GROUP_HINTS.get(rc.G_HELD if below else status, ""), rows=rows, total=film_total if view == "film" else len(all_rows), page=page,
-                           pages=max((len(all_rows) + PAGE_SIZE - 1) // PAGE_SIZE, 1), view=view, films=films, file_counts=file_counts, hidden_count=hidden_count, f=f, statuses=statuses, titles=rc.GROUP_TITLES, table=table,
+                           pages=max((len(all_rows) + PAGE_SIZE - 1) // PAGE_SIZE, 1), view=view, films=films, size_buckets=SIZE_BUCKETS, resolutions=RESOLUTIONS, resolution_of=resolution_of, file_counts=file_counts, hidden_count=hidden_count, f=f, statuses=statuses, titles=rc.GROUP_TITLES, table=table,
                            high=sum(1 for _, r in candidates if r.confidence == rc.HIGH), high_medium=len(candidates), roots=roots, **extra)
 
 
@@ -245,6 +245,28 @@ def queue_rows(conn, cfg, group, f):
     return rows_in_queue(conn, rc.classify(conn, cfg, f["q"] or None, f["root"] or None), group, f)
 
 
+# The Size and Resolution filters of the list page: (value, label, lowest GB, highest GB) and (value, label) of the picture class the size rules use.
+SIZE_BUCKETS = (("under5", "Under 5 GB", 0, 5), ("5to15", "5 to 15 GB", 5, 15), ("15to30", "15 to 30 GB", 15, 30), ("30to60", "30 to 60 GB", 30, 60), ("over60", "Over 60 GB", 60, None))
+RESOLUTIONS = (("2160", "4K (2160p)"), ("1080", "1080p"), ("720", "720p"), ("sd", "Smaller than 720p"), ("unknown", "Not read yet"))
+
+
+def size_matches(rec, wanted):
+    bucket = next((b for b in SIZE_BUCKETS if b[0] == wanted), None)
+    if bucket is None:
+        return True
+    gb = (rec.get("size_bytes") or 0) / 1024 ** 3
+    return gb >= bucket[2] and (bucket[3] is None or gb < bucket[3])
+
+
+def resolution_of(rec):
+    """'2160', '1080', '720', 'sd' or 'unknown': the picture class of a record (the one the size rules use, so a wide film cropped to 800 lines is 1080)."""
+    try:
+        width, height = [int(x) for x in str(rec.get("resolution") or "").lower().split("x")]
+    except ValueError:
+        return "unknown"
+    return size_policy.picture_class(width, height)
+
+
 def rows_in_queue(conn, classified, group, f):
     """The rows of one group (every row when `group` is None), narrowed by the filters."""
     rows = [(rec, r) for rec, r in classified if group is None or r.group == group]
@@ -259,6 +281,10 @@ def rows_in_queue(conn, classified, group, f):
     if f["label"] in file_labels.FILTERS:
         wanted = file_labels.ids_for(conn, f["label"])
         rows = [(rec, r) for rec, r in rows if rec["id"] in wanted]
+    if f["size"] in {b[0] for b in SIZE_BUCKETS}:
+        rows = [(rec, r) for rec, r in rows if size_matches(rec, f["size"])]
+    if f["res"] in {x[0] for x in RESOLUTIONS}:
+        rows = [(rec, r) for rec, r in rows if resolution_of(rec) == f["res"]]
     if f["quality"] in QUALITY_FILTERS:
         rows = [(rec, r) for rec, r in rows if _quality_matches(quality.state_for(conn, rec), f["quality"])]
     return rows

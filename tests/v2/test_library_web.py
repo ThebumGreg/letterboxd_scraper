@@ -454,3 +454,28 @@ def test_previous_and_next_walk_the_list_the_record_was_opened_from(client, conn
     for i, way in ((order[0], "previous"), (order[2], "next"), (9999, "next")):                # past an end, or not in the list: back to the list
         assert step(i, way).headers["Location"].endswith("/library/queue?status=all")
     assert "/library/queue?status=all&q=N1" in step(order[0], "next", "&q=N1").headers["Location"]
+
+
+# ---------------------------------------------------------------- size and resolution filters, and where a file waits (1.9.0)
+def test_the_list_can_be_narrowed_by_size_and_resolution(client, conn):
+    shares(conn)
+    small = add(conn, root="tfiles", rel="Downloads/Small.mkv", name="Small (2000).mkv", size=2 * 1024 ** 3)
+    big = add(conn, root="tfiles", rel="Downloads/Big.mkv", name="Big (2001).mkv", size=70 * 1024 ** 3)
+    conn.execute("UPDATE library_file SET resolution = '3840x2160' WHERE id = ?", (big,))
+    conn.commit()
+    ids = lambda url: set(int(i) for i in re.findall(r'data-record="(\d+)"', client.get(url).get_data(as_text=True)))      # noqa: E731
+    assert ids("/library/queue?status=all") == {small, big}
+    assert ids("/library/queue?status=all&size=over60") == {big} and ids("/library/queue?status=all&size=under5") == {small}
+    assert ids("/library/queue?status=all&res=2160") == {big} and ids("/library/queue?status=all&res=1080") == {small}
+    assert ids("/library/queue?status=all&res=2160&size=under5") == set() and ids("/library/queue?status=all&size=bogus") == {small, big}
+    page = client.get("/library/queue?status=all&size=over60").get_data(as_text=True)
+    assert 'name="size"' in page and 'name="res"' in page and '<option value="over60" selected>' in page and "4K" in row_for(page, big)
+
+
+def test_rule_steps_decide_which_queue_a_file_waits_in(conn):
+    from synchub.library import recommend as rc
+    from synchub.library.rule_steps import RuleSteps
+    record = rec_of(conn, add(conn, root="tfiles", rel="Downloads/Heat.mkv", name="Heat (1995).mkv"))
+    assert rc.recommend(record, CFG).group == rc.G_READY
+    for kinds, group in ((("audio",), rc.G_SUGGESTED), (("review",), rc.G_CHECK), (("compress", "audio"), rc.G_CONVERT), (("dv",), rc.G_CONVERT), (("copy",), rc.G_CONVERT)):
+        assert rc.recommend(record, CFG, lambda plans, kinds=kinds: RuleSteps(["step"], [], "headline", kinds)).group == group, kinds
