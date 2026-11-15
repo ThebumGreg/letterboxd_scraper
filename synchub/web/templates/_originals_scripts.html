@@ -31,5 +31,40 @@
             } catch (e) { say(false, 'Could not reach the server.'); button.disabled = false; }
         });
     });
+    const hiddenPost = async (url, payload, done) => {
+        try {
+            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf }, body: JSON.stringify(payload) });
+            const data = await res.json();
+            say(data.ok, data.message);
+            if (data.ok) setTimeout(() => location.reload(), 1200);
+        } catch (e) { say(false, 'Could not reach the server.'); }
+        if (done) done();
+    };
+    const picks = () => [...document.querySelectorAll('[data-hidden-pick]:checked')];
+    const refreshPicks = () => {
+        const on = picks(), bytes = on.reduce((n, c) => n + Number(c.dataset.size || 0), 0);
+        const label = document.getElementById('hiddenSelected');
+        if (label) label.textContent = on.length ? on.length + ' selected, ' + (bytes / 1073741824).toFixed(2) + ' GB' : 'Nothing selected';
+        document.querySelectorAll('[data-hidden-bulk]').forEach((b) => { b.disabled = !on.length; });
+    };
+    document.querySelectorAll('[data-hidden-pick]').forEach((c) => c.addEventListener('change', refreshPicks));
+    document.getElementById('hiddenAll')?.addEventListener('change', (e) => { document.querySelectorAll('[data-hidden-pick]:not(:disabled)').forEach((c) => { c.checked = e.target.checked; }); refreshPicks(); });
+    document.querySelectorAll('[data-hidden-bulk]').forEach((b) => b.addEventListener('click', () => {
+        const on = picks(), action = b.dataset.hiddenBulk, gb = (on.reduce((n, c) => n + Number(c.dataset.size || 0), 0) / 1073741824).toFixed(2);
+        if (action === 'delete' && !confirm('Delete ' + on.length + ' hidden file(s), ' + gb + ' GB, for good? A worker first checks each film still has its other file. This cannot be undone.')) return;
+        b.disabled = true;
+        hiddenPost('/api/library/hidden/act', { action, ids: on.map((c) => Number(c.dataset.hiddenPick)) }, () => { b.disabled = false; });
+    }));
+    document.querySelectorAll('[data-hidden-one]').forEach((b) => b.addEventListener('click', () => {
+        const action = b.dataset.hiddenOne;
+        if (action === 'delete' && !confirm('Delete "' + b.dataset.name + '" for good? A worker first checks the film still has its other file. This cannot be undone.')) return;
+        b.disabled = true;
+        hiddenPost('/api/library/hidden/act', { action, ids: [Number(b.dataset.id)] }, () => { b.disabled = false; });
+    }));
+    document.getElementById('hiddenDays')?.addEventListener('change', async (e) => {
+        const days = e.target.value;
+        if (days !== '0' && !confirm('Hidden files will be deleted for good ' + days + ' days after they were hidden, with a notification the day before. Files hidden longer than that are noticed first, then deleted a day later. Turn this on?')) { location.reload(); return; }
+        hiddenPost('/api/library/hidden/delete-after', { days });
+    });
 })();
 </script>

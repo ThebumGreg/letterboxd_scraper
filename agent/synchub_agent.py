@@ -50,7 +50,7 @@ MARKER = ".synchub-root"
 IGNORE_FILE = ".ignore"           # an empty file with this name makes Jellyfin skip the folder
 GENERIC_ARTWORK = re.compile(r"^(poster|folder|cover|fanart|backdrop|banner|landscape|thumb|clearlogo|clearart|logo|disc)\.(jpg|jpeg|png|webp|tbn)$", re.I)
 VIDEO_EXTENSIONS = (".mkv", ".mp4", ".m4v", ".avi", ".mov", ".ts", ".m2ts", ".wmv", ".iso")
-OPS = ["copy", "rename", "delete_source", "hide_source", "unhide_source", "originals"]     # the operations (plan.op) every agent can do; scan, hash and convert are added when the analysis module and ffmpeg are there
+OPS = ["copy", "rename", "delete_source", "hide_source", "unhide_source", "originals", "delete_hidden"]     # the operations (plan.op) every agent can do; scan, hash and convert are added when the analysis module and ffmpeg are there
 FEATURES = ["profiles", "scale", "audio_add", "benchmark", "two_outputs", "aside"]   # plan fields this agent understands; a job that needs one is only given to an agent that lists it (see jobs.can_run). "dovi" is added when dovi_tool and mkvmerge work
 MANIFEST_VERSION = 1
 HASH_BUFFER = 8 * 1024 * 1024
@@ -1784,7 +1784,7 @@ class JobRunner(threading.Thread):
         self.reporter.start()
         try:
             op = (self.job.get("plan") or {}).get("op")
-            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash, "convert": self.do_convert, "preview": self.do_preview, "quality": self.do_quality, "quality_ai": self.do_quality_ai, "rename": self.do_rename, "delete_source": self.do_delete_source, "hide_source": self.do_hide_source, "unhide_source": self.do_hide_source, "originals": self.do_originals}.get(op)
+            work = {"copy": self.do_copy, "scan": self.do_scan, "hash": self.do_hash, "convert": self.do_convert, "preview": self.do_preview, "quality": self.do_quality, "quality_ai": self.do_quality_ai, "rename": self.do_rename, "delete_source": self.do_delete_source, "hide_source": self.do_hide_source, "unhide_source": self.do_hide_source, "originals": self.do_originals, "delete_hidden": self.do_delete_hidden}.get(op)
             if work is None or (op in ("scan", "hash", "convert", "preview", "quality", "quality_ai") and media_analysis is None):
                 raise JobFailure("unsupported_job", f"This agent ({__version__}) cannot do '{op or self.job.get('kind')}' jobs. Update the agent"
                                  + (" (media_analysis.py must be next to synchub_agent.py)." if op in ("scan", "hash", "convert", "preview", "quality", "quality_ai") else "."), retryable=False)
@@ -2140,6 +2140,29 @@ class JobRunner(threading.Thread):
         self.prune_empty(os.path.dirname(src), self.agent.roots.path(source["root"]))
         self.log.info(f"Deleted the source {source['rel']} ({human_bytes(stat.st_size)}); the library copy is verified")
         return {"op": "delete_source", "bytes": stat.st_size, "deleted": True}
+
+    # ---- delete a file that was hidden on its share (renamed to name.synchub-duplicate / .synchub-old / .synchub-hidden), after checking the film still has its other file
+    HIDDEN_SUFFIXES = (".synchub-duplicate", ".synchub-old", ".synchub-hidden")
+
+    def do_delete_hidden(self):
+        source = self.job["source"]
+        src, keep = self.endpoints("delete_hidden")
+        plan = self.job["plan"]
+        if not src.endswith(self.HIDDEN_SUFFIXES):
+            raise JobFailure("bad_job", "Only a file SyncHub hid (its name ends in .synchub-duplicate, .synchub-old or .synchub-hidden) can be deleted here.", retryable=False)
+        if not os.path.isfile(keep) or (plan.get("keep_size") is not None and os.path.getsize(keep) != plan["keep_size"]):
+            raise JobFailure("verification_failed", f"The film's other file {self.job['dest']['rel']} is not there as it was, so the hidden file was kept.")
+        if not os.path.exists(src):
+            self.log.info("The hidden file was already gone")
+            return {"op": "delete_hidden", "already_gone": True}
+        stat = os.stat(src)
+        if not os.path.isfile(src) or (plan.get("source_size") is not None and stat.st_size != plan["source_size"]):
+            raise JobFailure("source_changed", f"{source['rel']} is not the file that was hidden (its size differs), so it was kept.")
+        self.report_progress("publish", 0.9, "Deleting the hidden file", force=True)
+        os.remove(src)
+        self.prune_empty(os.path.dirname(src), self.agent.roots.path(source["root"]))
+        self.log.info(f"Deleted the hidden file {source['rel']} ({human_bytes(stat.st_size)}); {self.job['dest']['rel']} is still there")
+        return {"op": "delete_hidden", "bytes": stat.st_size, "deleted": True}
 
     # ---- hide the original of a copied film from Jellyfin with an empty .ignore file in its folder (or take that file away again)
     def do_hide_source(self):

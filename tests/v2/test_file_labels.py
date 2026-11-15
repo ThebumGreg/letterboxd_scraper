@@ -277,3 +277,57 @@ def test_putting_a_hidden_file_back_uses_the_suffix_of_its_reason(client, conn):
     aside.sync(conn, back["id"])
     conn.commit()
     assert rec_of(conn, old)["dup_review"] is None and rec_of(conn, old)["hidden_reason"] is None and rec_of(conn, old)["is_old_version"] == 0
+
+
+# ---------------------------------------------------------------- the Hidden files section on Cleanup
+from synchub import settings  # noqa: E402
+from synchub.library import hidden  # noqa: E402
+
+
+def hide_old(client, conn, old):
+    client.post(f"/api/library/file/{old}/set-aside", json={"reason": "old_version"})
+    job = dict(conn.execute("SELECT * FROM job WHERE ref_type = 'library_aside' ORDER BY id DESC").fetchone())
+    conn.execute("UPDATE job SET status = 'done', result = '{}' WHERE id = ?", (job["id"],))
+    conn.commit()
+    aside.sync(conn, job["id"])
+    conn.commit()
+
+
+def test_cleanup_lists_hidden_files_with_reason_size_and_total(client, conn):
+    media_id, new, old = old_and_new(conn)
+    hide_old(client, conn, old)
+    page = client.get("/originals").get_data(as_text=True)
+    assert "Hidden files" in page and "old version" in page and "Put it back" in page and "Delete now" in page and f"/movie/{media_id}" in page
+    listing = hidden.listing(conn)
+    assert [i["id"] for i in listing["items"]] == [old] and listing["bytes"] == 1_000_000_000
+
+
+def test_deleting_a_hidden_file_queues_a_checked_job_and_marks_it_deleted(client, conn):
+    media_id, new, old = old_and_new(conn)
+    assert not client.post("/api/library/hidden/act", json={"action": "delete", "ids": [old]}).get_json()["ok"]        # not hidden yet
+    hide_old(client, conn, old)
+    assert client.post("/api/library/hidden/act", json={"action": "delete", "ids": [old]}).get_json()["ok"]
+    job = dict(conn.execute("SELECT * FROM job WHERE ref_type = 'library_aside' ORDER BY id DESC").fetchone())
+    plan = jobs.get(conn, job["id"])["plan"]
+    assert plan["op"] == "delete_hidden" and job["source_rel"].endswith(".synchub-old") and job["dest_rel"] == HEAT and plan["keep_size"] == 40_000_000_000
+    conn.execute("UPDATE job SET status = 'done', result = '{}' WHERE id = ?", (job["id"],))
+    conn.commit()
+    aside.sync(conn, job["id"])
+    conn.commit()
+    assert rec_of(conn, old)["dup_review"] == "deleted" and hidden.listing(conn)["items"] == []
+
+
+def test_automatic_deletion_is_off_by_default_and_warns_a_day_before(client, conn):
+    media_id, new, old = old_and_new(conn)
+    hide_old(client, conn, old)
+    assert hidden.sweep(conn, "2999-01-01 00:00:00") == (0, 0)                                                         # off: nothing happens
+    assert client.post("/api/library/hidden/delete-after", json={"days": "7"}).get_json()["ok"]
+    assert not client.post("/api/library/hidden/delete-after", json={"days": "5"}).get_json()["ok"]
+    conn.execute("UPDATE library_file SET hidden_at = '2026-01-01 00:00:00' WHERE id = ?", (old,))
+    conn.commit()
+    assert hidden.sweep(conn, "2026-01-06 12:00:00") == (0, 0)                                                         # a day and a half early
+    assert hidden.sweep(conn, "2026-01-07 00:00:00") == (1, 0)                                                         # noticed, not deleted
+    assert hidden.sweep(conn, "2026-01-07 05:00:00") == (0, 0)                                                         # the notice must come first
+    assert hidden.sweep(conn, "2026-01-08 00:00:00") == (0, 1)                                                         # a day later: deletion queued
+    assert conn.execute("SELECT COUNT(*) FROM job WHERE ref_type = 'library_aside' AND plan LIKE '%delete_hidden%'").fetchone()[0] == 1
+    assert hidden.sweep(conn, "2026-01-08 01:00:00") == (0, 0)                                                         # not queued twice

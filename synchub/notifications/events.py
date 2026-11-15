@@ -51,6 +51,12 @@ register(EventType(
     description="A conversion or copy completed on a worker. Can be chatty while a queue works through many files.", default_on=False,
 ))
 register(EventType(
+    "hidden_files_due", "Hidden files will be deleted tomorrow", ADMIN,
+    render=lambda p: Message("Hidden files go tomorrow", f"{p.get('count', 0)} hidden file(s), {p.get('gb', 0)} GB, are deleted tomorrow ({p.get('days')} days after they were hidden): "
+                             + ", ".join(p.get("names") or []) + ". Open Cleanup to put any back.", priority=0, ttl_seconds=86400),
+    description="Only when 'Delete hidden files after' is on (Cleanup page). A day before a hidden file is deleted for good, so you can put it back.", expires_hours=24,
+))
+register(EventType(
     "job_failed", "A job failed", ADMIN,
     render=lambda p: Message("Job failed", f"{_name(p)} failed: {p.get('error') or 'no reason given'}", priority=0),
     description="A job ran out of attempts, or a worker lost it.",

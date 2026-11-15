@@ -100,11 +100,15 @@ def sync(conn, job_id, now=None):
     if job["status"] != "done":
         if job["status"] in ("failed", "cancelled", "needs_review"):
             store.event(conn, rec["id"], "worker", f"aside_{job['status']}", None, {"job": job_id, "why": (job["error"] or job["review_reason"] or job["message"] or "")[:300]})
-            if not undo and why == "old_version" and rec.get("dup_review") != "aside" and job["status"] != "needs_review":
+            if plan.get("op") != "delete_hidden" and not undo and why == "old_version" and rec.get("dup_review") != "aside" and job["status"] != "needs_review":
                 store._update(conn, rec["id"], {"is_old_version": 0})                  # it was not hidden after all: back to what it was
                 if rec.get("media_id"):
                     file_labels.refresh(conn, [rec["media_id"]])
         return False
+    if plan.get("op") == "delete_hidden":
+        from synchub.library import hidden
+        hidden.mark_deleted(conn, rec, job_id, now)
+        return True
     if undo:
         store._update(conn, rec["id"], {"dup_review": None, "hidden_reason": None, "hidden_at": None, "hidden_notice_at": None, "is_old_version": 0})
     else:
