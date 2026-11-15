@@ -20,11 +20,11 @@
 </div>
 {% if reconcile and reconcile.jellyfin_items %}
 <p class="small text-body-secondary mb-1">Jellyfin movies: {{ reconcile.jellyfin_items }} item{{ '' if reconcile.jellyfin_items == 1 else 's' }} = {{ reconcile.titles }} title{{ '' if reconcile.titles == 1 else 's' }} here{% if reconcile.duplicates %} (<a href="#" data-show-extra-versions>{{ reconcile.duplicates }} more Jellyfin version{{ '' if reconcile.duplicates == 1 else 's' }}</a> of a film already counted){% endif %}{% if reconcile.unmatched %}, {{ reconcile.unmatched }} not matched yet (see Match review){% endif %}.</p>
-{% if file_counts and file_counts.films %}
-<p class="small text-body-secondary mb-4" id="fileBreakdown">{{ file_counts.films }} film{{ '' if file_counts.films == 1 else 's' }} with more than one file:
+{% if file_counts and (file_counts.films or file_counts.episodes) %}
+<p class="small text-body-secondary mb-4" id="fileBreakdown">{% if file_counts.films %}{{ file_counts.films }} film{{ '' if file_counts.films == 1 else 's' }}{% endif %}{% if file_counts.films and file_counts.episodes %} and {% endif %}{% if file_counts.episodes %}{{ file_counts.episodes }} episode{{ '' if file_counts.episodes == 1 else 's' }}{% endif %} with more than one file:
     {% for k in file_labels.ORDER %}{% if file_counts.files[k] %}<a href="{{ url_for('library_list', status='all', label=k) }}" title="{{ file_labels.HINT[k] }}">{{ file_counts.files[k] }} {{ file_labels.TEXT[k]|lower }}{{ '' if file_counts.files[k] == 1 else 's' }}</a>{{ ', ' if not loop.last else '' }}{% endif %}{% endfor %}.
     {% if file_counts.different_shares %}<a href="{{ url_for('library_list', status='all', label='different_shares') }}">{{ file_counts.different_shares }} on different shares</a>.{% endif %}
-    {% if file_counts.unlinked %}<a href="{{ url_for('library_list', status='all', label='unlinked') }}">{{ file_counts.unlinked }} movie file{{ '' if file_counts.unlinked == 1 else 's' }} not linked to a film</a>.{% endif %}
+    {% if file_counts.unlinked %}<a href="{{ url_for('library_list', status='all', label='unlinked') }}">{{ file_counts.unlinked }} movie or episode file{{ '' if file_counts.unlinked == 1 else 's' }} not linked to a film or episode</a>.{% endif %}
     {% if file_counts.saved_bytes %}Conversions saved {{ '%.1f'|format(file_counts.saved_bytes / 1073741824) }} GB.{% endif %}</p>
 {% endif %}
 {% endif %}

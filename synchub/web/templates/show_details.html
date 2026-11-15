@@ -118,6 +118,66 @@
     </div>
 </div>
 
+{% if episode_files %}
+<!-- ===================== Episodes with more than one file ===================== -->
+<div class="panel p-3 p-md-4 mb-4" id="episodeFiles">
+    <h5 class="mb-1">Files <span class="small text-body-secondary fw-normal">{{ episode_files|length }} episode{{ '' if episode_files|length == 1 else 's' }} with more than one file</span></h5>
+    <p class="small text-body-secondary">Episodes with one file look as they always did and are not listed. Nothing here deletes a file: hiding renames it on the share, and hidden files wait on the <a href="{{ url_for('workers_originals_page') }}">Cleanup</a> page.
+        <a href="{{ url_for('library_list', status='all', q=show.title, type='tv', label='many') }}">Open these in Files</a>.</p>
+    {% for ep in episode_files %}
+    <div class="border-top pt-2 mt-2">
+        <div class="fw-semibold">S{{ '%02d'|format(ep.season) }}E{{ '%02d'|format(ep.episode) }}{% if ep.title %} <span class="fw-normal text-body-secondary">{{ ep.title }}</span>{% endif %}</div>
+        {% for f in ep.files %}
+        <div class="ms-3 mt-1" data-file="{{ f.id }}">
+            <div class="d-flex flex-wrap justify-content-between gap-2"><span class="text-break">{{ f.name }}</span>
+                <span class="small">{% if f.is_main %}<span class="badge bg-success">MAIN</span> {% endif %}{% if f.label %}<span class="badge bg-{{ f.label_tone }}{% if f.label_tone in ('info', 'warning') %} text-dark{% endif %}" title="{{ f.label_hint }}">{{ f.label_text }}</span>{% endif %}</span></div>
+            <div class="small text-body-secondary">{{ f.resolution or 'unknown size' }} &middot; {{ (f.video_codec or 'unknown')|upper }} &middot; {{ '%.2f'|format((f.size_bytes or 0) / 1073741824) }} GB &middot; {{ f.root }}</div>
+            <div class="d-flex flex-wrap gap-2 mt-1">
+                <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('library_record', record_id=f.id) }}">Open record</a>
+                {% if not f.is_main %}
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="main" data-record="{{ f.id }}">Set as main file</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="replace-main" data-record="{{ f.id }}" title="Makes this the main file and hides the current main file as an old version. Nothing is deleted.">New main, hide the old one</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="old-version" data-record="{{ f.id }}" title="An older file the main file replaced. It is renamed on the share so Jellyfin ignores it.">This is an old version (hide it)</button>
+                {% if f.is_duplicate and not f.is_primary_duplicate %}<button type="button" class="btn btn-outline-warning btn-sm" data-file-act="set-aside" data-record="{{ f.id }}">Set this duplicate aside</button>{% endif %}
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="hide-other" data-record="{{ f.id }}">Hide it</button>
+                {% endif %}
+                {% if f.is_duplicate %}<button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="keep-both" data-record="{{ f.id }}">Keep both</button>{% endif %}
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="edition" data-record="{{ f.id }}">{{ 'Not an edition' if f.is_edition else 'A different edition' }}</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="not-this-film" data-record="{{ f.id }}" title="Stop counting this file as this episode. A scan will not add it back.">Not this episode</button>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endfor %}
+    <div id="episodeFileResult" class="small mt-2" role="status"></div>
+</div>
+<script>
+(() => {
+    const card = document.getElementById('episodeFiles');
+    if (!card) return;
+    const token = () => document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const out = document.getElementById('episodeFileResult');
+    const say = (text, ok) => { out.className = 'small mt-2 ' + (ok ? 'text-success' : 'text-danger'); out.textContent = text; };
+    const routes = { 'main': ['main', { on: true }], 'not-this-film': ['not-this-film', {}], 'keep-both': ['duplicate-note', { value: 'keep_both' }], 'set-aside': ['set-aside', { reason: 'duplicate' }],
+        'old-version': ['set-aside', { reason: 'old_version' }], 'hide-other': ['set-aside', { reason: 'other' }], 'replace-main': ['replace-main', {}] };
+    card.addEventListener('click', async (ev) => {
+        const act = ev.target.closest('[data-file-act]');
+        if (!act) return;
+        const kind = act.dataset.fileAct;
+        let [path, body] = kind === 'edition' ? ['edition', { on: act.textContent.trim() !== 'Not an edition', name: '' }] : routes[kind];
+        if (['set-aside', 'old-version', 'hide-other', 'replace-main'].includes(kind) && !window.confirm('Rename the file on the share so Jellyfin, Radarr and Sonarr ignore it? Nothing is deleted and you can put it back (or delete it later on the Cleanup page).')) return;
+        act.disabled = true;
+        try {
+            const r = await fetch('/api/library/file/' + act.dataset.record + '/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token() }, body: JSON.stringify(body) });
+            const d = await r.json().catch(() => ({ ok: false, message: 'SyncHub gave an unreadable answer.' }));
+            say(d.message || (d.ok ? 'Done.' : 'Failed.'), !!d.ok);
+            if (d.ok) setTimeout(() => location.reload(), 900); else act.disabled = false;
+        } catch (e) { say('Could not reach SyncHub.', false); act.disabled = false; }
+    });
+})();
+</script>
+{% endif %}
+
 <!-- ===================== Episodes ===================== -->
 <div class="sd-section-title mb-3">
     <h4 class="fw-bold mb-0"><i class="bi bi-collection-play text-success"></i> Episodes</h4>

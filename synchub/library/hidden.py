@@ -62,7 +62,10 @@ def request_delete(conn, record_id, now=None):
     if aside._busy(conn, record_id):
         raise HiddenError("A worker is already doing something with this file.")
     keep = None
-    if rec.get("media_id"):
+    if rec.get("episode_id") is not None:
+        keep = conn.execute("SELECT id, root_name, relative_path, size_bytes FROM library_file WHERE episode_id = ? AND id != ? AND missing_since IS NULL AND COALESCE(dup_review, '') != 'aside' "
+                            "ORDER BY is_main DESC, size_bytes DESC LIMIT 1", (rec["episode_id"], record_id)).fetchone()
+    elif rec.get("media_id"):
         keep = conn.execute("SELECT id, root_name, relative_path, size_bytes FROM library_file WHERE media_id = ? AND id != ? AND missing_since IS NULL AND COALESCE(dup_review, '') != 'aside' "
                             "ORDER BY is_main DESC, size_bytes DESC LIMIT 1", (rec["media_id"], record_id)).fetchone()
     elif rec.get("duplicate_group"):

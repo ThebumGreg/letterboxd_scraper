@@ -31,7 +31,7 @@ def save_film(conn, media_id, files):
     for f in keep:
         if f.get("media_link_source") != MANUAL:
             _write(conn, f["id"], media_id, AUTO)
-    for row in conn.execute("SELECT id FROM library_file WHERE media_id = ? AND media_link_source = ? AND COALESCE(dup_review, '') != 'aside'", (media_id, AUTO)).fetchall():
+    for row in conn.execute("SELECT id FROM library_file WHERE media_id = ? AND media_link_source = ? AND episode_id IS NULL AND COALESCE(dup_review, '') != 'aside'", (media_id, AUTO)).fetchall():
         if row["id"] not in ids:
             conn.execute("UPDATE library_file SET media_id = NULL, media_link_source = NULL WHERE id = ?", (row["id"],))
     file_labels.refresh(conn, [media_id])
@@ -40,7 +40,7 @@ def save_film(conn, media_id, files):
 
 def not_this_film(conn, file_id):
     """A person says the file is not this film: the link is cleared and no scan sets it again."""
-    conn.execute("UPDATE library_file SET media_id = NULL, media_link_source = ? WHERE id = ?", (MANUAL, file_id))
+    conn.execute("UPDATE library_file SET media_id = NULL, episode_id = NULL, media_link_source = ? WHERE id = ?", (MANUAL, file_id))
 
 
 def relink_all(conn):
@@ -83,8 +83,8 @@ def relink_all(conn):
             i += 1
     linked = 0
     for fid, rec in rows.items():
-        if rec.get("media_link_source") == MANUAL or rec.get("dup_review") == "aside":
-            continue
+        if rec.get("media_link_source") == MANUAL or rec.get("dup_review") == "aside" or rec.get("media_type") == "TV Episode":
+            continue                                    # (an episode file is linked by episode_link.py)
         media_id = claimed.get(fid)
         if media_id is None:
             if rec.get("media_id") is not None:
@@ -92,5 +92,7 @@ def relink_all(conn):
         else:
             _write(conn, fid, media_id, AUTO)
             linked += 1
+    from synchub.library import episode_link
+    episodes = episode_link.relink(conn)["episodes"]
     films = file_labels.refresh(conn)
-    return {"films": len({m for m in claimed.values()}), "files": linked, "with_more_than_one": films}
+    return {"films": len({m for m in claimed.values()}), "files": linked, "episodes": episodes, "with_more_than_one": films}

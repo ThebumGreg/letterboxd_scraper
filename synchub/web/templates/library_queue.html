@@ -13,7 +13,7 @@
     <a class="badge rounded-pill text-decoration-none bg-{{ 'primary' if not f.label else 'secondary' }}" href="{{ url_for('library_list', status=status) }}">Every file</a>
     {% for k in file_labels.ORDER %}{% if file_counts.files[k] %}<a class="badge rounded-pill text-decoration-none bg-{{ 'primary' if f.label == k else 'secondary' }}" href="{{ url_for('library_list', status='all', label=k) }}" title="{{ file_labels.HINT[k] }}">{{ file_labels.TEXT[k] }} {{ file_counts.files[k] }}</a>{% endif %}{% endfor %}
     {% if hidden_count %}<a class="badge rounded-pill text-decoration-none bg-{{ 'primary' if f.label == 'hidden' else 'secondary' }}" href="{{ url_for('library_list', status='all', label='hidden') }}">Hidden {{ hidden_count }}</a>{% endif %}
-    {% if file_counts.files.unexplained %}<a class="btn btn-sm btn-success ms-2" href="{{ url_for('library_sort') }}">Sort out unexplained files ({{ file_counts.files.unexplained }})</a>{% endif %}
+    {% if file_counts.files.unexplained %}<a class="btn btn-sm btn-success ms-2" href="{{ url_for('library_sort') }}" title="One film at a time. Episodes are sorted out on the show page.">Sort out unexplained films</a>{% endif %}
     <span class="btn-group btn-group-sm ms-auto" role="group" aria-label="How to list">
         <a class="btn btn-{{ 'secondary' if view != 'film' else 'outline-secondary' }}" href="{{ url_for('library_list', status=status, **filter_args) }}">By file</a>
         <a class="btn btn-{{ 'secondary' if view == 'film' else 'outline-secondary' }}" href="{{ url_for('library_list', status=status, view='film', **filter_args) }}">By film</a>
