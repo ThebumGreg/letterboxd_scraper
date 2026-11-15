@@ -16,7 +16,9 @@
         {% if q.check and q.check.status == 'failed' %}<span class="text-danger">The last check failed: {{ q.check.message }}</span>{% endif %}
         {% if act and not (q.check and q.check.status in ('queued', 'running')) %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-check="{{ file_id }}">{{ 'Check again' if q.result else 'Check quality' }}</button>{% endif %}
         {% if act %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-check="{{ file_id }}" data-mode="damage" title="Reads the whole file and counts decode errors. Slow, no score.">Damage check</button>{% endif %}
-        {% if act %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-check="{{ file_id }}" data-mode="compress" title="Encodes a few short clips with the planned conversion settings and scores them with VMAF, so you see how the picture would look and how big the file would be before converting. Changes nothing.">Test compression</button>{% endif %}
+        {% if act %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-check="{{ file_id }}" data-mode="compress" title="Encodes a few short clips with the planned conversion settings and scores them with VMAF, so you see how the picture would look and how big the file would be before converting. Changes nothing.">Test compression</button>
+        <select class="form-select form-select-sm py-0 w-auto d-inline-block" data-ctest-encoder="{{ file_id }}" aria-label="Encoder for the test" title="Which encoder the test uses. A CPU test only tells you about the CPU: convert with the same encoder you tested."><option value="">Encoder: as the profile says</option><option value="cpu">Test on the CPU</option><option value="gpu">Test on the GPU</option></select>
+        <label class="small text-body-secondary" title="Tests the profile on a file the size rules would leave alone, for example one already under the bitrate limit."><input type="checkbox" data-ctest-force="{{ file_id }}"> even if the rules leave it alone</label>{% endif %}
         {% if act and q.low %}<button type="button" class="btn btn-sm btn-outline-secondary py-0" data-quality-accept="{{ file_id }}" title="Stop flagging this file. It is flagged again only if the file changes.">Accept as is</button>{% endif %}
         {% if act and q.low %}<button type="button" class="btn btn-sm btn-outline-info py-0" data-quality-better="{{ file_id }}" title="Blocks the release that was grabbed for this film in Radarr and asks Radarr to search again. A film Radarr does not have is added to Radarr and searched; the old file is kept.">Request better copy</button>
         <button type="button" class="btn btn-sm btn-outline-info py-0" data-quality-releases="{{ file_id }}" title="Lists what the indexers have. Changes nothing until you pick one.">Show releases</button>{% endif %}
@@ -82,7 +84,19 @@
     });
     document.addEventListener('click', (e) => {
         const check = e.target.closest('[data-quality-check]');
-        if (check) send('/api/library/quality/check', { file_id: check.dataset.qualityCheck, mode: check.dataset.mode || 'quality' }, check);
+        if (check) {
+            const body = { file_id: check.dataset.qualityCheck, mode: check.dataset.mode || 'quality' };
+            if (body.mode === 'compress') {
+                const id = check.dataset.qualityCheck;
+                body.encoder = document.querySelector('[data-ctest-encoder="' + id + '"]')?.value || '';
+                body.force = !!document.querySelector('[data-ctest-force="' + id + '"]')?.checked;
+            }
+            send('/api/library/quality/check', body, check);
+        }
+        const over = e.target.closest('[data-ctest-override]');
+        if (over) send('/api/library/quality/override', { file_id: over.dataset.ctestOverride }, over);
+        const enc = e.target.closest('[data-encoder-choice]');
+        if (enc) send('/api/library/quality/encoder', { file_id: enc.dataset.fileId, choice: enc.dataset.encoderChoice }, enc);
         const accept = e.target.closest('[data-quality-accept]');
         if (accept) send('/api/library/quality/accept', { file_id: accept.dataset.qualityAccept, undo: accept.dataset.undo === '1' }, accept);
     });
@@ -152,6 +166,7 @@
                 <input type="text" class="form-control form-control-sm" style="max-width: 220px;" maxlength="60" placeholder="Edition name, e.g. Director's Cut" value="{{ f.edition_name or '' }}" data-edition-name="{{ f.id }}" aria-label="Edition name">
                 <button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="edition" data-record="{{ f.id }}">{{ 'Save edition name' if f.is_edition else 'This is a different edition' }}</button>
                 {% if f.is_edition %}<button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="edition-off" data-record="{{ f.id }}">Not an edition</button>{% endif %}
+                {% if f is not sameas copies.main %}<button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="{{ 'mobile-off' if f.is_mobile else 'mobile' }}" data-record="{{ f.id }}" title="A smaller copy for phones and remote viewing. Only the label changes; nothing on the share is renamed.">{{ 'Not a mobile copy' if f.is_mobile else 'This is a mobile copy' }}</button>{% endif %}
                 <button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="not-this-film" data-record="{{ f.id }}" title="Stop counting this file as part of this film. A scan will not add it back.">Not this film</button>
                 {% if f is not sameas copies.main and f.dup_review != 'aside' %}<button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="old-version" data-record="{{ f.id }}" title="An older file the main file replaced. It is renamed on the share so Jellyfin ignores it, and listed on the Cleanup page so you can delete it later.">This is an old version (hide it)</button>
                 <button type="button" class="btn btn-outline-secondary btn-sm" data-file-act="hide-other" data-record="{{ f.id }}" title="Hides the file for another reason. It is listed on the Cleanup page.">Hide it</button>{% endif %}
@@ -213,6 +228,7 @@
                 'keep-both': ['duplicate-note', { value: 'keep_both' }], 'review-later': ['duplicate-note', { value: 'review_later' }],
                 'set-aside': ['set-aside', { reason: 'duplicate' }], 'put-back': ['put-back', {}], 'old-version': ['set-aside', { reason: 'old_version' }], 'hide-other': ['set-aside', { reason: 'other' }],
                 'replace-main': ['replace-main', {}],
+                'mobile': ['mobile', { on: true }], 'mobile-off': ['mobile', { on: false }],
                 'edition': ['edition', { on: true, name: (card.querySelector('[data-edition-name="' + id + '"]') || {}).value || '' }], 'edition-off': ['edition', { on: false }],
             };
             const [path, body] = routes[kind];

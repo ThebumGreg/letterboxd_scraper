@@ -6,7 +6,7 @@ from synchub.library import recommend as rc, report, scan
 from settings_validation import validate_setting
 
 PAGE_SIZE = 50
-SETTING_KEYS = ("quality_samples", "quality_slice_seconds", "quality_flag_below", "quality_min_height", "quality_on_download", "quality_scan_library", "quality_scan_order", "quality_paused", "quality_damage_pass", "quality_check_first", "quality_after_convert", "ctest_clips", "ctest_seconds", "ctest_margin")
+SETTING_KEYS = ("quality_samples", "quality_slice_seconds", "quality_flag_below", "quality_min_height", "quality_on_download", "quality_scan_library", "quality_scan_order", "quality_paused", "quality_damage_pass", "quality_check_first", "quality_after_convert", "ctest_clips", "ctest_seconds", "ctest_margin", "ctest_before_convert")
 
 
 def _fail(message, status=400):
@@ -89,7 +89,7 @@ def register(app):
         if data.get("mode") == "compress":
             try:
                 with db.connection() as conn:
-                    compression_test.request(conn, file_id, by=_who(conn))
+                    compression_test.request(conn, file_id, by=_who(conn), encoder=str(data.get("encoder") or "") or None, force=bool(data.get("force")))
             except (compression_test.CompressionTestError, jobs.JobError) as exc:
                 return _fail(str(exc))
             return jsonify(ok=True, message="Queued. A worker will encode a few short clips with the planned settings and score them; this page does not need to stay open.")
@@ -100,6 +100,32 @@ def register(app):
         except (quality.QualityError, jobs.JobError) as exc:
             return _fail(str(exc))
         return jsonify(ok=True, message="Queued. A worker will check it soon; this page does not need to stay open." if mode == "quality" else "Queued. A worker will read the whole file looking for decode errors; this can take a while.")
+
+    @app.route("/api/library/quality/override", methods=["POST"])
+    def api_library_quality_override():
+        data = request.get_json(silent=True) or {}
+        file_id = _file_id(data)
+        if file_id is None:
+            return _fail("Choose a file.")
+        try:
+            with db.connection() as conn:
+                message = compression_test.override(conn, file_id, by=_who(conn))
+        except compression_test.CompressionTestError as exc:
+            return _fail(str(exc))
+        return jsonify(ok=True, message=message)
+
+    @app.route("/api/library/quality/encoder", methods=["POST"])
+    def api_library_quality_encoder():
+        data = request.get_json(silent=True) or {}
+        file_id = _file_id(data)
+        if file_id is None:
+            return _fail("Choose a file.")
+        try:
+            with db.connection() as conn:
+                message = compression_test.set_encoder_choice(conn, file_id, str(data.get("choice") or ""))
+        except compression_test.CompressionTestError as exc:
+            return _fail(str(exc))
+        return jsonify(ok=True, message=message)
 
     @app.route("/api/library/quality/accept", methods=["POST"])
     def api_library_quality_accept():

@@ -19,6 +19,7 @@
         <div class="small text-body-secondary text-break">{{ current.root_name }}: {{ current.relative_path }}</div>
         <div class="small mb-3">{{ current.size }}{% if current.resolution %} &middot; {{ current.resolution }}{% endif %}{% if current.video_codec %} &middot; {{ current.video_codec }}{% endif %}</div>
         <div class="d-flex flex-wrap gap-2" id="sortChoices" data-record="{{ current.id }}" data-skip="{{ keep_skip }}">
+            <button type="button" class="btn btn-outline-info" data-sort="mobile" title="A small copy made for phones. It is only labelled; the file is not renamed.">A mobile copy</button>
             <button type="button" class="btn btn-outline-warning" data-sort="old-version" title="It is an older file the main file replaced. It is hidden as an old version.">An old version (hide it)</button>
             <button type="button" class="btn btn-outline-secondary" data-sort="edition" title="A director's cut, extended or other edition you want to keep.">A different edition</button>
             <button type="button" class="btn btn-outline-secondary" data-sort="not-this-film" title="It was matched to the wrong film.">Not this film</button>
@@ -42,7 +43,7 @@
 (() => {
     const box = document.getElementById('sortChoices'), csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
     const say = (ok, text) => { const m = document.getElementById('sortMessage'); m.className = 'alert alert-' + (ok ? 'success' : 'danger'); m.textContent = text; };
-    const routes = { 'old-version': ['set-aside', { reason: 'old_version' }], 'hide-other': ['set-aside', { reason: 'other' }], 'not-this-film': ['not-this-film', {}], 'edition': ['edition', { on: true, name: '' }] };
+    const routes = { 'mobile': ['mobile', { on: true }], 'old-version': ['set-aside', { reason: 'old_version' }], 'hide-other': ['set-aside', { reason: 'other' }], 'not-this-film': ['not-this-film', {}], 'edition': ['edition', { on: true, name: '' }] };
     box.addEventListener('click', async (ev) => {
         const b = ev.target.closest('[data-sort]');
         if (!b) return;

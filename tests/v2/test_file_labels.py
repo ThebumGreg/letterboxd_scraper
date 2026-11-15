@@ -352,3 +352,16 @@ def test_sort_out_shows_one_unexplained_file_beside_the_main_file(client, conn):
     assert "What is this file?" in page and "Heat.1995.DVDRip.mkv" in page and f'data-record="{old}"' in page and "An old version" in page and "Skip for now" in page
     client.post(f"/api/library/file/{old}/set-aside", json={"reason": "old_version"})
     assert "Nothing left to sort out" in client.get("/library/sort").get_data(as_text=True)
+
+
+def test_a_person_can_mark_an_unexplained_file_as_a_mobile_copy_without_renaming_it(client, conn):
+    media_id, new, old = old_and_new(conn)
+    assert "A mobile copy" in client.get("/library/sort").get_data(as_text=True)
+    reply = client.post(f"/api/library/file/{old}/mobile", json={"on": True}).get_json()
+    assert reply["ok"], reply
+    assert rec_of(conn, old)["file_label"] == "mobile"
+    assert conn.execute("SELECT relative_path FROM library_file WHERE id = ?", (old,)).fetchone()[0].endswith("Heat.1995.DVDRip.mkv")
+    assert "Nothing left to sort out" in client.get("/library/sort").get_data(as_text=True)
+    assert client.post(f"/api/library/file/{old}/mobile", json={"on": False}).get_json()["ok"]
+    assert rec_of(conn, old)["file_label"] == "unexplained"
+    assert client.post("/api/library/file/999999/mobile", json={"on": True}).status_code == 404

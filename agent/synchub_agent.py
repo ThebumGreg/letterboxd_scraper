@@ -44,7 +44,7 @@ try:
 except ImportError:                        # pragma: no cover - exercised by tests that remove the module
     media_analysis = None
 
-__version__ = "1.7.0"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
+__version__ = "1.8.0"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
 IGNORE_FILE = ".ignore"           # an empty file with this name makes Jellyfin skip the folder
@@ -805,6 +805,16 @@ def choose_encoder(profile, working, preference="auto"):
         if GPU_ENCODERS[kind] in (working or ()):
             return kind
     return "cpu"
+
+
+def encoder_choice(wanted, profile, working, preference="auto"):
+    """choose_encoder with a plan's own `encoder` ('cpu' or 'gpu', set for one film): cpu forces the CPU, gpu asks for a GPU encoder even when the profile does not.
+    Anything else leaves it to the profile. HDR still stays on the CPU."""
+    if wanted == "cpu":
+        return "cpu"
+    if wanted == "gpu" and profile:
+        profile = {**profile, "gpu": True}
+    return choose_encoder(profile, working, preference)
 
 
 def gpu_video_arguments(kind, profile, device):
@@ -2732,7 +2742,8 @@ class JobRunner(threading.Thread):
             skipped = "this worker's ffmpeg has no libvmaf"
         elif facts["hdr"] != "sdr":
             skipped = "VMAF is not meaningful for HDR pictures, so only the size is estimated"
-        kind = choose_encoder(profile, (self.agent.capabilities or {}).get("encoders"), self.cfg.video_encoder)
+        wanted = plan.get("encoder") if plan.get("encoder") in ("cpu", "gpu") else None
+        kind = encoder_choice(wanted, profile, (self.agent.capabilities or {}).get("encoders"), self.cfg.video_encoder)
         holding = kind != "cpu" and self.agent.gpu_take()
         if kind != "cpu" and not holding:
             self.log.info("The GPU is busy; this test uses the CPU encoder")
@@ -2791,7 +2802,7 @@ class JobRunner(threading.Thread):
             clips = [{**c, "vmaf": None} for c in clips]
             scores = []
         self.report_progress("preview", 1.0, "Compression test finished", force=True)
-        return {"op": "compress_test", "clips": clips, "encoder": kind, "fallback": fell_back or None, "hdr": facts["hdr"], "height": height, "floor": vmaf_floor(height), "skipped": skipped if not scores else None,
+        return {"op": "compress_test", "clips": clips, "encoder": kind, "fallback": fell_back or None, "requested_encoder": wanted, "hdr": facts["hdr"], "height": height, "floor": vmaf_floor(height), "skipped": skipped if not scores else None,
                 "mean": round(sum(scores) / len(scores), 2) if scores else None, "min": round(min(scores), 2) if scores else None, "duration": duration, "crf": profile.get("crf"),
                 "rate_mode": profile.get("rate_mode"), "elapsed": round(time.monotonic() - started, 1)}
 
@@ -2929,8 +2940,9 @@ class JobRunner(threading.Thread):
             if bump and profile.get("max_bytes"):
                 profile["crf"] = min(PROFILE_CRF["hevc"][1], profile["crf"] + 2 * bump)
                 self.log.info(f"The last attempt came out over the size limit; encoding at quality {profile['crf']} this time", crf=profile["crf"])
-        kind = choose_encoder(profile, (self.agent.capabilities or {}).get("encoders"), self.cfg.video_encoder) if transcode else "cpu"
-        if profile and profile.get("gpu") and transcode and kind == "cpu":
+        wanted = (self.job.get("plan") or {}).get("encoder")
+        kind = encoder_choice(wanted, profile, (self.agent.capabilities or {}).get("encoders"), self.cfg.video_encoder) if transcode else "cpu"
+        if profile and (profile.get("gpu") or wanted == "gpu") and transcode and kind == "cpu" and wanted != "cpu":
             self.log.info("The plan allows GPU encoding but this worker has no GPU encoder that works (or the picture is HDR); using the CPU encoder")
         started, tried = time.monotonic(), []
         holding = False

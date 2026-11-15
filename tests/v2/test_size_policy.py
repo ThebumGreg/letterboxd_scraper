@@ -133,6 +133,7 @@ def test_a_profile_the_person_chose_keeps_its_quality_and_gets_only_the_cap():
 def test_an_approved_big_film_is_queued_as_a_compression_when_the_policy_is_on(conn):
     storage.create(conn, {"name": "media", "protocol": "local", "share": "/mnt/media", "mount_point": "/mnt/media"})
     settings.set_value("size_policy", "1", conn=conn)
+    settings.set_value("ctest_before_convert", "0", conn=conn)         # the compression-test gate has its own tests
     record_id = add(conn, rel="Movies/Heat.mkv", name="Heat (1995).mkv", size=45 * GIB, action="copy_rename")
     conn.execute("UPDATE library_file SET duration_seconds = 7200, media_type = 'Movie/Unknown' WHERE id = ?", (record_id,))
     from synchub.library import recommend as rc

@@ -91,24 +91,32 @@ def _profile_key(profile):
     return "|".join(str(profile.get(k)) for k in ("name", "crf", "preset", "rate_mode", "maxrate_kbps", "gpu", "ten_bit"))
 
 
-def _plan_for(conn, rec):
-    """(plan, profile, size decision) for the conversion that would run now. Raises CompressionTestError when no compression is planned."""
+def _plan_for(conn, rec, force=False):
+    """(plan, profile, size decision) for the conversion that would run now. Raises CompressionTestError when no compression is planned; with `force` the plan is
+    worked out as if the size rules applied (a file under the bitrate trigger, or the rules switched off)."""
     plans = [p for p in v.json_list(rec.get("approved_track_changes_json") if rec.get("approval_status") == v.APPROVAL_APPROVED and rec.get("approved_track_changes_json") else rec.get("proposed_track_changes_json"))
              if isinstance(p, dict) and p.get("op") in ("keep_tracks", "convert")]
     profile = profiles.effective(conn, rec)
-    size = size_policy.decide(rec, plans, size_policy.load(conn, profile))
+    size = size_policy.decide(rec, plans, size_policy.load(conn, profile), force=force)
     if size.profile is None:
-        raise CompressionTestError("The size rules would leave this file alone, so there is nothing to test. " + (size.summary or ""))
+        raise CompressionTestError("The size rules would leave this file alone, so there is nothing to test. " + (size.summary or "") + (" Tick “even if the rules leave it alone” to test it anyway." if not force else ""))
     base = {"change": dict(plans[0]) if plans else {}}
     if profile["video_codec"] == "hevc":
         base["profile"] = profiles.for_plan(profile)
     plan, _ = size_policy.apply(base, size, None)
+    size_policy.with_encoder(plan, rec)
     return plan, profile, size
 
 
 # ---------------------------------------------------------------- asking for one
-def request(conn, file_id, by="someone", now=None):
-    """Queues a compression test of one library file. Returns its id (the one already waiting when there is one). Raises CompressionTestError."""
+ENCODERS = ("cpu", "gpu")
+
+
+def request(conn, file_id, by="someone", now=None, encoder=None, force=False):
+    """Queues a compression test of one library file. Returns its id (the one already waiting when there is one). Raises CompressionTestError.
+    `encoder` ('cpu' or 'gpu') overrides the file's own choice and the profile for this test; `force` tests a file the size rules would leave alone."""
+    if encoder not in (None, "", *ENCODERS):
+        raise CompressionTestError("Choose the CPU or the GPU encoder, or leave it to the profile.")
     row = conn.execute("SELECT * FROM library_file WHERE id = ?", (file_id,)).fetchone()
     if row is None:
         raise CompressionTestError("That file is not in the Library.")
@@ -120,13 +128,15 @@ def request(conn, file_id, by="someone", now=None):
     waiting = conn.execute("SELECT id FROM compression_test WHERE library_file_id = ? AND status IN ('queued', 'running') ORDER BY id DESC LIMIT 1", (file_id,)).fetchone()
     if waiting:
         return waiting["id"]
-    plan, profile, size = _plan_for(conn, rec)
+    plan, profile, size = _plan_for(conn, rec, force=bool(force))
+    if encoder in ENCODERS:
+        plan["encoder"] = encoder
     now = now or db.now()
     clips, seconds, allowed = clip_count(conn), clip_seconds(conn), margin(conn)
     test_id = conn.execute(
-        "INSERT INTO compression_test (library_file_id, size_bytes, mtime, profile_key, profile_name, status, clips, clip_seconds, margin, from_gb, requested_by, message, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, 'Waiting for a worker.', ?, ?)",
-        (file_id, rec["size_bytes"], rec["mtime"], _profile_key(plan["profile"]), profile["name"], clips, seconds, allowed, size.numbers.get("size_gb"), by, now, now)).lastrowid
+        "INSERT INTO compression_test (library_file_id, size_bytes, mtime, profile_key, profile_name, status, clips, clip_seconds, margin, from_gb, requested_by, message, created_at, updated_at, encoder_wanted) "
+        "VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, 'Waiting for a worker.', ?, ?, ?)",
+        (file_id, rec["size_bytes"], rec["mtime"], _profile_key(plan["profile"]), profile["name"], clips, seconds, allowed, size.numbers.get("size_gb"), by, now, now, plan.get("encoder"))).lastrowid
     title = rec.get("recommended_name") or rec["file_name"]
     plan.update(op="compress_test", needs=[*[n for n in plan.get("needs", []) if n != "preview"], "compress_test"], clips=clips, seconds=seconds, duration=rec["duration_seconds"],
                 source_size=rec["size_bytes"], source_mtime=rec["mtime"], seed=test_id * 7919 + int(rec["size_bytes"] or 0) % 10007, test_id=test_id)
@@ -214,11 +224,83 @@ def describe(conn, rec):
     scored = [p for p in out["parts"] if p["vmaf"] is not None]
     out["worst_at"] = min(scored, key=lambda p: p["vmaf"])["at"] if scored else None
     out["skipped"], out["encoder"], out["elapsed"], out["hdr"] = result.get("skipped"), result.get("encoder"), result.get("elapsed"), result.get("hdr")
+    out["encoder_wanted"] = row.get("encoder_wanted")
+    out["encoder_note"] = ("You asked for the GPU encoder but it was busy or unavailable, so the CPU did this test." if row.get("encoder_wanted") == "gpu" and result.get("encoder") == "cpu" else
+                           "You asked for the CPU encoder." if row.get("encoder_wanted") == "cpu" else "")
+    if row["verdict"] in ("fail", "borderline") and result.get("encoder") not in (None, "cpu"):
+        out["verdict_text"] = (out["verdict_text"] or "") + " This test used the GPU encoder, which is usually less sharp than the CPU at the same size: a CPU test may score better."
+    out["encoder_choice"] = rec.get("encoder_choice")
     current = row["size_bytes"] == rec.get("size_bytes") and row["mtime"] == rec.get("mtime")
     if current and row["status"] == "done":
         try:
-            current = _profile_key(_plan_for(conn, rec)[0]["profile"]) == row["profile_key"]
+            current = _profile_key(_plan_for(conn, rec, force=True)[0]["profile"]) == row["profile_key"]
         except CompressionTestError:
             current = False
     out["current"] = current
     return out
+
+
+def set_encoder_choice(conn, file_id, choice):
+    """The encoder a film is converted with: 'cpu', 'gpu', or None for whatever the profile says. Used after comparing a CPU and a GPU test. Returns a sentence."""
+    if choice in ("", "profile"):
+        choice = None
+    if choice not in (None, *ENCODERS):
+        raise CompressionTestError("Choose the CPU, the GPU or the profile's own choice.")
+    if conn.execute("SELECT 1 FROM library_file WHERE id = ?", (file_id,)).fetchone() is None:
+        raise CompressionTestError("That file is not in the Library.")
+    conn.execute("UPDATE library_file SET encoder_choice = ? WHERE id = ?", (choice, file_id))
+    return {"cpu": "This film will be converted on the CPU.", "gpu": "This film will be converted on the GPU when one is free.", None: "This film follows the profile's encoder again."}[choice]
+
+
+# ---------------------------------------------------------------- the gate before a conversion
+def before_convert(conn=None):
+    """Does an approved conversion that compresses wait for a compression test? On unless switched off in Options > Quality."""
+    return settings.get("ctest_before_convert", conn=conn) != "0"
+
+
+def _current_test(conn, rec):
+    """The newest finished test of this file that still applies (same file, same profile), or None."""
+    row = conn.execute("SELECT * FROM compression_test WHERE library_file_id = ? AND status = 'done' ORDER BY id DESC LIMIT 1", (rec["id"],)).fetchone()
+    if row is None or row["size_bytes"] != rec.get("size_bytes") or row["mtime"] != rec.get("mtime"):
+        return None
+    try:
+        key = _profile_key(_plan_for(conn, rec, force=True)[0]["profile"])
+    except CompressionTestError:
+        return None
+    return dict(row) if key == row["profile_key"] else None
+
+
+def gate(conn, rec):
+    """What a conversion that compresses should do about the compression test: ('test', None) when one has to be run first, ('wait', row) when a finished one
+    stops it (Fail or Borderline that nobody accepted), ('go', row or None) otherwise. HDR and Dolby Vision pictures cannot be judged, so they go."""
+    if not before_convert(conn) or _json(rec.get("video_info_json")).get("hdr", "sdr") != "sdr":
+        return "go", None
+    current = _current_test(conn, rec)
+    if current is None:
+        return "test", None
+    if current["verdict"] in ("fail", "borderline") and rec.get("ctest_override") != current["profile_key"]:
+        return "wait", current
+    return "go", current
+
+
+def hold_note(row):
+    """Why a film was not converted, for the note on its record."""
+    mean, worst, floor = row["mean_vmaf"], row["min_vmaf"], row["floor"]
+    if row["verdict"] == "fail":
+        return (f"Held: the compression test failed (VMAF {mean:g} on average, floor {floor:g}). Change the profile, the encoder or the size target and approve it again, "
+                "or press Convert anyway on the compression test.")
+    return (f"Needs you: the compression test is borderline (VMAF {mean:g} on average, but one clip scored {worst:g}, floor {floor:g}). Press Convert anyway on the compression test "
+            "to accept it, or change the settings and approve it again.")
+
+
+def override(conn, file_id, by="someone"):
+    """"Convert anyway": accepts the tested settings for this film, whatever the verdict. Approve the file again to convert it. Returns a sentence."""
+    row = conn.execute("SELECT * FROM library_file WHERE id = ?", (file_id,)).fetchone()
+    if row is None:
+        raise CompressionTestError("That file is not in the Library.")
+    current = _current_test(conn, dict(row))
+    if current is None or current["verdict"] not in ("fail", "borderline"):
+        raise CompressionTestError("There is no failed or borderline test for these settings to accept.")
+    conn.execute("UPDATE library_file SET ctest_override = ? WHERE id = ?", (current["profile_key"], file_id))
+    logger.info(f"[compression_test] file {file_id}: {current['verdict']} accepted by {by}")
+    return "Accepted. Approve the file again and it will be converted with these settings."

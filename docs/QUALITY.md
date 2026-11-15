@@ -49,6 +49,15 @@ A quality check judges a file as it is. VMAF compares a converted copy with its 
 - **Settings** under Options > Quality: clips, seconds in each clip, and the margin.
 - **After-conversion VMAF** is a separate row ("After conversion (VMAF of the finished file)"). It comes from the last finished conversion of the file and appears only when the profile's VMAF mode is not off, the video was re-encoded and the picture is not HDR. When there is no such score the card says why.
 
+### Encoder, "test anyway" and testing before a conversion (1.8.0)
+
+- **CPU or GPU.** The test has a *Test on* choice: the profile's own setting, the CPU or the GPU. A film can also be told to **Convert this film on the CPU** (or the GPU) from its record page; the choice is stored on the file (`library_file.encoder_choice`) and reaches the conversion plan through `size_policy.with_encoder`. HDR never goes to the GPU. The worker honours the choice in `encoder_choice()` (workers need the 1.8.0 update). Testing on the CPU and converting on the GPU is allowed, but the score then describes the CPU encode, not the GPU one.
+- **A GPU Fail** says that a CPU test may score better, since GPU encoders usually need more bitrate for the same VMAF.
+- **Test anyway.** A file the size rules leave alone (too small, rules off, TV) is normally refused. Tick *even if the rules leave it alone* to test it with the profile as if it applied.
+- **Test before converting** (Options > Quality, `ctest_before_convert`, on by default). A conversion that would compress waits for a test, using the check-first machinery (`convert_wait.compression_test_id`). *Pass* goes ahead. *Borderline* is held and asks you (Needs you). *Fail* holds the film. **Convert anyway** (`library_file.ctest_override`) lets the next approval through; it is tied to the profile, so a changed profile asks again. HDR pictures skip the gate.
+- **Mobile copy by hand.** *This is a mobile copy* on a file's Details, and *A mobile copy* in Sort out unexplained files, label the file without renaming anything on the share (`library_file.is_mobile`).
+- **Downloads.** *Replace it* is now *Approve*. An import that was "nothing to do" gets an *Approve (tidy)* button that renames and moves it like Library approval.
+
 ## Where checks start
 
 1. **On demand:** *Check quality* on the movie page (**Your copies**) and on the Library record page.
