@@ -48,7 +48,10 @@
         document.querySelectorAll('[data-rule]').forEach((el) => { if (el.value !== '') rules[el.dataset.rule] = el.value; });
         const data = await libraryPost('/api/library/profiles', { id: pf('pfId').value, name: pf('pfName').value, video_codec: pf('pfCodec').value, subtitles: pf('pfSubs').value, crf: pf('pfCrf').value,
             preset: pf('pfPreset').value, audio_kbps: pf('pfAudio').value, ten_bit: pf('pfTenBit').checked, move_only: pf('pfMoveOnly').checked, description: pf('pfDesc').value, rules });
-        say(data.message || (data.ok ? 'Saved.' : 'Failed.'), data.ok);
+        const note = data.message || data.error || (data.ok ? 'Saved.' : 'Not saved.');
+        say(note, data.ok);
+        $('pfMessage').textContent = note;
+        $('pfMessage').className = 'small ms-2 ' + (data.ok ? 'text-success' : 'text-danger');
         if (data.ok) setTimeout(() => location.reload(), 600);
     });
     $('pfClear').addEventListener('click', () => { $('profileForm').reset(); pf('pfId').value = ''; });
