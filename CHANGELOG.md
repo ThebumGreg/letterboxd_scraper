@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.9.0
+
+No migration. Update SyncHub first, then the workers: tone-mapped HDR scoring and the credits fix are in the worker.
+
+**Compression test.**
+- **Clips stay out of the end credits.** The size estimate of a film had a clip from its credits (0.4 Mbps encoded) that pulled it down by about a quarter. The worker now leaves the last 8 minutes of a long film out, and SyncHub leaves any clip that is much quieter than the others out of the estimate (shown as *not counted* in Each clip). The 1.8.1 frame check stays; it was not the cause.
+- **4K and HDR films are scored.** Both sides are tone-mapped to SDR, then compared with VMAF. The result says it is a rough guide (it shows compression damage, not HDR colour or highlights), and an HDR film is still never held by it. Needs a worker whose ffmpeg has `zscale` and `tonemap` (Workers shows the `vmaf_hdr` capability).
+- **Keep films above this VMAF** (Options > Quality). A number from 50 to 100 replaces the automatic floor (93, 95 for 4K); blank keeps it automatic. Finished tests are judged again when it changes.
+- The test says which profile it used.
+
+**Library.**
+- **Size and Resolution filters** on the Files list, and the resolution under each size.
+- **Queues make sense again.** Since the profile rules arrived almost every file sat in Format conversion. Now a file whose only extra is a compatible audio track waits in Suggested changes, and a compression the rules could not decide alone waits in Worth a look. Format conversion keeps the files that need video work.
+- **History** on the Record page lists compression tests and quality checks, and **Why** says what it is.
+- New **docs/LIBRARY_FLOW.md**: the whole flow from scan to finished file, and where each Record page field comes from.
+
 ## 1.8.1
 
 No migration. Update SyncHub first, then the workers: the fix is in the worker.

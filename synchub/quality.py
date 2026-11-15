@@ -358,6 +358,9 @@ def sync(conn, job_id, now=None):
     elif target == "running":
         values["message"] = job.get("message") or "A worker is checking the file."
     conn.execute(f"UPDATE quality_check SET {', '.join(f'{k} = ?' for k in values)} WHERE id = ?", [*values.values(), row["id"]])
+    if target in ("done", "failed", "cancelled"):
+        from synchub.library import store
+        store.event(conn, row["library_file_id"], "worker", f"{'damage' if row.get('mode') == 'damage' else 'quality'}_check_{values['status']}", None, {"check": row["id"], "job": job_id, "note": values.get("message")}, now)
     return True
 
 

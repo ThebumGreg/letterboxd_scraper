@@ -37,6 +37,15 @@ def validate_setting(key, value):
         parts = [p.strip() for p in value.split(",") if p.strip()]
         return (True, ",".join(parts)) if all(p.isdigit() for p in parts) else (False, "Choose administrators from the list.")
 
+    if key == "ctest_floor":                         # the VMAF score a film must reach in a compression test; blank = the worker's own floor by resolution
+        if not value:
+            return True, ""
+        try:
+            number = float(value)
+        except ValueError:
+            return False, "The VMAF to keep must be a number."
+        return (True, f"{number:g}") if 50 <= number <= 100 else (False, "The VMAF to keep must be between 50 and 100.")
+
     if key in _SWITCH_KEYS:
         return (True, value) if value in ("0", "1") else (False, f"{key} must be 0 or 1.")
 

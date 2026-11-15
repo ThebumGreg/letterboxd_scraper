@@ -6,8 +6,8 @@
 
 {% block content %}
 {% set active = 'files' %}{% include "_media_nav.html" %}
-{% set filter_args = {'q': f.q, 'root': f.root, 'conf': f.conf, 'what': f.what, 'type': f.type, 'quality': f.quality, 'label': f.label} %}
-{% set filtered = f.q or f.root or f.conf or f.what or f.type or f.quality or f.label %}
+{% set filter_args = {'q': f.q, 'root': f.root, 'conf': f.conf, 'what': f.what, 'type': f.type, 'quality': f.quality, 'label': f.label, 'size': f.size, 'res': f.res} %}
+{% set filtered = f.q or f.root or f.conf or f.what or f.type or f.quality or f.label or f.size or f.res %}
 {% set below = status == 'below_minimum' %}
 <div class="d-flex flex-wrap align-items-center gap-2 mb-2" id="labelPills" aria-label="What the files are to their films">
     <a class="badge rounded-pill text-decoration-none bg-{{ 'primary' if not f.label else 'secondary' }}" href="{{ url_for('library_list', status=status) }}">Every file</a>
@@ -47,10 +47,14 @@
         <select class="form-select" id="fquality" name="quality"><option value="">Any quality check</option>{% for k, label in [('waiting', 'Queued or checking'), ('unchecked', 'Not checked'), ('good', 'Good or OK'), ('poor', 'Poor, bad or low'), ('small', 'Too small')] %}<option value="{{ k }}"{% if k == f.quality %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
     <div class="col-6 col-md-2"><label for="flabel" class="visually-hidden">What the file is to its film</label>
         <select class="form-select" id="flabel" name="label"><option value="">Any kind of file</option>{% for k in file_labels.FILTERS %}<option value="{{ k }}"{% if k == f.label %} selected{% endif %}>{{ file_labels.FILTER_TEXT[k] }}</option>{% endfor %}</select></div>
+    <div class="col-6 col-md-2"><label for="fsize" class="visually-hidden">Size</label>
+        <select class="form-select" id="fsize" name="size"><option value="">Any size</option>{% for k, label, lo, hi in size_buckets %}<option value="{{ k }}"{% if k == f.size %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <div class="col-6 col-md-2"><label for="fres" class="visually-hidden">Resolution</label>
+        <select class="form-select" id="fres" name="res"><option value="">Any resolution</option>{% for k, label in resolutions %}<option value="{{ k }}"{% if k == f.res %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
     <div class="col-6 col-md-2 d-flex gap-2"><button class="btn btn-outline-info" type="submit">Filter</button>{% if filtered %}<a class="btn btn-outline-secondary" href="{{ url_for('library_list', status=status) }}">Clear</a>{% endif %}</div>
 </form>
 
-{% if group and high_medium and not (f.type or f.quality) %}
+{% if group and high_medium and not (f.type or f.quality or f.size or f.res) %}
 <div class="panel p-3 mb-3 d-flex flex-wrap align-items-center gap-2">
     <div class="me-auto small"><strong>Approve together.</strong> Low-confidence files and duplicates are never included: they are decided one at a time.</div>
     <a class="btn btn-success btn-sm" href="{{ url_for('library_bulk', group=group, conf='medium', q=f.q, root=f.root, what=f.what) }}">Approve {{ high_medium }} (high and medium)&hellip;</a>
@@ -112,7 +116,7 @@
                     <td class="small">{{ r.headline }}{% if r.steps and r.steps != ['Copy as is'] %}<div class="text-body-secondary">{{ r.steps[:2]|join('; ') }}{% if r.steps|length > 2 %}; &hellip;{% endif %}</div>{% endif %}</td>
                     <td class="small text-nowrap">{% set q = row.quality %}{% if q %}<span class="badge bg-{{ 'danger' if q.low else 'primary' if q.check and q.check.status in ('queued', 'running') else 'success' if q.result and q.result.grade in ('good', 'ok') else 'secondary' }}">{{ q.label }}{% if q.result and q.result.score is not none and q.current %} {{ q.result.score|round|int }}{% endif %}</span>{% else %}-{% endif %}</td>
                     <td><span class="badge bg-{{ {'high': 'success', 'medium': 'warning', 'low': 'danger'}[r.confidence] }}{% if r.confidence == 'medium' %} text-dark{% endif %}">{{ r.confidence }}</span></td>
-                    <td class="text-end small text-nowrap">{{ row.size or '-' }}</td>
+                    <td class="text-end small text-nowrap">{{ row.size or '-' }}{% set rk = resolution_of(rec) %}{% if rk != 'unknown' %}<div class="text-body-secondary">{{ {'2160': '4K', '1080': '1080p', '720': '720p', 'sd': 'SD'}[rk] }}</div>{% endif %}</td>
                     <td class="pe-4 text-end text-nowrap">
                         {% if r.group == 'queued' and rec.approval_status != 'pending' and rec.migration_status == 'pending' %}
                             <button type="button" class="btn btn-sm btn-outline-secondary" data-decide="undo" data-id="{{ rec.id }}">Undo</button>
