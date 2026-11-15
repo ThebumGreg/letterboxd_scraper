@@ -458,10 +458,28 @@ def register(app):
             return _fail("Unknown action.", 404)
         try:
             with db.connection() as conn:
-                aside.request(conn, record_id, undo=action == "put-back")
+                aside.request(conn, record_id, undo=action == "put-back", reason=str((request.get_json(silent=True) or {}).get("reason") or "") or None)
         except aside.AsideError as exc:
             return _fail(str(exc))
         return jsonify(ok=True, message="A worker will rename the file shortly. Nothing is deleted." if action == "set-aside" else "A worker will put the file back shortly.")
+
+    @app.route("/api/library/file/<int:record_id>/replace-main", methods=["POST"])
+    def api_library_file_replace_main(record_id):
+        """This file is the new main file: the film's current main file is hidden as an old version."""
+        try:
+            with db.connection() as conn:
+                rec = _film_file(conn, record_id)
+                if not rec["media_id"]:
+                    raise aside.AsideError("This file is not linked to a film yet. Press Refresh links first.")
+                old = quality.copies(conn, rec["media_id"]).get("main")
+                if old is None or old["id"] == record_id:
+                    raise aside.AsideError("This file is already the main file.")
+                conn.execute("UPDATE library_file SET is_main = 0 WHERE media_id = ?", (rec["media_id"],))
+                conn.execute("UPDATE library_file SET is_main = 1 WHERE id = ?", (record_id,))
+                aside.request(conn, old["id"], reason="old_version")
+        except (aside.AsideError, v.LibraryError) as exc:
+            return _fail(str(exc))
+        return jsonify(ok=True, message="This is now the main file. A worker will hide the old main file shortly.")
 
     @app.route("/api/library/links/refresh", methods=["POST"])
     def api_library_links_refresh():

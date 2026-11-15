@@ -177,7 +177,7 @@ def test_a_duplicate_can_be_set_aside_and_put_back_but_never_the_kept_copy_or_th
     conn.commit()
     assert rec_of(conn, b)["dup_review"] == "aside" and rec_of(conn, b)["file_label"] is None
     page = client.get(f"/movie/{media_id}").get_data(as_text=True)
-    assert "Set aside" in page and f'data-file-act="put-back" data-record="{b}"' in page
+    assert "Hidden files" in page and f'data-file-act="put-back" data-record="{b}"' in page
     back = client.post(f"/api/library/file/{b}/put-back").get_json()
     assert back["ok"] and conn.execute("SELECT source_rel, dest_rel FROM job WHERE ref_type = 'library_aside' ORDER BY id DESC").fetchone()[0].endswith(".synchub-duplicate")
 
@@ -203,3 +203,77 @@ def test_the_record_page_shows_the_label_and_the_other_files_of_the_film(client,
     conn.commit()
     page = client.get(f"/library/record/{b}").get_data(as_text=True)
     assert "Mobile copy" in page and f"/movie/{media_id}" in page and "other files of this film" in page and a
+
+
+# ---------------------------------------------------------------- old versions and hiding any file that is not the main one
+def old_and_new(conn):
+    media_id = film(conn)
+    new = fixture_file(conn, rel=HEAT, size=40_000_000_000, resolution="3840x2160")
+    old = fixture_file(conn, rel="Heat (1995)/Heat.1995.DVDRip.mkv", size=1_000_000_000)
+    quality.copies(conn, media_id)
+    conn.commit()
+    return media_id, new, old
+
+
+def test_an_old_version_is_labelled_at_once_and_hidden_with_its_own_suffix(client, conn):
+    media_id, new, old = old_and_new(conn)
+    assert client.post(f"/api/library/file/{old}/set-aside", json={"reason": "old_version"}).get_json()["ok"]
+    assert rec_of(conn, old)["file_label"] == "old_version"
+    job = dict(conn.execute("SELECT * FROM job WHERE ref_type = 'library_aside'").fetchone())
+    assert job["dest_rel"] == "Heat (1995)/Heat.1995.DVDRip.mkv.synchub-old" and jobs.get(conn, job["id"])["plan"]["reason"] == "old_version"
+    conn.execute("UPDATE job SET status = 'done', result = '{}' WHERE id = ?", (job["id"],))
+    conn.commit()
+    assert aside.sync(conn, job["id"])
+    conn.commit()
+    row = rec_of(conn, old)
+    assert row["dup_review"] == "aside" and row["hidden_reason"] == "old_version" and row["hidden_at"]
+    assert [f["id"] for f in quality.copies(conn, media_id)["files"]] == [new]
+
+
+def test_the_main_file_and_the_last_file_are_never_hidden(client, conn):
+    media_id, new, old = old_and_new(conn)
+    refused = client.post(f"/api/library/file/{new}/set-aside", json={"reason": "old_version"}).get_json()
+    assert not refused["ok"] and "main file" in refused["message"]
+    client.post(f"/api/library/file/{old}/main", json={"on": True})
+    assert not client.post(f"/api/library/file/{old}/set-aside", json={"reason": "other"}).get_json()["ok"]           # the main file you chose
+    client.post(f"/api/library/file/{old}/main", json={"on": False})
+    assert not client.post(f"/api/library/file/{old}/set-aside", json={}).get_json()["ok"]                            # no reason given
+
+
+def test_make_this_the_main_hides_the_old_main_as_an_old_version(client, conn):
+    media_id, new, old = old_and_new(conn)
+    out = client.post(f"/api/library/file/{old}/replace-main").get_json()
+    assert out["ok"] and rec_of(conn, old)["is_main"] == 1
+    hidden = dict(conn.execute("SELECT * FROM job WHERE ref_type = 'library_aside'").fetchone())
+    assert hidden["ref_id"] == new and jobs.get(conn, hidden["id"])["plan"]["reason"] == "old_version"
+    assert rec_of(conn, new)["file_label"] == "old_version"
+    assert not client.post(f"/api/library/file/{old}/replace-main").get_json()["ok"]                                  # it is the main file already
+
+
+def test_a_failed_hide_gives_the_old_version_label_back(client, conn):
+    media_id, new, old = old_and_new(conn)
+    client.post(f"/api/library/file/{old}/set-aside", json={"reason": "old_version"})
+    job = dict(conn.execute("SELECT * FROM job WHERE ref_type = 'library_aside'").fetchone())
+    conn.execute("UPDATE job SET status = 'failed' WHERE id = ?", (job["id"],))
+    conn.commit()
+    assert not aside.sync(conn, job["id"])
+    conn.commit()
+    assert rec_of(conn, old)["is_old_version"] == 0 and rec_of(conn, old)["file_label"] == "unexplained"
+
+
+def test_putting_a_hidden_file_back_uses_the_suffix_of_its_reason(client, conn):
+    media_id, new, old = old_and_new(conn)
+    client.post(f"/api/library/file/{old}/set-aside", json={"reason": "old_version"})
+    job = dict(conn.execute("SELECT * FROM job WHERE ref_type = 'library_aside'").fetchone())
+    conn.execute("UPDATE job SET status = 'done', result = '{}' WHERE id = ?", (job["id"],))
+    conn.commit()
+    aside.sync(conn, job["id"])
+    conn.commit()
+    assert client.post(f"/api/library/file/{old}/put-back").get_json()["ok"]
+    back = dict(conn.execute("SELECT * FROM job WHERE ref_type = 'library_aside' ORDER BY id DESC").fetchone())
+    assert back["source_rel"].endswith(".synchub-old") and back["dest_rel"] == "Heat (1995)/Heat.1995.DVDRip.mkv"
+    conn.execute("UPDATE job SET status = 'done', result = '{}' WHERE id = ?", (back["id"],))
+    conn.commit()
+    aside.sync(conn, back["id"])
+    conn.commit()
+    assert rec_of(conn, old)["dup_review"] is None and rec_of(conn, old)["hidden_reason"] is None and rec_of(conn, old)["is_old_version"] == 0

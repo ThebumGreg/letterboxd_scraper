@@ -22,7 +22,7 @@ _FLOAT_KEYS = {"cap_mbps_2160", "cap_mbps_1080", "cap_mbps_720", "cap_mbps_sd", 
 _URL_KEYS = {"jellyfin_url", "radarr_url", "sonarr_url", "synchub_url"}
 _PATH_KEYS = {"radarr_root_folder", "sonarr_root_folder"}
 _CHOICES = {"rate_mode": {"target", "quality"}, "audio_mode": {"keep", "add_compatible", "compatible_only"}, "naming_style": {"jellyfin", "current"}, "tv_metadata_provider": {"tmdb", "sonarr"}, "library_integrity_mode": {"metadata", "tail", "full"}, "download_pipeline": {"off", "review", "auto"}, "originals_where": {"share", "worker"}, "vmaf_mode": {"off", "warn", "hold"}, "quality_on_download": {"off", "flag"}, "quality_scan_order": {"newest", "oldest"}, "protect_quality": {"high", "medium", "low"}, "protect_stream_type": {"mp4", "rtsp", "hls"}, "dash_units": {"us", "metric"}, "dash_quote_source": {"quote", "joke", "fact", "history", "rotate"}, "size_preset": {"fast", "medium", "slow", "slower"}, "review_first": {"always", "until_trusted", "low_confidence_only", "never"}, "dolby_vision_profile_5": {"review", "hdr10"}, "dolby_vision_profile_7_8": {"review", "hdr10", "remux", "leave"},
-            "source_delete_after_days": {"0", "7", "14", "30"}, "arr_after_migration": {"none", "update_location", "unmonitor", "remove"}, "arr_apply_when": {"after_copy", "with_source_delete"}}
+            "source_delete_after_days": {"0", "7", "14", "30"}, "hidden_delete_after_days": {"0", "7", "14", "30", "60", "90"}, "arr_after_migration": {"none", "update_location", "unmonitor", "remove"}, "arr_apply_when": {"after_copy", "with_source_delete"}}
 _FOLDER_NAME_KEYS = {"library_tv_folder", "library_movie_folder"}
 
 # The Servarr dropdowns submit this text if loading their options never finished.
