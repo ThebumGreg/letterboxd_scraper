@@ -292,10 +292,11 @@ def count_missing(conn):
 
 
 def _stop_quality_checks(conn, ids):
-    """Cancels the quality checks still waiting for records that are about to go, so no job is left pointing at a check that no longer exists."""
+    """Cancels the quality checks (and compression tests) still waiting for records that are about to go, so no job is left pointing at a row that no longer exists."""
     from synchub import jobs
     for file_id in ids:
-        for r in conn.execute("SELECT job_id FROM quality_check WHERE library_file_id = ? AND status IN ('queued', 'running') AND job_id IS NOT NULL", (file_id,)).fetchall():
+        for r in conn.execute("SELECT job_id FROM quality_check WHERE library_file_id = ? AND status IN ('queued', 'running') AND job_id IS NOT NULL "
+                              "UNION SELECT job_id FROM compression_test WHERE library_file_id = ? AND status IN ('queued', 'running') AND job_id IS NOT NULL", (file_id, file_id)).fetchall():
             try:
                 jobs.cancel(conn, r["job_id"], by="clear results")
             except jobs.JobError:

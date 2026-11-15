@@ -8,7 +8,7 @@ from functools import wraps
 
 from flask import Response, g, jsonify, request
 
-from synchub import downloads, db, jobs, pipeline_events, previews, protect, quality, states, storage, tasks, versions, workdrive, workers
+from synchub import compression_test, downloads, db, jobs, pipeline_events, previews, protect, quality, states, storage, tasks, versions, workdrive, workers
 from synchub.library import cleanup, hide, migrate, scan
 from synchub.library import hidden as hidden_files
 
@@ -187,6 +187,7 @@ def register(app):
             finished = migrate.sync_active(conn) + downloads.sync_active(conn) + versions.sync_active(conn)
             previews.sync_active(conn)
             quality.sync_active(conn)
+            compression_test.sync_active(conn)
             cleanup.sync_active(conn)
             for job in claimed:
                 logger.info(f"[jobs] job {job['id']} ({job['kind']}: {job['title']}) went to {worker['name']}, attempt {job['attempt']}")
@@ -222,6 +223,7 @@ def register(app):
             arrived = migrate.sync(conn, job_id) or downloads.sync(conn, job_id) or versions.sync(conn, job_id)
             previews.sync(conn, job_id)
             quality.sync(conn, job_id)
+            compression_test.sync(conn, job_id)
             cleanup.sync(conn, job_id)
             hidden = hide.sync(conn, job_id)
             updates = migrate.jellyfin_updates(conn, job_id) if arrived else None
@@ -248,6 +250,7 @@ def register(app):
             versions.sync(conn, job_id)
             previews.sync(conn, job_id)
             quality.sync(conn, job_id)
+            compression_test.sync(conn, job_id)
             cleanup.sync(conn, job_id)
             hide.sync(conn, job_id)
         _dashboard([job_id])
@@ -265,6 +268,7 @@ def register(app):
             versions.sync(conn, job_id)
             previews.sync(conn, job_id)
             quality.sync(conn, job_id)
+            compression_test.sync(conn, job_id)
             cleanup.sync(conn, job_id)
             hide.sync(conn, job_id)
         _dashboard([job_id])

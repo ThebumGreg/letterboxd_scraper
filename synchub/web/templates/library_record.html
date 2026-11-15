@@ -138,12 +138,34 @@
         </div>
         {% endif %}
         <div class="panel p-3 mb-3" id="qualityPanel"><h6 class="mb-2">Picture quality{% if r.held %} <a class="small fw-normal ms-2" href="{{ url_for('library_list', status='below_minimum') }}">All files below minimum quality</a>{% endif %}</h6>{{ quality_detail(rec.id, quality_state, can('library')) }}
-            {% if quality and (quality.mbps or quality.vmaf or quality.vmaf_skipped or quality.to_gb) %}
+            {% if ctest and (ctest.status in ('queued', 'running', 'failed') or ctest.verdict or ctest.skipped or ctest.est_gb) %}
+            <dl class="row small mb-0 mt-3 pt-3 border-top" id="compressionTest">
+                <dt class="col-5 text-body-secondary fw-normal">Compression test</dt>
+                <dd class="col-7">
+                {% if ctest.status in ('queued', 'running') %}<span class="text-body-secondary">{{ ctest.message }}</span>
+                {% elif ctest.status in ('failed', 'cancelled') %}<span class="text-danger">The last test did not finish: {{ ctest.message }}</span>
+                {% else %}
+                    {% if ctest.verdict %}<span class="badge bg-{{ {'pass': 'success', 'borderline': 'warning text-dark', 'fail': 'danger'}[ctest.verdict] }}">{{ ctest.verdict_label }}</span>
+                    VMAF {{ ctest.mean }} on average, worst clip {{ ctest.min }} at {{ ctest.worst_at }}, floor {{ '%g'|format(ctest.floor) }}.
+                    <span class="text-body-secondary">{{ ctest.verdict_text }}{% if ctest.verdict == 'borderline' %} Allowed: {{ '%g'|format(ctest.margin) }} under the floor.{% endif %}</span>
+                    {% else %}<span class="text-body-secondary">Not scored: {{ ctest.skipped or 'no score came back' }}.</span>{% endif %}
+                    {% if ctest.est_gb %}<div>Estimated size: about {{ ctest.est_gb }} GB{% if ctest.from_gb %} from {{ ctest.from_gb }} GB{% endif %} <span class="text-body-secondary">(give or take 15 %; the clips may not include the hardest scenes)</span></div>{% endif %}
+                    <div class="text-body-secondary">{{ ctest.clips }} clips of {{ ctest.clip_seconds }} s, {{ ctest.profile }}{% if ctest.encoder %}, {{ 'GPU' if ctest.encoder != 'cpu' else 'CPU' }} encoder{% endif %}, tested {{ ctest.when }}{% if not ctest.current %}. <strong>The file or the settings changed since; test again.</strong>{% endif %}</div>
+                    <details class="mt-1"><summary style="cursor: pointer;">Each clip</summary>
+                        <table class="table table-sm mb-0"><thead><tr><th>At</th><th>VMAF</th><th>Original</th><th>Compressed</th></tr></thead><tbody>
+                        {% for p in ctest.parts %}<tr><td>{{ p.at }}</td><td>{{ p.vmaf if p.vmaf is not none else '-' }}</td><td>{{ p.source_mbps }} Mbps</td><td>{{ p.encoded_mbps }} Mbps</td></tr>{% endfor %}
+                        </tbody></table></details>
+                {% endif %}
+                </dd>
+            </dl>
+            {% endif %}
+            {% if quality and (quality.mbps or quality.vmaf or quality.vmaf_skipped or quality.vmaf_none or quality.to_gb) %}
             <dl class="row small mb-0 mt-3 pt-3 border-top" id="qualityFacts">
                 {% if quality.mbps %}<dt class="col-5 text-body-secondary fw-normal">Video bitrate</dt><dd class="col-7">{{ quality.mbps }} Mbps <span class="text-body-secondary">(ceiling {{ quality.ceiling_mbps }} Mbps for {{ {'2160': '4K', '1080': '1080p', '720': '720p', 'sd': 'smaller'}[quality.picture] }}; compressed only above {{ quality.trigger_mbps }})</span></dd>{% endif %}
                 <dt class="col-5 text-body-secondary fw-normal">Compression</dt><dd class="col-7">{% if quality.to_gb %}{{ 'Would compress' if quality.action == 'compress' else 'Needs a look before compressing' }}: {{ quality.from_gb }} GB to about {{ quality.to_gb }} GB <span class="text-body-secondary">({{ quality.profile }})</span>{% else %}Left as it is <span class="text-body-secondary">({{ quality.profile }})</span>{% endif %}</dd>
-                {% if quality.vmaf %}<dt class="col-5 text-body-secondary fw-normal">Quality score (VMAF)</dt><dd class="col-7"><span class="badge bg-{{ 'success' if quality.vmaf.floor is none or quality.vmaf.mean >= quality.vmaf.floor else 'warning text-dark' }}">{{ quality.vmaf.mean }}</span> <span class="text-body-secondary">worst part {{ quality.vmaf.min }}{% if quality.vmaf.floor %}, floor {{ quality.vmaf.floor }}{% endif %}</span></dd>
-                {% elif quality.vmaf_skipped %}<dt class="col-5 text-body-secondary fw-normal">Quality score (VMAF)</dt><dd class="col-7 text-body-secondary">Not scored: {{ quality.vmaf_skipped }}</dd>{% endif %}
+                {% if quality.vmaf %}<dt class="col-5 text-body-secondary fw-normal">After conversion (VMAF of the finished file)</dt><dd class="col-7"><span class="badge bg-{{ 'success' if quality.vmaf.floor is none or quality.vmaf.mean >= quality.vmaf.floor else 'warning text-dark' }}">{{ quality.vmaf.mean }}</span> <span class="text-body-secondary">worst part {{ quality.vmaf.min }}{% if quality.vmaf.floor %}, floor {{ quality.vmaf.floor }}{% endif %}</span></dd>
+                {% elif quality.vmaf_skipped %}<dt class="col-5 text-body-secondary fw-normal">After conversion (VMAF of the finished file)</dt><dd class="col-7 text-body-secondary">Not scored: {{ quality.vmaf_skipped }}</dd>
+                {% elif quality.vmaf_none %}<dt class="col-5 text-body-secondary fw-normal">After conversion (VMAF of the finished file)</dt><dd class="col-7 text-body-secondary">{{ quality.vmaf_none }}</dd>{% endif %}
             </dl>
             {% endif %}
         </div>

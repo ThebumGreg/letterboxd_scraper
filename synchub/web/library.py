@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from flask import Response, jsonify, redirect, render_template, request, send_file, url_for
 
-from synchub import db, downloads, jobs, previews, quality, settings, storage, versions
+from synchub import compression_test, db, downloads, jobs, previews, quality, settings, storage, versions
 from synchub.library import aside, cleanup, file_labels, film_link, findings, hide, links, loose, migrate, profiles, recommend as rc, rules as profile_rules, report, rule_steps, scan, size_policy, store
 from synchub.library import vocab as v
 from settings_validation import validate_setting
@@ -350,6 +350,7 @@ def register(app):
                 data["film"] = conn.execute("SELECT id, title, year FROM media WHERE id = ? AND kind = 'movie'", (rec["media_id"],)).fetchone()
                 data["film_files"] = [dict(x) for x in conn.execute("SELECT id, root_name, file_name, file_label, dup_review, edition_name, duplicate_status FROM library_file WHERE media_id = ? AND id != ? "
                                                                     "AND missing_since IS NULL ORDER BY size_bytes DESC", (rec["media_id"], record_id))]
+            data["ctest"] = compression_test.describe(conn, rec)
             data["quality"] = rule_steps.quality_facts(conn, rec, previews.plans_of(rec, approved=rec["approval_status"] == v.APPROVAL_APPROVED))
             file_jobs = links.jobs_for_record(conn, record_id)
         preview_info = {"summary": size.summary or "The size rules would compress this file; watch a short window first.", "latest": previews.describe(latest) if latest else None} if size.profile is not None else None

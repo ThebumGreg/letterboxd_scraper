@@ -51,6 +51,8 @@ DEFAULTS = {
     # quality checks (docs/QUALITY.md): how many slices of a film a worker samples, how long each is, the score under which a film is flagged, whether new downloads are
     # checked (off or flag) and whether the Library clean-up checks the films it has not looked at yet, newest or oldest first
     "quality_samples": "10", "quality_slice_seconds": "30", "quality_flag_below": "60", "quality_on_download": "flag", "quality_after_convert": "1", "quality_scan_library": "0", "quality_scan_order": "newest", "quality_min_height": "1080", "quality_paused": "0", "quality_damage_pass": "0", "quality_check_first": "1",
+    # compression test (docs/QUALITY.md): clips encoded and scored before a conversion, seconds in each, and how far under the VMAF floor the worst clip may be and still pass
+    "ctest_clips": "4", "ctest_seconds": "15", "ctest_margin": "8",
     "library_exclude_folders": "@eaDir\n#recycle\n.Recycle.Bin\n$RECYCLE.BIN\nSystem Volume Information\nlost+found\n.Trash-*",
 }
 

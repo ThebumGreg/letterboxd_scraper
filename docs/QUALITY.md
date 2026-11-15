@@ -35,6 +35,20 @@ The thresholds are starting points. Tune them after you have looked at a few fil
 - It runs at low CPU priority.
 - The result belongs to the file as it was (size and modified time). If the file changes, the old result stops counting.
 
+## Compression test (before converting)
+
+A quality check judges a file as it is. VMAF compares a converted copy with its original, so until now it appeared only after a real conversion. **Test compression** gives the same VMAF answer *before* converting.
+
+- **Press Test compression** on the Library record page (Picture quality card) or in a file's Details on the movie page. It is a `scan`-kind job with the operation `compress_test`, shown on Media > Jobs. Only a worker that lists the `compress_test` feature takes it, so update workers first.
+- **The worker** picks 4 clips of 15 seconds spread over the film (the first and last 3 minutes are skipped on a long film), encodes each with the profile the conversion would use, and scores it against the same window of the film with libvmaf. The clip and the film are read with the same start and length, so both show the same frames. It uses the GPU encoder when the plan allows it, a GPU is free and the picture is not HDR; otherwise the CPU. Scoring is always on the CPU: the GPU in these workers is an Intel iGPU, and libvmaf has no Intel GPU version. Each clip is deleted as soon as it is scored; only numbers go back.
+- **Time.** About one minute of footage, but encoding plus VMAF: roughly 2 to 5 minutes for a 1080p film on a CPU worker, longer for 4K or a slow encoder preset. It needs about 2 GB of work space and low priority, like a preview.
+- **The verdict** is worked out in SyncHub (`synchub/compression_test.py`), so it can change without a worker update. Floor: 93, or 95 for 4K (the same floors as the after-conversion score). *Pass*: average at or above the floor and the worst clip no more than *margin* under it (default 8). *Borderline*: the average passes but the worst clip is further under. *Fail*: average under the floor.
+- **The size estimate.** With the usual bitrate-targeted encode the encoder lands near its target on every clip, so the clips' bitrate is the estimate. With a constant-quality profile the file's average bitrate is scaled by how much the clips shrank. Either way it is a guess: the clips may miss the film's hardest scenes. It is shown as give or take 15 %.
+- **HDR and Dolby Vision** are encoded but not scored, because VMAF is not meaningful on them as they are. Scoring them would mean tone-mapping both sides to SDR first (the AI quality test already does that for HDR); the score would be a rough guide only.
+- **Staleness.** A result belongs to the file as it was (size and modified time) and to the profile tested (name, quality, speed, rate mode, size cap). A change to either shows "test again".
+- **Settings** under Options > Quality: clips, seconds in each clip, and the margin.
+- **After-conversion VMAF** is a separate row ("After conversion (VMAF of the finished file)"). It comes from the last finished conversion of the file and appears only when the profile's VMAF mode is not off, the video was re-encoded and the picture is not HDR. When there is no such score the card says why.
+
 ## Where checks start
 
 1. **On demand:** *Check quality* on the movie page (**Your copies**) and on the Library record page.

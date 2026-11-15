@@ -95,6 +95,10 @@ def quality_facts(conn, rec, plans=()):
         out["vmaf"] = {"mean": vmaf["mean"], "min": vmaf.get("min"), "floor": vmaf.get("floor")}
     elif isinstance(vmaf, dict) and vmaf.get("skipped"):
         out["vmaf_skipped"] = vmaf["skipped"]
+    elif row is None:
+        out["vmaf_none"] = "No score: this file has not been converted. Use Test compression to see how a conversion would score."
+    else:
+        out["vmaf_none"] = "No score: the last conversion was not scored (VMAF is off in its profile, it did not re-encode the video, or the picture is HDR)."
     return out
 
 

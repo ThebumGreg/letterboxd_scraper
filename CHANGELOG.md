@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.7.0
+
+Migration 051 is new. Update SyncHub first, then the workers: **Test compression** needs the new worker (it reports the `compress_test` feature). Until a worker is updated the test waits.
+
+**Test compression before you convert.**
+- **A new button, Test compression,** next to *Check again* and *Damage check* (Library record page, and each file's Details on the movie page). A worker encodes **4 clips of 15 seconds**, spread over the film, with exactly the profile the real conversion would use (the GPU when the plan allows it and one is free, otherwise the CPU), scores each against the same window of the film with **VMAF** (CPU), and keeps only the numbers. Nothing is uploaded or left on the worker.
+- **What it says.** VMAF on average, the worst clip and where it is, the floor (93, or 95 for 4K), a verdict, and an estimated size ("about 13 GB from 30 GB, give or take 15 %"). **Pass**: the average meets the floor and no clip is more than 8 under it. **Borderline**: the average passes but one clip is further under. **Fail**: the average is under the floor. One easy scene can no longer hide a bad one. A fold lists every clip.
+- **HDR and Dolby Vision are not scored** (VMAF is not meaningful on them as they are). The clips are still encoded, so the size estimate is real. Tone-mapped scoring is a later step.
+- **Settings** under Options > Quality: clips (2 to 8, default 4), seconds in each (10 to 30, default 15) and how far under the floor the worst clip may be (default 8).
+- **A result belongs to the file and the profile it was tested with.** If either changes it says "test again".
+- **The Picture quality card says why there is no VMAF.** The old row is now "After conversion (VMAF of the finished file)", so it can no longer be mistaken for the test. A file that was never converted says so, and a conversion that was not scored says it was not (VMAF off in the profile, no re-encode, or HDR).
+- Not in this version: testing automatically before a conversion, retrying at a better setting, and watching the worst clip. See `plans/compression-test-plan.md` in the project files.
+
 ## 1.6.3
 
 Migration 050 is new. Update SyncHub first, then the workers (no new worker feature). After updating, press **Library, Refresh links** once: it now links episode files too. A show's episode list must exist (show page, **Refresh details**) for its files to be linked.
