@@ -249,6 +249,7 @@ def create(conn, subject_type, subject_id, by, mode="random", seconds=None, now=
     if profile["video_codec"] == "hevc":                      # the clip is made with the profile's own quality and speed, like the real job (the cap is added on top)
         base["profile"] = profiles.for_plan(profile)
     plan, _ = size_policy.apply(base, size, None)
+    size_policy.with_encoder(plan, rec)
     seconds = int(seconds or clip_seconds(conn))
     now = now or db.now()
     sig = signature(rec)

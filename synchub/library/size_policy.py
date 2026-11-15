@@ -135,13 +135,14 @@ def _size(plans, tracks):
     return kept, removed
 
 
-def decide(rec, plans=(), cfg=None):
-    """What the size policy says about one Library record, after the track rules in `plans` (the record's proposed or approved track changes)."""
+def decide(rec, plans=(), cfg=None, force=False):
+    """What the size policy says about one Library record, after the track rules in `plans` (the record's proposed or approved track changes).
+    With `force` the switches and the "only above this bitrate" trigger are skipped, to work out what a compression WOULD do (the compression test's "test anyway")."""
     cfg = cfg or Settings()
-    if not cfg.on:
+    if not cfg.on and not force:
         return Decision(NONE)
     movie = (rec.get("media_type") or "").lower().startswith("movie")
-    if not movie and not cfg.tv_on:
+    if not movie and not cfg.tv_on and not force:
         return Decision(NONE)
     duration = float(rec.get("duration_seconds") or 0)
     target_gb = float(rec["size_target_gb"]) if rec.get("size_target_gb") else 0.0      # a target chosen for this one title on the review screen
@@ -172,7 +173,7 @@ def decide(rec, plans=(), cfg=None):
     trigger = trigger_kbps(cfg, height_class, movie)
     over_bitrate = trigger > 0 and source_kbps > trigger
     over_size = bool(safety) and after > safety * GIB
-    if not (over_bitrate or over_size):
+    if not (over_bitrate or over_size or force):
         if trigger <= 0:
             return Decision(NONE, notes=["Pictures of this size are not compressed (the re-encode limit is off)."])
         return Decision(NONE, notes=[f"The video runs at about {source_kbps / 1000:.1f} Mbps; it is only compressed above {trigger / 1000:g} Mbps (and then aimed at {cap_kbps / 1000:g} Mbps)."])
@@ -278,6 +279,14 @@ def with_dv_remux(plan, dest_rel=None):
     out.pop("size_policy", None)
     out.update(op="convert", change=change, needs=sorted(set(needs) | {"dovi"}))
     return out, dest_rel
+
+
+def with_encoder(plan, rec):
+    """Carries a file's own encoder choice (cpu or gpu, set after comparing compression tests) into a plan; without one the profile decides."""
+    choice = (rec or {}).get("encoder_choice")
+    if choice in ("cpu", "gpu"):
+        plan["encoder"] = choice
+    return plan
 
 
 def apply(plan, decision, dest_rel=None):

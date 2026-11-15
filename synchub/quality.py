@@ -13,7 +13,7 @@ import logging
 import os
 import statistics
 
-from synchub import db, jobs, settings
+from synchub import compression_test, db, jobs, settings
 from synchub import versions as extra_versions
 from synchub.library import vocab as v
 
@@ -545,24 +545,27 @@ def check_first(conn=None):
     return settings.get("quality_check_first", conn=conn) != "0"
 
 
-def wait_for_check(conn, file_id, by="someone"):
-    """Asks for the checks a conversion waits for and records the wait. Returns True when the conversion must wait, False when the file is already checked (or cannot be)."""
+def wait_for_check(conn, file_id, by="someone", compress=False):
+    """Asks for the checks a conversion waits for and records the wait. Returns True when the conversion must wait, False when the file is already checked (or cannot be).
+    A conversion that compresses (`compress`) also waits for a compression test, or is stopped at once by a finished one that failed (see compression_test.gate)."""
     rec = _record(conn, file_id)
-    if rec is None or not check_first(conn):
+    if rec is None:
         return False
     if conn.execute("SELECT 1 FROM convert_wait WHERE library_file_id = ?", (file_id,)).fetchone():
         return True
-    need_quality = not is_current(latest(conn, file_id, done_only=True), rec)
-    need_damage = damage_pass(conn) and not is_current(latest(conn, file_id, done_only=True, mode="damage"), rec)
-    if not (need_quality or need_damage):
+    need_quality = check_first(conn) and not is_current(latest(conn, file_id, done_only=True), rec)
+    need_damage = check_first(conn) and damage_pass(conn) and not is_current(latest(conn, file_id, done_only=True, mode="damage"), rec)
+    step, finished = compression_test.gate(conn, rec) if compress else ("go", None)
+    if not (need_quality or need_damage or step != "go"):
         return False
     try:
         q = request(conn, file_id, by=by, source="convert") if need_quality else None
         d = request(conn, file_id, by=by, source="convert", mode="damage") if need_damage else None
-    except (QualityError, jobs.JobError) as exc:
+        c = compression_test.request(conn, file_id, by=by) if step == "test" else (finished["id"] if step == "wait" else None)
+    except (QualityError, compression_test.CompressionTestError, jobs.JobError) as exc:
         logger.info(f"[quality] no check before converting file {file_id}: {exc}")
         return False
-    conn.execute("INSERT INTO convert_wait (library_file_id, created_at, requested_by, quality_check_id, damage_check_id) VALUES (?, ?, ?, ?, ?)", (file_id, db.now(), by, q, d))
+    conn.execute("INSERT INTO convert_wait (library_file_id, created_at, requested_by, quality_check_id, damage_check_id, compression_test_id) VALUES (?, ?, ?, ?, ?, ?)", (file_id, db.now(), by, q, d, c))
     return True
 
 
@@ -579,14 +582,18 @@ def release_waiting(conn, cfg=None):
     for w in conn.execute("SELECT * FROM convert_wait").fetchall():
         fid, ids = w["library_file_id"], [i for i in (w["quality_check_id"], w["damage_check_id"]) if i]
         rows = [get(conn, i) for i in ids]
-        if any(r and r["status"] in LIVE for r in rows):
+        ctest = compression_test.get(conn, w["compression_test_id"]) if w["compression_test_id"] else None
+        if any(r and r["status"] in LIVE for r in rows) or (ctest and ctest["status"] in LIVE):
             continue
         conn.execute("DELETE FROM convert_wait WHERE library_file_id = ?", (fid,))
         rec = _record(conn, fid)
         if rec is None or rec["approval_status"] != v.APPROVAL_APPROVED or rec["migration_status"] != v.MIGRATION_PENDING:
             continue
-        if any(r and r["status"] != "done" for r in rows):
-            store.set_approval(conn, fid, v.APPROVAL_PENDING, "quality check", note="The quality check did not finish, so the file was not converted. Approve it again.")
+        if any(r and r["status"] != "done" for r in rows) or (ctest and ctest["status"] != "done"):
+            store.set_approval(conn, fid, v.APPROVAL_PENDING, "quality check", note="A check or the compression test did not finish, so the file was not converted. Approve it again.")
+        elif ctest and ctest["verdict"] in ("fail", "borderline") and rec["ctest_override"] != ctest["profile_key"]:
+            store.set_approval(conn, fid, v.APPROVAL_PENDING, "compression test", note=compression_test.hold_note(ctest))
+            held += 1
         elif is_held(conn, fid):
             store.set_approval(conn, fid, v.APPROVAL_PENDING, "quality check", note="Held from conversion: low quality or damaged. It can still be renamed and moved.")
             held += 1
@@ -838,7 +845,7 @@ def describe_file(conn, rec, label=None, siblings=()):
             "role": role, "hidden": bool(rec.get("source_hidden_at")), "hide_message": rec.get("source_hide_message"), "windows_path": hide.windows_path(root, folder),
             "unix_path": f"{rec.get('root_name')}:{folder}" if folder else None, "can_hide": role == "original" and len(str(rec.get("relative_path") or "").split("/")) >= 3,
             "label": label, "label_text": file_labels.text(label, rec) if label else None, "label_tone": file_labels.TONE.get(label), "label_hint": file_labels.HINT.get(label),
-            "is_edition": bool(rec.get("is_edition")), "edition_name": rec.get("edition_name"), "is_main_choice": bool(rec.get("is_main")), "dup_review": rec.get("dup_review"),
+            "is_edition": bool(rec.get("is_edition")), "is_mobile": bool(rec.get("is_mobile")), "edition_name": rec.get("edition_name"), "is_main_choice": bool(rec.get("is_main")), "dup_review": rec.get("dup_review"),
             "is_duplicate": bool(rec.get("duplicate_group")), "is_primary_duplicate": rec.get("duplicate_status") == v.DUP_PRIMARY,
             "saved_bytes": file_labels.saved_for(rec, siblings) if label == file_labels.CONVERTED else None,
             "version_name": _version_name(rec)}

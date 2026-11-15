@@ -232,7 +232,7 @@ def test_the_page_lists_imports_and_takes_decisions(app, client, conn):
     conn.execute("UPDATE download_import SET status = 'awaiting_approval', message = 'Waiting for your approval.' WHERE id = ?", (made,))
     conn.commit()
     page = client.get("/library").get_data(as_text=True)
-    assert "New downloads" in page and "Heat.1995.avi" in page and "Replace it" in page
+    assert "New downloads" in page and "Heat.1995.avi" in page and ">Approve<" in page
     assert client.post(f"/api/downloads/{made}/skip").get_json()["ok"] is True
     assert client.post(f"/api/downloads/{made}/approve").get_json()["ok"] is False
     assert client.post("/api/library/settings", json={"download_pipeline": "auto", "originals_retention_days": "7"}).get_json()["ok"] is True

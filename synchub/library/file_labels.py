@@ -4,7 +4,7 @@ Labels (a film with only one file has none):
   edition      a person marked it as a different edition (a hand choice always wins)
   converted    the file SyncHub made by converting or copying another file of the film
   original     the file a converted copy was made from (it may be hidden from Jellyfin)
-  mobile       a smaller extra copy next to the film (`Film (Year) - 1080p.mkv`)
+  mobile       a smaller extra copy next to the film (`Film (Year) - 1080p.mkv`), or any file a person marked as one
   duplicate    the very same content as another file (same hash); one of the group is the "keep this one" candidate
   unexplained  more than one file and none of the above
 
@@ -72,6 +72,8 @@ def classify(files):
             out[f["id"]] = EDITION
         elif f.get("is_old_version"):
             out[f["id"]] = OLD_VERSION
+        elif f.get("is_mobile"):
+            out[f["id"]] = MOBILE                       # a person said so; the name does not have to look like a version
         elif (f.get("migration_status") == v.MIGRATION_COMPLETED and f.get("migrated_how") in ("copy", "convert") and ":" in dest
               and dest.split(":", 1)[0] != f.get("root_name") and _dest_key(dest) in here):
             out[f["id"]] = ORIGINAL

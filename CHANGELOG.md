@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.8.0
+
+Migrations 052 and 053 are new. Update SyncHub first, then the workers: the CPU/GPU choice needs the new worker.
+
+**Compression test, phase 2.**
+- **Test before converting.** A conversion that would compress waits for a compression test. Pass goes ahead, Borderline asks you, Fail holds the film; **Convert anyway** overrides it for the current profile. Switch it off with Options > Quality > Test before converting. HDR is not gated.
+- **CPU or GPU.** Choose the encoder for a test, and **Convert this film on the CPU** per film. A GPU Fail hints that a CPU test may do better.
+- **Test anyway** for files the size rules leave alone.
+- **Downloads.** *Replace it* is now *Approve*; imports that needed nothing get an *Approve (tidy)* button that renames and moves them.
+- **Mobile copy label** by hand (film Details and Sort out unexplained files); nothing is renamed on the share.
+
 ## 1.7.0
 
 Migration 051 is new. Update SyncHub first, then the workers: **Test compression** needs the new worker (it reports the `compress_test` feature). Until a worker is updated the test waits.

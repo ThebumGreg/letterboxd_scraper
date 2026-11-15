@@ -119,6 +119,7 @@ def plan_for(rec, cfg, profile=None, mode=None, size=None, rules=None, held=Fals
         plan["audio_note"] = audio_note
     if compress:
         plan, dest_rel = size_policy.apply(plan, decision, dest_rel)
+        size_policy.with_encoder(plan, rec)
     return cfg.destination_root, dest_rel, plan
 
 
@@ -157,7 +158,7 @@ def queue(conn, record_id, cfg, by="someone", force=False, checked=False):
         dest_root, dest_rel, plan = plan_for(rec, dataclasses.replace(cfg, clean_names=bool(rules["clean_names"])), profile, size=size_policy.load(conn, profile), rules=rules, held=held)
     except layout.LayoutError as exc:
         raise ValueError(f"cannot plan the destination: {exc}")
-    if plan["op"] == "convert" and not checked and quality.wait_for_check(conn, record_id, by):
+    if plan["op"] == "convert" and not checked and quality.wait_for_check(conn, record_id, by, compress=bool(plan.get("size_policy"))):
         store.event(conn, record_id, "user", "waiting_for_check", None, {"by": by})        # the conversion job comes when the quality check says the file is good enough
         return None
     need = 0 if plan["op"] == "rename" else (rec["size_bytes"] or 0) * (2 if plan["op"] == "convert" else 1) + WORK_MARGIN_BYTES

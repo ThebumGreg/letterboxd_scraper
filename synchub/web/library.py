@@ -29,10 +29,26 @@ def _who(conn):
 
 def _with_previews(conn, rows):
     """Each import with the newest preview made for it, so the row can link to it."""
+    cfg = scan.config(conn)
     for row in rows:
         found = previews.latest_for(conn, "download_import", row["id"])
         row["preview"] = previews.describe(found) if found else None
+        row["can_tidy"], row["tidy_text"] = _tidy(conn, row, cfg)
     return rows
+
+
+def _tidy(conn, row, cfg):
+    """Whether an import that needs no conversion can still be approved as the Library would approve it (clean name, right share), and in words what that does."""
+    if row["status"] != "nothing_to_do" or not row.get("record_id"):
+        return False, ""
+    rec = store.get_record(conn, row["record_id"])
+    if rec is None or rec["approval_status"] != v.APPROVAL_PENDING or rec.get("missing_since"):
+        return False, ""
+    try:
+        r = rc.recommend(rec, rc.cfg_for(conn, dict(rec), cfg, {}), held=quality.is_held(conn, rec["id"]))
+    except Exception:                                             # a recommendation that cannot be worked out just hides the button
+        return False, ""
+    return bool(r.can_approve and not r.needs_name and (rec.get("recommended_action") in v.MIGRATABLE_ACTIONS)), r.headline
 
 
 def _fail(message, status=400):
@@ -327,7 +343,7 @@ def register(app):
             cfg = rc.cfg_for(conn, rec, cfg, {})
             rcm = rc.recommend(rec, cfg, lambda plans: rule_steps.for_record(conn, rec, plans), held=quality.is_held(conn, rec['id']))
             if quality.waiting_to_convert(conn, rec["id"]):
-                rcm.notes = rcm.notes + ["Waiting for its quality check before the conversion job is made. A file that passes is converted; a low quality or damaged one is held."]
+                rcm.notes = rcm.notes + ["Waiting for its quality check (and the compression test, when it compresses) before the conversion job is made. A file that passes is converted; a low quality, damaged or failed one is held."]
             events = store.events_for(conn, record_id)
             siblings = []
             if rec.get("duplicate_group"):
@@ -385,7 +401,7 @@ def register(app):
                                                       mode=data.get("mode") or None, profile_id=profile_id)
                     message = {"approved": "Approved.", "rejected": "Skipped: that copy will not be migrated."}.get(outcome, outcome[:1].upper() + outcome[1:] + ".")
                     if outcome == "approved" and quality.waiting_to_convert(conn, record_id):
-                        message = "Approved. A quality check runs first; a file that passes is converted, a low quality or damaged one is held."
+                        message = "Approved. A quality check (and a compression test, when it compresses) runs first; a file that passes is converted, a low quality, damaged or failed one is held."
                 elif action == "tested":
                     rc.approve_after_testing(conn, record_id, by, data.get("note"), cfg=cfg)
                     message = "Approved, with your note."
@@ -465,6 +481,19 @@ def register(app):
         except v.LibraryError as exc:
             return _fail(str(exc), 404)
         return jsonify(ok=True, message="Marked as a different edition." if on else "No longer marked as an edition.")
+
+    @app.route("/api/library/file/<int:record_id>/mobile", methods=["POST"])
+    def api_library_file_mobile(record_id):
+        """Marks a file as a mobile (smaller) copy of the film by hand, without renaming anything on the share."""
+        on = bool((request.get_json(silent=True) or {}).get("on", True))
+        try:
+            with db.connection() as conn:
+                rec = _film_file(conn, record_id)
+                conn.execute("UPDATE library_file SET is_mobile = ? WHERE id = ?", (1 if on else 0, record_id))
+                file_labels.refresh(conn, [rec["media_id"]] if rec["media_id"] else None)
+        except v.LibraryError as exc:
+            return _fail(str(exc), 404)
+        return jsonify(ok=True, message="Marked as a mobile copy." if on else "No longer marked as a mobile copy.")
 
     @app.route("/api/library/file/<int:record_id>/main", methods=["POST"])
     def api_library_file_main(record_id):
@@ -735,13 +764,18 @@ def register(app):
     # ---- files Radarr/Sonarr imported (the download pipeline)
     @app.route("/api/downloads/<int:intake_id>/<action>", methods=["POST"])
     def api_library_download_action(intake_id, action):
-        if action not in ("approve", "skip", "retry", "rescan"):
+        if action not in ("approve", "skip", "retry", "rescan", "tidy"):
             return _fail("Unknown action.", 404)
         try:
             with db.connection() as conn:
                 who = _who(conn)
                 if action == "approve":
                     downloads.approve(conn, intake_id, who)
+                elif action == "tidy":
+                    row = downloads.get(conn, intake_id)
+                    if row is None or row["status"] != "nothing_to_do" or not row["record_id"]:
+                        raise ValueError("This import is not waiting to be tidied.")
+                    rc.apply_recommendation(conn, row["record_id"], who, cfg=scan.config(conn))
                 elif action == "skip":
                     downloads.skip(conn, intake_id, who)
                 elif action == "retry":
@@ -752,7 +786,7 @@ def register(app):
             return _fail(str(exc))
         if action == "rescan":
             downloads.rescan_due()
-        return jsonify(ok=True, message={"approve": "Queued for a worker.", "skip": "Left as it is.", "retry": "Looking at it again.", "rescan": "Asked to rescan."}[action])
+        return jsonify(ok=True, message={"approve": "Queued for a worker.", "skip": "Left as it is.", "retry": "Looking at it again.", "rescan": "Asked to rescan.", "tidy": "Approved: it is renamed and moved like any Library approval."}[action])
 
     # ---- preview clips (docs/DESIGN_ENCODING.md section 12)
     @app.route("/library/previews/<int:preview_id>")

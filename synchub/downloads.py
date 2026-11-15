@@ -300,6 +300,7 @@ def queue(conn, intake_id, by, now=None):
         if profile["video_codec"] == "hevc":              # the profile's own quality and speed, with the size cap on top
             plan["profile"] = profiles.for_plan(profile)
         plan, dest_rel = size_policy.apply(plan, size, dest_rel)
+        size_policy.with_encoder(plan, rec)
     if dv:                                               # Dolby Vision 7 becomes 8.1 in this replacement; the picture is not re-encoded
         plan, dest_rel = size_policy.with_dv_remux(plan, dest_rel)
     job_id = jobs.create(conn, "download", title=f"Replace: {rec['file_name']}", ref=(REF, row["id"]), source=(row["root_name"], row["relative_path"]), dest=(row["root_name"], dest_rel),
