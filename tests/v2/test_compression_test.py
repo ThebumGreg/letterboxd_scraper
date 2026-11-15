@@ -208,6 +208,9 @@ def fake_runner(tmp_path, film, plan, vmaf=True, hdr="sdr"):
         def video_packet_bytes(self, settings, path, start, seconds):
             return agent.JobRunner.video_packet_bytes(self, settings, path, start, seconds)
 
+        def video_packet_stats(self, settings, path, start, seconds):
+            return agent.JobRunner.video_packet_stats(self, settings, path, start, seconds)
+
         def run_clip(self, command, duration, low, high, label):
             return agent.JobRunner.run_clip(self, command, duration, low, high, label)
 
@@ -232,6 +235,25 @@ def test_the_worker_encodes_clips_with_the_profile_and_reports_numbers_only(tmp_
     assert out["op"] == "compress_test" and len(out["clips"]) == 2 and out["encoder"] == "cpu" and out["mean"] is None and "libvmaf" in out["skipped"]
     assert all(c["encoded_kbps"] > 0 and c["source_kbps"] > 0 and c["vmaf"] is None and c["length"] == 5.0 for c in out["clips"])
     assert progress[-1][1] == 1.0 and [f.name for f in work.iterdir()] == ["ffmpeg.err"]     # every clip was removed; the log is the job folder's own
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg") or "libx265" not in subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout,
+                    reason="needs ffmpeg with libx265")
+def test_a_gpu_clip_that_stops_early_is_encoded_again_on_the_cpu(tmp_path, monkeypatch):
+    film = tmp_path / "Heat (1995).mkv"
+    subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=24:duration=40", "-c:v", "libx264", "-b:v", "3M", str(film)], check=True)
+    plan = {"op": "compress_test", "clips": 2, "seconds": 5, "seed": 1, "source_size": film.stat().st_size, "duration": 40.0,
+            "profile": {"video_codec": "hevc", "crf": 28, "preset": "ultrafast", "ten_bit": False, "audio_kbps": 192, "name": "Test", "gpu": True}, "change": {"video": {"action": "transcode"}}}
+    runner, work, _ = fake_runner(tmp_path, film, plan, vmaf=False)
+    runner.agent = types.SimpleNamespace(capabilities={"vmaf": False, "encoders": ["hevc_vaapi"]}, gpu_take=lambda: True, gpu_give=lambda: None)
+    real = agent.build_chunk_command
+
+    def stops_early(ffmpeg, src, out, change, profile, encoder, device, start, length=None):
+        return real(ffmpeg, src, out, change, profile, "cpu", device, start, 0.5 if encoder != "cpu" else length)    # the "GPU" writes half a second and exits cleanly
+    monkeypatch.setattr(agent, "build_chunk_command", stops_early)
+    out = agent.JobRunner.do_compress_test(runner)
+    assert out["encoder"] == "cpu" and out["fallback"] and "frames came out" in out["fallback"][0]
+    assert all(c["frames"] >= c["source_frames"] * 0.9 and c["encoded_kbps"] > 100 for c in out["clips"])
 
 
 def test_a_test_without_compression_settings_fails_without_retrying(tmp_path):

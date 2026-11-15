@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.8.1
+
+No migration. Update SyncHub first, then the workers: the fix is in the worker.
+
+**Compression test: a GPU clip that stops early.**
+- A GPU test once showed a clip at 0.4 Mbps with a VMAF of 97 beside clips at 11.6 Mbps. An encode that stops early exits cleanly, so nothing noticed: VMAF scored only the few frames that existed and the tiny size pulled the size estimate down. The worker now counts the frames of every clip against the film's same window. A clip with fewer than 90 % of them is encoded again on the CPU, and the test says so ("only N of M frames came out").
+
 ## 1.8.0
 
 Migrations 052 and 053 are new. Update SyncHub first, then the workers: the CPU/GPU choice needs the new worker.

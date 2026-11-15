@@ -44,7 +44,7 @@ try:
 except ImportError:                        # pragma: no cover - exercised by tests that remove the module
     media_analysis = None
 
-__version__ = "1.8.0"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
+__version__ = "1.8.1"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
 IGNORE_FILE = ".ignore"           # an empty file with this name makes Jellyfin skip the folder
@@ -942,6 +942,7 @@ def mkvmerge_command(mkvmerge, video, fps, src, out):
     return [mkvmerge, "-o", out, "--default-duration", f"0:{fps}p", video, "--no-video", src]
 
 
+SHORT_CLIP_RATIO = 0.9               # a test clip with fewer frames than this share of the film's window is an encode that stopped early
 MAXRATE_HEADROOM = 1.05              # the same cap as synchub.library.size_policy: maxrate is 5 % over the target video bitrate
 VMAF_FLOORS = ((2000, 95.0), (0, 93.0))     # the lowest mean VMAF score that still counts as visually clean, by picture height (see docs/DESIGN_ENCODING.md 11.2)
 VMAF_WINDOW_SECONDS = 20
@@ -2761,7 +2762,6 @@ class JobRunner(threading.Thread):
                     self.log.info(f"Encoding test clip {index + 1} of {count} ({start:.0f} s, {length:.0f} s) with the {kind} encoder", command=shlex.join(command))
                     try:
                         self.run_clip(command, length, low, low + band * 0.6, f"Clip {index + 1} of {count}: compressing")
-                        break
                     except JobFailure as exc:
                         if kind == "cpu" or exc.error_class != "encode_failed":
                             raise
@@ -2771,9 +2771,24 @@ class JobRunner(threading.Thread):
                             self.agent.gpu_give()
                             holding = False
                         kind = "cpu"
+                        continue
+                    source_bytes, source_frames = self.video_packet_stats(settings, src, start, length)
+                    encoded_bytes, encoded_frames = self.video_packet_stats(settings, out, 0, None)
+                    if kind != "cpu" and source_frames and encoded_frames < source_frames * SHORT_CLIP_RATIO:
+                        # A GPU encode that stopped early (it exits cleanly, so nothing else notices) would be scored on the few frames it has and look far too good, and
+                        # its tiny size would drag the size estimate down. Encode this clip again on the CPU instead.
+                        fell_back.append(f"{kind}: only {encoded_frames} of {source_frames} frames came out of clip {index + 1}")
+                        self.log.warning(f"The {kind} GPU encoder wrote only {encoded_frames} of {source_frames} frames of test clip {index + 1}; using the CPU encoder", encoder=kind)
+                        if holding:
+                            self.agent.gpu_give()
+                            holding = False
+                        kind = "cpu"
+                        self._remove(out)
+                        continue
+                    break
                 encoded_seconds = media_duration(media_analysis.run_ffprobe(settings, out)) or length
-                clip = {"start": round(start, 1), "length": round(length, 1), "source_kbps": round(self.video_packet_bytes(settings, src, start, length) * 8 / length / 1000),
-                        "encoded_kbps": round(self.video_packet_bytes(settings, out, 0, None) * 8 / encoded_seconds / 1000), "vmaf": None}
+                clip = {"start": round(start, 1), "length": round(length, 1), "source_kbps": round(source_bytes * 8 / length / 1000),
+                        "encoded_kbps": round(encoded_bytes * 8 / encoded_seconds / 1000), "frames": encoded_frames, "source_frames": source_frames, "vmaf": None}
                 if not skipped:
                     self.report_progress("preview", low + band * 0.6, f"Clip {index + 1} of {count}: scoring", force=True)
                     try:
@@ -2808,18 +2823,23 @@ class JobRunner(threading.Thread):
 
     def video_packet_bytes(self, settings, path, start, seconds):
         """Bytes of video in `seconds` from `start` (the whole file when `seconds` is None), summed from the packet sizes."""
+        return self.video_packet_stats(settings, path, start, seconds)[0]
+
+    def video_packet_stats(self, settings, path, start, seconds):
+        """(bytes, packets) of video in `seconds` from `start` (the whole file when `seconds` is None), counted from the packet sizes. One packet is one frame."""
         command = [settings.ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=size", "-of", "csv=p=0"]
         if seconds:
             command += ["-read_intervals", f"{start:.2f}%+{seconds}"]
         result, outcome = media_analysis.run_tool(settings, command + [path], 300, f"ffprobe packets {path}")
         if outcome != "ok" or result is None or result.returncode != 0:
-            return 0
-        total = 0
+            return 0, 0
+        total = count = 0
         for line in result.stdout.splitlines():
             line = line.strip().split(",")[0]
             if line.isdigit():
                 total += int(line)
-        return total
+                count += 1
+        return total, count
 
     def run_clip(self, command, duration, low, high, label):
         """Runs one ffmpeg command for a preview, reporting progress between `low` and `high`; a failure ends the job with ffmpeg's own words."""
