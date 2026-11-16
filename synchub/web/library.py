@@ -19,7 +19,7 @@ from settings_validation import validate_setting
 PAGE_SIZE = 100
 POLL_MAX_AGE = 10
 CONFIDENCE_FLOORS = {"high": rc.HIGH, "medium": rc.MEDIUM}
-FILTER_KEYS = ("q", "root", "conf", "what", "type", "quality", "label", "size", "res")
+FILTER_KEYS = ("q", "root", "conf", "what", "type", "quality", "label", "size", "res", "sort")
 
 
 def _who(conn):
@@ -172,13 +172,65 @@ def status_of(value):
 
 
 def rows_for_status(conn, classified, status, f):
-    """The (record, recommendation) rows of one status after the filters. Below minimum quality is the flagged list (worst first), which is not one of the
+    """The (record, recommendation) rows of one status after the filters and the chosen sort. Below minimum quality is the flagged list (worst first), which is not one of the
     classifier's groups: a flagged file somebody approved or rejected sits in another group and is still listed here."""
     if status == STATUS_BELOW:
         order = {d["id"]: n for n, d in enumerate(quality._flagged(conn))}
         rows = sorted(((rec, r) for rec, r in classified if rec["id"] in order), key=lambda row: order[row[0]["id"]])
-        return rows_in_queue(conn, rows, None, f)
-    return rows_in_queue(conn, classified, None if status == STATUS_ALL else status, f)
+        return sort_rows(conn, rows_in_queue(conn, rows, None, f), f["sort"])
+    return sort_rows(conn, rows_in_queue(conn, classified, None if status == STATUS_ALL else status, f), f["sort"])
+
+
+# The Sort box of the list page: (value, label). The empty value keeps the list's own order (by name, or worst first on Below minimum quality). Ties keep that order.
+SORTS = (("name", "Name"), ("size", "Size, largest first"), ("size_asc", "Size, smallest first"), ("resolution", "Resolution, highest first"), ("newest", "Newest file"),
+         ("confidence", "Confidence, lowest first"), ("quality", "Quality score, worst first"), ("saving", "Estimated saving, largest first"))
+_CONFIDENCE_RANK = {rc.LOW: 0, rc.MEDIUM: 1, rc.HIGH: 2}
+_RESOLUTION_RANK = {"2160": 0, "1080": 1, "720": 2, "sd": 3, "unknown": 4}
+
+
+def _quality_scores(conn):
+    """{file id: score of its latest finished quality check}; a file with none (or no score) is left out."""
+    scores = {}
+    for r in conn.execute("SELECT library_file_id, score FROM quality_check WHERE mode = 'quality' AND status = 'done' ORDER BY id"):
+        if r["score"] is None:
+            scores.pop(r["library_file_id"], None)
+        else:
+            scores[r["library_file_id"]] = r["score"]
+    return scores
+
+
+def _estimated_saving(rec, policy):
+    """Bytes the size rules would take off this file (0 when it would not be compressed)."""
+    try:
+        decision = size_policy.decide(rec, previews.plans_of(rec), policy)
+    except Exception:                                      # a record the rules cannot read sorts as no saving
+        return 0
+    if decision.action != size_policy.COMPRESS or not decision.profile:
+        return 0
+    return max((rec.get("size_bytes") or 0) - (decision.profile.get("target_bytes") or 0), 0)
+
+
+def sort_rows(conn, rows, key):
+    """The (record, recommendation) rows in the order `key` names (see SORTS); an unknown or empty key leaves them as they are."""
+    if key == "name":
+        return sorted(rows, key=lambda row: (row[0].get("approved_name") or row[0].get("recommended_name") or row[0]["file_name"] or "").lower())
+    if key == "size":
+        return sorted(rows, key=lambda row: -(row[0].get("size_bytes") or 0))
+    if key == "size_asc":
+        return sorted(rows, key=lambda row: row[0].get("size_bytes") or 0)
+    if key == "resolution":
+        return sorted(rows, key=lambda row: (_RESOLUTION_RANK[resolution_of(row[0])], -(row[0].get("size_bytes") or 0)))
+    if key == "newest":
+        return sorted(rows, key=lambda row: -(row[0].get("mtime") or 0))
+    if key == "confidence":
+        return sorted(rows, key=lambda row: _CONFIDENCE_RANK.get(row[1].confidence, 3))
+    if key == "quality":
+        scores = _quality_scores(conn)
+        return sorted(rows, key=lambda row: (row[0]["id"] not in scores, scores.get(row[0]["id"], 0)))     # worst first, files without a score last
+    if key == "saving":
+        policy = size_policy.load(conn)
+        return sorted(rows, key=lambda row: -_estimated_saving(row[0], policy))
+    return rows
 
 
 def queue_view(status):
@@ -218,7 +270,7 @@ def queue_view(status):
     statuses = [(STATUS_ALL, "All files", len(everything))] + [(g, rc.GROUP_TITLES[g], table[g]["total"]) for g in rc.GROUP_ORDER] + [(STATUS_BELOW, STATUS_TITLES[STATUS_BELOW], flagged)]
     return render_template("library_queue.html", status=status, group=group, title=STATUS_TITLES.get(status) or rc.GROUP_TITLES[status],
                            hint=STATUS_HINTS.get(status) or rc.GROUP_HINTS.get(rc.G_HELD if below else status, ""), rows=rows, total=film_total if view == "film" else len(all_rows), page=page,
-                           pages=max((len(all_rows) + PAGE_SIZE - 1) // PAGE_SIZE, 1), view=view, films=films, size_buckets=SIZE_BUCKETS, resolutions=RESOLUTIONS, resolution_of=resolution_of, file_counts=file_counts, hidden_count=hidden_count, f=f, statuses=statuses, titles=rc.GROUP_TITLES, table=table,
+                           pages=max((len(all_rows) + PAGE_SIZE - 1) // PAGE_SIZE, 1), view=view, films=films, size_buckets=SIZE_BUCKETS, resolutions=RESOLUTIONS, sorts=SORTS, resolution_of=resolution_of, file_counts=file_counts, hidden_count=hidden_count, f=f, statuses=statuses, titles=rc.GROUP_TITLES, table=table,
                            high=sum(1 for _, r in candidates if r.confidence == rc.HIGH), high_medium=len(candidates), roots=roots, **extra)
 
 
@@ -341,13 +393,6 @@ def register(app):
         shown = film["id"] if film else None
         return render_template("library_sort.html", film=film, current=current, others=others, left=left, skip=",".join(str(x) for x in sorted(skip | ({shown} if shown else set()))), keep_skip=",".join(str(x) for x in sorted(skip)))
 
-    @app.route("/library/queue/<group>")
-    def library_queue(group):
-        """The older address of one queue; it shows the same page with that status chosen."""
-        if group not in rc.GROUP_ORDER:
-            return redirect(url_for("library_page"))
-        return queue_view(group)
-
     @app.route("/library/review/<group>")
     def library_review(group):
         if group not in rc.GROUP_ORDER:
@@ -355,7 +400,9 @@ def register(app):
         f = _filters()
         after = request.args.get("after")
         with db.connection() as conn:
-            nxt = rc.next_record_id(conn, group, int(after) if after and after.isdigit() else None, f["q"] or None, f["root"] or None, scan.config(conn))
+            ids = [rec["id"] for rec, _ in rows_for_status(conn, rc.classify(conn, scan.config(conn), f["q"] or None, f["root"] or None), group, f)]     # the same list, filters and sort as the page
+        after = int(after) if after and after.isdigit() else None
+        nxt = (ids[ids.index(after) + 1] if ids.index(after) + 1 < len(ids) else ids[0]) if ids and after in ids else (ids[0] if ids else None)
         if nxt is None:
             return redirect(url_for("library_page", done=group))
         return redirect(url_for("library_record", record_id=nxt, group=group, **{k: x for k, x in f.items() if x}))
