@@ -48,6 +48,11 @@ def _purge_previews():
     previews.purge()
 
 
+def _record_storage():
+    from synchub import data_usage
+    data_usage.record_today()
+
+
 def _follow_better_copies():
     from synchub import better_copy
     better_copy.refresh_tracking()
@@ -126,6 +131,7 @@ def configure():
     scheduler.add_job(_follow_better_copies, "interval", minutes=1, id="job_better_copy_tracking", max_instances=1, coalesce=True)
     scheduler.add_job(_quality_pass, "interval", minutes=5, id="job_quality_pass", max_instances=1, coalesce=True)
     scheduler.add_job(_purge_previews, "interval", hours=6, id="job_purge_previews", max_instances=1, coalesce=True)
+    scheduler.add_job(_record_storage, "cron", hour=4, minute=15, id="job_storage_history", max_instances=1, coalesce=True, misfire_grace_time=3600)
     scheduler.add_job(dispatch.run_due, "interval", seconds=NOTIFY_SECONDS, id="job_notify", max_instances=1, coalesce=True)
     scheduler.add_job(watch.check, "interval", seconds=NOTIFY_SECONDS, id="job_notify_watch", max_instances=1, coalesce=True)
     scheduler.add_job(_announce_aired, "interval", hours=1, id="job_notify_aired", max_instances=1, coalesce=True)

@@ -1,0 +1,146 @@
+<!-- synchub/web/templates/system_storage.html -->
+{% extends "base.html" %}
+{% block title %}SyncHub storage{% endblock %}
+
+{% block content %}
+{% set d = usage.database %}
+{% set v = usage.volume %}
+{% set used_pct = (100 * v.used / v.total)|round|int if v.total else 0 %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+    <div>
+        <h2 class="mb-1">SyncHub storage</h2>
+        <p class="text-body-secondary mb-0">What SyncHub itself keeps in its data folder, and how that has changed. Your films and shows are on the shares, not here (see <a href="{{ url_for('storage_page') }}">Storage</a> for those).</p>
+    </div>
+    <a href="{{ url_for('system_storage_page') }}" class="btn btn-outline-secondary" id="storageRefresh">Refresh</a>
+</div>
+
+<div class="row g-3 mb-3" id="storageSummary">
+    <div class="col-12 col-md-6">
+        <div class="panel p-3 h-100">
+            <div class="text-body-secondary small">Everything in the data folder</div>
+            <div class="fs-3 fw-bold" id="dataTotal">{{ usage.data_bytes|filesize }}</div>
+            {% if growth %}<div class="small text-body-secondary">{{ '+' if growth[0] >= 0 else '-' }}{{ growth[0]|abs|filesize }} over the last {{ growth[1] }} day{{ '' if growth[1] == 1 else 's' }}.</div>
+            {% else %}<div class="small text-body-secondary">The growth shows after the second daily reading.</div>{% endif %}
+        </div>
+    </div>
+    <div class="col-12 col-md-6">
+        <div class="panel p-3 h-100">
+            <div class="text-body-secondary small">Free on the drive holding it</div>
+            <div class="fs-3 fw-bold" id="volumeFree">{{ v.free|filesize }} <span class="fs-6 fw-normal text-body-secondary">of {{ v.total|filesize }}</span></div>
+            <div class="progress mt-1" style="height: 6px;" role="progressbar" aria-label="How full the drive is" aria-valuenow="{{ used_pct }}" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar {{ 'bg-danger' if used_pct >= 90 else 'bg-warning' if used_pct >= 80 else 'bg-success' }}" style="width: {{ used_pct }}%"></div></div>
+            {% if free_growth and free_growth[0] < 0 %}<div class="small text-body-secondary mt-1">{{ (-free_growth[0])|filesize }} less free than {{ free_growth[1] }} day{{ '' if free_growth[1] == 1 else 's' }} ago.</div>{% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="panel p-3 mb-3" id="storageParts">
+    <h5 class="mb-3">What takes the room</h5>
+    <div class="table-responsive">
+    <table class="table align-middle mb-0">
+        <thead><tr><th>Part</th><th class="text-end">Size</th><th>Details</th><th></th></tr></thead>
+        <tbody>
+            <tr data-part="database"><td class="fw-bold">Database</td><td class="text-end">{{ d.total|filesize }}</td>
+                <td class="small text-body-secondary">File {{ d.file|filesize }}, journal (WAL) {{ d.wal|filesize }}{% if d.reclaimable %}, {{ d.reclaimable|filesize }} of it empty space that Compact gives back{% endif %}.</td>
+                <td class="text-end">{% if can('tools') %}<button type="button" class="btn btn-outline-warning btn-sm" id="btnCompact" data-confirm="Compact the database now? SyncHub pauses its own writes while it rewrites the file.">Compact</button>{% endif %}</td></tr>
+            <tr data-part="previews"><td class="fw-bold">Preview clips</td><td class="text-end">{{ usage.previews.bytes|filesize }}</td>
+                <td class="small text-body-secondary">{{ usage.previews.count }} clip folder{{ '' if usage.previews.count == 1 else 's' }}{% if usage.previews.waiting %}, {{ usage.previews.waiting }} waiting for you to watch{% endif %}. Cleared automatically after {{ usage.previews.keep_days }} days.</td>
+                <td class="text-end">{% if can('tools') %}<button type="button" class="btn btn-outline-secondary btn-sm" id="btnPreviews" data-confirm="Delete the clips of previews that have been answered or whose time is up?">Delete old</button>{% endif %}</td></tr>
+            <tr data-part="backups"><td class="fw-bold">Backups</td><td class="text-end">{{ usage.backups.bytes|filesize }}</td>
+                <td class="small text-body-secondary">{{ usage.backups.count }} cop{{ 'y' if usage.backups.count == 1 else 'ies' }}{% if usage.backups.newest_at %}; the newest is {{ usage.backups.newest_bytes|filesize }}, made {{ usage.backups.newest_at }}{% endif %}.</td><td></td></tr>
+            <tr data-part="logs"><td class="fw-bold">Logs</td><td class="text-end">{{ usage.logs_bytes|filesize }}</td><td class="small text-body-secondary">The app log and its older rotated files.</td><td></td></tr>
+            <tr data-part="posters"><td class="fw-bold">Posters</td><td class="text-end">{{ usage.posters_bytes|filesize }}</td><td class="small text-body-secondary">The poster cache. It fills again by itself if it is emptied.</td><td></td></tr>
+            <tr data-part="tv"><td class="fw-bold">TV settings</td><td class="text-end">{{ usage.tv_bytes|filesize }}</td><td class="small text-body-secondary">TVs added, app choices and pairing keys.</td><td></td></tr>
+            {% if usage.other_bytes > 1000000 %}<tr data-part="other"><td class="fw-bold">Other</td><td class="text-end">{{ usage.other_bytes|filesize }}</td><td class="small text-body-secondary">Anything else in the data folder.</td><td></td></tr>{% endif %}
+        </tbody>
+    </table>
+    </div>
+    <div id="storageMessage" class="small mt-2" role="status" aria-live="polite"></div>
+</div>
+
+<div class="row g-3 mb-3">
+    <div class="col-12 col-lg-6">
+        <div class="panel p-3 h-100" id="biggestTables">
+            <h5 class="mb-1">Biggest database tables</h5>
+            <p class="small text-body-secondary">{{ d.how or 'Sizes could not be read.' }}</p>
+            {% if d.tables %}
+            <table class="table table-sm mb-0"><thead><tr><th>Table</th><th class="text-end">Rows</th><th class="text-end">Size</th></tr></thead><tbody>
+                {% for t in d.tables %}<tr><td><code>{{ t.name }}</code></td><td class="text-end">{{ '{:,}'.format(t.rows) }}</td><td class="text-end">{{ t.bytes|filesize }}</td></tr>{% endfor %}
+            </tbody></table>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-12 col-lg-6">
+        <div class="panel p-3 mb-3" id="workFolders">
+            <h5 class="mb-1">Work folders on the workers</h5>
+            <p class="small text-body-secondary">Not in the data folder: each worker keeps its conversions on its own drive. Measured by the workers every few minutes.</p>
+            {% if usage.work %}
+            <table class="table table-sm mb-0"><thead><tr><th>Worker</th><th class="text-end">Used</th><th class="text-end">Jobs</th><th class="text-end">Originals</th></tr></thead><tbody>
+                {% for w in usage.work %}<tr><td><a href="{{ url_for('workers_page') }}">{{ w.name }}</a></td><td class="text-end">{{ w.bytes|filesize }}</td><td class="text-end">{{ w.jobs|filesize }}</td><td class="text-end">{{ w.originals|filesize }}</td></tr>{% endfor %}
+                <tr class="fw-bold"><td>All workers</td><td class="text-end">{{ usage.work_bytes|filesize }}</td><td></td><td></td></tr>
+            </tbody></table>
+            {% else %}<p class="small text-body-secondary mb-0">No worker has reported its work folder yet.</p>{% endif %}
+        </div>
+        <div class="panel p-3" id="dockerSizes" data-url="{{ url_for('api_system_storage_docker') }}">
+            <h5 class="mb-1">Image and container</h5>
+            {% if usage.docker_socket %}<p class="small text-body-secondary mb-0" id="dockerBody">Asking Docker...</p>
+            {% else %}<p class="small text-body-secondary mb-0" id="dockerBody">Off. To see the image and container sizes, mount <code>/var/run/docker.sock</code> into the container as read-only (see <code>unraid/synchub.xml</code> and docs/DEPLOY.md). SyncHub only reads from it.</p>{% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="panel p-3" id="storageHistory">
+    <h5 class="mb-1">Growth, one reading a day (last 90 days)</h5>
+    {% if history|length < 2 %}
+    <p class="small text-body-secondary mb-0">{{ history|length }} reading so far. The chart appears after the second day.</p>
+    {% else %}
+    <p class="small text-body-secondary">From {{ history[0].day }} to {{ history[-1].day }}. Each chart has its own scale: the left number is the first reading, the right one the latest.</p>
+    <div class="row g-3">
+        {% for key, label, points in series %}
+        <div class="col-12 col-md-6" data-series="{{ key }}">
+            <div class="d-flex justify-content-between small"><span class="fw-semibold">{{ label }}</span><span class="text-body-secondary">{{ history[0][key]|filesize }} &rarr; {{ history[-1][key]|filesize }}</span></div>
+            <svg viewBox="0 0 640 120" class="w-100 text-info" role="img" aria-label="{{ label }} over the last {{ history|length }} readings, now {{ history[-1][key]|filesize }}" preserveAspectRatio="none" style="height: 80px;">
+                <line x1="0" y1="119" x2="640" y2="119" stroke="currentColor" stroke-opacity=".25"/>
+                {% if points %}<polyline points="{{ points }}" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke"/>{% endif %}
+            </svg>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const message = document.getElementById('storageMessage');
+    const say = (text, bad) => { message.textContent = text; message.className = 'small mt-2 ' + (bad ? 'text-danger' : 'text-success'); };
+    async function act(button, url) {
+        if (!confirm(button.dataset.confirm)) return;
+        button.disabled = true; say('Working...');
+        try {
+            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: '{}' });
+            const out = await res.json().catch(() => ({}));
+            say(out.message || (res.ok ? 'Done.' : 'That did not work.'), !res.ok);
+            if (res.ok) setTimeout(() => location.reload(), 1500);
+        } catch (e) { say('Could not reach SyncHub.', true); }
+        finally { button.disabled = false; }
+    }
+    const compact = document.getElementById('btnCompact'), previews = document.getElementById('btnPreviews');
+    if (compact) compact.addEventListener('click', () => act(compact, '{{ url_for("api_tools_db_compact") }}'));
+    if (previews) previews.addEventListener('click', () => act(previews, '{{ url_for("api_tools_previews_clear") }}'));
+
+    const box = document.getElementById('dockerSizes'), body = document.getElementById('dockerBody');
+    const size = (n) => { n = Number(n) || 0; const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; } return (i ? n.toFixed(1) : n.toFixed(0)) + ' ' + u[i]; };
+    if (box && box.querySelector('code') === null) {
+        fetch(box.dataset.url).then((r) => r.json()).then((d) => {
+            if (!d.available) { body.textContent = d.reason || 'Docker did not answer.'; return; }
+            body.textContent = '';
+            const lines = [`Image${d.image_tags.length ? ' ' + d.image_tags[0] : ''}: ${size(d.image_bytes)}`, `This container's writable layer: ${size(d.writable_bytes)}`,
+                           `All ${d.images_count} images on this server: ${size(d.images_bytes)}`];
+            lines.forEach((t) => { const p = document.createElement('div'); p.textContent = t; p.className = 'small'; body.appendChild(p); });
+        }).catch(() => { body.textContent = 'Docker did not answer.'; });
+    }
+})();
+</script>
+{% endblock %}

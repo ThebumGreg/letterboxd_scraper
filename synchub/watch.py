@@ -247,6 +247,24 @@ def continue_watching(conn, user, limit=12, recent_days=60):
     return sorted(best.values(), key=lambda p: p["at"], reverse=True)[:limit]
 
 
+def last_played(conn, user=None):
+    """{media id: when it was last played, as Jellyfin reports it}, for the dashboard's Recently watched sort. For one Jellyfin user, or for everyone
+    when `user` is empty. A show is as recent as its latest watched episode."""
+    where, args = ("AND u.jellyfin_user_id = ?", (user,)) if user else ("", ())
+    found = {}
+    for sql in ("""SELECT l.entity_id AS media_id, MAX(u.last_played_at) AS at FROM link l
+                   JOIN src_jellyfin_userdata u ON u.item_id = l.source_key AND u.removed_at IS NULL AND u.last_played_at IS NOT NULL
+                   WHERE l.source = 'jellyfin' AND l.entity_type = 'media' """ + where + " GROUP BY l.entity_id",
+                """SELECT e.media_id, MAX(u.last_played_at) AS at FROM episode e
+                   JOIN link l ON l.source = 'jellyfin_episode' AND l.entity_type = 'episode' AND l.entity_id = e.id
+                   JOIN src_jellyfin_userdata u ON u.item_id = l.source_key AND u.removed_at IS NULL AND u.last_played_at IS NOT NULL
+                   WHERE e.season_number > 0 """ + where + " GROUP BY e.media_id"):
+        for r in conn.execute(sql, args):
+            if r["at"] and r["at"] > found.get(r["media_id"], ""):
+                found[r["media_id"]] = r["at"]
+    return found
+
+
 def library_states(conn, user):
     """{media id: 'finished' | 'in_progress'} for the titles this Jellyfin user has played or started, for the dashboard's watch filter.
     A show is finished when every episode in the library is played; a title not in the result is not started."""

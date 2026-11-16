@@ -46,6 +46,10 @@
             }
             if (s.view === "grid") view = "grid";
         } catch (_) { }
+        try {                                           // a link from another page (Library status) can open the list with a status already chosen
+            const wanted = new URLSearchParams(location.search).get("status");
+            if (wanted && statusSel && Array.from(statusSel.options).some((o) => o.value === wanted)) statusSel.value = wanted;
+        } catch (_) { }
         if (sortSel && !sortSel.value) sortSel.value = "users-desc";
         if (perSel && !perSel.value) perSel.value = "18";
     }
@@ -139,6 +143,8 @@
 
     const titleCmp = (a, b) => a.dataset.title.localeCompare(b.dataset.title);
     const addedCmp = (a, b) => (b.dataset.added || "").localeCompare(a.dataset.added || "");     // newest first; titles with no date last
+    const watchedCmp = (a, b) => (b.dataset.watched || "").localeCompare(a.dataset.watched || "");   // most recent first; never watched last
+    const statusCmp = (a, b) => (parseInt(a.dataset.stateRank, 10) || 0) - (parseInt(b.dataset.stateRank, 10) || 0);
     const yearCmp = (a, b) => (parseInt(b.dataset.year, 10) || 0) - (parseInt(a.dataset.year, 10) || 0);
 
     function render() {
@@ -171,6 +177,8 @@
             if (sortSel.value === "title-asc") return titleCmp(a, b);
             if (sortSel.value === "year-desc") return yearCmp(a, b) || titleCmp(a, b);
             if (sortSel.value === "added-desc") return addedCmp(a, b) || titleCmp(a, b);
+            if (sortSel.value === "watched-desc") return watchedCmp(a, b) || titleCmp(a, b);
+            if (sortSel.value === "status-asc") return statusCmp(a, b) || titleCmp(a, b);
             return (parseInt(b.dataset.userCount, 10) - parseInt(a.dataset.userCount, 10)) || titleCmp(a, b);
         });
 

@@ -9,7 +9,7 @@
   :root { --bg:#0b0e14; --card:#141a24; --line:#232c3b; --text:#eef2f8; --dim:#93a1b8; --accent:#4dabf7; }
   * { box-sizing:border-box; }
   html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden; cursor:none; }
-  #wrap { height:100vh; padding:2.2vh 2.4vw; display:grid; grid-template-rows:auto auto 1fr auto; gap:2vh; transition:transform 60s linear; }
+  #wrap { height:100vh; padding:2.2vh 2.4vw; display:grid; grid-template-rows:auto auto 1fr auto auto; gap:2vh; transition:transform 60s linear; }
   header { display:grid; grid-template-columns:1.1fr 1fr; gap:2.4vw; align-items:start; }
   #clock { font-size:min(15vh,11vw); font-weight:200; letter-spacing:-.02em; line-height:1; font-variant-numeric:tabular-nums; }
   #clock small { font-size:.28em; font-weight:300; color:var(--dim); margin-left:.2em; }
@@ -44,6 +44,13 @@
   #welcome h1 { margin:0; font-size:min(15vh,9vw); font-weight:300; line-height:1.05; }
   #welcome .pl { margin-top:4vh; font-size:4vh; line-height:1.35; } #welcome .pl b { color:var(--c); font-weight:600; margin-right:.5em; }
   #welcome .pl div { margin:.4vh 0; } #welcome .common { margin-top:3vh; font-size:3.6vh; color:#ffd43b; }
+  #new { display:none; align-items:center; gap:1.4vw; background:var(--card); border:1px solid var(--line); border-radius:2vh; padding:1.2vh 1.4vw; }
+  #new.on { display:flex; }
+  #new .lead { font-size:2.6vh; color:var(--accent); letter-spacing:.04em; text-transform:uppercase; white-space:nowrap; }
+  #new .posters { display:flex; gap:1vw; min-width:0; overflow:hidden; }
+  #new figure { margin:0; width:9vh; flex:none; text-align:center; }
+  #new img { width:100%; height:13.5vh; object-fit:cover; border-radius:1vh; background:var(--line); display:block; }
+  #new figcaption { font-size:1.7vh; color:var(--dim); margin-top:.4vh; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   footer { text-align:center; font-size:3.2vh; color:var(--dim); font-style:italic; min-height:4.6vh; }
   footer b { color:var(--text); font-weight:400; } footer small { font-style:normal; font-size:.7em; color:var(--accent); text-transform:uppercase; letter-spacing:.06em; margin-right:.6em; } footer span { font-style:normal; font-size:.75em; margin-left:.6em; }
 </style>
@@ -56,6 +63,7 @@
   </header>
   <div id="alerts"></div>
   <main id="people"></main>
+  <section id="new" aria-label="What's new"></section>
   <footer><div id="counts"></div><div id="quote"></div></footer>
 </div>
 <div id="welcome"></div>
@@ -115,6 +123,16 @@
     $("alerts").innerHTML = out;
   }
 
+  function drawNew() {
+    var n = (data && data.new) || [], box = $("new"), html = "", i;
+    if (!n.length) { box.className = ""; box.innerHTML = ""; return; }
+    for (i = 0; i < n.length; i++) {
+      html += '<figure><img src="' + esc(n[i].poster) + '" alt="" loading="lazy"><figcaption>' + esc(n[i].title) + "</figcaption></figure>";
+    }
+    box.innerHTML = '<div class="lead">What’s new</div><div class="posters">' + html + "</div>";
+    box.className = "on";
+  }
+
   function drawCounts() {
     var c = data.countdowns || [], out = "", i;
     for (i = 0; i < c.length; i++) { out += "<b>" + esc(c[i].label) + "</b>" + (c[i].days === 0 ? "today!" : c[i].days === 1 ? "tomorrow" : "in " + c[i].days + " days"); }
@@ -170,7 +188,7 @@
 
   function draw() {
     drawWeather(data.weather);
-    drawAlerts(); drawCounts();
+    drawAlerts(); drawCounts(); drawNew();
     var html = "";
     for (var i = 0; i < data.people.length; i++) {
       var p = data.people[i];

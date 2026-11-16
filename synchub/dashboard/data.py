@@ -44,6 +44,7 @@ _lock = threading.Lock()
 _last = {}                    # (database, mode asked for) -> (taken at, change counter, answer)
 _key_locks = {}
 KEEP_SECONDS = 15
+NEW_COUNT, NEW_DAYS = 6, 30         # the "What's new" strip: this many posters, from this many days back
 
 
 def cached(mode=None):
@@ -65,6 +66,20 @@ def cached(mode=None):
         return answer
 
 
+def whats_new():
+    """Up to six titles added to the library in the last month, for the strip on the TV screen ([] when the switch is off or nothing is new). Failures leave the strip out."""
+    if settings.get("dash_new_on") != "1":
+        return []
+    from synchub import catalog, db
+    try:
+        with db.connection() as conn:
+            return [{"id": t["id"], "title": t["title"], "year": t["year"], "kind": t["kind"], "poster": f"/poster/{t['id']}", "added": t["added"]}
+                    for t in catalog.recently_added_titles(conn, limit=NEW_COUNT, days=NEW_DAYS)]
+    except Exception as exc:
+        logger.warning(f"[dashboard] what's new could not be read: {exc.__class__.__name__}: {exc}")
+        return []
+
+
 def build(now=None, mode=None):
     now = now or config.now()
     start, end = config.window()
@@ -78,6 +93,7 @@ def build(now=None, mode=None):
            "birthdays": config.birthdays(now.date()),
            "all_left": school.all_left(now) if mode == "morning" else False,
            "people": [person(p, now, mode) for p in config.people()],
+           "new": whats_new(),
            "welcome": None}
     try:
         out["welcome"] = welcome.page(now, w)

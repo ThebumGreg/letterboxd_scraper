@@ -5,7 +5,7 @@ import os
 from flask import abort, flash, g, jsonify, redirect, render_template, request, send_file, send_from_directory, url_for
 
 from config import BASE_DIR
-from synchub import access, backup, catalog, db, ddns, discover, posters, poor_quality, profiles, quality, ratings, search, settings, states, status, tasks, watch, watchlist, webhooks, workers
+from synchub import access, backup, catalog, data_usage, db, ddns, discover, posters, poor_quality, profiles, quality, ratings, search, settings, states, status, tasks, watch, watchlist, webhooks, workers
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.tmdb import TmdbClient
 from synchub.library import episode_link, file_labels
@@ -42,9 +42,25 @@ def _first_run_steps(conn, health):
             ("Add a worker (optional, does the heavy file work)", count("worker") > 0, "workers_page")]
 
 
+def _watchlist_row(items, by_id, limit=12):
+    """The signed-in person's watchlist for the dashboard: {'ready': titles now in the library, 'missing': the rest, 'total'}; None when there is no list to show.
+    Each entry is the dashboard row of the title (poster, link, state), so the page can show it as it shows the rest."""
+    if items is None:
+        return None
+    ready, missing = [], []
+    for item in items:
+        row = by_id.get(item["media_id"])
+        if row:
+            (ready if row["state"] == "in_library" and row["jellyfin_link"] else missing).append(row)
+    return {"ready": ready[:limit], "ready_total": len(ready), "missing": missing[:limit], "missing_total": len(missing), "total": len(ready) + len(missing)}
+
+
 def register(app):
+    app.jinja_env.filters["filesize"] = data_usage.human
+
     @app.route("/")
     def index():
+        permissions = getattr(g, "permissions", None)
         with db.connection() as conn:
             rows = catalog.list_catalog(conn, max_rating=current_limit())
             defs = states.definitions(conn)
@@ -52,12 +68,12 @@ def register(app):
             user = watch.user_of(getattr(g, "profile", None))
             keep_going = watch.continue_watching(conn, user) if user else []
             seen = watch.library_states(conn, user) if user else {}
-            health = status.snapshot(conn) if access.allowed(getattr(g, "permissions", None), "logs") else None
-            reconcile = catalog.jellyfin_movie_reconcile(conn) if access.allowed(getattr(g, "permissions", None), "logs") else None
-            librarian = access.allowed(getattr(g, "permissions", None), "library")
+            played = watch.last_played(conn, user)
+            librarian = access.allowed(permissions, "library")
             file_counts = file_labels.counts(conn) if librarian else None
             film_tokens = file_labels.film_tokens(conn) if librarian else {}
-            first_run = _first_run_steps(conn, health) if not rows and health else []
+            first_run = _first_run_steps(conn, status.snapshot(conn)) if not rows and access.allowed(permissions, "logs") else []
+            my_list = watchlist.items(conn, g.profile["id"], limit=current_limit()) if getattr(g, "profile", None) and access.allowed(permissions, "watchlist") else None
         by_id = {r["id"]: r for r in rows}
         resume = []
         for item in keep_going:
@@ -65,14 +81,17 @@ def register(app):
             if row and row["jellyfin_link"]:
                 resume.append({**item, "row": row})
                 seen[row["id"]] = "in_progress"
+        ranks = {code: d.get("rank", 0) for code, d in defs.items()}
         for r in rows:
             r["watch"] = seen.get(r["id"], "not_started") if user else ""
             r["file_tokens"] = film_tokens.get(r["id"], "")
+            r["last_watched"] = played.get(r["id"], "")
+            r["state_rank"] = ranks.get(r["state"], 0)
         users = sorted({u for r in rows for u in r["wanted_by"] + r["watched_by"]}, key=str.lower)
         status_options = [(code, defs[code]["label"]) for code in STATUS_ORDER if code in defs]
         ratings_seen = sorted({r["certification"] for r in rows if r["certification"]}, key=lambda c: (ratings.rank(c) is None, ratings.rank(c) or 0, c))
-        return render_template("index.html", rows=rows, stats=catalog.dashboard_stats(rows), all_users=users, status_options=status_options,
-                               resume=resume, can_filter_watch=bool(user), certifications=ratings_seen, health=health, reconcile=reconcile, first_run=first_run, file_counts=file_counts)
+        return render_template("index.html", rows=rows, stats=catalog.dashboard_stats(rows), all_users=users, status_options=status_options, my_list=_watchlist_row(my_list, by_id),
+                               resume=resume, can_filter_watch=bool(user), certifications=ratings_seen, first_run=first_run, file_counts=file_counts)
 
     @app.route("/discover")
     def discover_page():
@@ -89,6 +108,34 @@ def register(app):
             recent = discover.recently_added(conn, discover.PER_SECTION, limit)
             coming, notes = discover.coming_up(conn, limit)
         return render_template("discover.html", sections=sections, recent=recent, coming=coming, notes=notes, error=error)
+
+    @app.route("/system/library")
+    def system_library_page():
+        """The health line, how Jellyfin's movies add up to titles here, and the breakdown of the files behind them: what used to sit above the dashboard's title list."""
+        permissions = getattr(g, "permissions", None)
+        with db.connection() as conn:
+            snapshot = status.snapshot(conn)
+            reconcile = catalog.jellyfin_movie_reconcile(conn)
+            librarian = access.allowed(permissions, "library")
+            file_counts = file_labels.counts(conn) if librarian else None
+            stats = catalog.dashboard_stats(catalog.list_catalog(conn))
+        return render_template("library_status.html", snapshot=snapshot, reconcile=reconcile, file_counts=file_counts, stats=stats)
+
+    @app.route("/system/storage")
+    def system_storage_page():
+        """What SyncHub itself takes: database, preview clips, backups, logs, work folders, free space, and how that has grown over the last 90 days."""
+        with db.connection() as conn:
+            data_usage.ensure_today(conn)
+            usage = data_usage.measure(conn)
+            history = data_usage.history(conn)
+        series = [(key, label, data_usage.chart_points(history, key)) for key, label in
+                  (("data_bytes", "Everything in /data"), ("db_bytes", "Database"), ("previews_bytes", "Preview clips"), ("backups_bytes", "Backups"), ("logs_bytes", "Logs"))]
+        return render_template("system_storage.html", usage=usage, history=history, series=series, growth=data_usage.growth(history), free_growth=data_usage.growth(history, "free_bytes"))
+
+    @app.route("/api/system/storage/docker")
+    def api_system_storage_docker():
+        """Image and container sizes, read through the Docker socket when it is mounted (loaded after the page, because Docker takes a moment to add up a container)."""
+        return jsonify(ok=True, **data_usage.docker_sizes())
 
     @app.route("/system/status")
     def status_page():

@@ -6,11 +6,6 @@
 
 {% block content %}
 <div id="tvNow" class="mb-3" hidden aria-live="polite"></div>
-{% if health %}
-<a href="{{ url_for('status_page') }}" class="d-inline-flex align-items-center gap-2 mb-3 text-decoration-none small text-body-secondary" id="healthDot" title="Open System status">
-    <i class="bi bi-circle-fill text-{{ {'ok': 'success', 'warn': 'warning', 'bad': 'danger'}.get(health.state, 'success') }}" aria-hidden="true"></i> {{ health.summary }}
-</a>
-{% endif %}
 <div class="row g-3 mb-4" aria-label="Library at a glance">
     {{ stat_card('In Library', stats.in_library, 'success', '', 'in_library', sub=stats.movies_in_library ~ ' movies · ' ~ stats.shows ~ ' shows (' ~ stats.shows_in_library ~ ' complete)') }}
     {{ stat_card('In Progress', stats.in_flight, 'primary', '', 'in_flight') }}
@@ -18,17 +13,6 @@
     {{ stat_card('Missing', stats.missing, 'danger', '', 'missing') }}
     {% if stats.partial %}{{ stat_card('Partial', stats.partial, 'warning', '', 'partial') }}{% endif %}
 </div>
-{% if reconcile and reconcile.jellyfin_items %}
-<p class="small text-body-secondary mb-1">Jellyfin movies: {{ reconcile.jellyfin_items }} item{{ '' if reconcile.jellyfin_items == 1 else 's' }} = {{ reconcile.titles }} title{{ '' if reconcile.titles == 1 else 's' }} here{% if reconcile.duplicates %} (<a href="#" data-show-extra-versions>{{ reconcile.duplicates }} more Jellyfin version{{ '' if reconcile.duplicates == 1 else 's' }}</a> of a film already counted){% endif %}{% if reconcile.unmatched %}, {{ reconcile.unmatched }} not matched yet (see Match review){% endif %}.</p>
-{% if file_counts and (file_counts.films or file_counts.episodes) %}
-<p class="small text-body-secondary mb-4" id="fileBreakdown">{% if file_counts.films %}{{ file_counts.films }} film{{ '' if file_counts.films == 1 else 's' }}{% endif %}{% if file_counts.films and file_counts.episodes %} and {% endif %}{% if file_counts.episodes %}{{ file_counts.episodes }} episode{{ '' if file_counts.episodes == 1 else 's' }}{% endif %} with more than one file:
-    {% for k in file_labels.ORDER %}{% if file_counts.files[k] %}<a href="{{ url_for('library_list', status='all', label=k) }}" title="{{ file_labels.HINT[k] }}">{{ file_counts.files[k] }} {{ file_labels.TEXT[k]|lower }}{{ '' if file_counts.files[k] == 1 else 's' }}</a>{{ ', ' if not loop.last else '' }}{% endif %}{% endfor %}.
-    {% if file_counts.different_shares %}<a href="{{ url_for('library_list', status='all', label='different_shares') }}">{{ file_counts.different_shares }} on different shares</a>.{% endif %}
-    {% if file_counts.unlinked %}<a href="{{ url_for('library_list', status='all', label='unlinked') }}">{{ file_counts.unlinked }} movie or episode file{{ '' if file_counts.unlinked == 1 else 's' }} not linked to a film or episode</a>.{% endif %}
-    {% if file_counts.saved_bytes %}Conversions saved {{ '%.1f'|format(file_counts.saved_bytes / 1073741824) }} GB.{% endif %}</p>
-{% endif %}
-{% endif %}
-
 {% if resume %}
 <section class="mb-4" aria-labelledby="h-continue" id="continueWatching">
     <h5 id="h-continue" class="mb-2">Continue Watching</h5>
@@ -44,6 +28,32 @@
         </div>
         {% endfor %}
     </div>
+</section>
+{% endif %}
+
+{% if my_list and my_list.total %}
+<section class="mb-4" aria-labelledby="h-watchlist" id="myWatchlist">
+    <div class="d-flex justify-content-between align-items-baseline mb-2">
+        <h5 id="h-watchlist" class="mb-0">On my watchlist</h5>
+        <a href="{{ url_for('watchlist_page') }}" class="small text-decoration-none">Open my watchlist</a>
+    </div>
+    {% for key, heading, total_key in (('ready', 'Now in the library', 'ready_total'), ('missing', 'Still missing', 'missing_total')) %}
+    {% if my_list[key] %}
+    <div class="small text-body-secondary mb-1" data-watchlist-group="{{ key }}">{{ heading }} <span class="badge bg-secondary">{{ my_list[total_key] }}</span></div>
+    <div class="d-flex gap-3 overflow-auto pb-2 mb-2">
+        {% for r in my_list[key] %}
+        <div class="panel p-2 d-flex flex-column gap-1 flex-shrink-0" style="width: 150px;" data-watchlist-item="{{ r.id }}">
+            <a href="{{ r.url }}"><img src="{{ r.poster }}" alt="" width="130" height="195" class="rounded poster w-100 h-auto" loading="lazy"></a>
+            <div class="small fw-bold text-truncate" title="{{ r.title }}"><a href="{{ r.url }}" class="text-decoration-none text-reset">{{ r.title }}</a></div>
+            <div class="mt-auto">
+                {% if key == 'ready' %}{{ watch_now(r.jellyfin_link, r.jellyfin_item_id, r.title, 'card') }}
+                {% else %}{{ state_badge(r.state_label, r.state_color, r.state_icon, r.progress_pct if r.state == 'downloading' else none) }}{% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endfor %}
 </section>
 {% endif %}
 
@@ -109,10 +119,12 @@
         <div class="flex-grow-1">
             <label for="sortOrder" class="form-label small mb-1">Sort by</label>
             <select id="sortOrder" class="form-select">
-                <option value="users-desc">Most requested</option>
+                <option value="users-desc">Most wanted</option>
                 <option value="title-asc">Title (A-Z)</option>
-                <option value="year-desc">Release year (newest)</option>
-                <option value="added-desc">Date added</option>
+                <option value="year-desc">Year (newest)</option>
+                <option value="status-asc">Status</option>
+                <option value="added-desc">Recently added</option>
+                <option value="watched-desc">Recently watched</option>
             </select>
         </div>
         <div class="btn-group flex-shrink-0" role="group" aria-label="View mode">
@@ -167,7 +179,7 @@
                 data-added-by="{{ r.wanted_by|join(', ') }}" data-user-count="{{ r.user_count }}"
                 data-link="{{ r.jellyfin_link if r.state == 'in_library' and r.jellyfin_link else '' }}"
                 data-jellyfin-item="{{ r.jellyfin_item_id or '' }}"
-                data-added="{{ r.date_added or '' }}" data-added-label="{{ r.date_added_label or '' }}"
+                data-watched="{{ r.last_watched or '' }}" data-state-rank="{{ r.state_rank }}" data-added="{{ r.date_added or '' }}" data-added-label="{{ r.date_added_label or '' }}"
                 data-summary="{% if r.kind == 'show' and r.aired %}{{ r.in_library }} of {{ r.aired }} episodes{% endif %}">
                 <td><img src="{{ r.poster }}" alt="" width="45" height="65" class="rounded poster poster-thumb" loading="lazy"></td>
                 <td>

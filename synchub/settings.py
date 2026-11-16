@@ -46,7 +46,7 @@ DEFAULTS = {
     # Welcome home page, the evening (tomorrow) screen and the quote source
     "dash_welcome_on": "0", "dash_welcome_seconds": "120", "dash_welcome_away": "15", "dash_welcome_gap": "60", "dash_welcome_quiet_on": "1", "dash_welcome_quiet_from": "22:00", "dash_welcome_quiet_to": "06:00",
     "dash_welcome_wake": "1", "dash_welcome_details": "1",
-    "dash_eve_on": "0", "dash_eve_start": "20:00", "dash_eve_end": "22:00", "dash_eve_days": "sun,mon,tue,wed,thu", "dash_quote_source": "quote",
+    "dash_new_on": "1", "dash_eve_on": "0", "dash_eve_start": "20:00", "dash_eve_end": "22:00", "dash_eve_days": "sun,mon,tue,wed,thu", "dash_quote_source": "quote",
     "unifi_net_host": "", "unifi_net_verify_tls": "0",
     # quality checks (docs/QUALITY.md): how many slices of a film a worker samples, how long each is, the score under which a film is flagged, whether new downloads are
     # checked (off or flag) and whether the Library clean-up checks the films it has not looked at yet, newest or oldest first

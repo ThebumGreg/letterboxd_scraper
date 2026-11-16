@@ -129,6 +129,10 @@ docker run -d --name synchub --init --restart unless-stopped \
 
 Controlling a TV, pairing a Google TV and playing a title only need the container to reach the TV's address, which works on any network type. Two things need the container to be **on your LAN**: *Scan network* (finds TVs by broadcasting) and *Wake-on-LAN* (a broadcast packet). On Unraid's default **Bridge** network they cannot work; give the container its own address (**Custom: br0**, with a fixed IP) or use **Host** (then port 5001 must be free). TVs can always be added by typing their address. The image includes `adb` for Google TV / Android TV; the key the TVs were told to trust is kept in `/data/tv`, so a replaced container is still trusted. Everything the TV pages remember (TVs, app choices, pairing) is in `/data/tv`, and the nightly backup saves it beside the database.
 
+### Seeing how much room SyncHub takes (System > SyncHub storage)
+
+The page measures what it can from inside the container: the database, preview clips, backups, logs, posters and each worker's work folder, with one reading a day kept for 90 days. To also show the **image and container size**, give the container the Docker socket read-only: on Unraid fill in the optional *Docker socket* path with `/var/run/docker.sock` (mode read only); with a command add `-v /var/run/docker.sock:/var/run/docker.sock:ro`. SyncHub only sends read requests (container and image sizes). It stays off if the path is empty, and everything else on the page works without it.
+
 ### After the first start
 
 1. **If you moved a database:** the log says `The database is older than this version: a copy was saved as /data/backups/premigrate-v6-....db before upgrading it.` That copy is yours to keep until you are happy.

@@ -29,12 +29,32 @@ NAV = (
     )),
     ("System", (
         (None, "Run"), ("tools", "Tools & Operations"),
-        (None, "Monitor"), ("status_page", "System status"), ("sessions_page", "Sessions"), ("activity_page", "What it's doing now"), ("logs_page", "Logs"), ("jellyfin_events_page", "Jellyfin events"), ("payloads_page", "Payloads"),
+        (None, "Monitor"), ("status_page", "System status"), ("system_library_page", "Library status"), ("system_storage_page", "SyncHub storage"), ("sessions_page", "Sessions"), ("activity_page", "What it's doing now"), ("logs_page", "Logs"), ("jellyfin_events_page", "Jellyfin events"), ("payloads_page", "Payloads"),
         (None, "Admin"), ("players_page", "Players"), ("ddns_page", "Dynamic DNS"), ("people_page", "People"),
         (None, "Remote"), ("tv_settings_page", "Remote Apps"), ("tv_setup_devices_page", "TVs"), ("tv_setup_advanced_page", "Remote Tools"),
     )),
     ("settings_page", "Settings"),
 )
+
+
+_dot = {"at": 0.0, "key": None, "value": None}
+DOT_SECONDS = 15
+
+
+def _health_dot():
+    """The summary behind the dot in the top bar ({'state', 'summary'}), reused for a few seconds because every page asks for it."""
+    import time
+    from synchub import status
+    key = db.DB_FILE
+    if _dot["value"] is None or _dot["key"] != key or time.monotonic() - _dot["at"] > DOT_SECONDS:
+        try:
+            with db.connection() as conn:
+                snap = status.snapshot(conn)
+            _dot.update(at=time.monotonic(), key=key, value={"state": snap["state"], "summary": snap["summary"]})
+        except Exception as exc:
+            logger.warning(f"The status dot could not be worked out: {exc.__class__.__name__}: {exc}")
+            return None
+    return _dot["value"]
 
 
 def current_profile(conn):
@@ -235,7 +255,8 @@ def create_app(start_scheduler=False, csrf=True):
                 children = shown
                 if any("href" in c for c in children):
                     menu.append({"label": first, "children": children})
-        return {"jellyfin_app": config, "current_profile": profile, "has_profiles": getattr(g, "has_profiles", False), "can": can, "media_tabs": media_tabs, "menu": menu,
+        health = _health_dot() if can("logs") else None
+        return {"health": health, "jellyfin_app": config, "current_profile": profile, "has_profiles": getattr(g, "has_profiles", False), "can": can, "media_tabs": media_tabs, "menu": menu,
                 "profile_link": link("my_profile", "My profile"),
                 "max_rating": getattr(g, "max_rating", None), "app_version": __version__, "app_build": buildinfo.get()}
 
