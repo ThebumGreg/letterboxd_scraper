@@ -6,7 +6,7 @@
 
 {% block content %}
 {% set active = 'files' %}{% include "_media_nav.html" %}
-{% set filter_args = {'q': f.q, 'root': f.root, 'conf': f.conf, 'what': f.what, 'type': f.type, 'quality': f.quality, 'label': f.label, 'size': f.size, 'res': f.res} %}
+{% set filter_args = {'q': f.q, 'root': f.root, 'conf': f.conf, 'what': f.what, 'type': f.type, 'quality': f.quality, 'label': f.label, 'size': f.size, 'res': f.res, 'sort': f.sort} %}
 {% set filtered = f.q or f.root or f.conf or f.what or f.type or f.quality or f.label or f.size or f.res %}
 {% set below = status == 'below_minimum' %}
 <div class="d-flex flex-wrap align-items-center gap-2 mb-2" id="labelPills" aria-label="What the files are to their films">
@@ -51,6 +51,8 @@
         <select class="form-select" id="fsize" name="size"><option value="">Any size</option>{% for k, label, lo, hi in size_buckets %}<option value="{{ k }}"{% if k == f.size %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
     <div class="col-6 col-md-2"><label for="fres" class="visually-hidden">Resolution</label>
         <select class="form-select" id="fres" name="res"><option value="">Any resolution</option>{% for k, label in resolutions %}<option value="{{ k }}"{% if k == f.res %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <div class="col-6 col-md-2"><label for="fsort" class="visually-hidden">Sort</label>
+        <select class="form-select" id="fsort" name="sort" aria-label="Sort by">{% if below %}<option value="">Worst first (flagged order)</option>{% endif %}{% for k, label in sorts %}<option value="{{ k }}"{% if k == f.sort or (not f.sort and not below and k == 'name') %} selected{% endif %}>Sort: {{ label }}</option>{% endfor %}</select></div>
     <div class="col-6 col-md-2 d-flex gap-2"><button class="btn btn-outline-info" type="submit">Filter</button>{% if filtered %}<a class="btn btn-outline-secondary" href="{{ url_for('library_list', status=status) }}">Clear</a>{% endif %}</div>
 </form>
 
@@ -98,10 +100,10 @@
             {% set ns = namespace(show=None, season=None) %}
             {% for row in rows %}
                 {% set rec = row.rec %}{% set r = row.r %}
-                {% if rec.media_type == 'TV Episode' and (rec.show_title != ns.show or rec.season_number != ns.season) %}
+                {% if not f.sort and rec.media_type == 'TV Episode' and (rec.show_title != ns.show or rec.season_number != ns.season) %}
                     {% set ns.show = rec.show_title %}{% set ns.season = rec.season_number %}
                     <tr class="table-active"><td colspan="{{ 7 if status in ('all', 'below_minimum') else 6 }}" class="ps-4 small fw-bold">{{ rec.show_title }}{% if rec.season_number is not none %} &middot; Season {{ rec.season_number }}{% endif %}</td></tr>
-                {% elif rec.media_type != 'TV Episode' and ns.show is not none %}{% set ns.show = None %}{% set ns.season = None %}{% endif %}
+                {% elif not f.sort and rec.media_type != 'TV Episode' and ns.show is not none %}{% set ns.show = None %}{% set ns.season = None %}{% endif %}
                 <tr data-record="{{ rec.id }}">
                     <td class="ps-4" style="max-width: 360px;">
                         <a class="fw-bold text-decoration-none" href="{{ url_for('library_record', record_id=rec.id, group=r.group, status=status, **filter_args) }}">{{ rec.approved_name or rec.recommended_name or rec.file_name }}</a>
