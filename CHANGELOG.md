@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.9.2
+
+No migration, no worker change. Update SyncHub.
+
+**Sort the Files page.** A new Sort box beside the filters: Name, Size (largest or smallest first), Resolution, Newest file, Confidence (lowest first, to find the ones needing care), Quality score (worst first) and Estimated saving (largest first). It sorts the whole filtered list before paging, and the choice stays in the address, so paging, **Open**, Previous and Next keep it. On Below minimum quality the list stays worst first until you choose a sort.
+
+**Review one by one follows the list.** It used to look only at the search, share and confidence filters. It now walks the same list you are looking at: every filter (type, folder, quality check, kind of file, size, resolution) and the sort. Skip keeps them too.
+
+**Old addresses removed** (no bookmarks): `/library/queue/<status>`, `/library/quality`, `/access` and `/diagnostics`. Use Files, People and What it's doing now.
+
 ## 1.9.1
 
 No migration, no worker change. Update SyncHub.

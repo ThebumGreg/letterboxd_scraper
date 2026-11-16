@@ -70,10 +70,6 @@ def register(app):
             notification_store.set_admin(conn, profile_id, enabled)
         return jsonify(ok=True, message="They will get administrator alerts." if enabled else "They will not get administrator alerts.")
 
-    @app.route("/access")
-    def access_page():
-        return redirect(url_for("people_page"), code=301)         # the page's old address
-
     def act(profile_id, change, message):
         """Runs `change(conn)`; the answer is the message or the reason it was refused."""
         try:

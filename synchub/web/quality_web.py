@@ -42,13 +42,6 @@ def overview(conn, full=True):
 
 
 def register(app):
-    @app.route("/library/quality")
-    def library_quality_page():
-        """Below minimum quality: files that are too small, scored low or are damaged. Held from conversion; they may only be renamed and moved.
-        It is the Library list page with that status chosen (/library/queue?status=below_minimum); this older address keeps working."""
-        from synchub.web import library
-        return library.queue_view(library.STATUS_BELOW)
-
     @app.route("/library/quality/export")
     def library_quality_export():
         q, root = (request.args.get("q") or "").strip(), (request.args.get("root") or "").strip()

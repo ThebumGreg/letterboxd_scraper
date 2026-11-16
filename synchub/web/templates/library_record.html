@@ -9,7 +9,7 @@
 {% block content %}
 {% include "_media_nav.html" %}
 {% set decided = rec.approval_status != 'pending' %}
-{% set nav = dict(status=back_status, q=f.q, root=f.root, conf=f.conf, what=f.what, type=f.type, quality=f.quality, label=f.label) %}
+{% set nav = dict(status=back_status, q=f.q, root=f.root, conf=f.conf, what=f.what, type=f.type, quality=f.quality, label=f.label, size=f.size, res=f.res, sort=f.sort) %}
 {% set net_path = rec.source_path if rec.source_path and rec.source_path != rec.root_name ~ ':' ~ rec.relative_path else none %}
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
     <span><a href="{{ url_for('library_list', **nav) }}" id="navBack"><i class="bi bi-arrow-left" aria-hidden="true"></i> {{ back_title }}</a>
@@ -44,14 +44,14 @@
             <div class="d-flex flex-wrap gap-2 align-items-center">
                 <button type="button" class="btn btn-success btn-lg" id="act-approve" data-act="approve">{{ 'Skip this duplicate' if r.kind == 'skip_duplicate' else 'Approve' if not r.needs_name else 'Approve with this name' }} <kbd class="ms-1">a</kbd></button>
                 <button type="button" class="btn btn-outline-danger" id="act-reject" data-act="reject">Reject <kbd class="ms-1">r</kbd></button>
-                <a class="btn btn-outline-secondary" id="act-skip" href="{{ url_for('library_review', group=group, after=rec.id, q=f.q, root=f.root, conf=f.conf) }}">Skip <kbd class="ms-1">s</kbd></a>
+                <a class="btn btn-outline-secondary" id="act-skip" href="{{ url_for('library_review', group=group, after=rec.id, q=f.q, root=f.root, conf=f.conf, what=f.what, type=f.type, quality=f.quality, label=f.label, size=f.size, res=f.res, sort=f.sort) }}">Skip <kbd class="ms-1">s</kbd></a>
             </div>
         {% elif r.override_allowed %}
             <p class="mb-2"><strong>Played it and it is fine?</strong> Say what you tested and approve it as it is. Otherwise reject it.</p>
             <div class="row g-2"><div class="col-md-8"><label for="testNote" class="visually-hidden">What you tested</label><input class="form-control" id="testNote" placeholder="Played it start to end on the TV, no problems" maxlength="500"></div>
                 <div class="col-md-4 d-flex gap-2"><button type="button" class="btn btn-success" data-act="tested">I tested it</button><button type="button" class="btn btn-outline-danger" data-act="reject">Reject</button></div></div>
         {% elif r.group not in ('done', 'queued') %}
-            <div class="d-flex gap-2"><button type="button" class="btn btn-outline-danger" data-act="reject">Reject</button><a class="btn btn-outline-secondary" href="{{ url_for('library_review', group=group, after=rec.id) }}">Skip</a></div>
+            <div class="d-flex gap-2"><button type="button" class="btn btn-outline-danger" data-act="reject">Reject</button><a class="btn btn-outline-secondary" href="{{ url_for('library_review', group=group, after=rec.id, q=f.q, root=f.root, conf=f.conf, what=f.what, type=f.type, quality=f.quality, label=f.label, size=f.size, res=f.res, sort=f.sort) }}">Skip</a></div>
         {% else %}<p class="text-body-secondary mb-0">Nothing to decide here.</p>{% endif %}
     {% if preview_info %}<div class="mt-2"><button type="button" class="btn btn-sm btn-outline-secondary" id="makePreview" title="{{ preview_info.summary }}"><i class="bi bi-play-btn" aria-hidden="true"></i> Make a preview</button>
         {% if preview_info.latest %}<a class="btn btn-sm btn-outline-primary ms-1" href="{{ url_for('library_preview', preview_id=preview_info.latest.id) }}">{{ 'Watch the latest preview' if preview_info.latest.status == 'ready' else 'Latest preview (' ~ preview_info.latest.status ~ ')' }}</a>{% endif %}</div>{% endif %}
@@ -257,7 +257,7 @@
 <script>
 (() => {
     const id = {{ rec.id }}, group = {{ group|tojson }};
-    const filters = {{ ({'q': f.q, 'root': f.root, 'conf': f.conf}|tojson) }};
+    const filters = {{ ({'q': f.q, 'root': f.root, 'conf': f.conf, 'what': f.what, 'type': f.type, 'quality': f.quality, 'label': f.label, 'size': f.size, 'res': f.res, 'sort': f.sort}|tojson) }};
     const next = () => {
         const qs = new URLSearchParams({ after: id }); Object.entries(filters).forEach(([k, v]) => { if (v) qs.set(k, v); });
         location.href = `/library/review/${encodeURIComponent(group)}?${qs}`;
