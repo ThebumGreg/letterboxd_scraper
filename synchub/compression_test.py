@@ -211,7 +211,8 @@ def sync(conn, job_id, now=None):
     if target in ("done", "failed", "cancelled"):
         from synchub.library import store
         store.event(conn, row["library_file_id"], "worker", f"compression_test_{values['status']}", None,
-                    {"test": row["id"], "job": job_id, "note": values.get("message"), "est_gb": values.get("est_gb")}, now)
+                    {"test": row["id"], "job": job_id, "est_gb": values.get("est_gb"),
+                     "note": " ".join(x for x in (values.get("message"), f"{row['profile_name']}." if row["profile_name"] else "", f"About {values['est_gb']} GB." if values.get("est_gb") else "") if x)}, now)
     return True
 
 

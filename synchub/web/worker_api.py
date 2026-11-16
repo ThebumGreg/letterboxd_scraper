@@ -188,6 +188,7 @@ def register(app):
             previews.sync_active(conn)
             quality.sync_active(conn)
             compression_test.sync_active(conn)
+            migrate.release_throttled(conn, scan.config(conn))                   # approved files held back by "Conversions at once" get their job as places free up
             cleanup.sync_active(conn)
             for job in claimed:
                 logger.info(f"[jobs] job {job['id']} ({job['kind']}: {job['title']}) went to {worker['name']}, attempt {job['attempt']}")

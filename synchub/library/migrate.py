@@ -128,6 +128,47 @@ def active_job(conn, record_id):
     return r["id"] if r else None
 
 
+def max_in_flight(conn=None):
+    """How many conversions may be queued, waiting for their checks or running at once (Options > Quality); 0 means no limit."""
+    try:
+        return max(0, min(500, int(settings.get("max_queued_conversions", conn=conn))))
+    except (TypeError, ValueError):
+        return 0
+
+
+def in_flight(conn):
+    """Conversions that hold a place: a job of a Library file whose plan converts the video or tracks and is not finished, plus files waiting for their quality check or compression test."""
+    jobs_n = conn.execute("SELECT COUNT(*) FROM job WHERE ref_type = ? AND status IN ('queued', 'running', 'needs_review') AND json_extract(plan, '$.op') = 'convert'", (REF,)).fetchone()[0]
+    return jobs_n + conn.execute("SELECT COUNT(*) FROM convert_wait").fetchone()[0]
+
+
+def waiting_for_slot(conn, rec):
+    """True when an approved file has no job yet only because the limit on conversions at once is reached."""
+    limit = max_in_flight(conn)
+    return bool(limit and rec["approval_status"] == v.APPROVAL_APPROVED and rec["migration_status"] == v.MIGRATION_PENDING and not rec.get("migration_cancelled_at")
+                and active_job(conn, rec["id"]) is None and not conn.execute("SELECT 1 FROM convert_wait WHERE library_file_id = ?", (rec["id"],)).fetchone() and in_flight(conn) >= limit)
+
+
+def release_throttled(conn, cfg, batch=200):
+    """Gives the approved files that were held back by the limit their job as places free up, oldest first. Returns how many jobs were made."""
+    limit = max_in_flight(conn)
+    if not limit or in_flight(conn) >= limit:
+        return 0
+    made = 0
+    rows = conn.execute(
+        """SELECT id FROM library_file WHERE approval_status = 'approved' AND migration_status = 'pending' AND migration_cancelled_at IS NULL AND missing_since IS NULL
+             AND id NOT IN (SELECT ref_id FROM job WHERE ref_type = 'library_file' AND status IN ('queued', 'running', 'needs_review'))
+             AND id NOT IN (SELECT library_file_id FROM convert_wait) ORDER BY id LIMIT ?""", (batch,)).fetchall()
+    for r in rows:
+        if in_flight(conn) >= limit:
+            break
+        try:
+            made += 1 if queue(conn, r["id"], cfg, "queue limit") is not None else 0
+        except (ValueError, v.StateError) as exc:
+            logger.debug(f"[migrate] file {r['id']} not queued from the waiting list: {exc}")
+    return made
+
+
 def profile_for(conn, rec):
     """The profile an approved record is converted with: the one chosen for the file, else the one chosen at its scan, else the default."""
     return profiles.effective(conn, rec)
@@ -158,6 +199,10 @@ def queue(conn, record_id, cfg, by="someone", force=False, checked=False):
         dest_root, dest_rel, plan = plan_for(rec, dataclasses.replace(cfg, clean_names=bool(rules["clean_names"])), profile, size=size_policy.load(conn, profile), rules=rules, held=held)
     except layout.LayoutError as exc:
         raise ValueError(f"cannot plan the destination: {exc}")
+    if plan["op"] == "convert" and not checked and not force and max_in_flight(conn) and in_flight(conn) >= max_in_flight(conn):
+        if not conn.execute("SELECT 1 FROM library_event WHERE media_file_id = ? AND event_type = 'waiting_for_slot' AND id > COALESCE((SELECT MAX(id) FROM library_event WHERE media_file_id = ? AND event_type = 'migration_queued'), 0)", (record_id, record_id)).fetchone():
+            store.event(conn, record_id, "system", "waiting_for_slot", None, {"limit": max_in_flight(conn), "note": f"Waiting for a free place: {max_in_flight(conn)} conversions at once is the limit."})
+        return None
     if plan["op"] == "convert" and not checked and quality.wait_for_check(conn, record_id, by, compress=bool(plan.get("size_policy"))):
         store.event(conn, record_id, "user", "waiting_for_check", None, {"by": by})        # the conversion job comes when the quality check says the file is good enough
         return None
