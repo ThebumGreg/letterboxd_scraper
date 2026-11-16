@@ -1,17 +1,40 @@
-# Runs the test suite. Pull requests and every branch except main get it directly; main and releases get it through docker-publish.yml.
+# Runs the tests. Pull requests get it directly; main and releases get it through docker-publish.yml.
+#   draft pull request  -> "quick" only (syntax check and the release/version tests), a minute or so
+#   ready pull request  -> the full suite and the image build; marking a draft ready runs them once
+# A new push to a pull request cancels the run still going for it (main and releases are never cancelled).
 name: Tests
 
 on:
   pull_request:
-  push:
-    branches-ignore: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_call:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  quick:
+    if: github.event.pull_request.draft == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m compileall -q synchub agent player
+      - run: python -m pytest -q tests/v2/test_release.py
+
   test:
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +50,7 @@ jobs:
       - run: python -m pytest -q
 
   image:
+    if: github.event.pull_request.draft != true
     # The image has to build (a wrong package name or a broken COPY would otherwise only show up when main is published).
     runs-on: ubuntu-latest
     steps:

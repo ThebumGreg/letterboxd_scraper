@@ -11,8 +11,12 @@ branch ──► pull request (tests + image build) ──► main ──► Git
 
 ## Day to day
 
-1. Work on a branch. Every push and pull request runs the tests and builds the image (`.github/workflows/ci.yml`), so a broken Dockerfile or a failing test shows up before `main`.
+1. Work on a branch and open a pull request. A draft pull request gets only a quick check on each push (syntax and the release tests); marking it ready runs the full tests and the image build (`.github/workflows/ci.yml`), so a broken Dockerfile or a failing test shows up before `main`. A new push cancels the run still going for that pull request.
 2. Merge to `main`. `.github/workflows/docker-publish.yml` runs the tests again and publishes `:latest`, `:<version>` (the number in `synchub/__init__.py`, for example `:1.1.0`) and `:sha-<commit>`. Unraid's *Check for Updates* then shows SyncHub as *update ready*. `:1.1.0` moves with every merge until the number is raised, so it is "the newest 1.1.0", not a frozen build; `:sha-<commit>` is the frozen one.
+
+## Several pull requests at once
+
+Pull requests worked on in parallel (one batch) do **not** change the version number: if each one bumped it, every merge would put the others out of date and force another round of merges and test runs. Only the **last** pull request of the batch to merge bumps it, once, by one PATCH step (ask before a minor or major bump), with the CHANGELOG section for the whole batch. Every other pull request adds its notes under the top CHANGELOG heading or leaves them for that last one. The release test requires SyncHub, the agent and the player to carry the same number.
 
 ## Making a numbered release
 
