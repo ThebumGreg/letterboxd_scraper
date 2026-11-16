@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.9.2
+
+Update SyncHub. One small migration (no worker change). **Requests start in dry run** after this update: the migration switches both "Dry run" boxes on, so nothing is asked of Radarr or Sonarr until you switch them off.
+
+**Requesting missing titles, with limits** (Settings > Automation). Automatic adding no longer asks for every wanted title at the Radarr/Sonarr sync. A new job, every few minutes, asks for wanted titles a few at a time:
+- **At most 5 movies and 10 shows downloading at once** (both can be changed). It counts only titles SyncHub itself asked for that are still downloading or waiting in Radarr/Sonarr; a new request goes out only when the count is under the limit.
+- **One request every 10 minutes** (setting), and an optional **daily ceiling** (off by default).
+- Most wanted first, then oldest. A title is asked for once, so one you remove from Radarr or Sonarr on purpose is not asked for again. A title the service cannot find is left alone for a day so it does not hold up the rest.
+- **Dry run first:** the task "Requesting missing titles" (Tools) lists what it would request. The settings page shows "Requested: 2 of 5 movies, 0 of 10 shows downloading".
+
+**Smaller backups and log purge.**
+- The nightly copy now leaves out logs and history that SyncHub fills in again by itself (API payload log, Jellyfin events, worker charts, job logs, sent notifications). Everything else is kept and a restore works the same. Switch off **Smaller copies** (Settings > Automation) for complete copies. Copies made by hand and the copy before an upgrade stay complete. The settings page shows the newest copy's size.
+- A daily purge removes API payloads and finished job logs older than **30 days** (Settings > Logging, 0 keeps everything).
+
 ## 1.9.1
 
 No migration, no worker change. Update SyncHub.

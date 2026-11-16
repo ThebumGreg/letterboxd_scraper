@@ -5,9 +5,11 @@ Jellyfin (even if it was deleted from Jellyfin since: those are not re-requested
 Titles whose ID is only a weak guess never get here, because they have no link until a human approves them.
 """
 import logging
+import time
+from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
-from synchub import catalog, settings
+from synchub import catalog, db, settings
 from synchub.clients import ApiError
 
 logger = logging.getLogger(__name__)
@@ -20,6 +22,14 @@ class RequestError(Exception):
 def _int_setting(key, default):
     try:
         return max(1, int(settings.get(key)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _count_setting(key, default):
+    """A whole number from a setting, where 0 is a real answer (unlike _int_setting, which never returns less than 1)."""
+    try:
+        return max(0, int(settings.get(key)))
     except (TypeError, ValueError):
         return default
 
@@ -81,6 +91,94 @@ def resolve_destination(client, quality_profile_id=None, root_folder=None):
     return Destination(profile_id, folder["path"])        # the path as the service spells it
 
 
+# ---------------------------------------------------------------- how many requests may go out
+SERVICES = ("radarr", "sonarr")
+GRACE_MINUTES = 30                      # a title just asked for counts as on its way until the service has had time to show it in its queue
+RETRY_HOURS = 24                        # a title the service could not find is left alone this long before the next try
+_FAILED = {}                            # (database, service, media_id) -> when it may be tried again
+
+
+def _stamp(moment):
+    return moment.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _moment(now):
+    return datetime.strptime((now or db.now())[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+
+
+def max_in_progress(service):
+    return _int_setting(f"{service}_max_in_progress", 5 if service == "radarr" else 10)
+
+
+def in_progress(conn, service, now=None):
+    """How many titles SyncHub asked this service for that are still downloading or waiting in its queue (or were asked for a moment ago)."""
+    grace = _stamp(_moment(now) - timedelta(minutes=GRACE_MINUTES))
+    if service == "radarr":
+        on_queue = """EXISTS (SELECT 1 FROM link l JOIN src_arr_queue q ON q.service = 'radarr' AND q.target_id = l.source_key AND q.removed_at IS NULL
+                              WHERE l.source = 'radarr' AND l.entity_type = 'media' AND l.entity_id = a.media_id)"""
+    else:
+        on_queue = """EXISTS (SELECT 1 FROM src_arr_queue q JOIN link l ON l.source = 'sonarr_episode' AND l.entity_type = 'episode' AND l.source_key = q.target_id
+                              JOIN episode e ON e.id = l.entity_id
+                              WHERE q.service = 'sonarr' AND q.removed_at IS NULL AND e.media_id = a.media_id)"""
+    return conn.execute(f"SELECT COUNT(*) FROM auto_request a WHERE a.service = ? AND (a.requested_at > ? OR {on_queue})", (service, grace)).fetchone()[0]
+
+
+def requested_since(conn, service, hours, now=None):
+    since = _stamp(_moment(now) - timedelta(hours=hours))
+    return conn.execute("SELECT COUNT(*) FROM auto_request WHERE service = ? AND requested_at > ?", (service, since)).fetchone()[0]
+
+
+def allowance(conn, service, now=None):
+    """How many titles may be requested right now, and why not more: (number, reason or None).
+    The limits: the cap on titles in progress, the daily ceiling (when set), and the gap since the last request (which also means one at a time)."""
+    cap = max_in_progress(service)
+    busy = in_progress(conn, service, now)
+    if busy >= cap:
+        return 0, f"{busy} of {cap} already downloading"
+    room = cap - busy
+    daily = _count_setting("request_daily_max", 0)
+    if daily:
+        left = daily - requested_since(conn, service, 24, now)
+        if left <= 0:
+            return 0, f"the daily ceiling of {daily} is reached"
+        room = min(room, left)
+    gap = _count_setting("request_gap_minutes", 10)
+    if gap:
+        last = conn.execute("SELECT MAX(requested_at) FROM auto_request WHERE service = ?", (service,)).fetchone()[0]
+        if last and _moment(now) - _moment(last) < timedelta(minutes=gap):
+            return 0, f"waiting {gap} minutes between requests"
+        room = min(room, 1)
+    return room, None
+
+
+def request_status(conn, now=None):
+    """What the automatic requests are doing, for the settings page and the System page."""
+    out = {}
+    for service in SERVICES:
+        enabled = settings.get(f"{service}_enable_queue_addition", conn=conn) == "1"
+        out[service] = {"enabled": enabled, "dry_run": settings.get(f"{service}_dry_run", conn=conn) == "1", "in_progress": in_progress(conn, service, now),
+                        "cap": max_in_progress(service), "today": requested_since(conn, service, 24, now), "total": conn.execute("SELECT COUNT(*) FROM auto_request WHERE service = ?", (service,)).fetchone()[0]}
+    out["text"] = f"Requested: {out['radarr']['in_progress']} of {out['radarr']['cap']} movies, {out['sonarr']['in_progress']} of {out['sonarr']['cap']} shows downloading"
+    return out
+
+
+def _remember(conn, service, item, now=None):
+    conn.execute("INSERT OR IGNORE INTO auto_request (service, media_id, title, requested_at) VALUES (?, ?, ?, ?)", (service, item["media_id"], item["title"], now or db.now()))
+    conn.commit()                                       # saved before the next network call: no write is left open while waiting for Radarr or Sonarr
+
+
+def _eligible(conn, service, items, now=None):
+    """Not asked for before (a title removed from the service on purpose stays removed), not failing a moment ago; most wanted first, then oldest."""
+    asked = {r[0] for r in conn.execute("SELECT media_id FROM auto_request WHERE service = ?", (service,))}
+    clock = time.monotonic()
+    ok = [i for i in items if i["media_id"] not in asked and _FAILED.get((db.DB_FILE, service, i["media_id"]), 0) <= clock]
+    return sorted(ok, key=lambda i: (-i["user_count"], i["media_id"]))
+
+
+def _failed(service, item):
+    _FAILED[(db.DB_FILE, service, item["media_id"])] = time.monotonic() + RETRY_HOURS * 3600
+
+
 # ---------------------------------------------------------------- what is wanted
 def pending_movies(conn, min_users):
     wanted = catalog.demand(conn)
@@ -128,27 +226,38 @@ def _blocked(result, label, waiting, exc):
     return result
 
 
-def run_radarr_additions(conn, client, dry_run=False, min_users=None):
+def run_radarr_additions(conn, client, dry_run=False, min_users=None, now=None):
+    """Requests the wanted movies that fit under the limits (see `allowance`); a dry run only reports which ones it would ask for."""
     min_users = min_users or _int_setting("radarr_min_user_count", 1)
-    result = {"added": [], "would_add": [], "errors": [], "blocked": None}
-    items = pending_movies(conn, min_users)
+    result = {"added": [], "would_add": [], "errors": [], "blocked": None, "held": None}
+    allowed, reason = allowance(conn, "radarr", now)
+    if not allowed:
+        result["held"] = reason
+        return result
+    items = _eligible(conn, "radarr", pending_movies(conn, min_users), now)
     if not items:
         return result
     try:
         destination = resolve_destination(client)
     except (RequestError, ApiError) as exc:
         return _blocked(result, "Radarr", len(items), exc)
+    done = result["would_add"] if dry_run else result["added"]
     for item in items:
+        if len(done) >= allowed:
+            break
         try:
             if dry_run:
                 if client.lookup(item["tmdb_id"]) is None:
                     raise RequestError(f"TMDB {item['tmdb_id']} was not found by Radarr.")
-                result["would_add"].append(item["title"])
+                done.append(item["title"])
             else:
-                result["added"].append(_add_movie(client, item["tmdb_id"], destination))
+                done.append(_add_movie(client, item["tmdb_id"], destination))
+                _remember(conn, "radarr", item, now)
         except (RequestError, ApiError) as exc:
             logger.warning(f"Radarr add failed for {item['title']}: {exc}")
             result["errors"].append(f"{item['title']}: {exc}")
+            if not dry_run:
+                _failed("radarr", item)
     return result
 
 
@@ -174,29 +283,41 @@ def tvdb_seasons(conn, media_id, tmdb_seasons):
     return sorted(result)
 
 
-def run_sonarr_additions(conn, client, dry_run=False, min_users=None):
+def run_sonarr_additions(conn, client, dry_run=False, min_users=None, now=None):
+    """Requests the wanted shows that fit under the limits (see `allowance`); a dry run only reports which ones it would ask for."""
     min_users = min_users or _int_setting("sonarr_min_user_count", 1)
     shows, skipped = pending_shows(conn, min_users)
-    result = {"added": [], "would_add": [], "errors": [], "skipped_no_tvdb": skipped, "blocked": None}
+    result = {"added": [], "would_add": [], "errors": [], "skipped_no_tvdb": skipped, "blocked": None, "held": None}
+    allowed, reason = allowance(conn, "sonarr", now)
+    if not allowed:
+        result["held"] = reason
+        return result
+    shows = _eligible(conn, "sonarr", shows, now)
     if not shows:
         return result
     try:
         destination = resolve_destination(client)
     except (RequestError, ApiError) as exc:
         return _blocked(result, "Sonarr", len(shows), exc)
+    done = result["would_add"] if dry_run else result["added"]
     for item in shows:
+        if len(done) >= allowed:
+            break
         try:
             show = client.lookup(item["tvdb_id"])
             if show is None:
                 raise RequestError(f"TVDB {item['tvdb_id']} was not found by Sonarr.")
             if dry_run:
-                result["would_add"].append(item["title"])
+                done.append(item["title"])
                 continue
             client.add_series(show, destination.quality_profile_id, destination.root_folder, monitored_seasons=item["seasons"])
-            result["added"].append(item["title"])
+            done.append(item["title"])
+            _remember(conn, "sonarr", item, now)
         except (RequestError, ApiError) as exc:
             logger.warning(f"Sonarr add failed for {item['title']}: {exc}")
             result["errors"].append(f"{item['title']}: {exc}")
+            if not dry_run:
+                _failed("sonarr", item)
     return result
 
 
