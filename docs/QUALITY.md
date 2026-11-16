@@ -48,6 +48,7 @@ A quality check judges a file as it is. VMAF compares a converted copy with its 
 - **Credits.** On a film over 50 minutes the clips are chosen as if it were 5 minutes shorter, so none lands in the end credits (black pictures that encode to almost nothing). A clip whose source bitrate is under half the median clip's is left out of the size estimate (*not counted*).
 - **VMAF to keep** (Options > Quality, `ctest_floor`): a score from 50 to 100 used instead of the automatic floor; blank is automatic. Changing it or the margin judges finished tests again.
 - **Staleness.** A result belongs to the file as it was (size and modified time) and to the profile tested (name, quality, speed, rate mode, size cap). A change to either shows "test again".
+- **Past runs.** Each test, quality check and damage check is its own row and is kept (only *Clear results* removes them). The Record page lists them under *Why and history > Past runs*; two of the same kind can be compared side by side.
 - **Settings** under Options > Quality: clips, seconds in each clip, and the margin.
 - **After-conversion VMAF** is a separate row ("After conversion (VMAF of the finished file)"). It comes from the last finished conversion of the file and appears only when the profile's VMAF mode is not off, the video was re-encoded and the picture is not HDR. When there is no such score the card says why.
 

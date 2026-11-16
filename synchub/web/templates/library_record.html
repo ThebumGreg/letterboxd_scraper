@@ -213,6 +213,19 @@
             <p class="small text-body-secondary mb-2">What the scan found in the file that led to the suggestion above, one line per reason (the category is on the left). It is written by the scan and is not changed by a quality check, a compression test or a conversion; those appear under History and in the Jobs list.</p>
             <ul class="small mb-0">{% for c, t in reasons %}<li><span class="text-body-secondary">{{ c }}:</span> {{ t }}</li>{% endfor %}{% for w in warnings if not reasons %}<li>{{ w }}</li>{% endfor %}{% for e in errors %}<li class="text-danger">{{ e }}</li>{% endfor %}</ul></div>
         {% endif %}
+        {% if runs and (runs.quality or runs.damage or runs.ctest) %}
+        <div class="panel p-3 mb-3" id="pastRuns"><h6>Past runs <span class="small fw-normal text-body-secondary">every check and test of this file; tick two of the same kind to compare them</span></h6>
+            {% for kind, title in [('ctest', 'Compression tests'), ('quality', 'Picture quality checks'), ('damage', 'Damage checks')] if runs[kind] %}
+            <div class="small fw-semibold mt-2">{{ title }}</div>
+            <ul class="small list-unstyled mb-1">{% for run in runs[kind] %}
+                <li><label class="d-flex gap-2 align-items-baseline"><input type="checkbox" class="form-check-input run-pick" data-kind="{{ kind }}" data-run="{{ run.kind }}-{{ run.id }}" aria-label="Pick this run to compare">
+                    <span>{{ run.when }} &middot; {{ run.summary }}{% if run.kind == 'ctest' %} <span class="text-body-secondary">({{ run.fields[0][1] }}, {{ run.fields[1][1] or '?' }})</span>{% endif %}{% if not run.current and run.status == 'done' %} <span class="badge bg-secondary" title="The file or the settings changed after this run">older file or settings</span>{% endif %}</span></label></li>{% endfor %}</ul>
+            <button type="button" class="btn btn-sm btn-outline-info py-0 run-compare" data-kind="{{ kind }}" disabled>Compare the two ticked</button>
+            {% endfor %}
+            <div id="runCompare" class="mt-3" hidden></div>
+            <script type="application/json" id="runData">{{ runs_json|safe }}</script>
+        </div>
+        {% endif %}
         {% if file_jobs %}
         <div class="panel p-3 mb-3" id="fileJobs"><h6>Jobs for this file</h6>
             <ul class="small list-unstyled mb-0">{% for j in file_jobs %}{% set jc = {'done': 'success', 'failed': 'danger', 'running': 'primary', 'needs_review': 'warning'}.get(j.status, 'secondary') %}
@@ -280,6 +293,42 @@
         if (map[e.key]) { document.getElementById(map[e.key])?.click(); e.preventDefault(); }
         if (e.key === 'e') { const n = document.getElementById('newName'); if (n) { n.focus(); n.select(); e.preventDefault(); } }
     });
+})();
+</script>
+<script>
+(() => {
+    // Past runs: tick two runs of the same kind, then see them side by side.
+    const dataEl = document.getElementById('runData'), box = document.getElementById('runCompare');
+    if (!dataEl || !box) return;
+    const runs = JSON.parse(dataEl.textContent), all = [...runs.quality, ...runs.damage, ...runs.ctest];
+    const find = (key) => all.find((r) => `${r.kind}-${r.id}` === key);
+    const el = (tag, text, cls) => { const e = document.createElement(tag); if (text !== undefined && text !== null) e.textContent = text; if (cls) e.className = cls; return e; };
+    const picked = (kind) => [...document.querySelectorAll(`.run-pick[data-kind="${kind}"]:checked`)];
+    const refresh = (kind) => {
+        const n = picked(kind).length;
+        document.querySelectorAll(`.run-pick[data-kind="${kind}"]`).forEach((b) => { b.disabled = n >= 2 && !b.checked; });
+        const btn = document.querySelector(`.run-compare[data-kind="${kind}"]`); if (btn) btn.disabled = n !== 2;
+    };
+    document.querySelectorAll('.run-pick').forEach((b) => b.addEventListener('change', () => refresh(b.dataset.kind)));
+    document.querySelectorAll('.run-compare').forEach((btn) => btn.addEventListener('click', () => {
+        const pair = picked(btn.dataset.kind).map((b) => find(b.dataset.run)); if (pair.length !== 2) return;
+        box.replaceChildren(); box.hidden = false;
+        const table = el('table', null, 'table table-sm small align-middle mb-2'), head = table.createTHead().insertRow();
+        head.appendChild(el('th', '')); pair.forEach((r) => head.appendChild(el('th', r.when)));
+        const body = table.createTBody(), row = (label, cells) => { const tr = body.insertRow(); tr.appendChild(el('td', label, 'text-body-secondary')); cells.forEach((c) => tr.appendChild(el('td', c === null || c === undefined || c === '' ? '-' : c))); };
+        const labels = []; pair.forEach((r) => r.fields.forEach(([l]) => { if (!labels.includes(l)) labels.push(l); }));
+        labels.forEach((l) => row(l, pair.map((r) => { const f = r.fields.find(([x]) => x === l); return f ? f[1] : null; })));
+        row('Result', pair.map((r) => r.summary)); row('Asked by', pair.map((r) => r.by));
+        if (pair.some((r) => r.findings && r.findings.length)) row('Findings', pair.map((r) => (r.findings || []).join('; ')));
+        box.appendChild(table);
+        if (pair.some((r) => r.clips && r.clips.length)) {
+            const line = (c) => `${c.at}: VMAF ${c.vmaf === null || c.vmaf === undefined ? '-' : c.vmaf}, ${c.source_mbps} to ${c.encoded_mbps} Mbps${c.atypical ? ' (not counted)' : ''}`;
+            const clips = el('table', null, 'table table-sm small mb-2'), h = clips.createTHead().insertRow(); h.appendChild(el('th', 'Each clip')); pair.forEach((r) => h.appendChild(el('th', r.when)));
+            const b2 = clips.createTBody(), most = Math.max(...pair.map((r) => (r.clips || []).length));
+            for (let i = 0; i < most; i++) { const tr = b2.insertRow(); tr.appendChild(el('td', `Clip ${i + 1}`, 'text-body-secondary')); pair.forEach((r) => tr.appendChild(el('td', r.clips && r.clips[i] ? line(r.clips[i]) : '-'))); }
+            box.appendChild(clips); box.appendChild(el('div', 'The clips of two tests are taken at different times in the film, so compare the averages first and the clips as a sanity check.', 'small text-body-secondary'));
+        }
+    }));
 })();
 </script>
 {% endblock %}

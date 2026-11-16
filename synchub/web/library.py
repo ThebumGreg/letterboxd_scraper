@@ -4,13 +4,14 @@ Scan the shares, see every file's plain-language recommendation sorted into queu
 confirmation), and export the lot as a CSV. Nothing here touches a file: approvals are decisions, recorded with who made them; what is done
 with approved files is a later step.
 """
+import json
 import dataclasses
 import os
 from datetime import datetime, timezone
 
 from flask import Response, jsonify, redirect, render_template, request, send_file, url_for
 
-from synchub import compression_test, db, downloads, jobs, previews, quality, settings, storage, versions
+from synchub import compression_test, db, downloads, jobs, previews, quality, runs as file_runs, settings, storage, versions
 from synchub.library import aside, cleanup, file_labels, film_link, findings, hide, links, loose, migrate, profiles, recommend as rc, rules as profile_rules, report, rule_steps, scan, size_policy, store
 from synchub.library import vocab as v
 from settings_validation import validate_setting
@@ -370,6 +371,8 @@ def register(app):
             rcm = rc.recommend(rec, cfg, lambda plans: rule_steps.for_record(conn, rec, plans), held=quality.is_held(conn, rec['id']))
             if quality.waiting_to_convert(conn, rec["id"]):
                 rcm.notes = rcm.notes + ["Waiting for its quality check (and the compression test, when it compresses) before the conversion job is made. A file that passes is converted; a low quality, damaged or failed one is held."]
+            if migrate.waiting_for_slot(conn, rec):
+                rcm.notes = rcm.notes + [f"Approved, waiting for a free place: the limit is {migrate.max_in_flight(conn)} conversions at once (Options > Quality). It is queued as soon as one finishes."]
             events = store.events_for(conn, record_id)
             siblings = []
             if rec.get("duplicate_group"):
@@ -395,9 +398,10 @@ def register(app):
             data["ctest"] = compression_test.describe(conn, rec)
             data["quality"] = rule_steps.quality_facts(conn, rec, previews.plans_of(rec, approved=rec["approval_status"] == v.APPROVAL_APPROVED))
             file_jobs = links.jobs_for_record(conn, record_id)
+            past_runs = file_runs.for_file(conn, rec)
         preview_info = {"summary": size.summary or "The size rules would compress this file; watch a short window first.", "latest": previews.describe(latest) if latest else None} if size.profile is not None else None
         data.update(preview_info=preview_info, cfg=cfg, profiles=all_profiles, chosen_profile=chosen, rename_to=rc.rename_path(rec, cfg), source_cleanup=cleanup.source_days())
-        return render_template("library_record.html", group=group, group_titles=rc.GROUP_TITLES, group_title=rc.GROUP_TITLES.get(group, group), events=events, siblings=siblings, f=_filters(), file_jobs=file_jobs, back_status=back_status, back_title=back_title, **data)
+        return render_template("library_record.html", group=group, group_titles=rc.GROUP_TITLES, group_title=rc.GROUP_TITLES.get(group, group), events=events, siblings=siblings, runs=past_runs, runs_json=json.dumps(past_runs, default=str).replace("</", "<\\/"), f=_filters(), file_jobs=file_jobs, back_status=back_status, back_title=back_title, **data)
 
     @app.route("/library/record/<int:record_id>/step/<direction>")
     def library_record_step(record_id, direction):

@@ -61,6 +61,8 @@ Approving chooses the **profile** for the file: the one picked on the approve sc
 
 Tests and checks are jobs on Media > Jobs, and each writes a line to the file's History.
 
+**Conversions at once.** Options > Quality > *Conversions at once* limits how many conversions are queued, waiting for these checks or running (0 = no limit). A bulk approval beyond the limit leaves the rest approved with no job; each poll from a worker queues the oldest of them when a place frees up. Start with about 6.
+
 ## 5. Convert and place
 
 `migrate.queue` builds the plan (`plan_for`): copy, rename inside the share, remux, or convert. A worker:

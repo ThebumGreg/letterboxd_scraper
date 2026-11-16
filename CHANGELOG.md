@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.9.1
+
+No migration, no worker change. Update SyncHub.
+
+**Compare runs.** Every picture quality check, damage check and compression test was always saved, but the Record page showed only the newest. **Why and history > Past runs** now lists all of them (date, result, encoder and profile for tests, a badge when the file or settings changed since). Tick two of the same kind and press **Compare the two ticked** to see them side by side: the score, verdict, VMAF, estimated size, time taken and each clip, so CPU against GPU, or one profile against another. History lines for a test now carry the profile and the estimated size. Clip times differ between tests, so compare the averages first.
+
+**Conversions at once** (Options > Quality, 0 = no limit, the default). A bulk approval used to make every job at once. With a limit of, say, 6, only that many conversions are queued, waiting for their checks or running; the other files stay approved ("Approved, waiting for a free place" on the record and in History) and are queued oldest first as places free up. Renames and plain copies are not counted, and **Queue again** ignores the limit.
+
 ## 1.9.0
 
 No migration. Update SyncHub first, then the workers: tone-mapped HDR scoring and the credits fix are in the worker.
