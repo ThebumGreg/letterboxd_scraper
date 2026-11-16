@@ -27,6 +27,9 @@
                 <details class="mb-3">
                     <summary class="small fw-bold">Settings (applied by the worker within a minute, no .env needed)</summary>
                     <div class="row g-2 mt-1">
+                        <div class="col-12"><label for="setRole" class="form-label small mb-0">What this worker takes</label>
+                            <select class="form-select form-select-sm" id="setRole"><option value="auto">Automatic (encodes when a GPU is found, otherwise checks only)</option><option value="encodes">Encodes allowed</option><option value="checks">Checks and light jobs only</option></select>
+                            <div class="form-text">Checks only: quality and damage checks, scans, copies and renames. It never takes a video encode, a compression test or a preview; those wait for a worker that is allowed to encode.</div></div>
                         <div class="col-6"><label for="setEncoder" class="form-label small mb-0">Video encoder</label>
                             <select class="form-select form-select-sm" id="setEncoder"><option value="auto">Automatic (GPU when allowed and working)</option><option value="cpu">CPU only</option><option value="vaapi">VAAPI (Intel / AMD)</option><option value="qsv">Quick Sync</option><option value="nvenc">NVIDIA NVENC</option></select></div>
                         <div class="col-6"><label for="setGpuSlots" class="form-label small mb-0">GPU encodes at once</label><input type="number" class="form-control form-control-sm" id="setGpuSlots" min="1" max="16" value="1">
