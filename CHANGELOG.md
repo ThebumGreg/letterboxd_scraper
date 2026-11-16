@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.6
+
+Update SyncHub. No migration, no worker change.
+
+**Lighter checks on GitHub.** A new push to a pull request cancels the run still going for it. A draft pull request gets only a quick check (syntax and the release tests); the full suite and the image build run when the pull request is marked ready. A pull request no longer runs twice (once for the branch, once for the pull request). Parallel pull requests in a batch no longer bump the version: only the last one to merge bumps it, once (docs/RELEASING.md).
+
 ## 1.9.5
 
 One small migration (055). No worker change. Update SyncHub.
