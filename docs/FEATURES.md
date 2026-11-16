@@ -70,7 +70,7 @@ The worker side is a small API (`/api/worker/v1/...`, token per worker, document
 | Admin | Players, Dynamic DNS, People |
 | TV | Remote Apps, TVs, Remote Tools |
 
-A person only sees the entries their profile may open (see People below); a group with nothing in it is hidden, and so is a dropdown with nothing in it. **Settings** has three tabs, each saved on its own: *Connections* (Jellyfin, TMDB, Radarr, Sonarr, push notifications), *Automation* (schedules, live updates and webhooks, backups, and the rules for adding titles to Radarr and Sonarr) and *Logging* (what is kept for the Payloads page). The old addresses `/access` and `/diagnostics` still work and lead to People and What it's doing now.
+A person only sees the entries their profile may open (see People below); a group with nothing in it is hidden, and so is a dropdown with nothing in it. **Settings** has three tabs, each saved on its own: *Connections* (Jellyfin, TMDB, Radarr, Sonarr, push notifications), *Automation* (schedules, live updates and webhooks, backups, and the rules for adding titles to Radarr and Sonarr) and *Logging* (what is kept for the Payloads page).
 
 ## Who is watching, PINs and permissions
 

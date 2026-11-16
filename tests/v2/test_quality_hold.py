@@ -210,16 +210,16 @@ def test_the_below_minimum_quality_page_lists_filters_pages_and_organizes(client
     one = convert_file(conn, rel="Old/Heat.avi")
     conn.execute("UPDATE library_file SET resolution = '854x480', video_info_json = ? WHERE id = ?", (json.dumps({"width": 854, "height": 480, "video_kbps": 1500, "hdr": "sdr", "bit_depth": 8}), one))
     conn.commit()
-    page = client.get("/library/quality").get_data(as_text=True)
+    page = client.get("/library/queue?status=below_minimum").get_data(as_text=True)
     assert "Held: low quality" in page and "Heat (1995).mkv" in page and "Rename and move only" in page and "Copy unchanged to the right folder" in page
-    assert "Heat (1995).mkv" not in client.get("/library/quality?q=zzz").get_data(as_text=True)
-    assert "Heat (1995).mkv" not in client.get("/library/quality?root=media").get_data(as_text=True)
+    assert "Heat (1995).mkv" not in client.get("/library/queue?status=below_minimum&q=zzz").get_data(as_text=True)
+    assert "Heat (1995).mkv" not in client.get("/library/queue?status=below_minimum&root=media").get_data(as_text=True)
     assert client.get("/library/quality/export").get_data(as_text=True).count("\n") >= 2
-    assert client.get("/library/queue/held").status_code == 302
+    assert "Below minimum quality" in client.get("/library/queue?status=held").get_data(as_text=True)         # the old name of the status
     done = client.post(f"/api/library/record/{one}/approve").get_json()
     assert done["ok"] and json.loads(conn.execute("SELECT plan FROM job WHERE kind = 'library'").fetchone()[0])["op"] == "copy"
     assert client.post("/api/library/quality/accept", json={"file_id": one}).get_json()["ok"]
-    assert "Nothing is flagged" in client.get("/library/quality").get_data(as_text=True)
+    assert "Nothing is flagged" in client.get("/library/queue?status=below_minimum").get_data(as_text=True)
 
 
 def test_the_library_page_no_longer_lists_a_held_file_in_format_conversion(client, conn):
@@ -227,7 +227,7 @@ def test_the_library_page_no_longer_lists_a_held_file_in_format_conversion(clien
     assert "Format conversion" in client.get("/library").get_data(as_text=True)
     conn.execute("UPDATE library_file SET resolution = '854x480', video_info_json = ? WHERE id = ?", (json.dumps({"width": 854, "height": 480, "video_kbps": 1500, "hdr": "sdr", "bit_depth": 8}), one))
     conn.commit()
-    queue = client.get("/library/queue/convert").get_data(as_text=True)
+    queue = client.get("/library/queue?status=convert").get_data(as_text=True)
     assert "Heat (1995).mkv" not in queue
     assert "Held: low quality" in client.get(f"/library/record/{one}").get_data(as_text=True)
 

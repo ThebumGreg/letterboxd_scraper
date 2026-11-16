@@ -92,14 +92,14 @@ def test_a_duplicate_search_is_started_from_the_page(client, conn):
 def test_the_library_settings_are_validated_saved_and_change_what_is_in_place(client, conn):
     shares(conn)
     placed = add(conn, root="media", rel="Movies/Heat (1995)/Heat (1995).mkv", name="Heat (1995).mkv")
-    assert "done" in client.get("/library/queue/done").get_data(as_text=True) and f'data-record="{placed}"' in client.get("/library/queue/done").get_data(as_text=True)
+    assert "done" in client.get("/library/queue?status=done").get_data(as_text=True) and f'data-record="{placed}"' in client.get("/library/queue?status=done").get_data(as_text=True)
     bad = post(client, "/api/library/settings", {"library_destination_root": "nowhere", "library_tail_seconds": "2", "library_movie_folder": "Mo/vies"})
     assert bad.status_code == 400 and "no share called" in bad.get_json()["message"] and "library_tail_seconds" in bad.get_json()["message"] and "library_movie_folder" in bad.get_json()["message"]
     assert settings.get("library_destination_root", conn=conn) == "media"
     ok = post(client, "/api/library/settings", {"library_destination_root": "tfiles", "library_movie_folder": "Films", "library_integrity_mode": "full", "library_tail_seconds": "45", "library_exclude_folders": " Extras \n\n Sample "})
     assert ok.get_json()["ok"]
     assert (settings.get("library_destination_root", conn=conn), settings.get("library_movie_folder", conn=conn), settings.get("library_exclude_folders", conn=conn)) == ("tfiles", "Films", "Extras\nSample")
-    assert f'data-record="{placed}"' not in client.get("/library/queue/done").get_data(as_text=True)        # media is no longer where things belong
+    assert f'data-record="{placed}"' not in client.get("/library/queue?status=done").get_data(as_text=True)        # media is no longer where things belong
     page = all_tabs(client, "/library")
     assert 'value="Films"' in page and "Last 45 s" in page and "Films/Film Name (Year)/Film Name (Year).ext" in page
 
@@ -107,7 +107,7 @@ def test_the_library_settings_are_validated_saved_and_change_what_is_in_place(cl
 def test_no_library_page_reuses_an_id_the_site_wide_script_attaches_to(client, conn):
     """app.js hooks #settingsForm on the Settings page and expects its unsaved-changes badge; a Library form with that id broke on every keystroke."""
     record_id = add(conn)
-    for url in ("/library", "/library/queue/ready", f"/library/record/{record_id}", "/library/bulk/ready"):
+    for url in ("/library", "/library/queue?status=ready", f"/library/record/{record_id}", "/library/bulk/ready"):
         assert 'id="settingsForm"' not in client.get(url).get_data(as_text=True)
 
 
@@ -115,12 +115,12 @@ def test_no_library_page_reuses_an_id_the_site_wide_script_attaches_to(client, c
 def test_a_list_shows_each_file_what_we_suggest_and_how_sure_we_are(client, conn):
     a = add(conn, root="tfiles", rel="Downloads/Heat.1995.1080p.mkv", name="Heat (1995).mkv", size=1024 ** 3)
     b = add(conn, root="tfiles", rel="Downloads/Multi.mkv", name="Multi (2001).mkv", audio=[track(1), track(2, "ita")], proposals=[plan(remove_audio=[(2, "ita")], default_audio=1)])
-    page = client.get("/library/queue/ready").get_data(as_text=True)
+    page = client.get("/library/queue?status=ready").get_data(as_text=True)
     row = row_for(page, a)
     assert "Heat (1995).mkv" in row and "tfiles: Downloads/Heat.1995.1080p.mkv" in row and "Looks good: ready to copy" in row and ">high<" in row and "1.00 GB" in row and 'data-decide="approve"' in row
-    suggested = row_for(client.get("/library/queue/suggested").get_data(as_text=True), b)
+    suggested = row_for(client.get("/library/queue?status=suggested").get_data(as_text=True), b)
     assert "Keep English tracks only" in suggested and ">medium<" in suggested and "Remove audio: #2 Italian" in suggested
-    assert row_for(client.get("/library/queue/ready").get_data(as_text=True), a) and "Looks good" not in client.get("/library/queue/suggested").get_data(as_text=True)
+    assert row_for(client.get("/library/queue?status=ready").get_data(as_text=True), a) and "Looks good" not in client.get("/library/queue?status=suggested").get_data(as_text=True)
 
 
 def test_a_list_can_be_filtered_by_text_share_and_confidence(client, conn):
@@ -129,9 +129,9 @@ def test_a_list_can_be_filtered_by_text_share_and_confidence(client, conn):
     b = add(conn, root="archive", rel="Other/Alien.mkv", name="Alien (1979).mkv")
     c = add(conn, root="tfiles", rel="Downloads/Weak.mkv", name="Weak (2000).mkv", naming_label="Medium", reasons=[("naming", "Naming confidence 0.7: No release year")])
     ids = lambda url: set(int(i) for i in re.findall(r'data-record="(\d+)"', client.get(url).get_data(as_text=True)))      # noqa: E731
-    assert ids("/library/queue/ready") == {a, b} and ids("/library/queue/ready?q=heat") == {a} and ids("/library/queue/ready?root=archive") == {b} and ids("/library/queue/ready?conf=medium") == set()
-    assert ids("/library/queue/suggested?conf=medium") == {c} and ids("/library/queue/suggested?conf=high") == set()
-    assert "Nothing here with this filter" in client.get("/library/queue/ready?q=zzz").get_data(as_text=True)
+    assert ids("/library/queue?status=ready") == {a, b} and ids("/library/queue?status=ready&q=heat") == {a} and ids("/library/queue?status=ready&root=archive") == {b} and ids("/library/queue?status=ready&conf=medium") == set()
+    assert ids("/library/queue?status=suggested&conf=medium") == {c} and ids("/library/queue?status=suggested&conf=high") == set()
+    assert "Nothing here with this filter" in client.get("/library/queue?status=ready&q=zzz").get_data(as_text=True)
 
 
 def test_a_long_list_is_paged_and_tv_is_grouped_by_show_and_season(client, conn, monkeypatch):
@@ -140,13 +140,13 @@ def test_a_long_list_is_paged_and_tv_is_grouped_by_show_and_season(client, conn,
     for ep in (1, 2, 3):
         add(conn, rel=f"s/{ep}.mkv", name=f"Show - S01E0{ep}.mkv", media_type="TV Episode", show="Show", season=1)
     add(conn, rel="s/other.mkv", name="Other - S02E01.mkv", media_type="TV Episode", show="Other", season=2)
-    first = client.get("/library/queue/ready").get_data(as_text=True)
+    first = client.get("/library/queue?status=ready").get_data(as_text=True)
     assert "Other &middot; Season 2" in first and first.count('data-record="') == 2 and 'aria-label="Pages"' in first and "4 files in this list" in first
-    second = client.get("/library/queue/ready?page=2").get_data(as_text=True)
+    second = client.get("/library/queue?status=ready&page=2").get_data(as_text=True)
     assert "Show &middot; Season 1" in second and second.count('data-record="') == 2
     on_first, on_second = set(re.findall(r'data-record="(\d+)"', first)), set(re.findall(r'data-record="(\d+)"', second))
     assert len(on_first) == len(on_second) == 2 and not on_first & on_second                # every file once, none twice
-    assert client.get("/library/queue/ready?page=abc").status_code == 200
+    assert client.get("/library/queue?status=ready&page=abc").status_code == 200
 
 
 def test_decided_files_offer_undo_and_blocked_ones_only_open(client, conn):
@@ -154,11 +154,11 @@ def test_decided_files_offer_undo_and_blocked_ones_only_open(client, conn):
     store.set_approval(conn, done, v.APPROVAL_APPROVED, "ann")
     conn.commit()
     blocked = add(conn, rel="b.mkv", name="B.mkv", size=0, mtime=0.0, status=v.ANALYSIS_FAILED, unreadable="stat failed", action="manual_review")
-    page = client.get("/library/queue/queued").get_data(as_text=True)         # approved, not finished: Approved and queued, not Done
+    page = client.get("/library/queue?status=queued").get_data(as_text=True)         # approved, not finished: Approved and queued, not Done
     assert 'data-decide="undo"' in row_for(page, done)
     placed = add(conn, root="media", rel="Movies/Heat (1995)/Heat (1995).mkv", name="Heat (1995).mkv")
-    assert "data-decide" not in row_for(client.get("/library/queue/done").get_data(as_text=True), placed)             # nobody decided it, so there is nothing to undo
-    needs = row_for(client.get("/library/queue/needs_you").get_data(as_text=True), blocked)
+    assert "data-decide" not in row_for(client.get("/library/queue?status=done").get_data(as_text=True), placed)             # nobody decided it, so there is nothing to undo
+    needs = row_for(client.get("/library/queue?status=needs_you").get_data(as_text=True), blocked)
     assert "Open</a>" in needs and "data-decide" not in needs and "Cannot read this file" in needs
 
 
@@ -166,14 +166,66 @@ def test_the_approve_together_bar_counts_only_what_qualifies(client, conn):
     add(conn, rel="a.mkv", name="A (2000).mkv")
     add(conn, rel="b.mkv", name="B (2001).mkv")
     add(conn, rel="m.mkv", name="M (2002).mkv", audio=[track(1), track(2, "ita")], proposals=[plan(remove_audio=[(2, "ita")], default_audio=1)])
-    ready = client.get("/library/queue/ready").get_data(as_text=True)
+    ready = client.get("/library/queue?status=ready").get_data(as_text=True)
     assert "Approve 2 (high and medium)" in ready and "Only the" not in ready
-    suggested = client.get("/library/queue/suggested").get_data(as_text=True)
+    suggested = client.get("/library/queue?status=suggested").get_data(as_text=True)
     assert "Approve 1 (high and medium)" in suggested
     add(conn, rel="c.mkv", name="C (2003).mkv", subtitles=[track(3, "fra", "subrip", "subtitle")], proposals=[plan(remove_subtitle=[(3, "fra")])])
-    suggested = client.get("/library/queue/suggested").get_data(as_text=True)
+    suggested = client.get("/library/queue?status=suggested").get_data(as_text=True)
     assert "Approve 2 (high and medium)" in suggested and "Only the 1 high" in suggested
-    assert client.get("/library/queue/nope").status_code == 302 and client.get("/library/bulk/nope").status_code == 302
+    assert client.get("/library/queue?status=nope").status_code == 200 and client.get("/library/bulk/nope").status_code == 302
+
+
+def _order(client, url):
+    return [int(i) for i in re.findall(r'data-record="(\d+)"', client.get(url).get_data(as_text=True))]
+
+
+def test_the_list_can_be_sorted_and_the_sort_stays_in_the_links(client, conn):
+    big = add(conn, rel="b.mkv", name="B (2000).mkv", size=9 * 1024 ** 3, mtime=1_700_000_100.0)
+    small = add(conn, rel="a.mkv", name="A (2000).mkv", size=1 * 1024 ** 3, mtime=1_700_000_300.0, naming_label="Medium", reasons=[("naming", "Naming confidence 0.7: No release year")])
+    mid = add(conn, rel="c.mkv", name="C (2000).mkv", size=4 * 1024 ** 3, mtime=1_700_000_200.0)
+    conn.execute("UPDATE library_file SET resolution = '1280x720' WHERE id = ?", (small,))
+    conn.execute("UPDATE library_file SET resolution = '3840x2160' WHERE id = ?", (mid,))
+    conn.execute("INSERT INTO quality_check (library_file_id, mode, status, score) VALUES (?, 'quality', 'done', 80), (?, 'quality', 'done', 40)", (big, mid))
+    conn.commit()
+    url = lambda key, status="all": f"/library/queue?status={status}&sort={key}"      # noqa: E731
+    assert _order(client, url("name")) == [small, big, mid]
+    assert _order(client, url("size")) == [big, mid, small] and _order(client, url("size_asc")) == [small, mid, big]
+    assert _order(client, url("resolution")) == [mid, big, small]
+    assert _order(client, url("newest")) == [small, mid, big]
+    assert _order(client, url("confidence"))[0] in (small,) and _order(client, url("quality")) == [mid, big, small]          # worst score first, unscored last
+    assert sorted(_order(client, url("saving"))) == sorted([big, small, mid]) and _order(client, url("nonsense")) == _order(client, "/library/queue?status=all")
+    page = client.get(url("size")).get_data(as_text=True)
+    assert 'value="size" selected' in page and f"sort=size" in re.search(r'<a class="fw-bold[^>]*href="([^"]+)"', page).group(1)
+
+
+def test_the_sort_is_kept_across_pages_and_when_stepping_through_records(client, conn, monkeypatch):
+    from synchub.web import library
+    monkeypatch.setattr(library, "PAGE_SIZE", 2)
+    ids = [add(conn, rel=f"{n}.mkv", name=f"{n.upper()} (2000).mkv", size=n_gb * 1024 ** 3) for n, n_gb in (("a", 1), ("b", 3), ("c", 2))]
+    first = client.get("/library/queue?status=ready&sort=size").get_data(as_text=True)
+    assert [int(i) for i in re.findall(r'data-record="(\d+)"', first)] == [ids[1], ids[2]] and "page=2" in first and "sort=size" in re.search(r'aria-label="Pages".*?</ul>', first, re.S).group(0)
+    assert _order(client, "/library/queue?status=ready&sort=size&page=2") == [ids[0]]
+    step = client.get(f"/library/record/{ids[1]}/step/next?status=ready&sort=size")
+    assert f"/library/record/{ids[2]}" in step.headers["Location"] and "sort=size" in step.headers["Location"]
+    assert "sort=size" in client.get(f"/library/record/{ids[1]}?status=ready&sort=size").get_data(as_text=True)
+
+
+def test_review_one_by_one_follows_the_filters_and_the_sort(client, conn):
+    ids = [add(conn, rel=f"{n}.mkv", name=f"{n.upper()} (2000).mkv", size=n_gb * 1024 ** 3) for n, n_gb in (("a", 2), ("b", 9), ("c", 20))]
+    first = client.get("/library/review/ready?sort=size")
+    assert f"/library/record/{ids[2]}" in first.headers["Location"] and "sort=size" in first.headers["Location"]
+    assert f"/library/record/{ids[1]}" in client.get(f"/library/review/ready?sort=size&after={ids[2]}").headers["Location"]
+    only_big = client.get("/library/review/ready?size=5to15")
+    assert f"/library/record/{ids[1]}" in only_big.headers["Location"]                        # the size filter is honoured
+    assert f"/library/record/{ids[1]}" in client.get(f"/library/review/ready?size=5to15&after={ids[1]}").headers["Location"]       # only one file in the list: it stays on it
+    assert client.get("/library/review/ready?size=under5&q=b").headers["Location"].endswith("/library?done=ready")                  # nothing matches: back to the list
+
+
+def test_the_old_list_addresses_are_gone(client, conn):
+    add(conn, rel="a.mkv", name="A (2000).mkv")
+    for old in ("/library/queue/ready", "/library/quality", "/access", "/diagnostics"):
+        assert client.get(old).status_code == 404, old
 
 
 # ---------------------------------------------------------------- one by one
@@ -257,10 +309,10 @@ def test_the_record_page_of_a_duplicate_lists_the_identical_copies(client, conn)
 def test_everything_from_the_files_is_escaped_and_an_unknown_record_goes_home(client, conn):
     record_id = add(conn, rel="<script>alert(1)</script>.mkv", name="<img src=x onerror=alert(2)>.mkv", reasons=[("audio", "<b>bold</b> reason")], show="<i>show</i>")
     hostile = add(conn, rel="h.mkv", name="H (2000).mkv", audio=[track(1), track(2, "<u>ita</u>")], proposals=[plan(remove_audio=[(2, "<u>ita</u>")], default_audio=1)])      # a language tag the file made up
-    for url in (f"/library/record/{record_id}", f"/library/record/{hostile}", "/library/queue/check", "/library/queue/needs_you", "/library/queue/ready", "/library/queue/suggested"):
+    for url in (f"/library/record/{record_id}", f"/library/record/{hostile}", "/library/queue?status=check", "/library/queue?status=needs_you", "/library/queue?status=ready", "/library/queue?status=suggested"):
         page = client.get(url).get_data(as_text=True)
         assert "<script>alert(1)</script>" not in page and "<img src=x" not in page and "<b>bold</b>" not in page and "<u>ita</u>" not in page
-    assert "&lt;u&gt;ita&lt;/u&gt;" in client.get("/library/queue/suggested").get_data(as_text=True)
+    assert "&lt;u&gt;ita&lt;/u&gt;" in client.get("/library/queue?status=suggested").get_data(as_text=True)
     assert client.get("/library/record/9999").status_code == 302
 
 
@@ -370,10 +422,10 @@ def test_a_list_can_be_filtered_by_type_and_where_the_film_sits_and_shows_the_qu
     alone = add(conn, root="tfiles", rel="Kids Movies/Cars (2006)/Cars.mkv", name="Cars (2006).mkv")
     show = add(conn, root="tfiles", rel="TV Shows/Show/Show.S01E02.mkv", name="Show - S01E02.mkv", media_type="TV Episode", show="Show", season=1)
     ids = lambda url: set(int(i) for i in re.findall(r'data-record="(\d+)"', client.get(url).get_data(as_text=True)))      # noqa: E731
-    assert ids("/library/queue/ready?what=loose") == {loose_a, loose_b} and ids("/library/queue/ready?what=alone") == {alone}
-    assert ids("/library/queue/ready?type=tv") == {show} and ids("/library/queue/ready?type=movies") == {loose_a, loose_b, alone}
-    assert ids("/library/queue/ready?quality=unchecked") >= {loose_a, alone} and ids("/library/queue/ready?quality=waiting") == set()
-    page = client.get("/library/queue/ready").get_data(as_text=True)
+    assert ids("/library/queue?status=ready&what=loose") == {loose_a, loose_b} and ids("/library/queue?status=ready&what=alone") == {alone}
+    assert ids("/library/queue?status=ready&type=tv") == {show} and ids("/library/queue?status=ready&type=movies") == {loose_a, loose_b, alone}
+    assert ids("/library/queue?status=ready&quality=unchecked") >= {loose_a, alone} and ids("/library/queue?status=ready&quality=waiting") == set()
+    page = client.get("/library/queue?status=ready").get_data(as_text=True)
     assert "Quality check" in page and "Not checked" in row_for(page, alone) and "loose" in row_for(page, loose_a) and "loose" not in row_for(page, alone).replace("Loose", "")
     assert "TV episode" in row_for(page, show) and "Loose films" in client.get("/library/fragment").get_data(as_text=True)
     assert "what=loose" in client.get("/library/fragment").get_data(as_text=True)         # the box links to the list each loose film is in
@@ -386,7 +438,7 @@ def test_one_page_lists_every_status_and_the_old_addresses_show_the_same_page(cl
     weak = add(conn, root="tfiles", rel="Downloads/Weak.mkv", name="Weak (2000).mkv", naming_label="Medium", reasons=[("naming", "Naming confidence 0.7: No release year")])
     ids = lambda url: set(int(i) for i in re.findall(r'data-record="(\d+)"', client.get(url).get_data(as_text=True)))      # noqa: E731
     assert ids("/library/queue") == {ready, weak} == ids("/library/queue?status=all") == ids("/library/queue?status=nonsense")
-    assert ids("/library/queue?status=ready") == {ready} == ids("/library/queue/ready") and ids("/library/queue?status=suggested") == {weak}
+    assert ids("/library/queue?status=ready") == {ready} and ids("/library/queue?status=suggested") == {weak}
     assert ids("/library/queue?status=all&q=heat") == {ready} and ids("/library/queue?status=all&conf=medium") == {weak}
     page = client.get("/library/queue?status=ready").get_data(as_text=True)
     assert '<option value="ready" selected>Ready to approve (1)</option>' in page and '<option value="all">All files (2)</option>' in page
@@ -411,7 +463,7 @@ def test_below_minimum_quality_is_a_status_with_its_tools_folded_away(client, co
     conn.commit()
     assert [d["id"] for d in quality._flagged(conn)] == [small]
     ids = lambda url: set(int(i) for i in re.findall(r'data-record="(\d+)"', client.get(url).get_data(as_text=True)))      # noqa: E731
-    assert ids("/library/queue?status=below_minimum") == {small} == ids("/library/quality") and ids("/library/queue?status=below_minimum&q=heat") == set()
+    assert ids("/library/queue?status=below_minimum") == {small}  and ids("/library/queue?status=below_minimum&q=heat") == set()
     page = client.get("/library/queue?status=below_minimum").get_data(as_text=True)
     assert '<option value="below_minimum" selected>Below minimum quality (1)</option>' in page and "Held: low quality" in page and "Accept as is" in page
     assert '<details class="panel p-3 mb-3" id="qualityTools">' in page and 'id="qSave"' in page and 'id="aiTest"' in page     # settings and the AI test, closed until opened

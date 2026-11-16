@@ -71,12 +71,12 @@ RULES = (
     ("storage_page", "storage"), ("api_storage*", "storage"),
     ("tv_setup*", "tv_setup"), ("api_tv_setup*", "tv_setup"), ("tv_*", "tv"), ("api_tv_*", "tv"),
     ("tools", "tools"), ("trigger", "tools"), ("export_csv", "tools"), ("api_tools_*", "tools"),
-    ("activity_page", "logs"), ("diagnostics_page", "logs"), ("api_activity", "logs"),
+    ("activity_page", "logs"), ("api_activity", "logs"),
     ("logs_page", "logs"), ("api_logs", "logs"), ("jellyfin_event*", "logs"),
     ("payloads_page", "payloads"), ("api_payload_logs", "payloads"), ("api_clear_payload_logs", "payloads"),
     ("settings_page", "settings"), ("update_settings", "settings"), ("api_test_connection", "settings"), ("api_protect*", "settings"), ("api_dashboard_*", "settings"), ("api_quality_profiles", "settings"),
     ("api_root_folders", "settings"), ("api_webhook_setup", "settings"),
-    ("save_profile", "access"), ("delete_profile", "access"), ("api_toggle_profile", "access"), ("api_jellyfin_users", "access"), ("people_page", "access"), ("access_page", "access"), ("api_access_*", "access"),
+    ("save_profile", "access"), ("delete_profile", "access"), ("api_toggle_profile", "access"), ("api_jellyfin_users", "access"), ("people_page", "access"), ("api_access_*", "access"),
 )
 
 
