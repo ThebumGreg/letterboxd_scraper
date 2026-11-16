@@ -1,5 +1,6 @@
 <!-- The workers and what each machine can do: rendered with the page and swapped in every few seconds. Jobs are their own tab. -->
 <h4 class="mb-3"><button type="button" class="btn btn-link text-reset text-decoration-none p-0 fs-4 fw-semibold" data-fleet-toggle="workers" aria-expanded="true"><i class="bi bi-chevron-down" aria-hidden="true"></i> Registered workers</button> <small class="text-body-secondary">({{ workers|length }})</small></h4>
+{% if encode_warning %}<div class="alert alert-warning" role="alert"><i class="bi bi-exclamation-triangle" aria-hidden="true"></i> {{ encode_warning }}</div>{% endif %}
 <div class="panel p-0 mb-5" data-section="workers">
     <div class="table-responsive">
         <table class="table table-hover align-middle mb-0 stack-sm" id="workerTable">
@@ -11,6 +12,7 @@
                 <tr data-worker="{{ w.id }}">
                     <td class="ps-4">
                         <div class="fw-bold">{{ w.name }}</div>
+                        <span class="badge bg-{{ 'primary' if w.role == 'encodes' else 'secondary' }} me-1" title="{{ 'Chosen on Edit worker' if w.role_chosen else 'Picked from what this worker reports; change it on Edit worker' }}">{{ w.role_label }}</span>
                         {% for tag in w.tags %}<span class="badge bg-secondary me-1">{{ tag }}</span>{% endfor %}
                         <div class="small text-body-secondary">token ...{{ w.token_hint or 'none' }}</div>
                         <div class="small text-body-secondary d-md-none">{% if w.version %}v{{ w.version }} &middot; {% endif %}{% if w.free %}{{ w.free }} free &middot; {% endif %}seen {{ w.seen }}</div>
@@ -24,7 +26,7 @@
                         </details>
                     </td>
                     <td class="small d-none d-md-table-cell">{% if not w.version %}-{% else %}<span class="badge bg-{{ 'success' if w.version == app_version else 'warning text-dark' }}" title="{{ 'Matches this SyncHub' if w.version == app_version else 'SyncHub is ' ~ app_version ~ '. Rebuild this worker (docs/UPGRADE.md).' }}">{{ w.version }}</span>{% if w.version != app_version %}<div class="text-body-secondary">update available</div>{% endif %}{% if w.commit %}<div class="text-body-secondary" title="The code this worker runs{% if w.built %}, built {{ w.built }}{% endif %}">{{ w.commit }}</div>{% if w.build_differs %}<div class="text-warning" title="Same release, but SyncHub is on commit {{ app_build.commit }}. Normal for a moment after a change; if it stays, press Update. A SyncHub-only change also shows this.">not SyncHub's build</div>{% endif %}{% endif %}{% endif %}</td>
-                    <td data-label="Running jobs">{{ w.running }} / {{ w.slots }}</td>
+                    <td data-label="Running jobs">{{ w.running }} / {{ w.slots }}{% if w.running %}<div class="small text-body-secondary">{{ w.running_classes.encode }} encoding &middot; {{ w.running_classes.light }} other</div>{% endif %}</td>
                     <td class="small d-none d-md-table-cell">
                         {% if w.free %}{{ w.free }} free{% else %}-{% endif %}
                         {% if w.originals %}<div class="text-body-secondary" title="Original files kept for the retention period">originals: {{ w.originals }}</div>{% endif %}

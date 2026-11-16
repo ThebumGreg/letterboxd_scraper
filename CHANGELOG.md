@@ -1,8 +1,8 @@
 # Changelog
 
-## 1.9.2
+## 1.9.5
 
-One small migration (054). No worker change. Update SyncHub.
+One small migration (055). No worker change. Update SyncHub.
 
 **Dashboard and System.**
 - **Library status** (System > Library status): the health line, the Jellyfin counts ("Jellyfin movies: 12 items = 12 titles here"), the file breakdown (labels, different shares, unlinked files, space saved) and the counts moved here from the top of the dashboard. The dashboard keeps only the counts (In Library, In Progress, Queued, Missing, Partial). The health dot now sits in the top bar of every page.
@@ -12,6 +12,35 @@ One small migration (054). No worker change. Update SyncHub.
 **SyncHub storage** (System > SyncHub storage): the data folder as a whole and what takes the room: database (file, journal, empty space and the biggest tables, with the Compact button), preview clips (with Delete old), backups, logs, posters, TV settings, and each worker's work folder as it reports it. One reading a day is kept for 90 days and drawn as small charts, so growth shows. The free space on the drive is shown with a bar. Image and container sizes appear when the Docker socket is mounted read-only: the Unraid template has an optional, empty "Docker socket" path (set it to `/var/run/docker.sock`); SyncHub only reads sizes.
 
 **TV morning screen: What's new.** A strip of up to six posters of what was added to Jellyfin in the last 30 days, above the quote, on the morning and evening screens. Settings > TV dashboard has a switch (on by default); nothing shows when nothing is new.
+## 1.9.4
+
+Update SyncHub. One small migration (no worker change). **Requests start in dry run** after this update: the migration switches both "Dry run" boxes on, so nothing is asked of Radarr or Sonarr until you switch them off.
+
+**Requesting missing titles, with limits** (Settings > Automation). Automatic adding no longer asks for every wanted title at the Radarr/Sonarr sync. A new job, every few minutes, asks for wanted titles a few at a time:
+- **At most 5 movies and 10 shows downloading at once** (both can be changed). It counts only titles SyncHub itself asked for that are still downloading or waiting in Radarr/Sonarr; a new request goes out only when the count is under the limit.
+- **One request every 10 minutes** (setting), and an optional **daily ceiling** (off by default).
+- Most wanted first, then oldest. A title is asked for once, so one you remove from Radarr or Sonarr on purpose is not asked for again. A title the service cannot find is left alone for a day so it does not hold up the rest.
+- **Dry run first:** the task "Requesting missing titles" (Tools) lists what it would request. The settings page shows "Requested: 2 of 5 movies, 0 of 10 shows downloading".
+
+**Smaller backups and log purge.**
+- The nightly copy now leaves out logs and history that SyncHub fills in again by itself (API payload log, Jellyfin events, worker charts, job logs, sent notifications). Everything else is kept and a restore works the same. Switch off **Smaller copies** (Settings > Automation) for complete copies. Copies made by hand and the copy before an upgrade stay complete. The settings page shows the newest copy's size.
+- A daily purge removes API payloads and finished job logs older than **30 days** (Settings > Logging, 0 keeps everything).
+
+## 1.9.3
+
+No migration. Update SyncHub, then update the workers (the version must match).
+
+**Worker roles.** Each worker now has a role, set on **Workers > More > Edit** under "What this worker takes": **Automatic** (encodes when a GPU or iGPU encoder works, otherwise checks only), **Encodes allowed**, or **Checks and light jobs only**. A checks-only worker never takes a video encode, a compression test or a preview; those wait for a worker that is allowed to encode, however long that takes, and a third PC with a graphics card simply joins that pool. Quality and damage checks, scans, hashes, remuxes (such as Dolby Vision 7 to 8.1), renames, copies, hides and deletes can run on any worker, but while a checks-only worker is online with a free slot, encoding workers leave those to it for the first minute, so the GPU stays free for encodes (after a minute they take them, so nothing sticks). A waiting encode shows "waiting for a worker that takes encodes" on Jobs, and counts as stuck after an hour. The Workers page shows each role as a badge, how many jobs of each kind run now, and a warning when encodes are waiting and no encoding worker is online. Set WOne to **Checks and light jobs only** when it comes back.
+
+## 1.9.2
+
+No migration, no worker change. Update SyncHub.
+
+**Sort the Files page.** A new Sort box beside the filters: Name, Size (largest or smallest first), Resolution, Newest file, Confidence (lowest first, to find the ones needing care), Quality score (worst first) and Estimated saving (largest first). It sorts the whole filtered list before paging, and the choice stays in the address, so paging, **Open**, Previous and Next keep it. On Below minimum quality the list stays worst first until you choose a sort.
+
+**Review one by one follows the list.** It used to look only at the search, share and confidence filters. It now walks the same list you are looking at: every filter (type, folder, quality check, kind of file, size, resolution) and the sort. Skip keeps them too.
+
+**Old addresses removed** (no bookmarks): `/library/queue/<status>`, `/library/quality`, `/access` and `/diagnostics`. Use Files, People and What it's doing now.
 
 ## 1.9.1
 

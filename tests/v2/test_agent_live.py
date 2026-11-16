@@ -51,7 +51,7 @@ class Rig:
                 path.mkdir()
                 (path / agent.MARKER).write_text(name + "\n")
                 storage.create(conn, {"name": name, "protocol": "local", "share": str(path), "mount_point": str(path)})
-            self.worker_id, self.token = workers.create(conn, "encoder-1", slots=1)
+            self.worker_id, self.token = workers.create(conn, "encoder-1", slots=1, settings={"role": "encodes"})   # the test box has no GPU, so say that it may encode
         self.running = []
 
     def env(self, **extra):

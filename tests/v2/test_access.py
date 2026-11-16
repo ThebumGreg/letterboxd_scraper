@@ -83,7 +83,7 @@ def test_every_permission_is_needed_by_something():
     ("tv_setup_devices_page", "tv_setup"), ("tv_setup_advanced_page", "tv_setup"), ("api_tv_setup_tvs_add", "tv_setup"), ("api_tv_setup_discovery_scan", "tv_setup"),
     ("export_csv", "tools"), ("api_activity", "logs"), ("logs_page", "logs"), ("api_logs", "logs"), ("jellyfin_events_export", "logs"), ("payloads_page", "payloads"),
     ("api_clear_payload_logs", "payloads"), ("settings_page", "settings"), ("update_settings", "settings"), ("api_webhook_setup", "settings"), ("api_test_connection", "settings"),
-    ("save_profile", "access"), ("delete_profile", "access"), ("api_jellyfin_users", "access"), ("access_page", "access"), ("people_page", "access"), ("api_access_set_pin", "access"),
+    ("save_profile", "access"), ("delete_profile", "access"), ("api_jellyfin_users", "access"), ("people_page", "access"), ("api_access_set_pin", "access"),
     ("who", access.PUBLIC), ("static", access.PUBLIC), ("poster", access.PUBLIC), ("api_webhook", access.PUBLIC), ("worker_api_poll", access.PUBLIC), ("worker_api_scan_records", access.PUBLIC),
     ("api_tasks", access.OPEN), ("something_new", None), (None, None)])
 def test_what_each_endpoint_needs(endpoint, need):
@@ -371,7 +371,7 @@ def test_a_deleted_profile_is_nobody(browser, v2, conn, people):
 def test_a_profile_can_open_exactly_the_pages_it_was_given(browser, people):
     sign_in(browser, people["cara"], "1357")
     assert browser.get("/library").status_code == 200 and browser.get("/workers").status_code == 200
-    for denied in ("/", "/settings", "/storage", "/tools", "/logs", "/payloads", "/ddns", "/search", "/resolution", "/access", "/people", "/activity", "/jellyfin-events"):
+    for denied in ("/", "/settings", "/storage", "/tools", "/logs", "/payloads", "/ddns", "/search", "/resolution", "/people", "/activity", "/jellyfin-events"):
         r = browser.get(denied)
         assert r.status_code == 403, denied
     page = text(browser.get("/settings"))
@@ -506,16 +506,6 @@ def test_people_holds_profile_management_for_those_with_access_and_never_prints_
     assert browser.post("/settings/profiles/save", data={"profile_name": "Eve"}).status_code == 403
     assert browser.post(f"/settings/profiles/delete/{people['bob']}").status_code == 403 and browser.post("/api/profiles/toggle", json={"id": 1, "is_active": 0}).status_code == 403
     assert browser.get("/api/jellyfin/users").status_code == 403
-
-
-def test_the_old_addresses_lead_to_the_new_pages(browser, v2, conn):
-    pid = conn.execute("INSERT INTO profile (name) VALUES ('Dana')").lastrowid
-    conn.commit()
-    sign_in(browser, pid)
-    for old, new in (("/access", "/people"), ("/diagnostics", "/activity")):
-        r = browser.get(old)
-        assert r.status_code == 301 and r.headers["Location"].endswith(new)
-        assert browser.get(new).status_code == 200
 
 
 def test_the_activity_page_belongs_to_whoever_may_read_the_logs(browser, v2, conn):
@@ -653,7 +643,7 @@ def test_only_someone_with_access_can_use_any_of_it(browser, people):
     for url in (f"/api/access/profile/{people['bob']}/permissions", f"/api/access/profile/{people['bob']}/pin", f"/api/access/profile/{people['bob']}/pin/clear",
                 f"/api/access/profile/{people['bob']}/signout", f"/api/access/profile/{people['bob']}/unlock", "/api/access/guest", "/api/access/session-days"):
         assert api(browser, url, {"permissions": list(access.KEYS), "pin": "1111", "days": 1}).status_code == 403, url
-    assert browser.get("/access").status_code == 403
+    assert browser.get("/people").status_code == 403
 
 
 # ---------------------------------------------------------------- getting back in

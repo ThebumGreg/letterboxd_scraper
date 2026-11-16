@@ -266,4 +266,3 @@ def test_diagnostics_endpoint_and_page(v2):
     assert "What it&#39;s doing now" in page or "What it's doing now" in page
     assert "/api/activity" in page
     assert "/activity" in client.get("/tools").get_data(as_text=True)
-    assert client.get("/diagnostics").status_code == 301

@@ -373,6 +373,7 @@
         document.getElementById('workerTags').value = values.tags || '';
         document.getElementById('workerSlots').value = values.slots || 1;
         const st = values.settings || {};
+        document.getElementById('setRole').value = st.role || 'auto';
         document.getElementById('setEncoder').value = st.encoder || 'auto';
         document.getElementById('setGpuSlots').value = st.gpu_slots || 1;
         document.getElementById('setCopy').value = st.max_copy_mb_s || 0;
@@ -394,7 +395,7 @@
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const body = { name: document.getElementById('workerName').value, tags: document.getElementById('workerTags').value, slots: document.getElementById('workerSlots').value,
-            settings: { encoder: document.getElementById('setEncoder').value, gpu_slots: document.getElementById('setGpuSlots').value, gpu_busy: document.getElementById('setGpuBusy').value,
+            settings: { role: document.getElementById('setRole').value, encoder: document.getElementById('setEncoder').value, gpu_slots: document.getElementById('setGpuSlots').value, gpu_busy: document.getElementById('setGpuBusy').value,
                         temp_alert_c: document.getElementById('setTempAlert').value, temp_alert_minutes: document.getElementById('setTempMinutes').value, disk_low_gb: document.getElementById('setDiskLow').value, throttle: document.getElementById('setThrottle').checked,
                         throttle_c: document.getElementById('setThrottleC').value, throttle_minutes: document.getElementById('setThrottleMin').value, throttle_resume_c: document.getElementById('setResumeC').value, work_dir: document.getElementById('setWorkDir').value, max_copy_mb_s: document.getElementById('setCopy').value, scan_threads: document.getElementById('setScan').value,
                         log_level: document.getElementById('setLog').value, update_window: document.getElementById('setWindow').value, auto_update: document.getElementById('setAutoUpdate').checked, ai_quality: document.getElementById('setAiQuality').checked } };

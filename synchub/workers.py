@@ -114,6 +114,7 @@ SETTINGS = {
     "log_level": ("agent", "choice", "INFO", ("DEBUG", "INFO", "WARNING", "ERROR")),
     "auto_update": ("host", "bool", True, None),
     "ai_quality": ("host", "bool", False, None),                # build the image with the AI quality test layer (PyTorch and models, about 1 GB); see agent/auto-update.sh
+    "role": ("hub", "choice", "auto", ("auto", "checks", "encodes")),   # what jobs this PC takes: checks = checks and light jobs only, encodes = encodes too; auto = encodes when a GPU encoder works, else checks (SyncHub's own routing, never sent to the agent)
     "work_dir": ("host", "path", "", None),                      # the folder on the PC that holds job files (WORK_DIR in .env); the PC's helper switches to it when the worker is idle
     "update_window": ("host", "window", "", None),
     # SyncHub's own limits for this PC ("hub": never sent to the agent or the helper): when to warn about heat and low space, and when to stop taking new jobs
@@ -173,6 +174,28 @@ def clean_settings(given, current=None):
 def setting(w, key):
     """One setting of a worker (the dict from get/list_all), or its default."""
     return w["settings"].get(key, SETTINGS[key][2])
+
+
+GPU_ENCODER_MARKS = ("_nvenc", "_qsv", "_vaapi")
+ROLE_LABELS = {"checks": "Checks and light jobs", "encodes": "Encodes allowed"}
+
+
+def detected_role(w):
+    """The role a worker gets when nobody chose one: encodes when it reports a working GPU (or iGPU) encoder, otherwise checks and light jobs (one that has not reported yet is trusted)."""
+    encoders = w["capabilities"].get("encoders") if isinstance(w.get("capabilities"), dict) else None
+    if encoders is None:
+        return "encodes"                                   # a worker that has not reported its encoders yet is trusted, as in jobs.can_run
+    return "encodes" if any(mark in str(e) for e in (encoders or []) for mark in GPU_ENCODER_MARKS) else "checks"
+
+
+def role(w):
+    """'checks' or 'encodes': what the worker is allowed to take. The setting wins; 'auto' follows what the worker reports."""
+    chosen = setting(w, "role")
+    return chosen if chosen in ROLE_LABELS else detected_role(w)
+
+
+def takes_encodes(w):
+    return role(w) == "encodes"
 
 
 def agent_settings(w):

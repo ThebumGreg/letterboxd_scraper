@@ -98,13 +98,15 @@ def test_radarr_additions_add_dry_run_and_report_errors(conn):
         lb(conn, "alice", f"s{i}", mid)
     settings.set_value("radarr_quality_profile_id", "4", conn=conn); settings.set_value("radarr_root_folder", "/films", conn=conn)
     conn.commit()
+    settings.set_value("request_gap_minutes", "0", conn=conn); conn.commit()                 # no pause between requests: this test is about what happens to each title
+    dry = FakeRadarr()
+    dry_result = automation.run_radarr_additions(conn, dry, dry_run=True)
+    assert dry_result["would_add"] == ["Heat", "Dup"] and len(dry_result["errors"]) == 1 and dry.added == []
+    assert conn.execute("SELECT COUNT(*) FROM auto_request").fetchone()[0] == 0              # a dry run records nothing
     radarr = FakeRadarr(fail_on=("11",))
     result = automation.run_radarr_additions(conn, radarr)
     assert result["added"] == ["Movie 949"] and radarr.added == [("Movie 949", 4, "/films")]
     assert len(result["errors"]) == 2 and any("Nope" in e and "not found" in e for e in result["errors"]) and any("Dup" in e for e in result["errors"])
-    dry = FakeRadarr()
-    dry_result = automation.run_radarr_additions(conn, dry, dry_run=True)
-    assert dry_result["would_add"] == ["Dup", "Heat"] and len(dry_result["errors"]) == 1 and dry.added == []
 
 
 def test_request_movie(conn):

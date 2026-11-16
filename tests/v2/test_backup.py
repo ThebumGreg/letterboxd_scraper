@@ -489,3 +489,74 @@ def test_the_command_line_mentions_the_tv_settings(v2, folder, tv_folder, tmp_pa
     assert "and the TV settings in c.tv.zip" in capsys.readouterr().out
     assert backup.main(["check", str(tmp_path / "c.db")]) == 0
     assert "also holds: the TV settings" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- slim copies
+def _fill_logs(conn):
+    conn.execute("INSERT INTO profile (name) VALUES ('Alice')")
+    for i in range(50):
+        conn.execute("INSERT INTO api_payload_log (direction, service, payload_json) VALUES ('out', 'radarr', ?)", ("x" * 2000,))
+        conn.execute("INSERT INTO jellyfin_event (received_at, event_type, payload) VALUES ('2026-01-01 00:00:00', 'PlaybackProgress', ?)", ("y" * 2000,))
+    job = conn.execute("INSERT INTO job (kind, status) VALUES ('library', 'done')").lastrowid
+    conn.execute("INSERT INTO job_log (job_id, received_at, content) VALUES (?, 'x', ?)", (job, "log " * 5000))
+    conn.execute("INSERT INTO job_attempt (job_id, attempt_no, started_at, command, log_tail) VALUES (?, 1, 'x', 'ffmpeg -i a', 'tail')", (job,))
+    conn.commit()
+
+
+def test_a_slim_copy_leaves_out_logs_and_history_but_keeps_everything_else(v2, folder, conn):
+    _fill_logs(conn)
+    full, slim = backup.create(folder / "full.db"), backup.create(folder / "slim.db", slim=True)
+    assert slim.stat().st_size < full.stat().st_size * 0.7
+    assert rows(slim) == ["Alice"] and rows(full) == ["Alice"]
+    for table in ("api_payload_log", "jellyfin_event", "job_log"):
+        assert rows(slim, f"SELECT COUNT(*) FROM {table}") == [0] and rows(full, f"SELECT COUNT(*) FROM {table}") == [50 if table != "job_log" else 1]
+    assert rows(slim, "SELECT command FROM job_attempt") == ["ffmpeg -i a"] and rows(slim, "SELECT log_tail FROM job_attempt") == [None]
+    assert rows(slim, "SELECT COUNT(*) FROM job") == [1]                                              # the job itself stays
+    report = backup.check(slim)
+    assert report["ok"] and report["counts"]["profiles"] == 1
+
+
+def test_a_slim_copy_restores_and_the_app_can_use_it(v2, folder, conn, tmp_path):
+    _fill_logs(conn)
+    slim = backup.create(folder / "slim.db", slim=True)
+    target, kept = backup.restore(slim, dest=tmp_path / "restored.db")
+    assert rows(target) == ["Alice"] and kept is None
+    check = sqlite3.connect(target)
+    check.execute("INSERT INTO api_payload_log (direction, service) VALUES ('in', 'jellyfin')")          # the emptied tables still work
+    check.commit(); check.close()
+
+
+def test_the_nightly_copy_is_slim_unless_switched_off_and_the_upgrade_copy_is_complete(v2, folder, conn):
+    _fill_logs(conn)
+    assert tasks.backup_database() and "logs and history left out" in _task_message(conn)
+    newest = sorted((folder / "backups").glob("synchub-*.db"))[-1]
+    assert rows(newest, "SELECT COUNT(*) FROM api_payload_log") == [0]
+    settings.set_value("backup_slim", "0")
+    (folder / "backups" / newest.name).unlink()
+    tasks.backup_database()
+    newest = sorted((folder / "backups").glob("synchub-*.db"))[-1]
+    assert rows(newest, "SELECT COUNT(*) FROM api_payload_log") == [50]
+    import inspect
+    assert inspect.signature(backup.create).parameters["slim"].default is False                      # copies made by hand and before upgrades are complete
+
+
+def _task_message(conn):
+    return conn.execute("SELECT message FROM task_status WHERE task_name = 'backup'").fetchone()[0]
+
+
+# ---------------------------------------------------------------- log purge
+def test_old_api_payloads_and_finished_job_logs_are_purged_by_age(v2, conn):
+    from synchub import log_purge
+    conn.execute("INSERT INTO api_payload_log (direction, service, created_at) VALUES ('out', 'a', datetime('now', '-40 days')), ('out', 'a', datetime('now', '-2 days'))")
+    old = conn.execute("INSERT INTO job (kind, status, finished_at) VALUES ('library', 'done', datetime('now', '-40 days'))").lastrowid
+    new = conn.execute("INSERT INTO job (kind, status, finished_at) VALUES ('library', 'done', datetime('now', '-1 days'))").lastrowid
+    running = conn.execute("INSERT INTO job (kind, status) VALUES ('library', 'running')").lastrowid
+    for job in (old, new, running):
+        conn.execute("INSERT INTO job_log (job_id, received_at, content) VALUES (?, 'x', 'log')", (job,))
+        conn.execute("INSERT INTO job_attempt (job_id, attempt_no, started_at, finished_at, log_tail) VALUES (?, 1, 'x', (SELECT finished_at FROM job WHERE id = ?), 'tail')", (job, job))
+    conn.commit()
+    removed = log_purge.purge()
+    assert removed["api_payloads"] == 1 and removed["job_logs"] == 1 and removed["job_attempt_logs"] == 1
+    assert [r[0] for r in conn.execute("SELECT job_id FROM job_log ORDER BY job_id")] == [new, running]
+    settings.set_value("logs_keep_days", "0"); settings.set_value("job_logs_keep_days", "0")
+    assert log_purge.purge() == {}                                                                   # 0 keeps everything

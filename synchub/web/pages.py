@@ -5,7 +5,7 @@ import os
 from flask import abort, flash, g, jsonify, redirect, render_template, request, send_file, send_from_directory, url_for
 
 from config import BASE_DIR
-from synchub import access, backup, catalog, data_usage, db, ddns, discover, posters, poor_quality, profiles, quality, ratings, search, settings, states, status, tasks, watch, watchlist, webhooks, workers
+from synchub import access, automation, backup, catalog, data_usage, db, ddns, discover, posters, poor_quality, profiles, quality, ratings, search, settings, states, status, tasks, watch, watchlist, webhooks, workers
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.tmdb import TmdbClient
 from synchub.library import episode_link, file_labels
@@ -323,6 +323,7 @@ def register(app):
     def settings_page():
         with db.connection() as conn:
             profile_list = profiles.list_all(conn)
+            request_status = automation.request_status(conn)
             worker_list = [{"id": w["id"], "name": w["name"]} for w in workers.list_all(conn) if not w["revoked"]]
         values = {**settings.DEFAULTS, **settings.get_all()}
         from synchub.dashboard import config as dash_config
@@ -334,7 +335,7 @@ def register(app):
             pass                                                # the TV part is optional; the page works without it
         in_docker = os.getenv("SYNCHUB_IN_DOCKER") == "1"
         return render_template("settings.html", settings=values, profiles=profile_list, relay_workers=worker_list, webhook_status=webhooks.status_for_all(), suggested_synchub_url=request.host_url.rstrip("/"),
-                               local_addresses=backup.addresses_on_this_machine(values) if in_docker else [], last_backup=backup.latest(), notify=dispatch.state(),
+                               local_addresses=backup.addresses_on_this_machine(values) if in_docker else [], last_backup=backup.latest(), request_status=request_status, notify=dispatch.state(),
                                dash_tvs=dash_tvs, dash_url=f"/dash/{dash_config.token()}", now_label=dash_config.now().tzname() or "server time")
 
     @app.route("/payloads")
@@ -348,10 +349,6 @@ def register(app):
     @app.route("/activity")
     def activity_page():
         return render_template("activity.html")
-
-    @app.route("/diagnostics")
-    def diagnostics_page():
-        return redirect(url_for("activity_page"), code=301)         # the page's old address
 
     @app.route("/ddns")
     def ddns_page():

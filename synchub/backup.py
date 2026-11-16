@@ -22,6 +22,9 @@ ADDRESS_SETTINGS = ("jellyfin_url", "radarr_url", "sonarr_url", "synchub_url")
 THIS_MACHINE = ("localhost", "127.0.0.1", "::1", "0.0.0.0")
 TV_SUFFIX = ".tv.zip"
 TV_FILES = ("prefs.json", "devices.json")                    # and everything in certs/; the call log is not kept
+# What a slim copy leaves out: logs and history that SyncHub fills again by itself (the tables stay, empty, so a restore works as usual).
+SLIM_CLEAR = ("api_payload_log", "jellyfin_event", "worker_stat", "worker_log", "player_log", "job_log", "processing_event")
+SLIM_NOTIFICATION_FINAL = ("sent", "failed", "dropped")       # a notification still waiting to go out is kept
 COUNTED = (("profiles", "profile"), ("titles", "media"), ("episodes", "episode"), ("workers", "worker"), ("library files", "library_file"))
 
 
@@ -115,9 +118,29 @@ def restore_tv(archive, tv_dir, now=None):
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def create(dest=None, source=None, now=None, with_tv=True):
+def slim_down(writer):
+    """Empties the log and history tables of a copy and gives the space back, so the copy holds only what SyncHub cannot rebuild."""
+    have = {r[0] for r in writer.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    for table in SLIM_CLEAR:
+        if table in have:
+            writer.execute(f'DELETE FROM "{table}"')
+    if {"notification", "notification_event"} <= have:
+        marks = ",".join("?" * len(SLIM_NOTIFICATION_FINAL))
+        writer.execute(f"DELETE FROM notification WHERE status IN ({marks})", SLIM_NOTIFICATION_FINAL)
+        writer.execute("DELETE FROM notification_event WHERE id NOT IN (SELECT event_id FROM notification)")
+    if "job_attempt" in have:
+        writer.execute("UPDATE job_attempt SET log_tail = NULL")
+    writer.commit()
+    writer.execute("VACUUM")
+
+
+def slim_setting():
+    return settings.get("backup_slim") != "0"
+
+
+def create(dest=None, source=None, now=None, with_tv=True, slim=False):
     """Saves a consistent copy and returns its path. Refuses to overwrite, and removes the copy if it does not pass SQLite's integrity check.
-    The TV settings are saved beside it (see the top of this file) unless with_tv is False."""
+    The TV settings are saved beside it (see the top of this file) unless with_tv is False. With slim, logs and history are left out (see slim_down)."""
     source = Path(source or db.DB_FILE)
     if not source.exists() or source.stat().st_size == 0:
         raise BackupError(f"There is no database at {source} to copy.")
@@ -130,6 +153,8 @@ def create(dest=None, source=None, now=None, with_tv=True):
     writer = sqlite3.connect(str(partial))
     try:
         reader.backup(writer)
+        if slim:
+            slim_down(writer)
         writer.execute("PRAGMA journal_mode = DELETE")             # one file, nothing waiting in a -wal beside it
         verdict = writer.execute("PRAGMA integrity_check").fetchone()[0]
     except sqlite3.Error as exc:
