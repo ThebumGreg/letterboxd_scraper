@@ -88,7 +88,7 @@ def test_scheduler_jobs_follow_settings_and_survive_bad_values(v2):
     scheduler.configure()
     jobs = {j.id: j.trigger.interval.total_seconds() / 3600 for j in scheduler.scheduler.get_jobs() if hasattr(j.trigger, "interval")}
     assert jobs == {"job_ddns": 1 / 60, "job_scrape": 24, "job_jellyfin": 12, "job_sonarr": 6, "job_queue_poll": 30 / 3600, "job_reaper": 30 / 3600, "job_prune_jellyfin_events": 24, "job_purge_previews": 6, "job_quality_pass": 5 / 60, "job_better_copy_tracking": 1 / 60,
-                    "job_notify": 30 / 3600, "job_notify_watch": 30 / 3600, "job_notify_aired": 1, "job_notify_prune": 24, "job_dashboard": 1 / 60, "job_dashboard_presence": 1 / 60, "job_dashboard_welcome_close": 15 / 3600}      # radarr off, bad values -> defaults
+                    "job_notify": 30 / 3600, "job_notify_watch": 30 / 3600, "job_notify_aired": 1, "job_notify_prune": 24, "job_dashboard": 1 / 60, "job_dashboard_presence": 1 / 60, "job_dashboard_welcome_close": 15 / 3600, "job_purge_logs": 24, "job_requests": 10 / 60}      # radarr off, bad values -> defaults
 
 
 def test_radarr_task_auto_adds_when_enabled_and_resyncs(v2, monkeypatch):
@@ -106,20 +106,23 @@ def test_radarr_task_auto_adds_when_enabled_and_resyncs(v2, monkeypatch):
         c.execute("INSERT INTO profile (name, letterboxd_username) VALUES ('A', 'alice')")
         mid = c.execute("INSERT INTO media (kind, title, tmdb_id) VALUES ('movie', 'Heat', '949')").lastrowid
         c.execute("INSERT INTO src_letterboxd_entry (username, slug, list, first_seen, last_seen, tmdb_id) VALUES ('alice', 'heat', 'watchlist', 'a', 'a', '949')")
-    tasks.sync_radarr()
+    tasks.request_missing()
     assert client.added == []                                         # queue addition is off by default
     settings.set_value("radarr_enable_queue_addition", "1")
-    tasks.sync_radarr()
-    assert client.added and "Auto-add: added 1" in _status(v2, "radarr")
-    settings.set_value("radarr_dry_run", "1")
-    client.added.clear()
-    tasks.sync_radarr()
-    assert client.added == [] and "dry run" in _status(v2, "radarr")
-
+    tasks.request_missing()
+    assert client.added == [] and "dry run: would add 1" in _status(v2, "requests")      # a new install starts as a dry run
     settings.set_value("radarr_dry_run", "0")
+    tasks.request_missing()
+    assert client.added and "added 1" in _status(v2, "requests")
+    client.added.clear()
+    tasks.request_missing()
+    assert client.added == [] and "holding" in _status(v2, "requests")                # one request every ten minutes
+
+    with v2.connection() as c:
+        c.execute("DELETE FROM auto_request")
     settings.set_value("radarr_root_folder", "/gone")
-    tasks.sync_radarr()
-    status = _status(v2, "radarr")
+    tasks.request_missing()
+    status = _status(v2, "requests")
     assert client.added == [] and "BLOCKED, 1 waiting" in status and "root folder '/gone'" in status
 
 

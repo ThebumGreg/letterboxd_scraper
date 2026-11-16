@@ -142,9 +142,10 @@ def backup_database():
         keep = backup.keep_count()
         if not keep:
             return "Backups are turned off in Settings."
-        path = backup.create()
+        slim = backup.slim_setting()
+        path = backup.create(slim=slim)
         removed = backup.prune(keep)
-        return f"Saved {path.name} ({path.stat().st_size / 1048576:.1f} MB)." + (f" Removed {len(removed)} older {'copy' if len(removed) == 1 else 'copies'}." if removed else "")
+        return f"Saved {path.name} ({path.stat().st_size / 1048576:.1f} MB{', logs and history left out' if slim else ''})." + (f" Removed {len(removed)} older {'copy' if len(removed) == 1 else 'copies'}." if removed else "")
     return run("backup", "Backing up the database", work)
 
 
@@ -239,11 +240,42 @@ def _summarise(result, noun):
         parts.append(f"dry run: would add {len(result['would_add'])}")
     if result.get("blocked"):
         parts.append(f"BLOCKED, {result['waiting']} waiting: {result['blocked']}")
+    if result.get("held"):
+        parts.append(f"holding: {result['held']}")
     if result.get("errors"):
         parts.append(f"{len(result['errors'])} could not be added")
     if result.get("skipped_no_tvdb"):
         parts.append(f"{len(result['skipped_no_tvdb'])} skipped (no TVDB ID)")
-    return (" Auto-add: " + ", ".join(parts) + ".") if parts else ""
+    return ("Auto-add: " + ", ".join(parts) + ".") if parts else ""
+
+
+def request_missing():
+    """Asks Radarr and Sonarr for wanted titles that are not in the library, a few at a time (limits in automation.allowance).
+    Runs every few minutes (the gap setting); a service that is switched off, or whose limits are full, costs one small query."""
+    def work(report):
+        notes = []
+        for service, client_class, label, noun, pull in (("radarr", RadarrClient, "Radarr", "movie(s)", _radarr_pull), ("sonarr", SonarrClient, "Sonarr", "show(s)", _sonarr_pull)):
+            if settings.get(f"{service}_enable_queue_addition") != "1":
+                continue
+            dry = settings.get(f"{service}_dry_run") == "1"
+            with db.connection() as conn:
+                allowed, reason = automation.allowance(conn, service)
+            if not allowed:
+                notes.append(f"{label}: holding, {reason}.")
+                continue
+            report(f"Checking which wanted {noun} should be added...", force=True)
+            _link_now()
+            client = client_class()
+            run_additions = automation.run_radarr_additions if service == "radarr" else automation.run_sonarr_additions
+            with db.connection() as conn:
+                result = run_additions(conn, client, dry_run=dry)
+            if result["added"]:
+                pull(client, report)
+            notes.append(f"{label}: " + (_summarise(result, noun) or "nothing to add.").replace("Auto-add: ", ""))
+        with db.connection() as conn:
+            status = automation.request_status(conn)["text"]
+        return " ".join(notes + [status + "."]) if notes else "Requests are off. " + status + "."
+    return run("requests", "Requesting missing titles", work)
 
 
 def _radarr_pull(client, report):
@@ -271,16 +303,7 @@ def sync_radarr():
     def work(report):
         client = RadarrClient()
         lib, queue = _radarr_pull(client, report)
-        note = ""
-        if settings.get("radarr_enable_queue_addition") == "1":
-            report("Checking which wanted movies should be added...", force=True)
-            _link_now()
-            with db.connection() as conn:
-                result = automation.run_radarr_additions(conn, client, dry_run=settings.get("radarr_dry_run") == "1")
-            if result["added"]:
-                _radarr_pull(client, report)
-            note = _summarise(result, "movie(s)")
-        return f"Radarr: {lib['seen']} movie(s), {queue['seen']} in queue.{note}"
+        return f"Radarr: {lib['seen']} movie(s), {queue['seen']} in queue."
     return run("radarr", "Syncing Radarr", work)
 
 
@@ -289,16 +312,7 @@ def sync_sonarr():
         client = SonarrClient()
         lib, queue = _sonarr_pull(client, report)
         errors = f" ({len(lib['episode_fetch_errors'])} series had episode errors)" if lib["episode_fetch_errors"] else ""
-        note = ""
-        if settings.get("sonarr_enable_queue_addition") == "1":
-            report("Checking which wanted shows should be added...", force=True)
-            _link_now()
-            with db.connection() as conn:
-                result = automation.run_sonarr_additions(conn, client, dry_run=settings.get("sonarr_dry_run") == "1")
-            if result["added"]:
-                _sonarr_pull(client, report)
-            note = _summarise(result, "show(s)")
-        return f"Sonarr: {lib['series']} series, {lib['episodes']} episode(s), {queue['seen']} in queue{errors}.{note}"
+        return f"Sonarr: {lib['series']} series, {lib['episodes']} episode(s), {queue['seen']} in queue{errors}."
     return run("sonarr", "Syncing Sonarr", work)
 
 

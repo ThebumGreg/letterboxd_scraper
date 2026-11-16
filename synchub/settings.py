@@ -11,9 +11,11 @@ DEFAULTS = {
     "request_delay_min": str(DEFAULT_REQUEST_DELAY_RANGE[0]), "request_delay_max": str(DEFAULT_REQUEST_DELAY_RANGE[1]),
     "user_delay_min": str(DEFAULT_USER_DELAY_RANGE[0]), "user_delay_max": str(DEFAULT_USER_DELAY_RANGE[1]),
     "disable_jellyfin_connection": "0", "jellyfin_url": "", "jellyfin_server_id": "", "radarr_url": "", "sonarr_url": "",
-    "radarr_enable_queue_addition": "0", "radarr_dry_run": "0",
+    "radarr_enable_queue_addition": "0", "radarr_dry_run": "1", "radarr_max_in_progress": "5",
     "radarr_min_user_count": "1", "radarr_quality_profile_id": "1", "radarr_root_folder": "/movies",
-    "sonarr_enable_queue_addition": "0", "sonarr_dry_run": "0",
+    "sonarr_enable_queue_addition": "0", "sonarr_dry_run": "1", "sonarr_max_in_progress": "10",
+    # missing titles are requested one at a time, this many minutes apart (and no more than a daily ceiling, 0 = none); a log purge keeps these many days of the API payload log
+    "request_gap_minutes": "10", "request_daily_max": "0", "backup_slim": "1", "logs_keep_days": "30", "job_logs_keep_days": "30",
     "sonarr_min_user_count": "1", "sonarr_quality_profile_id": "1", "sonarr_root_folder": "/tv",
     "dvr_enabled": "0", "dvr_poll_seconds": "300", "dvr_path_prefixes": "/DVR", "dvr_counts_as_library": "1",
     "enable_notifications": "0", "notify_admin_profiles": "", "notify_history_keep_days": "90", "payload_logging_enabled": "0", "payload_retention_limit": "500",

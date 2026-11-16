@@ -158,6 +158,27 @@
             </div>
         </div>
         <div class="col-lg-6">
+            <div class="panel p-3 p-md-4 mb-4" id="requestLimits">
+                <h5 class="text-success mb-1"><i class="bi bi-cloud-download" aria-hidden="true"></i> Requesting missing titles</h5>
+                <p class="small text-body-secondary">When automatic adding is on below, SyncHub asks Radarr and Sonarr for titles people want that are not in the library, a few at a time. It never has more of its own requests downloading than the limits say: a new one goes out only when the count is under the limit. The most wanted come first, then the oldest. A title is asked for once; one you remove from Radarr or Sonarr is not asked for again. Titles without a TMDB or TVDB number are skipped.</p>
+                {% if request_status %}<div class="alert alert-secondary py-2 small mb-3"><strong>{{ request_status.text }}.</strong>
+                    Movies: {{ 'dry run' if request_status.radarr.dry_run else 'live' }}{{ '' if request_status.radarr.enabled else ', switched off' }}, {{ request_status.radarr.today }} requested in the last day.
+                    Shows: {{ 'dry run' if request_status.sonarr.dry_run else 'live' }}{{ '' if request_status.sonarr.enabled else ', switched off' }}, {{ request_status.sonarr.today }} requested in the last day.</div>{% endif %}
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="request_gap_minutes" class="form-label">Minutes between requests</label>
+                        <input type="number" class="form-control" id="request_gap_minutes" name="request_gap_minutes" value="{{ settings.get('request_gap_minutes') or 10 }}" min="1" max="1440" step="1">
+                        <div class="form-text">At most one new request for movies and one for shows this often.</div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label for="request_daily_max" class="form-label">Daily ceiling (0 = none)</label>
+                        <input type="number" class="form-control" id="request_daily_max" name="request_daily_max" value="{{ settings.get('request_daily_max') or 0 }}" min="0" max="1000" step="1">
+                        <div class="form-text">A safety net on top of the limits below, for movies and shows each.</div>
+                    </div>
+                </div>
+                <div class="form-text">Start with the dry run switches below on: the Tools page then lists what would be requested (task "Requesting missing titles") without asking for anything. Switch the dry run off when the list looks right.</div>
+            </div>
+
             <div class="panel p-3 p-md-4 mb-4">
                 <div class="d-flex justify-content-between mb-3">
                     <h5 class="text-primary mb-0"><i class="bi bi-film" aria-hidden="true"></i> Radarr (Movies)</h5>
@@ -260,7 +281,9 @@
                     <input type="number" class="form-control" id="backup_keep" name="backup_keep" value="{{ settings.get('backup_keep') or 7 }}" min="0" max="365" step="1" required>
                     <div class="form-text">0 turns the nightly copy off.</div>
                 </div>
-                <div class="small text-body-secondary">Newest copy: {% if last_backup %}<strong>{{ last_backup[0].name }}</strong>, {{ last_backup[1].strftime('%Y-%m-%d %H:%M') }}{% else %}none yet{% endif %}.</div>
+                {{ switch('backup_slim', 'Smaller copies: leave out logs and history', settings.backup_slim) }}
+                <div class="form-text mb-2">The copy keeps settings, profiles, links, library decisions, quality and test results and workers. It leaves out the API payload log, Jellyfin events, worker charts, job logs and sent notifications, which fill in again by themselves. A restore works the same either way. The copy made just before an upgrade is always complete.</div>
+                <div class="small text-body-secondary">Newest copy: {% if last_backup %}<strong>{{ last_backup[0].name }}</strong>, {{ '%.1f'|format(last_backup[0].stat().st_size / 1048576) }} MB, {{ last_backup[1].strftime('%Y-%m-%d %H:%M') }}{% else %}none yet{% endif %}.</div>
             </div>
         </div>
         <div class="col-lg-6">
@@ -325,7 +348,12 @@
                     <button type="button" class="btn btn-sm btn-outline-secondary py-0" onclick="fetchServarr('radarr')"><i class="bi bi-arrow-repeat"></i> Load options</button>
                 </div>
                 {{ switch('radarr_enable_queue_addition', 'Automatically add wanted titles', settings.radarr_enable_queue_addition) }}
-                {{ switch('radarr_dry_run', 'Dry run (only report what would be added)', settings.radarr_dry_run) }}
+                {{ switch('radarr_dry_run', 'Dry run (only list what would be requested)', settings.radarr_dry_run) }}
+                <div class="mb-3">
+                    <label for="radarr_max_in_progress" class="form-label">Most movies downloading at once</label>
+                    <input type="number" class="form-control" id="radarr_max_in_progress" name="radarr_max_in_progress" value="{{ settings.get('radarr_max_in_progress') or 5 }}" min="1" max="500" step="1">
+                    <div class="form-text">Counts only titles SyncHub requested that are still downloading or waiting in Radarr.</div>
+                </div>
                 <div class="row">
                     <div class="col-md-6 mb-3">
                         <label for="radarr_quality_profile_id" class="form-label">Quality Profile</label>
@@ -352,7 +380,12 @@
                     <button type="button" class="btn btn-sm btn-outline-secondary py-0" onclick="fetchServarr('sonarr')"><i class="bi bi-arrow-repeat"></i> Load options</button>
                 </div>
                 {{ switch('sonarr_enable_queue_addition', 'Automatically add wanted titles', settings.sonarr_enable_queue_addition) }}
-                {{ switch('sonarr_dry_run', 'Dry run (only report what would be added)', settings.sonarr_dry_run) }}
+                {{ switch('sonarr_dry_run', 'Dry run (only list what would be requested)', settings.sonarr_dry_run) }}
+                <div class="mb-3">
+                    <label for="sonarr_max_in_progress" class="form-label">Most shows downloading at once</label>
+                    <input type="number" class="form-control" id="sonarr_max_in_progress" name="sonarr_max_in_progress" value="{{ settings.get('sonarr_max_in_progress') or 10 }}" min="1" max="500" step="1">
+                    <div class="form-text">Counts only titles SyncHub requested that are still downloading or waiting in Sonarr.</div>
+                </div>
                 <div class="row">
                     <div class="col-md-6 mb-3">
                         <label for="sonarr_quality_profile_id" class="form-label">Quality Profile</label>
@@ -407,6 +440,20 @@
                     {{ switch('log_service_sonarr', 'Sonarr', settings.log_service_sonarr) }}
                     {{ switch('log_service_tmdb', 'TMDB', settings.log_service_tmdb) }}
                     {{ switch('log_service_dynu', 'Dynu DDNS', settings.log_service_dynu) }}
+                </div>
+            </div>
+            <div class="panel p-3 p-md-4 mb-4" id="logPurge">
+                <h5 class="text-success mb-1">Keeping logs</h5>
+                <p class="small text-body-secondary">Old log rows are removed once a day so the database does not grow for ever. 0 keeps everything. Jellyfin events and the notification history have their own age settings (Automation and Connections).</p>
+                <div class="row">
+                    <div class="col-md-6 mb-2">
+                        <label for="logs_keep_days" class="form-label">Keep API payloads for (days)</label>
+                        <input type="number" class="form-control" id="logs_keep_days" name="logs_keep_days" value="{{ settings.get('logs_keep_days') or 30 }}" min="0" max="36500" step="1">
+                    </div>
+                    <div class="col-md-6 mb-2">
+                        <label for="job_logs_keep_days" class="form-label">Keep finished job logs for (days)</label>
+                        <input type="number" class="form-control" id="job_logs_keep_days" name="job_logs_keep_days" value="{{ settings.get('job_logs_keep_days') or 30 }}" min="0" max="36500" step="1">
+                    </div>
                 </div>
             </div>
         </div>

@@ -76,6 +76,11 @@ def _prune_jellyfin_events():
         logger.info(f"Removed {removed} Jellyfin event(s) older than the retention setting.")
 
 
+def _purge_logs():
+    from synchub import log_purge
+    log_purge.purge_and_report()
+
+
 def _daily_picks():
     from synchub import discover
     sent = discover.send_daily_picks()
@@ -111,6 +116,14 @@ JOBS = (
 )
 
 
+def automation_gap_minutes():
+    """How often missing titles are requested: the gap between requests, at least a minute."""
+    try:
+        return max(1, int(settings.get("request_gap_minutes")))
+    except (TypeError, ValueError):
+        return 10
+
+
 def configure():
     scheduler.remove_all_jobs()
     scheduler.add_job(ddns.run_update, "interval", minutes=ddns.interval_minutes(), id="job_ddns", max_instances=1, coalesce=True)
@@ -123,6 +136,7 @@ def configure():
     scheduler.add_job(_dashboard_welcome_close, "interval", seconds=15, id="job_dashboard_welcome_close", max_instances=1, coalesce=True)
     scheduler.add_job(_reap_jobs, "interval", seconds=REAPER_SECONDS, id="job_reaper", max_instances=1, coalesce=True)
     scheduler.add_job(_prune_jellyfin_events, "interval", hours=24, id="job_prune_jellyfin_events", max_instances=1, coalesce=True)
+    scheduler.add_job(_purge_logs, "interval", hours=24, id="job_purge_logs", max_instances=1, coalesce=True)
     scheduler.add_job(_follow_better_copies, "interval", minutes=1, id="job_better_copy_tracking", max_instances=1, coalesce=True)
     scheduler.add_job(_quality_pass, "interval", minutes=5, id="job_quality_pass", max_instances=1, coalesce=True)
     scheduler.add_job(_purge_previews, "interval", hours=6, id="job_purge_previews", max_instances=1, coalesce=True)
@@ -134,6 +148,8 @@ def configure():
     from synchub import backup
     if backup.keep_count():
         scheduler.add_job(tasks.backup_database, "cron", hour=3, minute=30, id="job_backup", max_instances=1, coalesce=True, misfire_grace_time=3600)
+    gap = automation_gap_minutes()
+    scheduler.add_job(tasks.request_missing, "interval", minutes=gap, id="job_requests", max_instances=1, coalesce=True)
     dvr_seconds = dvr_poll_seconds()
     if dvr_seconds > 0 and settings.get("dvr_enabled") == "1":
         scheduler.add_job(tasks.sync_dvr, "interval", seconds=dvr_seconds, id="job_dvr", max_instances=1, coalesce=True)
