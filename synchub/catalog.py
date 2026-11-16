@@ -1,6 +1,6 @@
 """Read-side queries for the pages: who wants what, the dashboard list, and items that still need a human."""
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from synchub import ratings, settings, states
 
@@ -72,6 +72,23 @@ def _added_dates(conn):
     newest = {r["series_id"]: r["newest"] for r in conn.execute(
         "SELECT series_id, MAX(date_created) AS newest FROM src_jellyfin_item WHERE type = 'episode' AND removed_at IS NULL AND date_created IS NOT NULL AND series_id IS NOT NULL GROUP BY series_id")}
     return {item: max(filter(None, (own.get(item), newest.get(item)))) for item in set(own) | set(newest)}
+
+
+def recently_added_titles(conn, limit=6, days=30, today=None):
+    """The newest titles in the Jellyfin library, newest first: [{'id', 'kind', 'title', 'year', 'added'}]. Only what was added within `days`. A lean read
+    (no per-title state work), for the TV screen, which asks every half minute. A show counts as added when its newest episode arrived."""
+    today = date.fromisoformat(today) if today else date.today()
+    cutoff = (today - timedelta(days=days)).isoformat()
+    added, links = _added_dates(conn), _active_links(conn, "jellyfin", "src_jellyfin_item", "item_id")
+    fresh = sorted(((added[item][:10], media_id) for media_id, item in links.items() if item in added and added[item][:10] >= cutoff), reverse=True)
+    out = []
+    for day, media_id in fresh[:limit * 3]:
+        m = conn.execute("SELECT id, kind, title, year FROM media WHERE id = ?", (media_id,)).fetchone()
+        if m:
+            out.append({"id": m["id"], "kind": m["kind"], "title": m["title"], "year": m["year"], "added": day})
+        if len(out) == limit:
+            break
+    return out
 
 
 def jellyfin_app_config(conn):

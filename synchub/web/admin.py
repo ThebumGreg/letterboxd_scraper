@@ -121,6 +121,13 @@ def register(app):
             return jsonify(ok=False, message=str(exc)), 409
         return jsonify(ok=True, message=f"Compacted: {out['before_mb']} MB to {out['after_mb']} MB.", **out)
 
+    @app.route("/api/tools/previews-clear", methods=["POST"])
+    def api_tools_previews_clear():
+        from synchub import data_usage
+        cleared, freed = data_usage.clear_old_previews()
+        return jsonify(ok=True, cleared=cleared, freed_bytes=freed,
+                       message=f"Deleted the clips of {cleared} old preview{'' if cleared == 1 else 's'}, freeing {freed / 1e6:.1f} MB." if cleared or freed else "No old preview clips to delete.")
+
     @app.route("/api/tools/live-session")
     def api_tools_live_session():
         """What Jellyfin reports for people watching live TV right now. Only reads; keys, tokens and addresses are left out."""

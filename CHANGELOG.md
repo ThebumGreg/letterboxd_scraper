@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.9.5
+
+One small migration (055). No worker change. Update SyncHub.
+
+**Dashboard and System.**
+- **Library status** (System > Library status): the health line, the Jellyfin counts ("Jellyfin movies: 12 items = 12 titles here"), the file breakdown (labels, different shares, unlinked files, space saved) and the counts moved here from the top of the dashboard. The dashboard keeps only the counts (In Library, In Progress, Queued, Missing, Partial). The health dot now sits in the top bar of every page.
+- **My watchlist on the dashboard**, as a row like Continue Watching: "Now in the library" (with Watch now) and "Still missing". It shows only for a signed-in person with something on their watchlist. It never requests anything.
+- **Sort** on the title list: Most wanted, Title, Year, Status, Recently added, Recently watched (yours when you are signed in, everyone's otherwise). It is remembered in the browser.
+
+**SyncHub storage** (System > SyncHub storage): the data folder as a whole and what takes the room: database (file, journal, empty space and the biggest tables, with the Compact button), preview clips (with Delete old), backups, logs, posters, TV settings, and each worker's work folder as it reports it. One reading a day is kept for 90 days and drawn as small charts, so growth shows. The free space on the drive is shown with a bar. Image and container sizes appear when the Docker socket is mounted read-only: the Unraid template has an optional, empty "Docker socket" path (set it to `/var/run/docker.sock`); SyncHub only reads sizes.
+
+**TV morning screen: What's new.** A strip of up to six posters of what was added to Jellyfin in the last 30 days, above the quote, on the morning and evening screens. Settings > TV dashboard has a switch (on by default); nothing shows when nothing is new.
 ## 1.9.4
 
 Update SyncHub. One small migration (no worker change). **Requests start in dry run** after this update: the migration switches both "Dry run" boxes on, so nothing is asked of Radarr or Sonarr until you switch them off.

@@ -66,6 +66,10 @@ When someone's phone joins the home Wi-Fi after being away, the TV shows a full-
 - **Seeing why:** the Welcome home section lists what happened lately ("Sam came home: quiet hours, nothing shown"). **Try it on the TV now** shows it for the first person.
 - Needs each person's phone set to use its real Wi-Fi address (same note as for students). Only "this phone is on the home Wi-Fi" is known, never where anyone is. A phone on mobile data shows as home a few seconds to a minute after it joins the Wi-Fi.
 
+## What's new
+
+A strip of up to six posters, above the quote line, of what was added to the Jellyfin library in the last 30 days (a show counts when its newest episode arrived). It shows on the morning and the evening screen, and not at all when nothing is new. Settings > TV dashboard > **What's new** turns it off. Posters come from SyncHub's own poster cache, so nothing is loaded from the internet.
+
 ## The evening screen (tomorrow)
 
 Switch it on in Screen. Between 8 and 10 pm (setting) on Sunday to Thursday (setting) the same page shows **tomorrow**: tomorrow's weather and a hint ("Rain tomorrow: pack umbrellas"), each student's leave-by time or no school, and each calendar person's events. **Show tomorrow now** and the "tomorrow screen" link let you try it any time.

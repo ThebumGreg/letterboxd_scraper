@@ -34,7 +34,7 @@ def sizes(top=8):
             how = "row counts only"
         tables = []
         for name in [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]:
-            tables.append({"name": name, "rows": conn.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0], "mb": _mb(by_table.get(name, 0))})
+            tables.append({"name": name, "rows": conn.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0], "mb": _mb(by_table.get(name, 0)), "bytes": by_table.get(name, 0)})
     finally:
         conn.close()
     tables.sort(key=lambda t: (t["mb"], t["rows"]), reverse=True)

@@ -26,5 +26,6 @@
   <Config Name="Data" Target="/data" Default="/mnt/cache/appdata/synchub" Mode="rw" Description="Database, logs, poster cache, TV settings and backups. Use the cache or pool path, not /mnt/user (SQLite needs real file locking)." Type="Path" Display="always" Required="true" Mask="false">/mnt/cache/appdata/synchub</Config>
   <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User the app runs as (99 is Unraid's nobody)." Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
   <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group the app runs as (100 is Unraid's users)." Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="Docker socket (optional)" Target="/var/run/docker.sock" Default="" Mode="ro" Description="Leave empty to keep this off. Set to /var/run/docker.sock to let SyncHub read its own image and container size for System, SyncHub storage. Read-only; SyncHub only asks Docker for sizes." Type="Path" Display="advanced" Required="false" Mask="false"></Config>
   <Config Name="Time zone" Target="TZ" Default="UTC" Mode="" Description="For the logs and the nightly backup at 03:30, for example America/Los_Angeles." Type="Variable" Display="always" Required="false" Mask="false">UTC</Config>
 </Container>

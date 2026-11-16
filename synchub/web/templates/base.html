@@ -20,6 +20,11 @@
             <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">
                 <span class="text-success">Sync</span>Hub
             </a>
+            {% if health %}
+            <a href="{{ url_for('status_page') }}" class="text-decoration-none ms-2 me-auto" id="healthDot" title="{{ health.summary }}. Open System status." aria-label="System status: {{ health.summary }}">
+                <i class="bi bi-circle-fill text-{{ {'ok': 'success', 'warn': 'warning', 'bad': 'danger'}.get(health.state, 'success') }}" aria-hidden="true"></i><span class="visually-hidden">{{ health.summary }}</span>
+            </a>
+            {% endif %}
             {% set remote = menu|selectattr('endpoint', 'defined')|selectattr('endpoint', 'equalto', 'tv_remote_page')|first %}
             {% if remote %}<a class="btn btn-outline-success btn-sm ms-auto me-2 d-lg-none" href="{{ remote.href }}" aria-label="Remote"><i class="bi bi-tv" aria-hidden="true"></i> Remote</a>{% endif %}
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
