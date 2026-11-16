@@ -496,3 +496,80 @@ def test_a_job_waiting_for_the_gpu_is_shown_as_such(conn):
     jobs.progress(conn, jid, w["id"], stage="wait_gpu", progress=0.2, message="Copied here, waiting for the GPU (3 min)", now=later(5))
     got = jobs.get(conn, jid)
     assert got["stage"] == "wait_gpu" and jobs.lifecycle(got) == ("working", "Waiting for the GPU")
+
+
+# ---------------------------------------------------------------- worker roles
+CONVERT = {"op": "convert", "change": {"video": {"action": "transcode"}}}
+REMUX = {"op": "convert", "change": {"video": {"action": "copy"}}}
+
+
+def seen_worker(conn, name, encoders=(), role=None, slots=2, now=T0):
+    w = worker(conn, name, slots=slots)
+    conn.execute("UPDATE worker SET capabilities = ?, last_seen = ?, settings = ? WHERE id = ?",
+                 (jobs.json.dumps({"ops": ["convert", "scan", "quality", "compress_test", "preview"], "encoders": list(encoders)}), now,
+                  jobs.json.dumps({"role": role} if role else {}), w["id"]))
+    return workers.get(conn, w["id"], now)
+
+
+def test_job_classes():
+    assert jobs.job_class({"kind": "library", "plan": CONVERT}) == "encode"
+    assert jobs.job_class({"kind": "scan", "plan": {"op": "compress_test"}}) == "encode"
+    assert jobs.job_class({"kind": "preview", "plan": {}}) == "encode"
+    for plan in (REMUX, {"op": "quality"}, {"op": "scan"}, {"op": "copy"}, {"op": "quality_ai"}, {"op": "rename"}):
+        assert jobs.job_class({"kind": "library", "plan": plan}) == "light", plan
+
+
+def test_default_role_follows_what_the_worker_reports(conn):
+    assert workers.role(seen_worker(conn, "cpu")) == "checks"
+    assert workers.role(seen_worker(conn, "igpu", ["hevc_vaapi"])) == "encodes"
+    assert workers.role(seen_worker(conn, "forced", ["hevc_vaapi"], role="checks")) == "checks"
+    assert workers.role(worker(conn, "new")) == "encodes"              # nothing reported yet: trusted
+
+
+def test_a_checks_only_worker_never_takes_an_encode_but_takes_checks(conn):
+    cpu, gpu = seen_worker(conn, "cpu"), seen_worker(conn, "gpu", ["hevc_vaapi"])
+    encode, check = queue(conn, plan=CONVERT), queue(conn, "scan", plan={"op": "quality"})
+    assert [j["id"] for j in jobs.claim(conn, cpu, 2, now=T0)] == [check]
+    assert jobs.claim(conn, cpu, 2, now=T0) == []
+    assert [j["id"] for j in jobs.claim(conn, gpu, 2, now=T0)] == [encode]
+
+
+def test_a_third_encoding_worker_joins_the_pool(conn):
+    a, b = seen_worker(conn, "a", ["hevc_nvenc"], slots=1), seen_worker(conn, "b", ["hevc_qsv"], slots=1)
+    first, second = queue(conn, plan=CONVERT), queue(conn, plan=CONVERT)
+    assert [j["id"] for j in jobs.claim(conn, a, 1, now=T0)] == [first]
+    assert [j["id"] for j in jobs.claim(conn, b, 1, now=T0)] == [second]
+
+
+def test_a_waiting_encode_says_why_when_no_encoding_worker_is_online(conn):
+    cpu = seen_worker(conn, "cpu")
+    encode = queue(conn, plan=CONVERT)
+    assert jobs.claim(conn, cpu, 1, now=T0) == []
+    assert "takes encodes" in jobs.get(conn, encode)["wait_reason"]
+    conn.execute("UPDATE worker SET last_seen = ?", (later(7200),))                          # the checks worker is still online two hours on
+    assert jobs.stuck(conn, now=later(7200)) == [{"id": encode, "title": "library job", "reason": "no worker that takes encodes is online and ready"}]
+
+
+def test_light_jobs_prefer_a_checks_worker_but_never_stick(conn):
+    cpu, gpu = seen_worker(conn, "cpu"), seen_worker(conn, "gpu", ["hevc_vaapi"])
+    check = queue(conn, "scan", plan={"op": "quality"})
+    assert jobs.claim(conn, gpu, 1, now=T0) == []                                           # the checks worker has a free slot and goes first
+    assert [j["id"] for j in jobs.claim(conn, gpu, 1, now=later(jobs.LIGHT_HOLD_SECONDS + 1))] == [check]    # it did not take it in time
+
+
+def test_light_jobs_go_straight_to_the_encoding_worker_when_the_checks_worker_is_full_or_gone(conn):
+    gpu = seen_worker(conn, "gpu", ["hevc_vaapi"])
+    first = queue(conn, "scan", plan={"op": "quality"})
+    assert [j["id"] for j in jobs.claim(conn, gpu, 1, now=T0)] == [first]                  # no checks worker at all
+    cpu = seen_worker(conn, "cpu", slots=1)
+    queue(conn, "scan", plan={"op": "quality"})
+    taken = queue(conn, "scan", plan={"op": "scan"})
+    assert len(jobs.claim(conn, cpu, 1, now=T0)) == 1                                       # the checks worker's only slot is now busy
+    assert [j["id"] for j in jobs.claim(conn, gpu, 1, now=T0)]                              # so the GPU worker is not made to wait
+    assert taken
+
+
+def test_a_pinned_encode_does_not_reach_a_checks_worker(conn):
+    cpu = seen_worker(conn, "cpu")
+    queue(conn, plan=CONVERT, pinned_worker_id=cpu["id"])
+    assert jobs.claim(conn, cpu, 1, now=T0) == []

@@ -149,6 +149,24 @@ def can_run(worker, job):
     return True
 
 
+LIGHT_HOLD_SECONDS = 60            # a light job waits this long for a checks-only worker with a free slot before an encoding worker may take it
+
+
+def job_class(job):
+    """'encode' for a job that encodes video (a conversion that re-encodes, a compression test, a preview), otherwise 'light' (scans, checks,
+    hashes, remuxes, renames, copies, hides, deletes). Only an encoding worker takes an encode."""
+    plan = job["plan"] if isinstance(job.get("plan"), dict) else {}
+    if job["kind"] == "preview" or plan.get("op") in ("preview", "compress_test"):
+        return "encode"
+    if plan.get("op") == "convert" and isinstance((plan.get("change") or {}).get("video"), dict) and plan["change"]["video"].get("action") == "transcode":
+        return "encode"
+    return "light"
+
+
+def _has_room(w):
+    return w["enabled"] and not w["paused"] and not w["draining"] and not w.get("revoked") and w["online"] and w["running"] < w["slots"]
+
+
 def claim(conn, worker, free_slots, free_bytes=None, now=None):
     """Gives the worker up to `free_slots` queued jobs it is allowed and able to run. A disabled, paused or draining worker gets none."""
     if not worker["enabled"] or worker["paused"] or worker["draining"]:
@@ -163,6 +181,12 @@ def claim(conn, worker, free_slots, free_bytes=None, now=None):
         return []
     tags = set(worker["tags"])
     claimed = []
+    others = []                                        # the other workers, read once and only when a job's class needs them
+    def peers():
+        if not others:
+            others.append([w for w in workers.list_all(conn, now) if w["id"] != worker["id"]])
+        return others[0]
+    mine = workers.role(worker)
     # Space already promised: what the jobs this worker is running may still need, plus what it is given in this call. Counted in full (some of it is
     # already used and so already missing from free_bytes), which errs on the side of waiting rather than filling the disk.
     reserved = conn.execute("SELECT COALESCE(SUM(need_bytes), 0) FROM job WHERE worker_id = ? AND status = 'running'", (worker["id"],)).fetchone()[0] or 0
@@ -173,6 +197,13 @@ def claim(conn, worker, free_slots, free_bytes=None, now=None):
         if len(claimed) >= room:
             break
         job = row(r)
+        klass = job_class(job)
+        if klass == "encode" and mine != "encodes":
+            if not any(workers.takes_encodes(w) and _has_room(w) and not workers.throttled(conn, w["id"]) for w in peers()):
+                _note_wait(conn, job, "waiting for a worker that takes encodes: none is online and ready (this worker is set to checks and light jobs)")
+            continue                                   # an encode always waits for an encoding worker, however long it takes
+        if klass == "light" and mine == "encodes" and job["pinned_worker_id"] != worker["id"] and _held_for_checks(conn, job, peers(), now):
+            continue                                   # a checks-only worker with a free slot gets the first minute, so this one stays free for encodes
         why = wait_reason(worker, job, free_bytes, reserved)
         if why:
             _note_wait(conn, job, f"{worker['name']}: {why}")
@@ -196,6 +227,15 @@ def claim(conn, worker, free_slots, free_bytes=None, now=None):
     return claimed
 
 
+def _held_for_checks(conn, job, peers, now):
+    since = max(job.get("created_at") or "", job.get("not_before") or "")
+    if since and since <= _later(now, -LIGHT_HOLD_SECONDS):
+        return False
+    from synchub import workers
+    return any(workers.role(w) == "checks" and _has_room(w) and not workers.throttled(conn, w["id"])
+               and wait_reason(w, job, w["status"].get("work_free_bytes") if isinstance(w.get("status"), dict) else None) is None for w in peers)
+
+
 STUCK_AFTER_SECONDS = 3600         # a queued job nothing can take for this long is "stuck": it shows as a problem and sends a notification
 
 
@@ -205,14 +245,18 @@ def stuck(conn, now=None, after_seconds=STUCK_AFTER_SECONDS):
     Returns [{'id', 'title', 'reason'}]."""
     now = now or db.now()
     limit = _later(now, -after_seconds)
-    ready = [r for r in conn.execute("SELECT id, last_seen, enabled, paused, draining, revoked_at FROM worker")
+    from synchub import workers
+    ready = [r for r in conn.execute("SELECT * FROM worker")
              if r["enabled"] and not r["paused"] and not r["draining"] and not r["revoked_at"] and _fresh(r["last_seen"], now)]
+    encoders_ready = any(workers.takes_encodes(workers.row(r, now)) for r in ready)
     out = []
-    for r in conn.execute("SELECT id, title, created_at, not_before, wait_reason FROM job WHERE status = 'queued' AND cancel_requested = 0 ORDER BY id"):
+    for r in conn.execute("SELECT id, kind, plan, title, created_at, not_before, wait_reason FROM job WHERE status = 'queued' AND cancel_requested = 0 ORDER BY id"):
         since = max(r["created_at"] or "", r["not_before"] or "")
         if since > limit:
             continue
         reason = None if ready else "no worker is online and ready to take it"
+        if ready and not encoders_ready and job_class({"kind": r["kind"], "plan": _load(r["plan"], {})}) == "encode":
+            reason = "no worker that takes encodes is online and ready"
         reason = reason or r["wait_reason"]
         if reason:
             out.append({"id": r["id"], "title": r["title"], "reason": reason})

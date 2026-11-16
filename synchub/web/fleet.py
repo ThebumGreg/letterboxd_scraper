@@ -260,12 +260,23 @@ def snapshot(conn):
     for w in raw:
         w["benchmark_last"] = workers.last_benchmark(conn, w["id"])
     able = [w for w in raw if w["enabled"] and not w["revoked"] and w["online"]]
+    running = {}
+    for r in conn.execute("SELECT worker_id, kind, plan FROM job WHERE status = 'running'"):
+        counts_by = running.setdefault(r["worker_id"], {"encode": 0, "light": 0})
+        counts_by[jobs.job_class({"kind": r["kind"], "plan": jobs._load(r["plan"], {})})] += 1
+    for w in raw:
+        w["role"], w["role_label"] = workers.role(w), workers.ROLE_LABELS[workers.role(w)]
+        w["role_chosen"] = workers.setting(w, "role") != "auto"
+        w["running_classes"] = running.get(w["id"], {"encode": 0, "light": 0})
+    queued_encodes = sum(1 for r in conn.execute("SELECT kind, plan FROM job WHERE status = 'queued' AND cancel_requested = 0")
+                         if jobs.job_class({"kind": r["kind"], "plan": jobs._load(r["plan"], {})}) == "encode")
+    no_encoder = bool(queued_encodes) and not any(workers.takes_encodes(w) and w["enabled"] and not w["revoked"] and w["online"] and not w["paused"] and not w["draining"] for w in raw)
     listed = [describe_job(j) for j in jobs.recent(conn, 50)]
     for j in listed:
         j["waiting_for"] = _waiting_for(j, able)
         j["record_id"] = links.record_for_job(conn, j)
     tasks = [describe_task(t) for t in workers.recent_tasks(conn, 30)]
-    return {"workers": [describe_worker(w, root_names, workers.last_update(conn, w["id"]), workers.host_seen(conn, w["id"]), workers.heat_state(conn, w["id"])) for w in raw], "jobs": listed, "tasks": tasks, "rows": merged_rows(listed, tasks), "counts": counts, "summary": summary, "root_names": root_names, "app_version": __version__, "app_build": buildinfo.get()}
+    return {"workers": [describe_worker(w, root_names, workers.last_update(conn, w["id"]), workers.host_seen(conn, w["id"]), workers.heat_state(conn, w["id"])) for w in raw], "jobs": listed, "tasks": tasks, "rows": merged_rows(listed, tasks), "counts": counts, "summary": summary, "encode_warning": (f"{queued_encodes} job{'s' if queued_encodes != 1 else ''} that encode video {'are' if queued_encodes != 1 else 'is'} waiting, and no worker that takes encodes is online. Bring one online, or set a worker's role to Encodes allowed on Edit worker." if no_encoder else None), "root_names": root_names, "app_version": __version__, "app_build": buildinfo.get()}
 
 
 def _setup(conn, name, token=None):
