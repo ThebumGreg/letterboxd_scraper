@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.3
+
+No migration. Update SyncHub, then update the workers (the version must match).
+
+**Worker roles.** Each worker now has a role, set on **Workers > More > Edit** under "What this worker takes": **Automatic** (encodes when a GPU or iGPU encoder works, otherwise checks only), **Encodes allowed**, or **Checks and light jobs only**. A checks-only worker never takes a video encode, a compression test or a preview; those wait for a worker that is allowed to encode, however long that takes, and a third PC with a graphics card simply joins that pool. Quality and damage checks, scans, hashes, remuxes (such as Dolby Vision 7 to 8.1), renames, copies, hides and deletes can run on any worker, but while a checks-only worker is online with a free slot, encoding workers leave those to it for the first minute, so the GPU stays free for encodes (after a minute they take them, so nothing sticks). A waiting encode shows "waiting for a worker that takes encodes" on Jobs, and counts as stuck after an hour. The Workers page shows each role as a badge, how many jobs of each kind run now, and a warning when encodes are waiting and no encoding worker is online. Set WOne to **Checks and light jobs only** when it comes back.
+
 ## 1.9.2
 
 No migration, no worker change. Update SyncHub.
