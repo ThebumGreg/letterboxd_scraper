@@ -193,7 +193,7 @@ class RokuDriver(Driver):
         raise DeviceError("The Roku answered 404 for every media player channel it has (tried " + ", ".join(tried) + "). It has no channel that plays a "
                           "video from an address, so cameras cannot be shown on it this way.")
 
-    def view_stream(self, url, package):
+    def view_stream(self, url, package, video=True):
         """Shows a camera full screen with the Play on Roku channel (HLS from the go2rtc relay; expect a few seconds of delay)."""
         return self.play_url(url, "Camera", "hls")
 

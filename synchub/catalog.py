@@ -208,6 +208,23 @@ def jellyfin_movie_reconcile(conn):
             "duplicates": len(matched) - len({linked[i] for i in matched}), "unmatched": len(items) - len(matched)}
 
 
+def unlinked_jellyfin_movies(conn):
+    """The Jellyfin movie items that are not tied to a title here (the "not matched yet" count on Library status), with why: no TMDB id in Jellyfin, or an id that
+    has not been linked yet. A person can link each with a TMDB id."""
+    rows = conn.execute("""SELECT t.item_id, t.name, t.year, t.tmdb_id, t.path FROM src_jellyfin_item t
+                           WHERE t.type = 'movie' AND t.removed_at IS NULL AND NOT EXISTS (
+                               SELECT 1 FROM link l JOIN media m ON m.id = l.entity_id AND m.kind = 'movie'
+                               WHERE l.source = 'jellyfin' AND l.entity_type = 'media' AND l.source_key = t.item_id)
+                           ORDER BY t.name COLLATE NOCASE""").fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["reason"] = ("Jellyfin has no TMDB id for it" if not d["tmdb_id"] else f"Jellyfin gives TMDB {d['tmdb_id']} but it is not linked yet")
+        d["folder"] = (d.pop("path") or "").rsplit("/", 1)[0] if d.get("path") else ""
+        out.append(d)
+    return out
+
+
 def requesters_of(conn, media_id):
     return demand(conn).get(media_id, {"wanted_by": [], "watched_by": []})
 

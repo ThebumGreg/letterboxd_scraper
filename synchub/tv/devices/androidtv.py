@@ -11,6 +11,7 @@ from pathlib import Path
 from . import Driver, DeviceError, register
 
 DREAM_APPS = {"com.google.android.apps.tv.dreamx"}   # the Google TV screensaver ("Ambient mode")
+SCREENSAVER_KEYS = ("screensaver_enabled", "screensaver_activate_on_sleep", "screensaver_activate_on_dock")   # secure settings that start the screensaver
 STREAM_URL_RE = re.compile(r"^[a-z]{3,5}://[A-Za-z0-9._:/?=&%~-]{1,300}$")
 PACKAGE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$")
 KEY_RE = re.compile(r"^(KEYCODE_[A-Z0-9_]+|\d{1,3})$")
@@ -352,6 +353,27 @@ class AndroidTVDriver(Driver):
         raise DeviceError("The command ran, but the TV is not showing a screensaver. Turn one on in Settings > System > "
                           "Ambient mode (or Screen saver), then run Diagnose to see the current settings.")
 
+    def hold_screensaver_off(self):
+        """Switches the screensaver off (secure settings) and returns the old values, so restore_screensaver can put them back.
+        Values are "null" when the TV had never set them."""
+        saved = {}
+        for key in SCREENSAVER_KEYS:
+            saved[key] = self._adb("shell", "settings", "get", "secure", key, action=f"read {key}", quiet=True, timeout=8).strip() or "null"
+            self._adb("shell", "settings", "put", "secure", key, "0", action=f"screensaver off ({key})", quiet=True, timeout=8)
+        self.log("screensaver", "", None, True, None, "screensaver turned off while the dashboard is open (was: " +
+                 ", ".join(f"{k}={v}" for k, v in saved.items()) + ")")
+        return saved
+
+    def restore_screensaver(self, saved):
+        for key, value in (saved or {}).items():
+            if key not in SCREENSAVER_KEYS:
+                continue
+            if value in ("null", ""):
+                self._adb("shell", "settings", "delete", "secure", key, action=f"restore {key}", quiet=True, timeout=8)
+            elif re.fullmatch(r"-?\d{1,10}", value):
+                self._adb("shell", "settings", "put", "secure", key, value, action=f"restore {key}", quiet=True, timeout=8)
+        self.log("screensaver", "", None, True, None, "screensaver put back as it was: " + ", ".join(f"{k}={v}" for k, v in (saved or {}).items()))
+
     def diagnose(self):
         sections = [
             ("device", "getprop ro.product.manufacturer; getprop ro.product.model; getprop ro.build.version.release"),
@@ -399,14 +421,14 @@ class AndroidTVDriver(Driver):
                 return out
         raise DeviceError(f"No launchable activity found for {app_id}")
 
-    def view_stream(self, url, package):
+    def view_stream(self, url, package, video=True):
         """Opens a stream address full screen in a video player app (ADB `am start`, with and without a media type: players differ in which they
         declare). Returns what happened, or raises DeviceError if the app would not open."""
         if not STREAM_URL_RE.match(url) or not PACKAGE_RE.match(package):
             raise DeviceError("bad stream address or player app")
         self.leave_screensaver()
         last = ""
-        for media in ("-t video/* ", ""):
+        for media in (("-t video/* ", "") if video else ("",)):
             last = self._adb("shell", f"am start -a android.intent.action.VIEW -d '{url}' {media}{package}", action=f"view {package}")
             if not re.search(r"Error|unable to resolve|does not exist|Exception", last):
                 return f"opened in {package}"

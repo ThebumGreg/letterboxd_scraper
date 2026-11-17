@@ -57,6 +57,7 @@
                 </div>
             </div>
             {{ switch('dash_skip_busy', 'Leave the TV alone if something is already playing or another app is open', settings.dash_skip_busy) }}
+            {{ switch('dash_screensaver_off', 'Turn the TV screensaver off while the dashboard is open (put back afterwards)', settings.dash_screensaver_off) }}
             {{ switch('dash_sleep_after', 'Put the TV back to sleep afterwards if the dashboard woke it', settings.dash_sleep_after) }}
             <div class="fw-semibold mb-1">Morning screen</div>
             {{ switch('dash_enabled', 'Show the morning screen on the TV', settings.dash_enabled, dims='#dashMorning', dims_when='unchecked') }}
@@ -78,8 +79,8 @@
                 {{ switch('dash_close_when_left', 'Close the screen early once every student with a watched phone has left for school', settings.dash_close_when_left) }}
             </div>
             <div class="fw-semibold mb-1">What's new</div>
-            {{ switch('dash_new_on', "Show a What's new strip with the newest titles in the library", settings.dash_new_on) }}
-            <div class="form-text mb-3">Up to six posters of what was added to Jellyfin in the last 30 days, above the quote. Nothing shows when nothing is new. Appears on the morning and the evening screen.</div>
+            {{ switch('dash_new_on', "Show the newest titles (1 or 2 posters) between the time and the weather", settings.dash_new_on) }}
+            <div class="form-text mb-3">One or two posters of what was added to Jellyfin in the last 30 days, between the time and the weather. Nothing shows when nothing is new. Appears on the morning and the evening screen.</div>
             <div class="fw-semibold mb-1">Evening screen (tomorrow)</div>
             {{ switch('dash_eve_on', 'Show tomorrow on the TV in the evening', settings.dash_eve_on, dims='#dashEvening', dims_when='unchecked') }}
             <div id="dashEvening">

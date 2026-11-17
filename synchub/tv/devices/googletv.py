@@ -279,10 +279,17 @@ class GoogleTVDriver(Driver):
                           ("" if self.adb else '. Set "adb": true on this device to launch apps over ADB, which works on TVs '
                                                "that reject app links."))
 
-    def view_stream(self, url, package):
+    def hold_screensaver_off(self):
+        return self.adb.hold_screensaver_off() if self.adb else None
+
+    def restore_screensaver(self, saved):
+        if self.adb:
+            self.adb.restore_screensaver(saved)
+
+    def view_stream(self, url, package, video=True):
         """Shows a camera stream full screen: through ADB in a video player app when ADB is on, else by sending the Remote protocol the address."""
         if self.adb:
-            return self.adb.view_stream(url, package)
+            return self.adb.view_stream(url, package, video=video)
         ok, why = self._launch_link(url, None)
         if not ok:
             raise DeviceError(f"The TV did not take the stream address ({why}). Set \"adb\": true on this device so SyncHub can open it in {package}.")

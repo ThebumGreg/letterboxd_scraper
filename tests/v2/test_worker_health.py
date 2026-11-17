@@ -16,7 +16,7 @@ def minutes(n, base=T0):
 
 
 def status(temp=60.0, free=200 * GB, cpu=20.0):
-    return {"work_free_bytes": free, "gpu_encodes": 1, "host": {"cpu_percent": cpu, "temps": {"cpu": temp, "max": temp + 3}, "mem_available_bytes": 8 * GB, "gpu_mhz": 900}}
+    return {"work_free_bytes": free, "gpu_encodes": 1, "host": {"cpu_percent": cpu, "temps": {"cpu": temp, "max": temp + 3}, "mem_available_bytes": 8 * GB, "gpu_mhz": 900, "gpu_percent": 35}}
 
 
 def checkin(conn, w, at, **kw):
@@ -64,7 +64,7 @@ def test_a_row_is_kept_every_five_minutes_and_old_rows_go(conn):
     checkin(conn, w, far)
     assert [r["at"] for r in conn.execute("SELECT at FROM worker_stat")] == [far]  # the rest are over 14 days old
     pts = workers.history(conn, w["id"], 24, now=far)
-    assert pts == [{"at": far, "cpu": 20.0, "temp": 60.0, "free_gb": 200, "running": 0, "gpu_encodes": 1}]
+    assert pts == [{"at": far, "cpu": 20.0, "temp": 60.0, "free_gb": 200, "running": 0, "gpu_encodes": 1, "gpu": 35.0}]
 
 
 def test_history_is_averaged_down_to_the_points_asked_for(conn):

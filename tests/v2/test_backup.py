@@ -560,3 +560,38 @@ def test_old_api_payloads_and_finished_job_logs_are_purged_by_age(v2, conn):
     assert [r[0] for r in conn.execute("SELECT job_id FROM job_log ORDER BY job_id")] == [new, running]
     settings.set_value("logs_keep_days", "0"); settings.set_value("job_logs_keep_days", "0")
     assert log_purge.purge() == {}                                                                   # 0 keeps everything
+
+
+# ---------------------------------------------------------------- copies made before upgrades
+def _fake_copies(folder_path, names, size=10):
+    folder_path.mkdir(parents=True, exist_ok=True)
+    for i, name in enumerate(names):
+        p = folder_path / name
+        p.write_bytes(b"x" * size)
+        os.utime(p, (1_700_000_000 + i * 60, 1_700_000_000 + i * 60))
+
+
+def test_only_the_newest_pre_upgrade_copies_are_kept(folder):
+    names = [f"premigrate-v{n}-2026110{n}-000000.db" for n in range(1, 8)] + ["synchub-20261101-000000.db", "synchub-20261102-000000.db", "notes.txt"]
+    _fake_copies(backup.BACKUP_DIR, names)
+    removed = backup.prune_premigrate(3)
+    assert sorted(removed) == [f"premigrate-v{n}-2026110{n}-000000.db" for n in range(1, 5)]
+    left = sorted(p.name for p in backup.BACKUP_DIR.iterdir())
+    assert left == sorted(["premigrate-v5-20261105-000000.db", "premigrate-v6-20261106-000000.db", "premigrate-v7-20261107-000000.db", "synchub-20261101-000000.db", "synchub-20261102-000000.db", "notes.txt"])
+    assert backup.prune_premigrate(0) == ["premigrate-v5-20261105-000000.db", "premigrate-v6-20261106-000000.db"]      # at least one always stays
+    assert backup.prune_premigrate(3, directory=backup.BACKUP_DIR / "nope") == []
+
+
+def test_the_folder_total_counts_each_kind(folder, v2):
+    _fake_copies(backup.BACKUP_DIR, ["premigrate-v1-a.db", "premigrate-v2-b.db", "synchub-1.db", "synchub-1.tv.zip", "odd.db"], size=1024)
+    assert backup.folder_summary() == {"nightly": 1, "before_upgrade": 2, "other": 1, "bytes": 5 * 1024}
+    assert backup.describe_folder().startswith("1 nightly, 2 before upgrades, 1 other")
+    assert settings.get("premigrate_keep") == "3"
+
+
+def test_the_settings_page_shows_the_folder_and_the_delete_button_works(folder, client, v2):
+    _fake_copies(backup.BACKUP_DIR, [f"premigrate-v{n}-x.db" for n in range(1, 6)])
+    page = client.get("/settings").get_data(as_text=True)
+    assert "0 nightly, 5 before upgrades" in page and 'id="premigrate_keep"' in page and "Delete old pre-upgrade copies" in page
+    got = client.post("/api/backup/prune-upgrade-copies").get_json()
+    assert got["ok"] and got["removed"] == 2 and len(list(backup.BACKUP_DIR.glob("premigrate-*.db"))) == 3

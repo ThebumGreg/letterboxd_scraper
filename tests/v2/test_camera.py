@@ -322,7 +322,7 @@ class CameraTV(Driver):
     def status(self, quiet=False):
         return {"online": True, "power": "on", "app": self.app}
 
-    def view_stream(self, url, package):
+    def view_stream(self, url, package, video=True):
         self.events.append(("view", url, package))
         if type(self).quits > 0:
             type(self).quits -= 1

@@ -79,6 +79,17 @@ def verdict_for(mean, worst, floor, allowed=8):
     return "pass"
 
 
+GROWTH = 1.05                       # a clip whose encode is more than this much of the source's own bitrate shows the conversion would not make the file smaller
+
+
+def no_saving(clips):
+    """True when the encoded clips are as big as, or bigger than, the source's own picture: an already lean file (a small .m4v, a modest 1080p) that a high-quality profile
+    would only inflate. Looks at the clips that were encoded and have both rates; needs most of them to agree."""
+    both = [c for c in clips if c.get("encoded_kbps") and c.get("source_kbps")]
+    grown = [c for c in both if c["encoded_kbps"] > c["source_kbps"] * GROWTH]
+    return bool(both) and len(grown) * 2 > len(both)
+
+
 def atypical(clips):
     """The clips that say little about the whole film: one whose picture is far quieter than the rest (end credits, a black or still scene) would drag the size estimate down
     and one far busier would push it up. Only judged with three clips or more, by the clip's source bitrate against the median of them all. Returns a set of indexes."""
@@ -200,9 +211,13 @@ def sync(conn, job_id, now=None):
             info = _json(rec["video_info_json"])
             mean, worst, floor = result.get("mean"), result.get("min"), floor_override(conn) or result.get("floor")
             verdict = verdict_for(mean, worst, floor, row["margin"] if row["margin"] is not None else 8)
+            grew = no_saving(result["clips"])
+            if grew:
+                verdict = "fail"                                      # a conversion that makes the file bigger is never worth it, whatever it scores
             est = estimate_gb(result["clips"], plan.get("size_policy"), plan.get("profile"), info.get("video_kbps"))
             values.update(mean_vmaf=mean, min_vmaf=worst, floor=floor, verdict=verdict, est_gb=est, result_json=json.dumps(result), finished_at=now,
-                          message=f"{VERDICT_LABELS[verdict]}: VMAF {mean:g}, worst {worst:g}." if verdict else (result.get("skipped") or "Not scored."))
+                          message=(f"{VERDICT_LABELS[verdict]}: VMAF {mean:g}, worst {worst:g}." if verdict else (result.get("skipped") or "Not scored."))
+                          + (" No saving: the converted picture came out as big as, or bigger than, the original, so this file is already small. Leave it alone." if grew else ""))
     elif target in ("failed", "cancelled"):
         values.update(message=(job["error"] or job["review_reason"] or job["message"] or ("Cancelled." if target == "cancelled" else "The worker could not run the test."))[:400], finished_at=now)
     elif target == "running":

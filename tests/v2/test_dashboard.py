@@ -375,10 +375,17 @@ class FakeDevice:
     def status(self, quiet=False):
         return {"online": True, "power": self.power_state, "app": self.app}
 
-    def view_stream(self, url, package):
+    def view_stream(self, url, package, video=True):
         self.opened.append((url, package))
         self.app = package
         return "opened"
+
+    def hold_screensaver_off(self):
+        self.ss = "off"
+        return {"screensaver_enabled": "1", "screensaver_activate_on_sleep": "null"}
+
+    def restore_screensaver(self, saved):
+        self.ss = ("restored", saved)
 
     def close_stream(self, package):
         self.closed.append(package)
@@ -989,3 +996,27 @@ def test_a_key_press_every_few_minutes_keeps_the_screensaver_away(tv, monkeypatc
     tv.app = "com.netflix.ninja"
     show.tick(at(2026, 11, 9, 6, 40))
     assert tv.keys == ["KEYCODE_WAKEUP"]                                          # another app in front: no key presses
+
+
+def test_the_screensaver_is_turned_off_while_the_dashboard_is_open_and_put_back(tv):
+    show.tick(at(2026, 11, 9, 6, 31))
+    assert tv.ss == "off"
+    held = json.loads(settings.get("dash_screensaver_saved"))
+    assert held["values"]["screensaver_enabled"] == "1"
+    show.tick(at(2026, 11, 9, 7, 0))
+    assert tv.ss == "off"                                                       # still held, not read twice
+    show.tick(at(2026, 11, 9, 8, 31))
+    assert tv.ss[0] == "restored" and tv.ss[1]["screensaver_enabled"] == "1"
+    assert settings.get("dash_screensaver_saved") == ""
+
+
+def test_a_left_over_screensaver_change_is_put_back_when_nothing_is_shown(tv):
+    settings.set_value("dash_screensaver_saved", json.dumps({"device": "front", "values": {"screensaver_enabled": "1"}}))
+    show.tick(at(2026, 11, 9, 12, 0))                                           # outside the window, nothing on screen
+    assert tv.ss[0] == "restored" and settings.get("dash_screensaver_saved") == ""
+
+
+def test_the_screensaver_stays_alone_when_the_switch_is_off(tv):
+    settings.set_value("dash_screensaver_off", "0")
+    show.tick(at(2026, 11, 9, 6, 31))
+    assert not hasattr(tv, "ss")

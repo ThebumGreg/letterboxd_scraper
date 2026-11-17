@@ -42,6 +42,45 @@ def _save(state, mode="morning"):
     settings.set_value(_KEYS[mode], json.dumps(state))
 
 
+_SS_KEY = "dash_screensaver_saved"
+
+
+def hold_screensaver(dev, step=None):
+    """Turns the TV screensaver off while a dashboard page is up. The old values are kept in the `dash_screensaver_saved` setting (not the daily state), so
+    a restart or a day change can still put them back. Held once: a second call while it is held does nothing."""
+    if settings.get("dash_screensaver_off") != "1" or settings.get(_SS_KEY):
+        return
+    try:
+        saved = dev.hold_screensaver_off()
+    except DeviceError as exc:
+        if step:
+            step(f"Could not turn the TV screensaver off ({exc}); it is left as it was", ok=False)
+        return
+    if saved:
+        settings.set_value(_SS_KEY, json.dumps({"device": dev.id, "values": saved}))
+        if step:
+            step("Turned the TV screensaver off while the dashboard is open")
+
+
+def release_screensaver(dev=None, step=None):
+    """Puts the screensaver back as it was. Safe to call at any time; does nothing when it was not turned off."""
+    try:
+        held = json.loads(settings.get(_SS_KEY) or "{}")
+    except ValueError:
+        held = {}
+    if not held:
+        return
+    try:
+        (dev or _runtime_device()[1]).restore_screensaver(held.get("values"))
+    except (DeviceError, ShowError) as exc:
+        if step:
+            step(f"Could not put the TV screensaver back ({exc}); will try again", ok=False)
+        return
+    settings.set_value(_SS_KEY, "")
+    if step:
+        step("Put the TV screensaver back as it was")
+
+
 def page_url(mode="morning"):
     base = settings.get("synchub_url").strip().rstrip("/")
     if not base:
@@ -109,7 +148,8 @@ def start(manual=False, now=None, mode="morning"):
     standby = before.get("power") in ("standby", None)
     if not orchestrator.ensure_on(dev, step):
         raise ShowError(f"{dev.name} would not wake up (see the TV log).")
-    step(f"Opening the dashboard in {package}: {dev.view_stream(url, package)}")
+    step(f"Opening the dashboard in {package}: {dev.view_stream(url, package, video=False)}")
+    hold_screensaver(dev, step)
     state = _state((now or config.now()).date(), mode)
     state.update(shown=True, hidden=False, was_standby=standby)
     # "Show on the TV now" outside the window stays up for a while: the minute job would otherwise close it at once for being outside the window
@@ -135,12 +175,14 @@ def stop(manual=False, now=None, mode="morning"):
         app = None
     if app == package or manual:
         step(f"Closed the dashboard: {dev.close_stream(package)}")
+        release_screensaver(dev, step)
         if state.get("was_standby") and settings.get("dash_sleep_after") == "1":
             time.sleep(2)
             dev.power(False)
             step("Put the TV back to sleep")
     else:
         step(f"The dashboard is not on screen ({app or 'TV off'}), so {dev.name} was left as it is")
+        release_screensaver(dev, step)
     state.update(shown=False, hidden=manual or state.get("hidden", False))
     _save(state, mode)
     return steps
@@ -159,7 +201,8 @@ def revive(mode="morning"):
         return False
     r.logbook.add("system", dev.id, "dashboard", response="The TV went to its screensaver: opening the dashboard again", ok=True)
     dev.leave_screensaver(status)
-    r.logbook.add("system", dev.id, "dashboard", response=f"Opened the dashboard again: {dev.view_stream(page_url(mode), settings.get('dash_app'))}", ok=True)
+    r.logbook.add("system", dev.id, "dashboard", response=f"Opened the dashboard again: {dev.view_stream(page_url(mode), settings.get('dash_app'), video=False)}", ok=True)
+    hold_screensaver(dev)
     return True
 
 
@@ -195,6 +238,11 @@ def tick(now=None):
     if not settings.get("dash_tv"):
         return
     now = now or config.now()
+    if settings.get(_SS_KEY) and not any(_state(now.date(), m)["shown"] for m in MODES):
+        try:
+            release_screensaver()                         # nothing is on screen (a restart, a day change, switched off): never leave the screensaver off
+        except Exception as exc:
+            logger.warning(f"[dashboard] screensaver restore: {exc}")
     for mode in MODES:
         if active(mode):
             _tick_window(now, mode)

@@ -6,6 +6,7 @@ Anything weaker becomes a pending match_review item for a human. Two records tha
 same kind are never silently merged: the TMDB ID decides, and the disagreement is raised for review.
 """
 import logging
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -256,6 +257,29 @@ def link_manually(conn, source, source_key, kind, tmdb_id, title=None, year=None
     conn.execute("UPDATE match_review SET status = CASE WHEN candidate_tmdb_id = ? THEN 'approved' ELSE 'dismissed' END WHERE source = ? AND source_key = ? AND status = 'pending'",
                  (str(tmdb_id), source, source_key))
     return media_id
+
+
+def suggest_as_show(conn, tmdb, source, source_key):
+    """A film from a list that is really a TV series (Letterboxd lists some): searches TMDB's TV shows for the title and adds the best few as pending suggestions
+    of kind 'show' for a person to approve. Returns how many suggestions were added (0: nothing found)."""
+    table, col, title_col = (("src_letterboxd_entry", "slug", "title") if source == "letterboxd" else ("src_serializd_entry", "serializd_show_id", "title"))
+    row = conn.execute(f"SELECT MAX({title_col}) AS title, MAX(year) AS year FROM {table} WHERE {col} = ?", (source_key,)).fetchone()
+    if not row or not row["title"]:
+        return 0
+    wanted = re.sub(r"[^a-z0-9]+", " ", row["title"].lower()).strip()
+    added = 0
+    for found in tmdb.search_tv(row["title"])[:4]:
+        if not found.get("id"):
+            continue
+        name = found.get("name") or found.get("original_name") or ""
+        same = re.sub(r"[^a-z0-9]+", " ", name.lower()).strip() == wanted
+        year = (found.get("first_air_date") or "")[:4]
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO match_review (source, source_key, source_title, source_year, kind, candidate_media_id, candidate_tmdb_id, confidence, reason) VALUES (?,?,?,?,?,?,?,?,?)",
+            (source, source_key, row["title"], row["year"], "show", None, str(found["id"]), 0.9 if same else 0.6,
+             f"Listed as a film, but TMDB has a TV series called {name}" + (f" ({year})" if year else "")))
+        added += cur.rowcount
+    return added
 
 
 def approve_review(conn, review_id):

@@ -281,8 +281,14 @@
                     <input type="number" class="form-control" id="backup_keep" name="backup_keep" value="{{ settings.get('backup_keep') or 7 }}" min="0" max="365" step="1" required>
                     <div class="form-text">0 turns the nightly copy off.</div>
                 </div>
+                <div class="mb-2">
+                    <label for="premigrate_keep" class="form-label">Copies to keep from before upgrades</label>
+                    <input type="number" class="form-control" id="premigrate_keep" name="premigrate_keep" value="{{ settings.get('premigrate_keep') or 3 }}" min="1" max="50" step="1" required>
+                    <div class="form-text">Each upgrade that changes the database saves a complete copy first (hundreds of MB each). Only the newest few are kept; they are the way back from a bad upgrade.</div>
+                </div>
                 {{ switch('backup_slim', 'Smaller copies: leave out logs and history', settings.backup_slim) }}
                 <div class="form-text mb-2">The copy keeps settings, profiles, links, library decisions, quality and test results and workers. It leaves out the API payload log, Jellyfin events, worker charts, job logs and sent notifications, which fill in again by themselves. A restore works the same either way. The copy made just before an upgrade is always complete.</div>
+                <div class="small text-body-secondary mb-1">Folder: {{ backup_folder }}. <button type="button" class="btn btn-link btn-sm p-0 align-baseline" id="pruneUpgradeCopies">Delete old pre-upgrade copies</button> <span id="pruneUpgradeNote"></span></div>
                 <div class="small text-body-secondary">Newest copy: {% if last_backup %}<strong>{{ last_backup[0].name }}</strong>, {{ '%.1f'|format(last_backup[0].stat().st_size / 1048576) }} MB, {{ last_backup[1].strftime('%Y-%m-%d %H:%M') }}{% else %}none yet{% endif %}.</div>
             </div>
         </div>
@@ -481,6 +487,16 @@
 
 {% block scripts %}
 {% include "_dashboard_settings_js.html" %}
+<script>
+    document.getElementById('pruneUpgradeCopies')?.addEventListener('click', async (e) => {
+        const note = document.getElementById('pruneUpgradeNote'); e.target.disabled = true; note.textContent = '';
+        try {
+            const r = await (await fetch('/api/backup/prune-upgrade-copies', { method: 'POST', headers: { 'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || '' } })).json();
+            note.textContent = r.message + (r.folder ? ' Folder now: ' + r.folder + '.' : '');
+        } catch (err) { note.textContent = 'Could not reach SyncHub.'; }
+        e.target.disabled = false;
+    });
+</script>
 <script>
     // Cameras to serve: tick the ones the relay and the TV pop-up should offer (all when none is ticked).
     (function () {

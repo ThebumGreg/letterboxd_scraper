@@ -87,7 +87,7 @@ def box(tmp_path):
     calls.write_text("")
     # curl: the idle check answers $SHIM_IDLE; a report is written down. SHIM_HUB_DOWN makes every call fail.
     curl = ('echo "curl $*" >> "$SHIM_LOG"\n[ -z "${SHIM_HUB_DOWN:-}" ] || { echo "curl: (7) down" >&2; exit 7; }\n'
-            'case "$*" in *update/check*) if [ -n "${SHIM_ANSWER:-}" ]; then printf \"%s\\n\" \"$SHIM_ANSWER\"; else echo "{\\"ok\\":true,\\"idle\\":${SHIM_IDLE:-true}}"; fi;; *) echo "{\\"ok\\":true}";; esac')
+            'case "$*" in *update/check*) if [ -n "${SHIM_ANSWER:-}" ]; then printf \"%s\\n\" \"$SHIM_ANSWER\"; else echo "{\\"ok\\":true,\\"idle\\":${SHIM_IDLE:-true},\\"hub_version\\":\\"${SHIM_HUB:-99.0.0}\\"${SHIM_EXTRA:-}}"; fi;; *) echo "{\\"ok\\":true}";; esac')
     # the updater: succeeds, or fails with a build error while $SHIM_FAIL_UPDATE exists; writes down which version it was asked to deploy
     updater = ('case "$*" in *--ai-status*) cat "$SHIM_AI" 2>/dev/null || echo off; exit 0;; esac\n'
                'case "$*" in *"--ai-quality on"*) echo on > "$SHIM_AI";; *"--ai-quality off"*) echo off > "$SHIM_AI";; esac\n'
@@ -165,14 +165,48 @@ def test_a_window_over_midnight_counts(box):
     assert head_version(box) == "1.1.0"
 
 
-def test_when_synchub_does_not_answer_it_waits_and_keeps_the_report(box):
+def test_when_synchub_does_not_answer_it_waits_even_inside_the_window(box):
     publish(box, "1.1.0")
     code, out, calls = box.run(SHIM_HUB_DOWN="1")
-    assert "waiting" in out and head_version(box) == "1.0.0"
-    code, out, calls = box.run(SHIM_HUB_DOWN="1", SYNCHUB_UPDATE_WINDOW="00:00-23:59")           # window: updates anyway, cannot report
-    assert head_version(box) == "1.1.0" and (box.state / "pending.json").exists()
-    code, out, calls = box.run()                                                                   # SyncHub is back: the kept report goes out
-    assert not (box.state / "pending.json").exists() and len(reports_of(calls)) == 2 and '"status":"ok"' in reports_of(calls)[-1]
+    assert "waiting" in out and "did not say which version" in out and head_version(box) == "1.0.0"
+    box.run(SHIM_HUB_DOWN="1", SYNCHUB_UPDATE_WINDOW="00:00-23:59")                                # no answer, so no update, window or not
+    assert head_version(box) == "1.0.0"
+    box.run()                                                                                      # SyncHub is back and runs a newer version: updates
+    assert head_version(box) == "1.1.0"
+
+
+def test_new_code_waits_until_synchub_runs_that_version(box):
+    publish(box, "1.1.0")
+    code, out, calls = box.run(SHIM_HUB="1.0.0")
+    assert "New code 1.1.0" in out and "waiting: SyncHub runs 1.0.0. Update SyncHub first" in out and head_version(box) == "1.0.0"
+    assert any('"status":"waiting"' in c for c in calls.splitlines())
+    again = box.run(SHIM_HUB="1.0.0")[2]
+    assert again.count('"status":"waiting"') == calls.count('"status":"waiting"')                  # said once, not every minute
+    box.run(SHIM_HUB="1.1.0")                                                                      # SyncHub updated: the same version is enough
+    assert head_version(box) == "1.1.0"
+
+
+def test_versions_compare_as_numbers_not_text(box):
+    publish(box, "1.9.10")
+    box.run(SHIM_HUB="1.9.9")
+    assert head_version(box) == "1.0.0"
+    box.run(SHIM_HUB="1.9.10")
+    assert head_version(box) == "1.9.10"
+
+
+def test_the_update_ahead_switch_and_now_skip_the_wait(box):
+    publish(box, "1.1.0")
+    box.run(SHIM_ANSWER=answer(hub_version="1.0.0", update_ahead=True))
+    assert head_version(box) == "1.1.0"
+    publish(box, "1.2.0")
+    box.run("--now")
+    assert head_version(box) == "1.2.0"
+
+
+def test_the_manual_update_button_waits_too(box):
+    publish(box, "1.1.0")
+    code, out, calls = box.run(SHIM_ANSWER=answer(request="update", hub_version="1.0.0"))
+    assert head_version(box) == "1.0.0" and "waiting" in out
 
 
 def test_a_failed_update_puts_the_old_code_back_and_is_not_tried_again(box):
@@ -237,7 +271,7 @@ def test_update_worker_says_the_old_worker_keeps_running_when_the_build_fails(tm
 # ---------------------------------------------------------------- requests from the Workers page, settings from SyncHub
 def answer(**fields):
     import json
-    return json.dumps({"ok": True, "idle": True, "running": 0, "auto_update": True, "window": "", "request": None, **fields})
+    return json.dumps({"ok": True, "idle": True, "running": 0, "auto_update": True, "window": "", "request": None, "hub_version": "99.0.0", **fields})
 
 
 def test_an_update_request_updates_now_without_waiting_for_the_hour(box):
@@ -687,3 +721,19 @@ def test_the_workers_page_offers_the_power_buttons(client, v2):
     page = client.get("/workers/fragment").get_data(as_text=True)
     assert 'data-worker-action="host_shutdown"' in page and 'data-worker-action="host_shutdown_now"' in page and 'data-worker-action="host_reboot"' in page
     assert 'data-fleet-toggle="workers"' in page and 'data-fleet-toggle="machines"' in page
+
+
+def test_the_check_tells_the_helper_which_version_synchub_runs_and_a_waiting_report_is_shown(client, v2):
+    from synchub import __version__
+    wid, headers = authed(v2)
+    got = client.post("/api/worker/v1/update/check", json={}, headers=headers).get_json()
+    assert got["hub_version"] == __version__ and got["update_ahead"] is False
+    ok = client.post("/api/worker/v1/update/report", headers=headers, json={"status": "waiting", "version": "9.9.9", "commit": "abc", "error": "SyncHub runs 1.0.0. Update SyncHub first"})
+    assert ok.status_code == 200
+    page = client.get("/workers").get_data(as_text=True)
+    assert "New code 9.9.9 is waiting: SyncHub runs 1.0.0. Update SyncHub first" in page
+
+
+def test_newer_than_hub_compares_numbers():
+    assert workers.newer_than_hub("1.9.10", "1.9.9") and not workers.newer_than_hub("1.9.9", "1.9.10")
+    assert not workers.newer_than_hub("1.9.6", "1.9.6") and not workers.newer_than_hub("junk", "1.9.6")

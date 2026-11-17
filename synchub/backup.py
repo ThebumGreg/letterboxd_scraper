@@ -195,6 +195,49 @@ def prune(keep=None, directory=None):
     return [p.name for p in gone]
 
 
+def premigrate_keep_count():
+    try:
+        return max(int(settings.get("premigrate_keep")), 1)
+    except (TypeError, ValueError):
+        return 3
+
+
+def prune_premigrate(keep=None, directory=None):
+    """Deletes all but the newest `keep` copies made before an upgrade (always at least one stays). They stay complete: they are the way back from a bad migration.
+    Returns the names removed."""
+    keep = premigrate_keep_count() if keep is None else max(int(keep), 1)
+    files = sorted(Path(directory or BACKUP_DIR).glob(f"{PREMIGRATE_PREFIX}*.db"), key=lambda p: (p.stat().st_mtime, p.name))
+    gone = files[:-keep] if len(files) > keep else []
+    for path in gone:
+        path.unlink(missing_ok=True)
+    return [p.name for p in gone]
+
+
+def folder_summary(directory=None):
+    """What the backups folder holds: {'nightly': n, 'before_upgrade': n, 'other': n, 'bytes': total}. Partial files and TV archives count towards the total."""
+    out = {"nightly": 0, "before_upgrade": 0, "other": 0, "bytes": 0}
+    folder = Path(directory or BACKUP_DIR)
+    if not folder.is_dir():
+        return out
+    for path in folder.iterdir():
+        if not path.is_file():
+            continue
+        out["bytes"] += path.stat().st_size
+        if path.suffix == ".db" and path.name.startswith(PREMIGRATE_PREFIX):
+            out["before_upgrade"] += 1
+        elif path.suffix == ".db" and path.name.startswith(PREFIX):
+            out["nightly"] += 1
+        elif path.suffix == ".db":
+            out["other"] += 1
+    return out
+
+
+def describe_folder(directory=None):
+    f = folder_summary(directory)
+    parts = [f"{f['nightly']} nightly", f"{f['before_upgrade']} before upgrades"] + ([f"{f['other']} other"] if f["other"] else [])
+    return ", ".join(parts) + f", {f['bytes'] / 1073741824:.1f} GB in all" if f["bytes"] >= 1073741824 else ", ".join(parts) + f", {f['bytes'] / 1048576:.0f} MB in all"
+
+
 def latest(directory=None):
     """(path, modified time) of the newest copy of either kind, or None."""
     files = [p for p in Path(directory or BACKUP_DIR).glob("*.db")]

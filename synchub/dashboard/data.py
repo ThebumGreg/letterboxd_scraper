@@ -44,7 +44,7 @@ _lock = threading.Lock()
 _last = {}                    # (database, mode asked for) -> (taken at, change counter, answer)
 _key_locks = {}
 KEEP_SECONDS = 15
-NEW_COUNT, NEW_DAYS = 6, 30         # the "What's new" strip: this many posters, from this many days back
+NEW_COUNT, NEW_DAYS = 2, 30         # the "What's new" box between the time and the weather: this many posters, from this many days back
 
 
 def cached(mode=None):
@@ -67,7 +67,7 @@ def cached(mode=None):
 
 
 def whats_new():
-    """Up to six titles added to the library in the last month, for the strip on the TV screen ([] when the switch is off or nothing is new). Failures leave the strip out."""
+    """Up to two titles added to the library in the last month, for the box between the time and the weather on the TV screen ([] when the switch is off or nothing is new). Failures leave the strip out."""
     if settings.get("dash_new_on") != "1":
         return []
     from synchub import catalog, db
