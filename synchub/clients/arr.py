@@ -72,6 +72,10 @@ class RadarrClient(_Arr):
     def movies(self):
         return self._get("GetLibrary", "/api/v3/movie", timeout=60)
 
+    def movie(self, movie_id):
+        """One movie exactly as Radarr has it (send it back whole when updating)."""
+        return self._get("GetMovie", f"/api/v3/movie/{int(movie_id)}", timeout=30)
+
     def calendar(self, start, end):
         """Monitored movies with a release between two dates (YYYY-MM-DD)."""
         return self._get("GetCalendar", "/api/v3/calendar", params={"start": start, "end": end, "unmonitored": "false"}, timeout=30)
