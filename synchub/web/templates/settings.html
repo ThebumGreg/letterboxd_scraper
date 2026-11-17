@@ -163,7 +163,7 @@
                 <p class="small text-body-secondary">When automatic adding is on below, SyncHub asks Radarr and Sonarr for titles people want that are not in the library, a few at a time. It never has more of its own requests downloading than the limits say: a new one goes out only when the count is under the limit. The most wanted come first, then the oldest. A title is asked for once; one you remove from Radarr or Sonarr is not asked for again. Titles without a TMDB or TVDB number are skipped.</p>
                 {% if request_status %}<div class="alert alert-secondary py-2 small mb-3"><strong>{{ request_status.text }}.</strong>
                     Movies: {{ 'dry run' if request_status.radarr.dry_run else 'live' }}{{ '' if request_status.radarr.enabled else ', switched off' }}, {{ request_status.radarr.today }} requested in the last day.
-                    Shows: {{ 'dry run' if request_status.sonarr.dry_run else 'live' }}{{ '' if request_status.sonarr.enabled else ', switched off' }}, {{ request_status.sonarr.today }} requested in the last day.</div>{% endif %}
+                    Shows: {{ 'dry run' if request_status.sonarr.dry_run else 'live' }}{{ '' if request_status.sonarr.enabled else ', switched off' }}, {{ request_status.sonarr.today }} requested in the last day. <a href="{{ url_for('system_requests_page') }}">See what was requested and when</a>.</div>{% endif %}
                 <div class="row">
                     <div class="col-md-6 mb-3">
                         <label for="request_gap_minutes" class="form-label">Minutes between requests</label>

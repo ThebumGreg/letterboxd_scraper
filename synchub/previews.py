@@ -111,6 +111,18 @@ def folder(preview_id):
     return os.path.join(root_folder(), str(int(preview_id)))
 
 
+def folder_bytes(preview_id):
+    """What a preview's clip folder takes on disk (0 when the clips are gone)."""
+    total = 0
+    for base, _dirs, files in os.walk(folder(preview_id)):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(base, name))
+            except OSError:
+                pass
+    return total
+
+
 def clip_path(preview_id, name):
     if name not in CLIP_NAMES:
         raise PreviewError("Unknown clip.")

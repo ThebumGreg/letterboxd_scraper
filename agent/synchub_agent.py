@@ -44,7 +44,7 @@ try:
 except ImportError:                        # pragma: no cover - exercised by tests that remove the module
     media_analysis = None
 
-__version__ = "1.9.8"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
+__version__ = "1.9.9"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
 PROTOCOL = 1                       # the SyncHub worker API version this agent speaks
 MARKER = ".synchub-root"
 IGNORE_FILE = ".ignore"           # an empty file with this name makes Jellyfin skip the folder
@@ -1001,12 +1001,22 @@ def hdr_tonemap_chain(transfer):
             "zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
 
 
-def vmaf_clip_command(ffmpeg, encoded, source, start, length, threads, tonemap=None):
+FPS_RE = re.compile(r"^\d{1,6}(/\d{1,6})?$")
+
+
+def vmaf_clip_command(ffmpeg, encoded, source, start, length, threads, tonemap=None, shift=0, fps=None, subsample=0):
     """Scores a test clip (a file that starts at 0) against the same window of the film. The clip was encoded with the same `-ss start -t length` read of the
     film, so both sides show the same frames. Both are scaled to at most 1080p, the size the VMAF model was trained for. `tonemap` (the picture's transfer, for an HDR
-    picture) tone-maps both sides to SDR first."""
-    scale = "setpts=PTS-STARTPTS,scale=-2:'min(1080,ih)':flags=bicubic" + ("," + hdr_tonemap_chain(tonemap) if tonemap else "") + ",format=yuv420p"
-    graph = f"[0:v:0]{scale}[d];[1:v:0]{scale}[r];[d][r]libvmaf=n_threads={max(1, int(threads))}"
+    picture) tone-maps both sides to SDR first.
+    The last three are for the alignment probe that runs when a score is low (probe_alignment): `shift` moves the encoded clip that many frames against the film
+    (negative: the film against the clip), `fps` (like 24000/1001) puts both on one constant frame rate first, and `subsample` scores every Nth frame only, to be quick."""
+    tail = "scale=-2:'min(1080,ih)':flags=bicubic" + ("," + hdr_tonemap_chain(tonemap) if tonemap else "") + ",format=yuv420p"
+    rate = f",fps=fps={fps}" if fps and FPS_RE.match(str(fps)) else ""
+
+    def side(frames):
+        return (f"trim=start_frame={int(frames)}," if frames > 0 else "") + "setpts=PTS-STARTPTS" + rate + "," + tail
+    option = f":n_subsample={int(subsample)}" if subsample and int(subsample) > 1 else ""
+    graph = f"[0:v:0]{side(max(0, int(shift)))}[d];[1:v:0]{side(max(0, -int(shift)))}[r];[d][r]libvmaf=n_threads={max(1, int(threads))}{option}"
     return [ffmpeg, "-nostdin", "-hide_banner", "-v", "info", "-i", encoded, "-ss", f"{start:.3f}", "-t", f"{length:.3f}", "-i", source, "-lavfi", graph, "-f", "null", "-"]
 
 
@@ -2767,6 +2777,7 @@ class JobRunner(threading.Thread):
         planned = plan.get("change") if isinstance(plan.get("change"), dict) else {}
         change = {"video": planned.get("video") or {"action": "transcode"}}
         clips, fell_back, count = [], [], len(windows)
+        keep = bool(plan.get("keep_clips"))
         try:
             for index, (start, length) in enumerate(windows):
                 self.guard()
@@ -2817,14 +2828,26 @@ class JobRunner(threading.Thread):
                             skipped = "ffmpeg could not compute a VMAF score: " + (done.stdout or "")[-300:].strip()
                         else:
                             clip["vmaf"] = round(score, 2)
+                            if score < vmaf_floor(height):
+                                self.report_progress("preview", low + band * 0.8, f"Clip {index + 1} of {count}: checking the alignment", force=True)
+                                probe = self.probe_alignment(out, src, start, length, tonemap, video.get("r_frame_rate"))
+                                if probe:
+                                    clip["probe"] = probe
+                                    self.log.info(f"Alignment check of clip {index + 1}: best {probe['best']} scores {probe['best_vmaf']} (as is {probe['scores'].get('as is')})", **probe)
                     self.reporter.check()
                 self.log.info(f"Test clip {index + 1}/{count}", **clip)
                 clips.append(clip)
-                self._remove(out)
+                if keep:
+                    self.log.info(f"Kept the test clip for inspection: {out}")
+                else:
+                    self._remove(out)
         finally:
             if holding:
                 self.agent.gpu_give()
-            shutil.rmtree(work, ignore_errors=True)
+            if keep:
+                self.log.info(f"The test clips stay in {work} until the job folder is removed")
+            else:
+                shutil.rmtree(work, ignore_errors=True)
         scores = [c["vmaf"] for c in clips if c["vmaf"] is not None]
         if skipped and not scores:
             self.log.info(f"No quality score: {skipped}")
@@ -2835,6 +2858,27 @@ class JobRunner(threading.Thread):
         return {"op": "compress_test", "clips": clips, "encoder": kind, "fallback": fell_back or None, "requested_encoder": wanted, "hdr": facts["hdr"], "tonemapped": bool(tonemap and scores), "height": height, "floor": vmaf_floor(height), "skipped": skipped if not scores else None,
                 "mean": round(sum(scores) / len(scores), 2) if scores else None, "min": round(min(scores), 2) if scores else None, "duration": duration, "crf": profile.get("crf"),
                 "rate_mode": profile.get("rate_mode"), "elapsed": round(time.monotonic() - started, 1)}
+
+    def probe_alignment(self, encoded, src, start, length, tonemap, fps):
+        """A clip scored low gets a few quick extra scores (every 8th frame): as it is, on one constant frame rate, and with the encoded clip moved 1 and 2 frames
+        either way. When a shift or the constant rate scores far higher, the low score came from the two pictures being paired wrongly (odd frame timing in the
+        file), not from the encode. Returns {"scores": {...}, "best": name, "best_vmaf": score} or None."""
+        runs = [("as is", {}), *([("constant rate", {"fps": fps})] if fps and FPS_RE.match(str(fps)) else []), *[(f"{k:+d} frames", {"shift": k}) for k in (-2, -1, 1, 2)]]
+        found = {}
+        for name, extra in runs:
+            try:
+                done = subprocess.run(vmaf_clip_command(self.cfg.ffmpeg, encoded, src, start, length, min(4, os.cpu_count() or 1), tonemap, subsample=8, **extra),
+                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", timeout=300)
+            except (OSError, subprocess.SubprocessError):
+                continue
+            score = parse_vmaf(done.stdout) if done.returncode == 0 else None
+            if score is not None:
+                found[name] = round(score, 2)
+            self.reporter.check()
+        if not found:
+            return None
+        best = max(found, key=found.get)
+        return {"scores": found, "best": best, "best_vmaf": found[best]}
 
     def video_packet_bytes(self, settings, path, start, seconds):
         """Bytes of video in `seconds` from `start` (the whole file when `seconds` is None), summed from the packet sizes."""

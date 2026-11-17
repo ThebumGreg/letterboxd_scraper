@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.9.9
+
+Update SyncHub first, then the workers (the alignment check runs on the worker). No migration.
+
+**Compression test: alignment check.** When a clip scores under the floor, the worker now re-scores a short stretch of it five more ways (as is, on a constant frame rate, and the encoded clip shifted by one or two frames either way). If one of those scores at least 4 points higher, the clip is marked "misaligned" on the Record page with the better score: the low number came from the two pictures being paired wrongly, not from the encode. New setting Settings > Quality > "Keep the test clips" (off by default) leaves the clips and their work folder on the worker so they can be looked at.
+
+**Lists.** System > Requested titles shows every title SyncHub asked Radarr or Sonarr for by itself, when, and whether it is in Jellyfin yet (dry runs are not stored, so they do not show). System > Preview clips lists every preview with its film, date, status, decision and size on disk, with a link to open it.
+
+**Small.** The Record page says "HDR is always encoded on the CPU" next to the CPU choice for HDR tests, so the "CPU (HDR)" label no longer looks like a bug.
+
 ## 1.9.8
 
 Update SyncHub first. One small migration (057). Nothing changes on screen yet.

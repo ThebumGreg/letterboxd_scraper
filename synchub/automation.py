@@ -162,6 +162,21 @@ def request_status(conn, now=None):
     return out
 
 
+def request_log(conn, limit=500):
+    """Every title SyncHub asked Radarr or Sonarr for by itself, newest first, with where it stands now.
+    A dry run only logs what it would have asked, so it is not here."""
+    rows = conn.execute("""SELECT a.service, a.media_id, a.title, a.requested_at, m.year FROM auto_request a LEFT JOIN media m ON m.id = a.media_id
+                           ORDER BY a.requested_at DESC, a.rowid DESC LIMIT ?""", (int(limit),)).fetchall()
+    out = []
+    for r in rows:
+        row = dict(r)
+        row["in_jellyfin"] = _ever_in_jellyfin(conn, r["media_id"])
+        row["when"] = (r["requested_at"] or "")[:16]
+        row["label"] = "movie" if r["service"] == "radarr" else "show"
+        out.append(row)
+    return out
+
+
 def _remember(conn, service, item, now=None):
     conn.execute("INSERT OR IGNORE INTO auto_request (service, media_id, title, requested_at) VALUES (?, ?, ?, ?)", (service, item["media_id"], item["title"], now or db.now()))
     conn.commit()                                       # saved before the next network call: no write is left open while waiting for Radarr or Sonarr

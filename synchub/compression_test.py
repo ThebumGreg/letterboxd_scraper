@@ -90,6 +90,20 @@ def no_saving(clips):
     return bool(both) and len(grown) * 2 > len(both)
 
 
+ALIGN_GAIN = 4.0                    # a quick score this much higher when the clip is moved a frame or put on a constant frame rate means the pairing, not the encode, was the problem
+
+
+def misaligned(clip):
+    """A sentence ("scores 93.1 with a constant rate") when the alignment check found the low score of a clip came from the two pictures being paired wrongly; else None."""
+    probe = clip.get("probe") if isinstance(clip, dict) else None
+    if not isinstance(probe, dict) or not isinstance(probe.get("scores"), dict):
+        return None
+    base, best = probe["scores"].get("as is"), probe.get("best_vmaf")
+    if base is None or best is None or probe.get("best") == "as is" or best < base + ALIGN_GAIN:
+        return None
+    return f"scores {best:g} with {probe['best']} (quick check, {base:g} as is)"
+
+
 def atypical(clips):
     """The clips that say little about the whole film: one whose picture is far quieter than the rest (end credits, a black or still scene) would drag the size estimate down
     and one far busier would push it up. Only judged with three clips or more, by the clip's source bitrate against the median of them all. Returns a set of indexes."""
@@ -170,6 +184,7 @@ def request(conn, file_id, by="someone", now=None, encoder=None, force=False):
         "VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, 'Waiting for a worker.', ?, ?, ?)",
         (file_id, rec["size_bytes"], rec["mtime"], _profile_key(plan["profile"]), profile["name"], clips, seconds, allowed, size.numbers.get("size_gb"), by, now, now, plan.get("encoder"))).lastrowid
     title = rec.get("recommended_name") or rec["file_name"]
+    plan.update(keep_clips=settings.get("ctest_keep_clips", conn=conn) == "1")
     plan.update(op="compress_test", needs=[*[n for n in plan.get("needs", []) if n != "preview"], "compress_test"], clips=clips, seconds=seconds, duration=rec["duration_seconds"],
                 source_size=rec["size_bytes"], source_mtime=rec["mtime"], seed=test_id * 7919 + int(rec["size_bytes"] or 0) % 10007, test_id=test_id)
     job_id = jobs.create(conn, "scan", title=f"Compression test: {title}", ref=(REF, test_id), source=(rec["root_name"], rec["relative_path"]), plan=plan, priority=PRIORITY,
@@ -275,8 +290,9 @@ def describe(conn, rec):
            "when": (row["finished_at"] or row["created_at"] or "")[:10], "verdict": row["verdict"], "verdict_label": VERDICT_LABELS.get(row["verdict"]), "verdict_text": VERDICT_TEXT.get(row["verdict"]),
            "mean": row["mean_vmaf"], "min": row["min_vmaf"], "floor": row["floor"], "margin": row["margin"], "from_gb": row["from_gb"], "est_gb": row["est_gb"]}
     result = _json(row["result_json"])
-    out["parts"] = [{"at": _clock(c.get("start")), "vmaf": c.get("vmaf"), "source_mbps": round((c.get("source_kbps") or 0) / 1000, 1), "encoded_mbps": round((c.get("encoded_kbps") or 0) / 1000, 1)}
-                    for c in result.get("clips") or []]
+    out["parts"] = [{"at": _clock(c.get("start")), "vmaf": c.get("vmaf"), "source_mbps": round((c.get("source_kbps") or 0) / 1000, 1), "encoded_mbps": round((c.get("encoded_kbps") or 0) / 1000, 1),
+                     "misaligned": misaligned(c)} for c in result.get("clips") or []]
+    out["misaligned"] = sum(1 for part in out["parts"] if part["misaligned"])
     skip = atypical(result.get("clips") or [])
     for i, part in enumerate(out["parts"]):
         part["atypical"] = i in skip
