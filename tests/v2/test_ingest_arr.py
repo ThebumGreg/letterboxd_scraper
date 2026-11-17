@@ -113,3 +113,23 @@ def test_queue_item_that_returns_is_reopened(conn):
     radarr.sync_queue(conn, FakeRadarr([], []), now="2026-01-02 00:00:00")
     radarr.sync_queue(conn, FakeRadarr([], rec), now="2026-01-03 00:00:00")
     assert conn.execute("SELECT removed_at FROM src_arr_queue").fetchone()[0] is None
+
+
+def test_radarr_saves_folder_and_file_path(conn):
+    movies = [{"id": 1, "tmdbId": 949, "title": "Heat", "year": 1995, "hasFile": True, "path": "/movies/Heat (1995)",
+               "movieFile": {"relativePath": "Heat (1995).mkv", "size": 123}},
+              {"id": 2, "tmdbId": 5, "title": "None yet", "year": 2000, "hasFile": False, "path": "/movies/None yet (2000)"}]
+    radarr.sync_library(conn, FakeRadarr(movies), now="2026-01-01 00:00:00")
+    got = q(conn, "src_radarr_movie", "radarr_id")
+    assert (got["1"]["folder"], got["1"]["file_path"], got["1"]["file_size"]) == ("/movies/Heat (1995)", "/movies/Heat (1995)/Heat (1995).mkv", 123)
+    assert got["2"]["folder"] == "/movies/None yet (2000)" and got["2"]["file_path"] is None
+
+
+def test_sonarr_saves_series_folder_and_episode_file(conn):
+    series = [{"id": 10, "tvdbId": 1, "title": "Show", "year": 2020, "path": "/tv/Show"}]
+    eps = {10: [{"id": 5, "seasonNumber": 1, "episodeNumber": 1, "hasFile": True, "episodeFile": {"path": "/tv/Show/Season 1/S01E01.mkv", "size": 9}},
+                {"id": 6, "seasonNumber": 1, "episodeNumber": 2, "hasFile": False}]}
+    sonarr.sync_library(conn, FakeSonarr(series, eps), now="2026-01-01 00:00:00")
+    assert q(conn, "src_sonarr_series", "sonarr_id")["10"]["folder"] == "/tv/Show"
+    got = q(conn, "src_sonarr_episode", "sonarr_episode_id")
+    assert (got["5"]["file_path"], got["5"]["file_size"]) == ("/tv/Show/Season 1/S01E01.mkv", 9) and got["6"]["file_path"] is None

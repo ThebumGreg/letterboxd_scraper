@@ -3,6 +3,15 @@ from synchub.ingest.common import mark_unseen, touch
 from synchub.text import clean_id
 
 
+def _file_path(movie):
+    """The movie file's full path as Radarr reports it, or None (no file yet)."""
+    mf = movie.get("movieFile") or {}
+    if mf.get("path"):
+        return mf["path"]
+    rel, folder = mf.get("relativePath"), movie.get("path")
+    return f"{folder.rstrip('/')}/{rel}" if rel and folder else None
+
+
 def sync_library(conn, client, now=None):
     now = now or db.now()
     movies = client.movies()
@@ -12,6 +21,7 @@ def sync_library(conn, client, now=None):
             "radarr_id": str(m["id"]), "tmdb_id": clean_id(m.get("tmdbId")), "imdb_id": clean_id(m.get("imdbId")),
             "title": m.get("title"), "year": m.get("year") or None,
             "monitored": 1 if m.get("monitored") else 0, "has_file": 1 if m.get("hasFile") else 0,
+            "folder": m.get("path") or None, "file_path": _file_path(m), "file_size": (m.get("movieFile") or {}).get("size"),
         }, now)
         seen.append(str(m["id"]))
     return {"seen": len(seen), "removed": mark_unseen(conn, "src_radarr_movie", ("radarr_id",), seen, now)}
