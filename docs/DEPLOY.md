@@ -129,7 +129,7 @@ docker run -d --name synchub --init --restart unless-stopped \
 
 Controlling a TV, pairing a Google TV and playing a title only need the container to reach the TV's address, which works on any network type. Two things need the container to be **on your LAN**: *Scan network* (finds TVs by broadcasting) and *Wake-on-LAN* (a broadcast packet). On Unraid's default **Bridge** network they cannot work; give the container its own address (**Custom: br0**, with a fixed IP) or use **Host** (then port 5001 must be free). TVs can always be added by typing their address. The image includes `adb` for Google TV / Android TV; the key the TVs were told to trust is kept in `/data/tv`, so a replaced container is still trusted. Everything the TV pages remember (TVs, app choices, pairing) is in `/data/tv`, and the nightly backup saves it beside the database.
 
-### Seeing how much room SyncHub takes (System > SyncHub storage)
+### Seeing how much room SyncHub takes (System > SyncHub data)
 
 The page measures what it can from inside the container: the database, preview clips, backups, logs, posters and each worker's work folder, with one reading a day kept for 90 days. To also show the **image and container size**, give the container the Docker socket read-only: on Unraid fill in the optional *Docker socket* path with `/var/run/docker.sock` (mode read only); with a command add `-v /var/run/docker.sock:/var/run/docker.sock:ro`. SyncHub only sends read requests (container and image sizes). It stays off if the path is empty, and everything else on the page works without it.
 
@@ -186,7 +186,7 @@ docker start synchub
 
 The database that was there is kept beside it as `synchub.db.before-restore-<time>`. A copy from a *newer* SyncHub than the one running is refused.
 
-**Look at things.** `docker logs synchub` (start-up), the **Logs** page and `/data/logs/app.log` (everything, rotated), **Tools & Operations** and **System → Monitor → What it's doing now** (`/activity`) when a task looks stuck. For a worker: the **Logs** button on the Workers page fetches the worker's own log into SyncHub (filter, search, download), the **Machines** section shows its CPU, memory, graphics card and which encoders work, and a job's **Fetch full log** button gets that job's log; on the PC itself, `docker compose logs -f`.
+**Look at things.** `docker logs synchub` (start-up), the **Logs** page and `/data/logs/app.log` (everything, rotated), **Tools & Operations** and **System → Monitor → Logs → Diagnostics** (`/activity`) when a task looks stuck. For a worker: the **Logs** button on the Workers page fetches the worker's own log into SyncHub (filter, search, download), the **Machines** section shows its CPU, memory, graphics card and which encoders work, and a job's **Fetch full log** button gets that job's log; on the PC itself, `docker compose logs -f`.
 
 **Move to another server later:** the same three commands: `backup create`, `backup check`, copy, start.
 

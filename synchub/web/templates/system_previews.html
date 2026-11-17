@@ -5,7 +5,7 @@
 {% block content %}
 <div class="mb-3">
     <h2 class="mb-1">Preview clips</h2>
-    <p class="text-body-secondary mb-0">Every preview SyncHub has made, newest first. {{ rows|length }} in all, {{ total|filesize }} on disk. Old ones are cleared automatically; <a href="{{ url_for('system_storage_page') }}">SyncHub storage</a> has the Delete old button.</p>
+    <p class="text-body-secondary mb-0">Every preview SyncHub has made, newest first. {{ rows|length }} in all, {{ total|filesize }} on disk. Old ones are cleared automatically; <a href="{{ url_for('system_storage_page') }}">Data folder</a> has the Delete old button.</p>
 </div>
 <div class="panel p-3 mb-3" id="previewList">
 {% if rows %}

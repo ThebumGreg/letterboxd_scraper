@@ -8,6 +8,7 @@ from flask import Flask, g, jsonify, redirect, render_template, request, url_for
 
 from config import BASE_DIR
 from synchub import __version__, access, backup, buildinfo, db, ratings, tasks
+from synchub.web import system_tabs
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +30,9 @@ NAV = (
     )),
     ("System", (
         (None, "Run"), ("tools", "Tools & Operations"),
-        (None, "Monitor"), ("status_page", "System status"), ("system_library_page", "Library status"), ("system_storage_page", "SyncHub storage"), ("system_requests_page", "Requested titles"), ("system_previews_page", "Preview clips"), ("sessions_page", "Sessions"), ("activity_page", "What it's doing now"), ("logs_page", "Logs"), ("jellyfin_events_page", "Jellyfin events"), ("payloads_page", "Payloads"),
-        (None, "Admin"), ("players_page", "Players"), ("ddns_page", "Dynamic DNS"), ("people_page", "People"),
-        (None, "Remote"), ("tv_settings_page", "Remote Apps"), ("tv_setup_devices_page", "TVs"), ("tv_setup_advanced_page", "Remote Tools"),
+        (None, "Monitor"), ("group:status", "Status"), ("sessions_page", "Sessions"), ("group:logs", "Logs"), ("group:data", "SyncHub data"),
+        (None, "Admin"), ("people_page", "People"), ("ddns_page", "Dynamic DNS"),
+        (None, "Remote"), ("group:remote", "Remote setup"),
     )),
     ("settings_page", "Settings"),
 )
@@ -231,8 +232,22 @@ def create_app(start_scheduler=False, csrf=True):
             from synchub.web.media import TABS
             return [{"key": key, "label": label, "href": url_for(endpoint), "help": text} for key, label, endpoint, text in TABS if can(access.required(endpoint))]
 
+        def tabs_of(group):
+            """The tabs of a System page group this person may open: [{'key', 'label', 'href', 'help', 'endpoint'}]."""
+            return [{"key": key, "label": label, "href": url_for(endpoint), "help": text, "endpoint": endpoint}
+                    for key, label, endpoint, text in system_tabs.GROUPS[group][1] if can(access.required(endpoint))]
+
         def link(endpoint, label):
+            if endpoint.startswith("group:"):           # one entry for a group of pages: it opens the first tab this person may open
+                tabs = tabs_of(endpoint[6:])
+                return {"href": tabs[0]["href"], "label": label, "endpoint": endpoint, "also": [t["href"] for t in tabs]} if tabs else None
             return {"href": url_for(endpoint), "label": label, "endpoint": endpoint} if can(access.required(endpoint)) else None
+
+        def system_tabs_here():
+            """The tab row for the System page being shown (empty when it is not one of a group, or only one tab is open to this person)."""
+            group = system_tabs.group_of(request.endpoint)
+            tabs = tabs_of(group) if group else []
+            return {"group": group, "title": system_tabs.GROUPS[group][0], "tabs": tabs} if len(tabs) > 1 else None
 
         menu = []
         for first, second in NAV:
@@ -260,7 +275,7 @@ def create_app(start_scheduler=False, csrf=True):
                     menu.append({"label": first, "children": children})
         health = _health_dot() if can("logs") else None
         return {"health": health, "jellyfin_app": config, "current_profile": profile, "has_profiles": getattr(g, "has_profiles", False), "can": can, "media_tabs": media_tabs, "menu": menu,
-                "profile_link": link("my_profile", "My profile"),
+                "profile_link": link("my_profile", "My profile"), "system_tabs": system_tabs_here,
                 "max_rating": getattr(g, "max_rating", None), "app_version": __version__, "app_build": buildinfo.get()}
 
     from synchub.library import file_labels

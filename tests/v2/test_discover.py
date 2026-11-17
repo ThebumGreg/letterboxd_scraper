@@ -205,7 +205,7 @@ def test_jobs_waiting_for_you_and_failures_in_the_last_day_show_in_the_queue(v2,
 
 def test_the_status_page_and_the_dashboard_dot(client, v2, conn):
     page = client.get("/system/status")
-    assert page.status_code == 200 and "System status" in page.get_data(as_text=True) and "All systems OK" in page.get_data(as_text=True)
+    assert page.status_code == 200 and "Status" in page.get_data(as_text=True) and "All systems OK" in page.get_data(as_text=True)
     dash = client.get("/").get_data(as_text=True)
     assert 'id="healthDot"' in dash and "All systems OK" in dash and 'href="/system/status"' in dash
 

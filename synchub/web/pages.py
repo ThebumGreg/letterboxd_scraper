@@ -109,18 +109,6 @@ def register(app):
             coming, notes = discover.coming_up(conn, limit)
         return render_template("discover.html", sections=sections, recent=recent, coming=coming, notes=notes, error=error)
 
-    @app.route("/system/library")
-    def system_library_page():
-        """The health line, how Jellyfin's movies add up to titles here, and the breakdown of the files behind them: what used to sit above the dashboard's title list."""
-        permissions = getattr(g, "permissions", None)
-        with db.connection() as conn:
-            snapshot = status.snapshot(conn)
-            reconcile = catalog.jellyfin_movie_reconcile(conn)
-            librarian = access.allowed(permissions, "library")
-            file_counts = file_labels.counts(conn) if librarian else None
-            stats = catalog.dashboard_stats(catalog.list_catalog(conn))
-        return render_template("library_status.html", snapshot=snapshot, reconcile=reconcile, file_counts=file_counts, stats=stats)
-
     @app.route("/system/storage")
     def system_storage_page():
         """What SyncHub itself takes: database, preview clips, backups, logs, work folders, free space, and how that has grown over the last 90 days."""
@@ -156,9 +144,14 @@ def register(app):
 
     @app.route("/system/status")
     def status_page():
+        """The health list, then how Jellyfin's movies add up to titles here and the breakdown of the files behind them (the dashboard keeps only the counts)."""
+        permissions = getattr(g, "permissions", None)
         with db.connection() as conn:
             snapshot = status.snapshot(conn)
-        return render_template("status.html", snapshot=snapshot)
+            reconcile = catalog.jellyfin_movie_reconcile(conn)
+            file_counts = file_labels.counts(conn) if access.allowed(permissions, "library") else None
+            stats = catalog.dashboard_stats(catalog.list_catalog(conn))
+        return render_template("status.html", snapshot=snapshot, reconcile=reconcile, file_counts=file_counts, stats=stats)
 
     @app.route("/api/status/dismiss-failed", methods=["POST"])
     def api_status_dismiss_failed():

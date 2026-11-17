@@ -1,12 +1,12 @@
 <!-- synchub/web/templates/jellyfin_events.html -->
 {% extends "base.html" %}
 {% from "_macros.html" import csrf_field with context %}
-{% block title %}Jellyfin events{% endblock %}
+{% block title %}Jellyfin webhooks{% endblock %}
 
 {% block content %}
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
     <div>
-        <h2 class="mb-1">Jellyfin events</h2>
+        <h2 class="mb-1">Jellyfin webhooks</h2>
         <p class="text-body-secondary mb-0">Everything Jellyfin's Webhook plugin has sent, kept for later use. {% if status %}Last one: {{ status.event }}, {{ status.ago }}.{% else %}Nothing has arrived yet: set it up under Settings, Live updates.{% endif %}</p>
         <p class="small text-body-secondary mb-0">Most of the stored events are <em>User Data Saved</em> and <em>Playback Progress</em>. To keep the database small, untick <em>User Data Saved</em> in Jellyfin's Webhook plugin and keep Playback Stop; events are kept for {{ keep_days }} days by default, and Tools has a Compact database button.</p>
     </div>

@@ -8,9 +8,10 @@
         <h2 class="mb-1">Sessions</h2>
         <p class="text-body-secondary mb-0">Who is watching what and on which device, and what the DVR is recording or about to record. Updates every few seconds.</p>
     </div>
-    <a href="{{ url_for('status_page') }}" class="btn btn-outline-secondary">System status</a>
+    {% if can('tools') %}<button type="button" class="btn btn-outline-secondary btn-sm" id="showLiveSession" title="What Jellyfin reports for a live channel that is playing, without keys, tokens or addresses. It only reads from Jellyfin.">Live TV session details</button>{% endif %}
 </div>
 <div id="sessionsLive">{% include "_sessions_live.html" %}</div>
+{% if can('tools') %}<pre id="liveSessionResult" class="small mt-3 mb-0 text-wrap" style="max-height: 24rem; overflow: auto;"></pre>{% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -33,6 +34,15 @@
             const data = await res.json().catch(() => ({}));
             if (data.ok) b.closest('.mb-2')?.remove(); else { alert(data.body || 'Could not cancel it.'); b.disabled = false; }
         } catch (e) { alert(e.message); b.disabled = false; }
+    });
+    const liveBtn = document.getElementById('showLiveSession'), liveOut = document.getElementById('liveSessionResult');
+    if (liveBtn) liveBtn.addEventListener('click', async () => {
+        liveBtn.disabled = true; liveOut.textContent = 'Asking Jellyfin...';
+        try {
+            const body = await (await fetch('/api/tools/live-session', { headers: { Accept: 'application/json' } })).json();
+            liveOut.textContent = !body.ok ? body.message : (body.sessions.length ? JSON.stringify(body.sessions, null, 2) : 'No one is watching live TV right now. Start a live channel in Jellyfin and press the button again.');
+        } catch (e) { liveOut.textContent = e.message; }
+        finally { liveBtn.disabled = false; }
     });
     setInterval(async () => {
         if (document.hidden) return;

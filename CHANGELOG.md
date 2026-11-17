@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.9.10
+
+Update SyncHub only (the workers are unchanged). No migration, no settings change. The System menu goes from 19 entries to 8; nothing was removed from the pages, they moved.
+
+- **Status** (System > Monitor) is System status and Library status in one page: the health list, then the library counts, how Jellyfin's films add up and the multi-file breakdown. Its second tab is **Requested titles**.
+- **Logs** is one entry with four tabs: Log, Diagnostics (was What it's doing now), API traffic (was Payloads) and Jellyfin webhooks (was Jellyfin events). A person only sees the tabs they may open.
+- **SyncHub data** (was SyncHub storage) has two tabs, Data folder and Preview clips. The duplicate Database size panel is gone from Tools & Operations (Data folder has the sizes and Compact), and Live TV session details moved to the Sessions page.
+- **Remote setup** is one entry with the tabs Apps, TVs, Players and Tools (was Remote Apps, TVs, Remote Tools, and Players under Admin). The pages keep their addresses.
+- Admin now holds People and Dynamic DNS. The old Library status page (`/system/library`) is gone; `/system/status` has it.
+
 ## 1.9.9
 
 Update SyncHub first, then the workers (the alignment check runs on the worker). No migration.
