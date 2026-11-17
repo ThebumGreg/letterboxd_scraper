@@ -1,16 +1,15 @@
 <!-- synchub/web/templates/status.html -->
 {% extends "base.html" %}
-{% block title %}System status{% endblock %}
+{% block title %}Status{% endblock %}
 
 {% block content %}
 {% set tone = {'ok': 'success', 'warn': 'warning', 'bad': 'danger', 'off': 'secondary'} %}
 {% set words = {'ok': 'OK', 'warn': 'Check', 'bad': 'Problem', 'off': 'Off'} %}
 <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
     <div>
-        <h2 class="mb-1">System status</h2>
-        <p class="text-body-secondary mb-0">{{ snapshot.summary }}. Connections are judged from their settings and how their last sync went.</p>
+        <h2 class="mb-1">Status</h2>
+        <p class="text-body-secondary mb-0">{{ snapshot.summary }}. Connections are judged from their settings and how their last sync went. The dashboard keeps only the library counts.</p>
     </div>
-    <a href="{{ url_for('activity_page') }}" class="btn btn-outline-secondary">What it's doing now</a>
 </div>
 <ul class="list-group mb-4" id="statusList">
     {% for i in snapshot['items'] %}
@@ -23,6 +22,32 @@
     </li>
     {% endfor %}
 </ul>
+<h5 class="mb-2">Library</h5>
+<div class="panel p-3 mb-3" id="libraryCounts">
+    <div class="row text-center g-2">
+        <div class="col-6 col-md"><div class="fw-bold fs-4 text-success">{{ stats.in_library }}</div><div class="small text-body-secondary">In library</div></div>
+        <div class="col-6 col-md"><div class="fw-bold fs-4 text-primary">{{ stats.in_flight }}</div><div class="small text-body-secondary">In progress</div></div>
+        <div class="col-6 col-md"><div class="fw-bold fs-4 text-info">{{ stats.queued }}</div><div class="small text-body-secondary">Queued</div></div>
+        <div class="col-6 col-md"><div class="fw-bold fs-4 text-danger">{{ stats.missing }}</div><div class="small text-body-secondary">Missing</div></div>
+        <div class="col-6 col-md"><div class="fw-bold fs-4 text-warning">{{ stats.partial }}</div><div class="small text-body-secondary">Partial</div></div>
+    </div>
+    <div class="small text-body-secondary text-center mt-2">{{ stats.movies }} movies and {{ stats.shows }} shows known ({{ stats.movies_in_library }} movies and {{ stats.shows_in_library }} complete shows in the library).</div>
+</div>
+<div class="panel p-3 mb-3">
+{% if reconcile and reconcile.jellyfin_items %}
+<p class="small text-body-secondary mb-1">Jellyfin movies: {{ reconcile.jellyfin_items }} item{{ '' if reconcile.jellyfin_items == 1 else 's' }} = {{ reconcile.titles }} title{{ '' if reconcile.titles == 1 else 's' }} here{% if reconcile.duplicates %} (<a href="{{ url_for('index', status='extra_versions') }}">{{ reconcile.duplicates }} more Jellyfin version{{ '' if reconcile.duplicates == 1 else 's' }}</a> of a film already counted){% endif %}{% if reconcile.unmatched %}, <a href="/resolution#jellyfin-unlinked">{{ reconcile.unmatched }} not matched yet</a>{% endif %}.</p>
+{% if file_counts and (file_counts.films or file_counts.episodes) %}
+<p class="small text-body-secondary mb-0" id="fileBreakdown">{% if file_counts.films %}{{ file_counts.films }} film{{ '' if file_counts.films == 1 else 's' }}{% endif %}{% if file_counts.films and file_counts.episodes %} and {% endif %}{% if file_counts.episodes %}{{ file_counts.episodes }} episode{{ '' if file_counts.episodes == 1 else 's' }}{% endif %} with more than one file:
+    {% for k in file_labels.ORDER %}{% if file_counts.files[k] %}<a href="{{ url_for('library_list', status='all', label=k) }}" title="{{ file_labels.HINT[k] }}">{{ file_counts.files[k] }} {{ file_labels.TEXT[k]|lower }}{{ '' if file_counts.files[k] == 1 else 's' }}</a>{{ ', ' if not loop.last else '' }}{% endif %}{% endfor %}.
+    {% if file_counts.different_shares %}<a href="{{ url_for('library_list', status='all', label='different_shares') }}">{{ file_counts.different_shares }} on different shares</a>.{% endif %}
+    {% if file_counts.unlinked %}<a href="{{ url_for('library_list', status='all', label='unlinked') }}">{{ file_counts.unlinked }} movie or episode file{{ '' if file_counts.unlinked == 1 else 's' }} not linked to a film or episode</a>.{% endif %}
+    {% if file_counts.saved_bytes %}Conversions saved {{ '%.1f'|format(file_counts.saved_bytes / 1073741824) }} GB.{% endif %}</p>
+{% endif %}
+{% endif %}
+
+
+{% if not reconcile.jellyfin_items and not (file_counts and (file_counts.films or file_counts.episodes)) %}<p class="small text-body-secondary mb-0">Nothing to break down yet. Run the Jellyfin sync from Tools &amp; Operations.</p>{% endif %}
+</div>
 {% endblock %}
 {% block scripts %}<script>
 document.querySelectorAll('[data-dismiss]').forEach(button => button.addEventListener('click', async () => {

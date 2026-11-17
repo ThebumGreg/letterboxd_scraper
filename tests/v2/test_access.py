@@ -461,7 +461,7 @@ def test_the_menu_groups_workers_library_and_storage_and_tools_logs_and_payloads
     shown = menu(text(browser.get("/")))
     assert shown["links"] == ["Dashboard", "Remote", "Settings"]
     assert shown["dropdowns"] == {"Discover": ["New &amp; trending", "Find &amp; request", "My watchlist"], "Media": ["Library", "Cleanup", "Workers", "Jobs", "Storage", "Options", "Resolution Center", "Library check"],
-                                  "System": ["Tools &amp; Operations", "System status", "Library status", "SyncHub storage", "Requested titles", "Preview clips", "Sessions", "What it&#39;s doing now", "Logs", "Jellyfin events", "Payloads", "Players", "Dynamic DNS", "People", "Remote Apps", "TVs", "Remote Tools"]}
+                                  "System": ["Tools &amp; Operations", "Status", "Sessions", "Logs", "SyncHub data", "People", "Dynamic DNS", "Remote setup"]}
     page = text(browser.get("/"))
     assert re.findall(r'class="dropdown-header">(.*?)</h6>', page) == ["Matching", "Run", "Monitor", "Admin", "Remote"]
 
@@ -469,7 +469,7 @@ def test_the_menu_groups_workers_library_and_storage_and_tools_logs_and_payloads
 def test_the_menu_shows_only_what_the_person_may_open(browser, people):
     sign_in(browser, people["cara"], "1357")
     shown = menu(text(browser.get("/library")))
-    assert shown == {"links": [], "dropdowns": {"Media": ["Library", "Cleanup", "Workers", "Jobs", "Options", "Library check"], "System": ["Players"]}}
+    assert shown == {"links": [], "dropdowns": {"Media": ["Library", "Cleanup", "Workers", "Jobs", "Options", "Library check"], "System": ["Remote setup"]}}
     sign_in(browser, people["bob"], "2468")
     assert menu(text(browser.get("/"))) == {"links": ["Dashboard"], "dropdowns": {"Discover": ["New &amp; trending", "Find &amp; request"]}}
 
@@ -512,7 +512,7 @@ def test_the_activity_page_belongs_to_whoever_may_read_the_logs(browser, v2, con
     reader, tooler = add_profile(conn, "Reader", "logs", "1111"), add_profile(conn, "Tooler", "tools", "2222")
     sign_in(browser, reader, "1111")
     assert browser.get("/activity").status_code == 200 and browser.get("/api/activity").status_code == 200
-    assert "What it&#39;s doing now" in text(browser.get("/logs"))             # in the menu
+    assert "Diagnostics" in text(browser.get("/logs"))             # a tab of the Logs page
     sign_in(browser, tooler, "2222")
     assert browser.get("/activity").status_code == 403 and browser.get("/api/activity").status_code == 403
 
@@ -522,7 +522,34 @@ def test_a_menu_heading_with_nothing_under_it_is_left_out(browser, v2, conn):
     sign_in(browser, pid, "3333")
     page = text(browser.get("/logs"))
     assert re.findall(r'class="dropdown-header">(.*?)</h6>', page) == ["Monitor", "Remote"]
-    assert menu(page)["dropdowns"] == {"System": ["System status", "Library status", "SyncHub storage", "Requested titles", "Preview clips", "Sessions", "What it&#39;s doing now", "Logs", "Jellyfin events", "Remote Apps"]}
+    assert menu(page)["dropdowns"] == {"System": ["Status", "Sessions", "Logs", "SyncHub data", "Remote setup"]}
+
+
+def tab_labels(page):
+    row = re.search(r'<ul class="nav nav-tabs mb-3 system-tabs".*?</ul>', page, re.S)
+    return re.findall(r'class="nav-link[^"]*"[^>]*>(.*?)</a>', row.group(0)) if row else []
+
+
+def test_the_system_pages_of_a_group_share_a_tab_row_with_only_the_tabs_the_person_may_open(browser, v2, conn):
+    reader, payer = add_profile(conn, "Reader", "logs", "1111"), add_profile(conn, "Payer", "logs,payloads", "2222")
+    sign_in(browser, reader, "1111")
+    assert tab_labels(text(browser.get("/logs"))) == ["Log", "Diagnostics", "Jellyfin webhooks"]
+    assert tab_labels(text(browser.get("/system/status"))) == ["Overview", "Requested titles"]
+    assert tab_labels(text(browser.get("/system/previews"))) == ["Data folder", "Preview clips"]
+    assert not tab_labels(text(browser.get("/sessions")))               # a page that is not in a group has no tab row
+    sign_in(browser, payer, "2222")
+    page = text(browser.get("/payloads"))
+    assert tab_labels(page) == ["Log", "Diagnostics", "API traffic", "Jellyfin webhooks"] and 'nav-link active" href="/payloads"' in page
+    assert re.search(r'dropdown-toggle active"[^>]*>System', page)
+
+
+def test_every_page_of_a_tab_group_keeps_the_system_menu_lit(browser, v2, conn):
+    pid = conn.execute("INSERT INTO profile (name) VALUES ('Dana')").lastrowid
+    conn.commit()
+    sign_in(browser, pid)
+    for path in ("/activity", "/payloads", "/jellyfin-events", "/system/requests", "/system/previews", "/tv/devices", "/tv/advanced", "/players"):
+        assert re.search(r'dropdown-toggle active"[^>]*>System', text(browser.get(path))), path
+    assert tab_labels(text(browser.get("/tv/settings"))) == ["Apps", "TVs", "Players", "Tools"]
 
 
 def test_the_last_person_who_can_manage_access_cannot_be_deleted(browser, v2, conn, people):

@@ -1,6 +1,6 @@
 <!-- synchub/web/templates/system_storage.html -->
 {% extends "base.html" %}
-{% block title %}SyncHub storage{% endblock %}
+{% block title %}SyncHub data{% endblock %}
 
 {% block content %}
 {% set d = usage.database %}
@@ -8,7 +8,7 @@
 {% set used_pct = (100 * v.used / v.total)|round|int if v.total else 0 %}
 <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
     <div>
-        <h2 class="mb-1">SyncHub storage</h2>
+        <h2 class="mb-1">SyncHub data</h2>
         <p class="text-body-secondary mb-0">What SyncHub itself keeps in its data folder, and how that has changed. Your films and shows are on the shares, not here (see <a href="{{ url_for('storage_page') }}">Storage</a> for those).</p>
     </div>
     <a href="{{ url_for('system_storage_page') }}" class="btn btn-outline-secondary" id="storageRefresh">Refresh</a>

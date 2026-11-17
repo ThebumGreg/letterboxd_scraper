@@ -2,7 +2,7 @@
 
 **Remote** in SyncHub's top bar, with its pages under **System** (a TV section), drives your TVs like a remote, launches their apps, shows what is playing and starts a movie
 on any TV from whatever state it is in. Every outbound call (ADB, Android TV Remote, Roku ECP, Wake-on-LAN, Jellyfin) is
-shown in the Log on **System ▸ Remote Tools** with request, response, status and timing, and written to `tv/tv.log` in SyncHub's
+shown in the Log on **System ▸ Remote setup ▸ Tools** with request, response, status and timing, and written to `tv/tv.log` in SyncHub's
 data folder as JSON lines.
 
 There is nothing to start separately: the TV pages are part of SyncHub (`python -m synchub.web`) and use the Jellyfin

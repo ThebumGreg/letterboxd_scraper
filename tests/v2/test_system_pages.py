@@ -40,29 +40,29 @@ def library_file(conn):
 
 
 # ---------------------------------------------------------------- dashboard and Library status
-def test_the_dashboard_keeps_the_counts_and_the_breakdown_moves_to_library_status(client, v2, conn):
+def test_the_dashboard_keeps_the_counts_and_the_breakdown_moves_to_status(client, v2, conn):
     library_file(conn)
     settings.set_value("jellyfin_url", "http://jf.test")
     dash = client.get("/").get_data(as_text=True)
     assert "Library at a glance" in dash and "In Library" in dash
     assert 'id="fileBreakdown"' not in dash and "Jellyfin movies:" not in dash and 'id="libraryHealth"' not in dash
-    page = client.get("/system/library")
+    page = client.get("/system/status")
     text = page.get_data(as_text=True)
-    assert page.status_code == 200 and "Library status" in text and "Jellyfin movies: 1 item = 1 title here" in text
-    assert 'id="libraryHealth"' in text and 'id="libraryCounts"' in text
+    assert page.status_code == 200 and "Status" in text and "Jellyfin movies: 1 item = 1 title here" in text
+    assert 'id="statusList"' in text and 'id="libraryCounts"' in text
 
 
-def test_library_status_links_back_to_the_dashboard_with_a_status_chosen(client, v2, conn):
+def test_status_links_back_to_the_dashboard_with_a_status_chosen(client, v2, conn):
     film = library_file(conn)
     in_jellyfin(conn, film, "m2")                                       # a second Jellyfin item of the same film
     jf.sync(conn, FakeJellyfin([movie("m1", "Heat", "2026-10-21T18:04:11Z"), movie("m2", "Heat", "2026-10-22T18:04:11Z")]), "movies", now="2026-11-02 00:00:00")
     conn.commit()
-    text = client.get("/system/library").get_data(as_text=True)
+    text = client.get("/system/status").get_data(as_text=True)
     assert "/?status=extra_versions" in text or "status=extra_versions" in text
 
 
 def test_the_health_dot_is_in_the_top_bar_of_every_page_for_someone_who_can_read_the_logs(client, v2):
-    for path in ("/", "/system/library", "/discover"):
+    for path in ("/", "/system/status", "/discover"):
         text = client.get(path).get_data(as_text=True)
         assert 'id="healthDot"' in text and 'href="/system/status"' in text and "All systems OK" in text
 
@@ -73,7 +73,7 @@ def test_a_guest_without_the_logs_permission_gets_neither_the_pages_nor_the_dot(
     browser = app.test_client()
     browser.set_cookie("synchub_profile", "0")
     settings.set_value("access_guest_permissions", "dashboard")
-    assert browser.get("/system/library").status_code == 403 and browser.get("/system/storage").status_code == 403
+    assert browser.get("/system/status").status_code == 403 and browser.get("/system/storage").status_code == 403
     assert browser.get("/api/system/storage/docker").status_code == 403
     assert 'id="healthDot"' not in browser.get("/").get_data(as_text=True)
 
@@ -217,7 +217,7 @@ def test_the_storage_page_shows_every_part_and_the_menu_links_it(client, data_di
     put(data_dir / "logs/app.log", 700)
     page = client.get("/system/storage")
     text = page.get_data(as_text=True)
-    assert page.status_code == 200 and "SyncHub storage" in text
+    assert page.status_code == 200 and "SyncHub data" in text
     for part in ("database", "previews", "backups", "logs", "posters", "tv"):
         assert f'data-part="{part}"' in text
     assert 'id="biggestTables"' in text and 'id="workFolders"' in text and "reading so far" in text

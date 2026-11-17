@@ -66,11 +66,11 @@ The worker side is a small API (`/api/worker/v1/...`, token per worker, document
 | Group | Pages |
 |---|---|
 | Run | Tools & Operations |
-| Monitor | System status, What it's doing now, Logs, Jellyfin events, Payloads (things you look at) |
-| Admin | Players, Dynamic DNS, People |
-| TV | Remote Apps, TVs, Remote Tools |
+| Monitor | Status (health, library counts, and a Requested titles tab), Sessions, Logs (tabs: Log, Diagnostics, API traffic, Jellyfin webhooks), SyncHub data (tabs: Data folder, Preview clips) |
+| Admin | People, Dynamic DNS |
+| Remote | Remote setup (tabs: Apps, TVs, Players, Tools) |
 
-A person only sees the entries their profile may open (see People below); a group with nothing in it is hidden, and so is a dropdown with nothing in it. **Settings** has three tabs, each saved on its own: *Connections* (Jellyfin, TMDB, Radarr, Sonarr, push notifications), *Automation* (schedules, live updates and webhooks, backups, and the rules for adding titles to Radarr and Sonarr) and *Logging* (what is kept for the Payloads page).
+A person only sees the entries their profile may open (see People below); a group with nothing in it is hidden, and so is a dropdown with nothing in it. **Settings** has three tabs, each saved on its own: *Connections* (Jellyfin, TMDB, Radarr, Sonarr, push notifications), *Automation* (schedules, live updates and webhooks, backups, and the rules for adding titles to Radarr and Sonarr) and *Logging* (what is kept for the API traffic page).
 
 ## Who is watching, PINs and permissions
 
@@ -108,7 +108,7 @@ SyncHub shows, and uses, **where each person is in what they watch**. Jellyfin a
 
 ## Jellyfin events (what Jellyfin told us, kept)
 
-Every event Jellyfin's Webhook plugin sends is stored (**System, Monitor, Jellyfin events**) with its type, who, what (title, series, season and episode), device, client, playback position and the whole body as it arrived, so it can be used later. The page shows counts by type, filters by type, user and text, opens any event in full, and exports everything as JSON lines (oldest first). Playback progress arrives every few seconds per player and is stored at most every 30 seconds per player and title. Events are kept for 365 days by default (Settings, Automation, Live updates, "Keep Jellyfin events for"; 0 keeps them for ever) and older ones are deleted once a day. The plugin sends plain text unless told otherwise; SyncHub reads the body as JSON either way.
+Every event Jellyfin's Webhook plugin sends is stored (**System, Monitor, Logs, Jellyfin webhooks**) with its type, who, what (title, series, season and episode), device, client, playback position and the whole body as it arrived, so it can be used later. The page shows counts by type, filters by type, user and text, opens any event in full, and exports everything as JSON lines (oldest first). Playback progress arrives every few seconds per player and is stored at most every 30 seconds per player and title. Events are kept for 365 days by default (Settings, Automation, Live updates, "Keep Jellyfin events for"; 0 keeps them for ever) and older ones are deleted once a day. The plugin sends plain text unless told otherwise; SyncHub reads the body as JSON either way.
 
 ## Opening items in the Jellyfin app (iPhone and iPad)
 

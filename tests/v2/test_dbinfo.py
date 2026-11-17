@@ -1,4 +1,4 @@
-"""The database size card on Tools, the 7-day event default and the scan default (Details only)."""
+"""The database size on SyncHub data, the 7-day event default and the scan default (Details only)."""
 from synchub import dbinfo, jellyfin_events, jobs, settings
 
 
@@ -7,7 +7,7 @@ def test_sizes_lists_the_biggest_tables_and_compact_runs_when_idle(client, v2):
     assert out["ok"] and out["file_mb"] >= 0 and out["tables"] and {"name", "rows", "mb"} <= set(out["tables"][0])
     done = client.post("/api/tools/db-compact", json={}).get_json()
     assert done["ok"] and "before_mb" in done and "Compacted" in done["message"]
-    assert "Compact database" in client.get("/tools").get_data(as_text=True)
+    assert "Compact database" not in client.get("/tools").get_data(as_text=True) and 'id="btnCompact"' in client.get("/system/storage").get_data(as_text=True)          # the button lives on SyncHub data
 
 
 def test_compact_is_refused_while_a_job_runs(client, v2):

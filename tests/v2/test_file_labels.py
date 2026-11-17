@@ -190,7 +190,7 @@ def test_home_and_the_library_show_the_same_counts_and_filters(client, conn):
     conn.commit()
     home = client.get("/").get_data(as_text=True)
     assert 'value="file_mobile"' in home and "1 film with more than one file" not in home          # the filter stays on the dashboard; the breakdown moved to System
-    status = client.get("/system/library").get_data(as_text=True)
+    status = client.get("/system/status").get_data(as_text=True)
     assert "1 film with more than one file" in status and "1 mobile copy" in status and f"1 film" in status
     listing = client.get("/library/queue?status=all&label=mobile").get_data(as_text=True)
     assert "Heat (1995) - 1080p.mkv" in listing and "Heat (1995).mkv<" not in listing.split("queueTable")[-1].replace("Heat (1995) - 1080p.mkv", "")

@@ -30,7 +30,7 @@ def test_jellyfin_movies_without_a_link_are_listed_with_why(conn):
     conn.execute("INSERT INTO src_jellyfin_item (item_id, type, name, first_seen, last_seen, removed_at) VALUES ('c', 'movie', 'Gone', ?, ?, ?)", (NOW, NOW, NOW))
     got = {r["item_id"]: r for r in catalog.unlinked_jellyfin_movies(conn)}
     assert set(got) == {"a", "b"} and "no TMDB id" in got["a"]["reason"] and "TMDB 55" in got["b"]["reason"]
-    assert len(got) == catalog.jellyfin_movie_reconcile(conn)["unmatched"]                         # the same number Library status shows
+    assert len(got) == catalog.jellyfin_movie_reconcile(conn)["unmatched"]                         # the same number Status shows
 
 
 def test_the_page_lists_both_and_the_status_number_links_to_it(client, v2):
@@ -39,7 +39,7 @@ def test_the_page_lists_both_and_the_status_number_links_to_it(client, v2):
         conn.execute("INSERT INTO src_jellyfin_item (item_id, type, name, year, first_seen, last_seen) VALUES ('a', 'movie', 'No Id', 2001, ?, ?)", (NOW, NOW))
     page = client.get("/resolution").get_data(as_text=True)
     assert "This is a TV show" in page and "In Jellyfin, not linked" in page and "No Id" in page and 'id="jellyfin-unlinked"' in page
-    assert "/resolution#jellyfin-unlinked" in client.get("/system/library").get_data(as_text=True)
+    assert "/resolution#jellyfin-unlinked" in client.get("/system/status").get_data(as_text=True)
 
 
 def test_a_jellyfin_item_can_be_linked_by_tmdb_id(client, v2, monkeypatch):

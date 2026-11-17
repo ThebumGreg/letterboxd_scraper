@@ -31,7 +31,7 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
     <h4 class="mb-0">Individual tasks</h4>
-    <span class="small"><a href="{{ url_for('activity_page') }}" class="text-decoration-none">A task looks stuck or failed? See what the app is doing</a> &middot; <a href="{{ url_for('logs_page') }}" class="text-decoration-none">Logs</a></span>
+    <span class="small"><a href="{{ url_for('activity_page') }}" class="text-decoration-none">A task looks stuck or failed? See what the app is doing</a> &middot; <a href="{{ url_for('logs_page') }}" class="text-decoration-none">Logs</a> &middot; <a href="{{ url_for('system_storage_page') }}" class="text-decoration-none">Database size and Compact</a></span>
 </div>
 <div class="row row-cols-1 row-cols-md-2 g-4 mb-4">
     {{ task_card('jellyfin_movies', 'Jellyfin movies', 'Reads your movie library from Jellyfin.', task_statuses.get('jellyfin_movies'), url_for('trigger', name='jellyfin_movies'), 'Sync movies now') }}
@@ -57,26 +57,6 @@
             </div>
             <div><button type="button" class="btn btn-secondary btn-sm" id="checkLibraryPaths">Check library folders</button></div>
             <div id="libraryPathsResult" class="small"></div>
-        </div>
-    </div>
-    <div class="col-md-6">
-        <div class="panel p-3 p-md-4 h-100 d-flex flex-column gap-3" id="liveSession">
-            <div>
-                <h5 class="m-0 text-success">Live TV session details</h5>
-                <p class="text-body-secondary m-0 mt-1">Start a live channel in Jellyfin, then press the button. It shows what Jellyfin reports for it, including what is on air. It leaves out keys, tokens and addresses, so you can copy it into the chat. It only reads from Jellyfin.</p>
-            </div>
-            <div><button type="button" class="btn btn-secondary btn-sm" id="showLiveSession">Show live session details</button></div>
-            <pre id="liveSessionResult" class="small mb-0 text-wrap" style="max-height: 24rem; overflow: auto;"></pre>
-        </div>
-    </div>
-    <div class="col-md-6">
-        <div class="panel p-3 p-md-4 h-100 d-flex flex-column gap-3" id="dbSize">
-            <div>
-                <h5 class="m-0 text-success">Database size</h5>
-                <p class="text-body-secondary m-0 mt-1">How big SyncHub's database is and which tables take the room. <em>Compact database</em> gives space freed by deleting old events back to the disk. It waits if a job is running.</p>
-            </div>
-            <div class="d-flex flex-wrap gap-2"><button type="button" class="btn btn-secondary btn-sm" id="dbShow">Show sizes</button><button type="button" class="btn btn-outline-warning btn-sm" id="dbCompact" data-confirm="Compact the database now? SyncHub pauses its own writes while it rewrites the file.">Compact database</button></div>
-            <pre id="dbResult" class="small mb-0 text-wrap" style="max-height: 20rem; overflow: auto;"></pre>
         </div>
     </div>
     <div class="col-12">
@@ -120,16 +100,6 @@ document.addEventListener("DOMContentLoaded", function() {
         } catch (e) { out.innerHTML = `<span class="text-danger">${esc(e.message)}</span>`; }
         finally { checkBtn.disabled = false; }
     });
-    const liveBtn = document.getElementById('showLiveSession'), liveOut = document.getElementById('liveSessionResult');
-    if (liveBtn) liveBtn.addEventListener('click', async () => {
-        liveBtn.disabled = true; liveOut.textContent = 'Asking Jellyfin...';
-        try {
-            const res = await fetch('/api/tools/live-session', {headers: {Accept: 'application/json'}});
-            const body = await res.json();
-            liveOut.textContent = !body.ok ? body.message : (body.sessions.length ? JSON.stringify(body.sessions, null, 2) : 'No one is watching live TV right now. Start a live channel in Jellyfin and press the button again.');
-        } catch (e) { liveOut.textContent = e.message; }
-        finally { liveBtn.disabled = false; }
-    });
     const tOut = document.getElementById('timingsResult'), tShow = document.getElementById('timingsShow'), tReset = document.getElementById('timingsReset');
     const col = (v, n) => String(v).padStart(n);
     if (tShow) tShow.addEventListener('click', async () => {
@@ -146,25 +116,6 @@ document.addEventListener("DOMContentLoaded", function() {
     if (tReset) tReset.addEventListener('click', async () => {
         await fetch('/api/tools/timings/reset', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || ''}, body: '{}'});
         tOut.textContent = 'Cleared.';
-    });
-    const dbOut = document.getElementById('dbResult'), dbToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
-    const dbShow = document.getElementById('dbShow'), dbCompact = document.getElementById('dbCompact');
-    if (dbShow) dbShow.addEventListener('click', async () => {
-        dbShow.disabled = true; dbOut.textContent = 'Reading...';
-        try {
-            const body = await (await fetch('/api/tools/db-sizes', {headers: {Accept: 'application/json'}})).json();
-            dbOut.textContent = `File ${body.file_mb} MB (log ${body.wal_mb} MB). ${body.reclaimable_mb} MB can be given back by compacting.\nBiggest tables (${body.how}):\n` + body.tables.map(t => `${String(t.mb).padStart(8)} MB  ${String(t.rows).padStart(9)} rows  ${t.name}`).join('\n');
-        } catch (e) { dbOut.textContent = e.message; }
-        finally { dbShow.disabled = false; }
-    });
-    if (dbCompact) dbCompact.addEventListener('click', async () => {
-        if (!confirm(dbCompact.dataset.confirm)) return;
-        dbCompact.disabled = true; dbOut.textContent = 'Compacting. This can take a minute...';
-        try {
-            const res = await fetch('/api/tools/db-compact', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRFToken': dbToken}, body: '{}'});
-            dbOut.textContent = (await res.json().catch(() => ({}))).message || 'Done.';
-        } catch (e) { dbOut.textContent = e.message; }
-        finally { dbCompact.disabled = false; }
     });
     document.querySelectorAll('[data-task-last]').forEach(el => {
         const val = el.textContent.trim();

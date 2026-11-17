@@ -116,8 +116,8 @@ def test_jobs_are_their_own_tab_and_the_workers_list_holds_the_hardware(client, 
 
 
 # ---------------------------------------------------------------- headings match the menu
-@pytest.mark.parametrize("path, heading", [("/tools", "Tools &amp; Operations"), ("/logs", "Logs"), ("/payloads", "Payloads"), ("/ddns", "Dynamic DNS"),
-                                           ("/settings", "Settings"), ("/people", "People"), ("/activity", "What it&#39;s doing now"), ("/jellyfin-events", "Jellyfin events")])
+@pytest.mark.parametrize("path, heading", [("/tools", "Tools &amp; Operations"), ("/logs", "Logs"), ("/payloads", "API traffic"), ("/ddns", "Dynamic DNS"),
+                                           ("/settings", "Settings"), ("/people", "People"), ("/activity", "Diagnostics"), ("/jellyfin-events", "Jellyfin webhooks")])
 def test_each_page_is_headed_with_its_menu_name(client, v2, path, heading):
     page = text(client.get(path))
     wanted = htmllib.unescape(heading)
