@@ -313,7 +313,8 @@ def register(app):
             reviews = catalog.pending_reviews(conn)
             reviewed = {(r["source"], r["key"]) for r in reviews}
             unmatched = [u for u in catalog.unmatched_sources(conn) if (u["source"], u["key"]) not in reviewed]
-        return render_template("resolution.html", reviews=reviews, unmatched=unmatched)
+            in_jellyfin = catalog.unlinked_jellyfin_movies(conn)
+        return render_template("resolution.html", reviews=reviews, unmatched=unmatched, in_jellyfin=in_jellyfin)
 
     @app.route("/tools")
     def tools():
@@ -335,7 +336,7 @@ def register(app):
             pass                                                # the TV part is optional; the page works without it
         in_docker = os.getenv("SYNCHUB_IN_DOCKER") == "1"
         return render_template("settings.html", settings=values, profiles=profile_list, relay_workers=worker_list, webhook_status=webhooks.status_for_all(), suggested_synchub_url=request.host_url.rstrip("/"),
-                               local_addresses=backup.addresses_on_this_machine(values) if in_docker else [], last_backup=backup.latest(), request_status=request_status, notify=dispatch.state(),
+                               local_addresses=backup.addresses_on_this_machine(values) if in_docker else [], last_backup=backup.latest(), backup_folder=backup.describe_folder(), request_status=request_status, notify=dispatch.state(),
                                dash_tvs=dash_tvs, dash_url=f"/dash/{dash_config.token()}", now_label=dash_config.now().tzname() or "server time")
 
     @app.route("/payloads")

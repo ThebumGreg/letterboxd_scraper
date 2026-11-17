@@ -373,6 +373,14 @@ def register(app):
                     "media_id": got["media_id"], "url": f"/show/{got['media_id']}"}
         return _guard(go)
 
+    @app.route("/api/backup/prune-upgrade-copies", methods=["POST"])
+    def api_backup_prune_upgrade_copies():
+        """Settings, Database backups: deletes the copies made before upgrades beyond the newest few (Settings, 'Copies to keep from before upgrades')."""
+        from synchub import backup
+        removed = backup.prune_premigrate()
+        return jsonify(ok=True, removed=len(removed), folder=backup.describe_folder(),
+                       message=(f"Deleted {len(removed)} old copies." if len(removed) != 1 else "Deleted 1 old copy.") if removed else "Nothing to delete: only the newest few are there.")
+
     # ---------------------------------------------------------------- resolution center
     def reconcile_soon():
         tasks.start_async(tasks.reconcile)
@@ -412,18 +420,37 @@ def register(app):
             done = isinstance(review_id, int) and matching.dismiss_review(conn, review_id)
         return jsonify(ok=True, message="Dismissed.") if done else fail("That suggestion is no longer pending.")
 
+    @app.route("/api/resolution/as-show", methods=["POST"])
+    def api_resolution_as_show():
+        """"This is a TV show": a list entry the film search could not match is searched among TMDB's TV series; the best become suggestions."""
+        data = request.get_json(silent=True) or {}
+        source, key = data.get("source"), data.get("key")
+        if source not in ("letterboxd", "serializd") or not key:
+            return fail("Unknown item.")
+
+        def go():
+            with db.connection() as conn:
+                added = matching.suggest_as_show(conn, TmdbClient(), source, key)
+            if not added:
+                raise RequestError("TMDB has no TV series with that title (or its suggestions are already listed). Link it by TMDB ID instead.")
+            return {"message": f"{added} TV suggestion{'' if added == 1 else 's'} added.", "added": added}
+        return _guard(go)
+
     @app.route("/api/resolution/link", methods=["POST"])
     def api_resolution_link():
         data = request.get_json(silent=True) or {}
         source, key, kind, tmdb_id = data.get("source"), data.get("key"), data.get("kind"), str(data.get("tmdb_id") or "").strip()
-        if source not in ("letterboxd", "serializd") or kind not in ("movie", "show") or not key:
+        if source not in ("letterboxd", "serializd", "jellyfin") or kind not in ("movie", "show") or not key:
             return fail("Unknown item.")
         if not tmdb_id.isdigit():
             return fail("Enter the numeric TMDB ID.")
         with db.connection() as conn:
             title = year = None
-            table, col = ("src_letterboxd_entry", "slug") if source == "letterboxd" else ("src_serializd_entry", "serializd_show_id")
-            row = conn.execute(f"SELECT MAX(title) AS title, MAX(year) AS year FROM {table} WHERE {col} = ?", (key,)).fetchone()
+            if source == "jellyfin":
+                row = conn.execute("SELECT name AS title, year FROM src_jellyfin_item WHERE item_id = ?", (key,)).fetchone()
+            else:
+                table, col = ("src_letterboxd_entry", "slug") if source == "letterboxd" else ("src_serializd_entry", "serializd_show_id")
+                row = conn.execute(f"SELECT MAX(title) AS title, MAX(year) AS year FROM {table} WHERE {col} = ?", (key,)).fetchone()
             if row and row["title"]:
                 title, year = row["title"], row["year"]
             matching.link_manually(conn, source, key, kind, tmdb_id, title, year)

@@ -126,6 +126,9 @@ def create_app(start_scheduler=False, csrf=True):
         saved = backup.copy_before_upgrade()
         if saved:
             logger.info(f"The database is older than this version: a copy was saved as {saved} before upgrading it.")
+        old = backup.prune_premigrate()
+        if old:
+            logger.info(f"Removed {len(old)} older copies made before upgrades (the newest {backup.premigrate_keep_count()} are kept).")
     except Exception as exc:
         logger.warning(f"Could not save a copy of the database before upgrading it: {exc}")
     db.migrate()

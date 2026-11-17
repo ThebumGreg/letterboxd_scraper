@@ -145,6 +145,7 @@ def backup_database():
         slim = backup.slim_setting()
         path = backup.create(slim=slim)
         removed = backup.prune(keep)
+        backup.prune_premigrate()
         return f"Saved {path.name} ({path.stat().st_size / 1048576:.1f} MB{', logs and history left out' if slim else ''})." + (f" Removed {len(removed)} older {'copy' if len(removed) == 1 else 'copies'}." if removed else "")
     return run("backup", "Backing up the database", work)
 

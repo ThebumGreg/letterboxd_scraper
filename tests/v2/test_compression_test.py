@@ -122,6 +122,15 @@ def test_a_pass_is_stored_with_the_estimate_and_the_clips(conn, big):
     assert shown["verdict_label"] == "Pass" and shown["current"] and shown["parts"][0]["at"] == "10:00" and shown["worst_at"] == "40:00"
 
 
+def test_an_encode_bigger_than_the_source_is_a_fail_with_no_saving(conn, big):
+    res = result((99.0, 99.0, 99.0, 99.0))
+    res["clips"] = [clip(600.0 * (i + 1), 99.0, source=4300, encoded=6200) for i in range(4)]
+    row = finish(conn, compression_test.request(conn, big), res)
+    assert row["verdict"] == "fail" and "No saving" in row["message"] and "already small" in row["message"]
+    assert compression_test.no_saving([clip(1, 90, source=4000, encoded=3900)]) is False                 # smaller than the source: fine
+    assert compression_test.no_saving([]) is False
+
+
 def test_one_bad_clip_makes_it_borderline_even_when_the_average_passes(conn, big):
     row = finish(conn, compression_test.request(conn, big), result((99.0, 99.0, 99.0, 80.0)))
     assert row["mean_vmaf"] == 94.25 and row["verdict"] == "borderline"

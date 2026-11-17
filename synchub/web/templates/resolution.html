@@ -62,16 +62,45 @@
                     <td>{{ u.year or '-' }}</td>
                     <td><span class="badge {{ 'badge-tv' if u.kind == 'show' else 'badge-movie' }}">{{ 'TV' if u.kind == 'show' else 'MOVIE' }}</span></td>
                     <td class="small">{{ u.users }}</td>
-                    <td class="pe-4" style="max-width: 320px;">
+                    <td class="pe-4" style="max-width: 360px;">
                         <form class="d-flex gap-2 link-form" data-source="{{ u.source }}" data-key="{{ u.key }}" data-kind="{{ u.kind }}">
                             <input type="number" min="1" class="form-control form-control-sm" placeholder="TMDB ID" required aria-label="TMDB ID for {{ u.title or u.key }}">
                             <button type="submit" class="btn btn-sm btn-outline-info">Link</button>
+                            {% if u.kind == 'movie' %}<button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" data-as-show title="Letterboxd lists some TV series as films: look it up among TV series and suggest the best">This is a TV show</button>{% endif %}
                         </form>
                     </td>
                 </tr>
                 {% else %}
                 {% endfor %}
                 <tr id="unmatched-empty" class="{{ 'd-none' if unmatched }}"><td colspan="5" class="text-center text-body-secondary py-4">Everything is matched.</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<h4 class="mb-2">In Jellyfin, not linked <small class="text-body-secondary">(<span id="jf-count">{{ in_jellyfin|length }}</span>)</small></h4>
+<p class="text-body-secondary small">Movies Jellyfin has that are not tied to a title here. This is the "not matched yet" number on <a href="/system/library">Library status</a>. Link each with its TMDB ID.</p>
+<div class="panel p-0 overflow-hidden mb-5" id="jellyfin-unlinked">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr><th class="ps-4">Title</th><th>Year</th><th>Why</th><th class="pe-4">Link by TMDB ID</th></tr>
+            </thead>
+            <tbody>
+                {% for j in in_jellyfin %}
+                <tr>
+                    <td class="fw-bold ps-4">{{ j.name or j.item_id }}{% if j.folder %}<div class="small text-body-secondary fw-normal">{{ j.folder }}</div>{% endif %}</td>
+                    <td>{{ j.year or '-' }}</td>
+                    <td class="small">{{ j.reason }}</td>
+                    <td class="pe-4" style="max-width: 320px;">
+                        <form class="d-flex gap-2 link-form" data-source="jellyfin" data-key="{{ j.item_id }}" data-kind="movie" data-jf>
+                            <input type="number" min="1" class="form-control form-control-sm" placeholder="TMDB ID" value="{{ j.tmdb_id or '' }}" required aria-label="TMDB ID for {{ j.name or j.item_id }}">
+                            <button type="submit" class="btn btn-sm btn-outline-info">Link</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+                <tr id="jf-empty" class="{{ 'd-none' if in_jellyfin }}"><td colspan="4" class="text-center text-body-secondary py-4">Every Jellyfin movie is linked.</td></tr>
             </tbody>
         </table>
     </div>
@@ -98,7 +127,10 @@
         document.querySelectorAll('[data-review-count]').forEach((el) => { el.textContent = cards; });
         document.getElementById('review-empty').classList.toggle('d-none', cards > 0);
         approveAll.classList.toggle('d-none', cards === 0);
-        const rows = document.querySelectorAll('.link-form').length;
+        const rows = document.querySelectorAll('.link-form:not([data-jf])').length;
+        const jf = document.querySelectorAll('.link-form[data-jf]').length;
+        document.getElementById('jf-count').textContent = jf;
+        document.getElementById('jf-empty').classList.toggle('d-none', jf > 0);
         document.getElementById('unmatched-count').textContent = rows;
         document.getElementById('unmatched-empty').classList.toggle('d-none', rows > 0);
     }
@@ -131,6 +163,14 @@
         updateCounts();
         say(data.message);
     });
+
+    document.querySelectorAll('[data-as-show]').forEach((btn) => btn.addEventListener('click', async () => {
+        const form = btn.closest('.link-form');
+        btn.disabled = true; btn.textContent = 'Looking...';
+        const data = await send('/api/resolution/as-show', { source: form.dataset.source, key: form.dataset.key });
+        if (data.ok) { location.reload(); return; }
+        alert(data.message || 'Failed.'); btn.disabled = false; btn.textContent = 'This is a TV show';
+    }));
 
     document.querySelectorAll('.link-form').forEach((form) => form.addEventListener('submit', async (e) => {
         e.preventDefault();

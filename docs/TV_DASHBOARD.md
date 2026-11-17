@@ -66,9 +66,13 @@ When someone's phone joins the home Wi-Fi after being away, the TV shows a full-
 - **Seeing why:** the Welcome home section lists what happened lately ("Sam came home: quiet hours, nothing shown"). **Try it on the TV now** shows it for the first person.
 - Needs each person's phone set to use its real Wi-Fi address (same note as for students). Only "this phone is on the home Wi-Fi" is known, never where anyone is. A phone on mobile data shows as home a few seconds to a minute after it joins the Wi-Fi.
 
+## The TV screensaver
+
+A Google TV's screensaver (Ambient mode) would otherwise start about a minute after the page opens, and SyncHub would have to leave it and open the page again (a flicker). So while a dashboard page is on the TV, SyncHub turns the screensaver off over ADB (the secure settings `screensaver_enabled`, `screensaver_activate_on_sleep` and `screensaver_activate_on_dock`), remembers what they were and puts them back when the page closes. If nothing is on screen it puts them back at the next minute, so they are never left off. Settings > TV dashboard > Screen has the switch (on by default). Some TVs keep the Ambient mode setting elsewhere; if the screensaver still starts, the TV's log shows the values read, and the older "open the page again" fallback still works.
+
 ## What's new
 
-A strip of up to six posters, above the quote line, of what was added to the Jellyfin library in the last 30 days (a show counts when its newest episode arrived). It shows on the morning and the evening screen, and not at all when nothing is new. Settings > TV dashboard > **What's new** turns it off. Posters come from SyncHub's own poster cache, so nothing is loaded from the internet.
+One or two posters, in a box between the time and the weather, of what was added to the Jellyfin library in the last 30 days (a show counts when its newest episode arrived). It shows on the morning and the evening screen, and not at all when nothing is new. Settings > TV dashboard > **What's new** turns it off. Posters come from SyncHub's own poster cache, so nothing is loaded from the internet.
 
 ## The evening screen (tomorrow)
 

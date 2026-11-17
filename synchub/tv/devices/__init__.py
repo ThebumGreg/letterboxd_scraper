@@ -114,7 +114,7 @@ class Driver:
                 return choice
         return "e"
 
-    def view_stream(self, url, package):
+    def view_stream(self, url, package, video=True):
         raise DeviceError(f"{self.name} cannot show a camera stream yet")
 
     def close_stream(self, package):
@@ -187,6 +187,13 @@ class Driver:
                  f"left the screensaver (Home), then waited {SCREENSAVER_SETTLE:g}s before opening the app")
         time.sleep(SCREENSAVER_SETTLE)
         return True
+
+    def hold_screensaver_off(self):
+        """Turns the TV's own screensaver off. -> what to hand back to restore_screensaver, or None when this device cannot."""
+        return None
+
+    def restore_screensaver(self, saved):
+        """Puts back what hold_screensaver_off changed."""
 
     def _in_screensaver(self, status):
         return status.get("power") == "dreaming"

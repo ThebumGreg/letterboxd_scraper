@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.9.7
+
+Update SyncHub first, then the workers. One small migration (056). The workers' GPU chart, the "waits for SyncHub" rule and the capabilities list need the worker update.
+
+**TV dashboard.**
+- **The screensaver no longer interrupts the dashboard.** While the dashboard is on the TV, SyncHub turns the TV's screensaver off over ADB (`screensaver_enabled`, `screensaver_activate_on_sleep`, `screensaver_activate_on_dock` in the secure settings), remembers the old values and puts them back when the dashboard closes (or at the next minute if nothing is on screen, so it is never left off). Switch: Settings > TV dashboard. The failing `-t video/*` first try is skipped for the dashboard and the welcome page.
+- **Layout:** calendar events show the time on its own line and the title wraps (nothing is cut off); the Weather card is smaller; the people cards get the room (six fit at 4K); **What's new** is now one or two posters between the Time and the Weather instead of a strip.
+
+**Workers.**
+- A **GPU in use** chart on the Stats page (when the worker reports GPU load; Intel iGPUs do through their sleep counter).
+- The Workers page now lists what a worker can do (**Features**) and shows **VMAF for HDR**.
+- **A worker only updates to a version SyncHub already runs.** The PC's updater is told SyncHub's version; new code that is a newer version than SyncHub waits ("New code 1.9.8 is waiting: SyncHub runs 1.9.7. Update SyncHub first") and the Workers page says so. The same version with a newer commit is fine. If SyncHub does not answer, the updater waits. Edit worker has "Update even before SyncHub is updated"; `--now` on the PC also skips the wait.
+
+**Library.**
+- **A compression test whose encode comes out as big as, or bigger than, the original is a Fail ("No saving")**, whatever it scores: the file is already small.
+- **File names in another alphabet** (such as `500 дней лета.2009.WEB-DL.2160p.mkv`) get the English title and year of the film they are linked to as their recommended name (`(500) Days of Summer (2009).mkv`), after every scan. A name a person approved is never changed. The record's History says what changed.
+- **Resolution center:** "This is a TV show" on an unmatched film looks it up among TMDB's TV series and adds suggestions to approve; a new **In Jellyfin, not linked** list shows the movies behind "N not matched yet" on Library status (with why) and links each by TMDB ID. The Library status number now links there.
+
+**Backups.** Copies made before an upgrade are now pruned: **Copies to keep from before upgrades** (Settings > Database backups, default 3, pruned at every start and after each nightly copy), the folder total ("7 nightly, 3 before upgrades, 4.2 GB in all") and a **Delete old pre-upgrade copies** button.
+
 ## 1.9.6
 
 Update SyncHub. No migration, no worker change.

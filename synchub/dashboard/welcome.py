@@ -166,7 +166,7 @@ def present(now, ready):
             from synchub.tv import orchestrator
             if not orchestrator.ensure_on(dev, lambda message, ok=True: r.logbook.add("system", dev.id, "dashboard", response=message, ok=ok)):
                 raise show.ShowError(f"{dev.name} would not wake up (see the TV log).")
-            dev.view_stream(url, package)
+            dev.view_stream(url, package, video=False)
         except Exception:
             settings.set_value("dash_welcome", "{}")
             raise

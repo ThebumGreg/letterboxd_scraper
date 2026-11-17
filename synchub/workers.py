@@ -10,7 +10,7 @@ import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from synchub import db, settings
+from synchub import __version__, db, settings
 from synchub.notifications import emit
 
 logger = logging.getLogger(__name__)
@@ -113,6 +113,7 @@ SETTINGS = {
     "scan_threads": ("agent", "int", 2, (1, 16)),
     "log_level": ("agent", "choice", "INFO", ("DEBUG", "INFO", "WARNING", "ERROR")),
     "auto_update": ("host", "bool", True, None),
+    "update_ahead": ("host", "bool", False, None),               # update even when the new code is a newer version than SyncHub runs (off: the PC waits until SyncHub has been updated first)
     "ai_quality": ("host", "bool", False, None),                # build the image with the AI quality test layer (PyTorch and models, about 1 GB); see agent/auto-update.sh
     "role": ("hub", "choice", "auto", ("auto", "checks", "encodes")),   # what jobs this PC takes: checks = checks and light jobs only, encodes = encodes too; auto = encodes when a GPU encoder works, else checks (SyncHub's own routing, never sent to the agent)
     "work_dir": ("host", "path", "", None),                      # the folder on the PC that holds job files (WORK_DIR in .env); the PC's helper switches to it when the worker is idle
@@ -399,14 +400,14 @@ def record_stat(conn, worker_id, status, now=None):
     if last is not None and _seconds(last, now) < STAT_EVERY_SECONDS:
         return
     running = conn.execute("SELECT COUNT(*) FROM job WHERE worker_id = ? AND status = 'running'", (worker_id,)).fetchone()[0]
-    conn.execute("INSERT INTO worker_stat (worker_id, at, cpu_percent, temp_cpu, temp_max, mem_available, work_free, running, gpu_encodes, gpu_mhz) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    conn.execute("INSERT INTO worker_stat (worker_id, at, cpu_percent, temp_cpu, temp_max, mem_available, work_free, running, gpu_encodes, gpu_mhz, gpu_percent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                  (worker_id, now, _number(host.get("cpu_percent")), _number(temps.get("cpu")), _number(temps.get("max")), _number(host.get("mem_available_bytes")),
-                  _number(status.get("work_free_bytes")), running, _number(status.get("gpu_encodes")), _number(host.get("gpu_mhz"))))
+                  _number(status.get("work_free_bytes")), running, _number(status.get("gpu_encodes")), _number(host.get("gpu_mhz")), _number(host.get("gpu_percent"))))
     conn.execute("DELETE FROM worker_stat WHERE at < ?", ((datetime.strptime(now[:19], "%Y-%m-%d %H:%M:%S") - timedelta(days=STAT_KEEP_DAYS)).strftime("%Y-%m-%d %H:%M:%S"),))
 
 
 def history(conn, worker_id, hours=24, points=240, now=None):
-    """The worker's health history for the last `hours`, averaged into at most `points` steps: [{'at', 'cpu', 'temp', 'free_gb', 'running', 'gpu_encodes'}]."""
+    """The worker's health history for the last `hours`, averaged into at most `points` steps: [{'at', 'cpu', 'temp', 'free_gb', 'running', 'gpu_encodes', 'gpu'}]."""
     now = now or db.now()
     hours = max(1, min(int(hours), STAT_KEEP_DAYS * 24))
     since = (datetime.strptime(now[:19], "%Y-%m-%d %H:%M:%S") - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
@@ -417,7 +418,7 @@ def history(conn, worker_id, hours=24, points=240, now=None):
         chunk = rows[i:i + step]
         avg = lambda key: (round(sum(r[key] for r in chunk if r[key] is not None) / n, 1) if (n := sum(1 for r in chunk if r[key] is not None)) else None)   # noqa: E731
         out.append({"at": chunk[-1]["at"], "cpu": avg("cpu_percent"), "temp": max((r["temp_cpu"] if r["temp_cpu"] is not None else r["temp_max"] for r in chunk if r["temp_cpu"] is not None or r["temp_max"] is not None), default=None),
-                    "free_gb": round(avg("work_free") / 1e9) if avg("work_free") is not None else None, "running": max(r["running"] or 0 for r in chunk), "gpu_encodes": max(r["gpu_encodes"] or 0 for r in chunk)})
+                    "free_gb": round(avg("work_free") / 1e9) if avg("work_free") is not None else None, "running": max(r["running"] or 0 for r in chunk), "gpu_encodes": max(r["gpu_encodes"] or 0 for r in chunk), "gpu": avg("gpu_percent")})
     return out
 
 
@@ -493,6 +494,25 @@ def request_host(conn, worker_id, what, by=None):
         task_open(conn, worker_id, TASK_KIND.get(what, what), "Waiting for the PC's helper to check in (it asks every minute)", by=by)
 
 
+def version_key(text):
+    """'1.9.10' -> (1, 9, 10) so versions compare as numbers; None when it is not a plain dotted number."""
+    try:
+        return tuple(int(x) for x in str(text).strip().split("."))
+    except ValueError:
+        return None
+
+
+def newer_than_hub(new_version, hub_version):
+    """True when the code a worker would update to is a newer version than SyncHub runs (the same version, even with a newer commit, is fine)."""
+    new, hub = version_key(new_version), version_key(hub_version)
+    return bool(new and hub and new > hub)
+
+
+def waiting_text(report):
+    new = report.get("version") or "newer code"
+    return f"New code {new} is waiting: {report.get('error') or 'update SyncHub first'}"
+
+
 def host_check(conn, worker_id, now=None):
     """The PC's timer asked: what it should know. A request is handed over once (an update only when nothing is running) and cleared."""
     now = now or db.now()
@@ -518,6 +538,7 @@ def host_check(conn, worker_id, now=None):
     if want_disks:
         settings.set_value(DISKS_WANT_KEY.format(worker_id), "", conn=conn)
     return {"want_log": want_log, "want_disks": want_disks, "work_dir": setting(w, "work_dir"), "idle": running == 0, "running": running, "auto_update": bool(setting(w, "auto_update")), "ai_quality": bool(setting(w, "ai_quality")), "window": setting(w, "update_window"), "request": request,
+            "hub_version": __version__, "update_ahead": bool(setting(w, "update_ahead")),
             **protect.host_instruction(conn, worker_id)}
 
 
@@ -541,8 +562,8 @@ def report_update(conn, worker_id, info, now=None):
     if status == "started":                                           # the helper is about to update (an hourly check, or a request that found new code)
         task_note(conn, worker_id, "update", str(info.get("note") or "")[:200] or f"Updating to {str(info.get('commit') or 'the newest code')[:80]}", running=True, create="auto", now=now)
         return {"status": "started", "commit": str(info.get("commit") or "")[:80]}
-    if status not in ("ok", "failed", "current", "problem"):
-        raise ValueError("The update report needs a status of 'ok', 'failed', 'current' or 'problem'.")
+    if status not in ("ok", "failed", "current", "problem", "waiting"):
+        raise ValueError("The update report needs a status of 'ok', 'failed', 'current', 'problem' or 'waiting'.")
     report = {k: str(info.get(k) or "")[:{"error": 2000, "log": 6000}.get(k, 80)] for k in UPDATE_FIELDS if k != "at"}
     report["status"], report["at"] = status, now or db.now()
     note = str(info.get("note") or "")[:200]
@@ -550,6 +571,9 @@ def report_update(conn, worker_id, info, now=None):
         task_finish(conn, worker_id, "update", "failed" if status == "failed" else "done", note, error=report["error"] if status == "failed" else None, log=report["log"], create=True, now=report["at"])
         return report
     settings.set_value(UPDATE_KEY.format(worker_id), json.dumps(report), conn=conn)
+    if status == "waiting":                                          # newer code than SyncHub runs: nobody is alerted, the page says what to do
+        task_finish(conn, worker_id, "update", "done", waiting_text(report), create=False, now=report["at"])
+        return report
     if status in ("ok", "failed", "current"):
         if status == "ok":
             text = f"Updated {_build(report['previous'], report['previous_commit'])} to {_build(report['version'], report['commit'])}" if report["previous"] or report["previous_commit"] else f"Updated to {_build(report['version'], report['commit'])}"

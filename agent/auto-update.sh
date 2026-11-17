@@ -502,6 +502,37 @@ if ! git_run merge-base --is-ancestor "$LOCAL" "$REMOTE"; then touch "$CHECKED";
 if [ -f "$STATE/failed" ] && [ "$(cat "$STATE/failed")" = "$REMOTE" ]; then touch "$CHECKED"; exit 0; fi       # already failed here; wait for newer code
 
 short="$(git_run rev-parse --short "$REMOTE")"
+
+# New code is only taken once SyncHub itself runs that version (update SyncHub first, then the workers). The same version with a newer commit is fine.
+# SyncHub not answering counts as "wait" too. --now (a person typed it) and the "Update even before SyncHub" switch skip this.
+if [ "$FORCE" != 1 ] && [ "$(jget update_ahead)" != true ]; then
+    new_version="$(agent_version "$REMOTE")"; hub_version="$(jget hub_version)"
+    if [ -z "$hub_version" ]; then
+        why="SyncHub did not say which version it runs"
+    elif python3 - "$new_version" "$hub_version" <<'PY'
+import sys
+def key(v):
+    try: return tuple(int(x) for x in v.strip().split("."))
+    except ValueError: return None
+a, b = key(sys.argv[1]), key(sys.argv[2])
+sys.exit(0 if a and b and a > b else 1)
+PY
+    then
+        why="SyncHub runs $hub_version. Update SyncHub first"
+    else
+        why=""
+    fi
+    if [ -n "$why" ]; then
+        [ "$(cat "$STATE/waiting-hub" 2>/dev/null)" = "$short:$why" ] || {
+            log "New code $new_version ($short) is waiting: $why."
+            echo "$short:$why" > "$STATE/waiting-hub"
+            send_report "{\"status\":\"waiting\",\"version\":\"$new_version\",\"commit\":\"$short\",\"error\":$(printf '%s' "$why" | json_escape)}"
+        }
+        [ "$REQUEST" = update ] && send_report "{\"status\":\"waiting\",\"version\":\"$new_version\",\"commit\":\"$short\",\"error\":$(printf '%s' "$why" | json_escape)}"
+        exit 0
+    fi
+    rm -f "$STATE/waiting-hub"
+fi
 if [ "$FORCE" = 1 ]; then
     log "New code $short: updating now (--now)"
 elif [ "$REQUEST" = update ]; then

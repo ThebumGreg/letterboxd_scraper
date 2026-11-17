@@ -95,4 +95,6 @@ def relink_all(conn):
     from synchub.library import episode_link
     episodes = episode_link.relink(conn)["episodes"]
     films = file_labels.refresh(conn)
-    return {"films": len({m for m in claimed.values()}), "files": linked, "episodes": episodes, "with_more_than_one": films}
+    from synchub.library import names
+    renamed = names.fix_foreign(conn)                   # a file named in another alphabet gets its film's title
+    return {"films": len({m for m in claimed.values()}), "files": linked, "episodes": episodes, "with_more_than_one": films, "renamed": renamed}

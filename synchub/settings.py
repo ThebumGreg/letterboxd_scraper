@@ -7,7 +7,7 @@ SECRET_FIELDS = ("tmdb_api_key", "jellyfin_api_key", "radarr_api_key", "sonarr_a
 
 DEFAULTS = {
     "scraper_interval_hours": "24", "radarr_interval_hours": "6", "sonarr_interval_hours": "6", "jellyfin_interval_hours": "6",
-    "metadata_refresh_hours": "24", "queue_poll_seconds": "30", "synchub_url": "", "jellyfin_events_keep_days": "7", "ddns_interval_minutes": "1", "access_guest_permissions": "dashboard,tv", "guest_max_rating": "1", "access_session_days": "30", "backup_keep": "7",
+    "metadata_refresh_hours": "24", "queue_poll_seconds": "30", "synchub_url": "", "jellyfin_events_keep_days": "7", "ddns_interval_minutes": "1", "access_guest_permissions": "dashboard,tv", "guest_max_rating": "1", "access_session_days": "30", "backup_keep": "7", "premigrate_keep": "3",
     "request_delay_min": str(DEFAULT_REQUEST_DELAY_RANGE[0]), "request_delay_max": str(DEFAULT_REQUEST_DELAY_RANGE[1]),
     "user_delay_min": str(DEFAULT_USER_DELAY_RANGE[0]), "user_delay_max": str(DEFAULT_USER_DELAY_RANGE[1]),
     "disable_jellyfin_connection": "0", "jellyfin_url": "", "jellyfin_server_id": "", "radarr_url": "", "sonarr_url": "",
@@ -48,7 +48,7 @@ DEFAULTS = {
     # Welcome home page, the evening (tomorrow) screen and the quote source
     "dash_welcome_on": "0", "dash_welcome_seconds": "120", "dash_welcome_away": "15", "dash_welcome_gap": "60", "dash_welcome_quiet_on": "1", "dash_welcome_quiet_from": "22:00", "dash_welcome_quiet_to": "06:00",
     "dash_welcome_wake": "1", "dash_welcome_details": "1",
-    "dash_new_on": "1", "dash_eve_on": "0", "dash_eve_start": "20:00", "dash_eve_end": "22:00", "dash_eve_days": "sun,mon,tue,wed,thu", "dash_quote_source": "quote",
+    "dash_new_on": "1", "dash_screensaver_off": "1", "dash_eve_on": "0", "dash_eve_start": "20:00", "dash_eve_end": "22:00", "dash_eve_days": "sun,mon,tue,wed,thu", "dash_quote_source": "quote",
     "unifi_net_host": "", "unifi_net_verify_tls": "0",
     # quality checks (docs/QUALITY.md): how many slices of a film a worker samples, how long each is, the score under which a film is flagged, whether new downloads are
     # checked (off or flag) and whether the Library clean-up checks the films it has not looked at yet, newest or oldest first

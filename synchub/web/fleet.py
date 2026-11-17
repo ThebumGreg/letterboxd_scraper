@@ -55,6 +55,11 @@ ENCODERS = {
 }
 
 
+# The worker's "features" list in words, so nothing it can do is hidden from the page.
+FEATURE_NAMES = {"profiles": "Conversion profiles", "scale": "Scaling", "audio_add": "Add audio track", "benchmark": "Benchmark", "two_outputs": "Two outputs",
+                 "aside": "Keep originals aside", "preview": "Previews", "compress_test": "Compression test", "quality": "Quality check", "damage": "Damage check",
+                 "quality_ai": "AI quality", "dovi": "Dolby Vision"}
+
 # What the agent tests with a real frame (agent/synchub_agent.py, detect_capabilities).
 TESTED = {"libx265", "libx264", "libsvtav1", "hevc_nvenc", "h264_nvenc", "av1_nvenc", "hevc_qsv", "h264_qsv", "av1_qsv", "hevc_vaapi", "h264_vaapi", "av1_vaapi"}
 
@@ -114,7 +119,7 @@ def describe_host(w):
         "gpu_encodes": _whole(live.get("gpu_encodes")),
         "container": container, "host_uptime": _duration(dynamic.get("host_uptime_seconds")), "agent_uptime": _duration(live.get("uptime_seconds")),
         "python": _text(caps.get("python"), 20), "ffmpeg": _text(caps.get("ffmpeg"), 120), "ffprobe": _text(caps.get("ffprobe"), 120),
-        "hwaccels": [str(h)[:24] for h in _items(ffmpeg.get("hwaccels"), 20)], "vmaf": bool(caps.get("vmaf")), "ops": [str(o)[:24] for o in _items(caps.get("ops"), 20)],
+        "hwaccels": [str(h)[:24] for h in _items(ffmpeg.get("hwaccels"), 20)], "vmaf": bool(caps.get("vmaf")), "vmaf_hdr": bool(caps.get("vmaf_hdr")), "features": [FEATURE_NAMES.get(str(f), str(f))[:40] for f in _items(caps.get("features"), 30)], "ops": [str(o)[:24] for o in _items(caps.get("ops"), 20)],
         "encoders": describe_encoders(caps.get("encoders"), ffmpeg.get("encoders_built")), "work_free": _gb(live.get("work_free_bytes")),
         "slots": caps.get("agent_slots"),
     }
@@ -145,6 +150,8 @@ def describe_update(report):
         return None
     if report.get("status") == "current":
         return {"ok": True, "text": f"checked, already up to date on {workers._build(report.get('version'), report.get('commit'))} ({webhooks.ago(report['at']) if report.get('at') else 'earlier'})", "error": None}
+    if report.get("status") == "waiting":
+        return {"ok": False, "text": f"{workers.waiting_text(report)} ({webhooks.ago(report['at']) if report.get('at') else 'earlier'})", "error": None}
     if report.get("status") == "problem":
         return {"ok": False, "text": f"problem, see the log ({webhooks.ago(report['at']) if report.get('at') else 'earlier'})", "error": report.get("error"), "log": report.get("log")}
     ok = report.get("status") == "ok"
