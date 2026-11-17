@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.8
+
+Update SyncHub first. One small migration (057). Nothing changes on screen yet.
+
+**Library check, step 1: Radarr and Sonarr paths are saved.** Each Radarr and Sonarr sync now also keeps the movie folder, the movie file path and size, the series folder and the episode file paths and sizes, exactly as the service reports them. The Library check page that compares them with Jellyfin and the files on disk comes next. After updating, run a Radarr/Sonarr sync to fill them.
+
 ## 1.9.7
 
 Update SyncHub first, then the workers. One small migration (056). The workers' GPU chart, the "waits for SyncHub" rule and the capabilities list need the worker update.
