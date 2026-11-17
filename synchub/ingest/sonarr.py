@@ -31,6 +31,7 @@ def sync_library(conn, client, now=None, progress=None):
         touch(conn, "src_sonarr_series", ("sonarr_id",), {
             "sonarr_id": sid, "tvdb_id": clean_id(s.get("tvdbId")), "tmdb_id": clean_id(s.get("tmdbId")), "imdb_id": clean_id(s.get("imdbId")),
             "title": s.get("title"), "year": s.get("year") or None, "monitored": 1 if s.get("monitored") else 0,
+            "folder": s.get("path") or None,
         }, now)
         seen_series.append(sid)
         if episodes is None:
@@ -42,6 +43,7 @@ def sync_library(conn, client, now=None, progress=None):
                 "sonarr_episode_id": eid, "sonarr_id": sid, "season_number": ep.get("seasonNumber"), "episode_number": ep.get("episodeNumber"),
                 "tvdb_episode_id": clean_id(ep.get("tvdbId")), "title": ep.get("title"), "air_date": ep.get("airDate") or None,
                 "monitored": 1 if ep.get("monitored") else 0, "has_file": 1 if ep.get("hasFile") else 0,
+                "file_path": (ep.get("episodeFile") or {}).get("path"), "file_size": (ep.get("episodeFile") or {}).get("size"),
             }, now)
             seen_eps.append(eid)
         episodes_seen += len(seen_eps)

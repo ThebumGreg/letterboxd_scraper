@@ -122,7 +122,7 @@ class SonarrClient(_Arr):
         return self._get("GetCalendar", "/api/v3/calendar", params={"start": start, "end": end, "unmonitored": "false", "includeSeries": "true"}, timeout=30)
 
     def episodes(self, series_id):
-        return self._get("GetEpisodes", "/api/v3/episode", params={"seriesId": series_id}, timeout=60)
+        return self._get("GetEpisodes", "/api/v3/episode", params={"seriesId": series_id, "includeEpisodeFile": "true"}, timeout=60)
 
     def rescan_series(self, series_id):
         """Asks Sonarr to look at the series' folders again, so it notices the file was replaced."""

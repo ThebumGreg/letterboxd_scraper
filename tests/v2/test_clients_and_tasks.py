@@ -68,7 +68,7 @@ def test_arr_clients_send_key_and_page_the_queue(v2, calls):
     assert calls[0][2]["headers"]["X-Api-Key"] == "RKEY"
     calls.routes["/api/v3/episode"] = Resp([{"id": 1}])
     assert SonarrClient("http://sonarr", "S").episodes(10) == [{"id": 1}]
-    assert calls[-1][2]["params"] == {"seriesId": 10}
+    assert calls[-1][2]["params"] == {"seriesId": 10, "includeEpisodeFile": "true"}
 
 
 def test_payload_logging_masks_secrets_and_is_opt_in(v2, calls):
