@@ -345,3 +345,19 @@ def test_the_tv_page_draws_the_strip_and_the_settings_page_has_the_switch(client
 def test_build_failing_to_read_the_titles_leaves_the_strip_out_and_the_rest_alone(v2, monkeypatch):
     monkeypatch.setattr(catalog, "recently_added_titles", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db busy")))
     assert dash_data.whats_new() == []
+
+
+def test_the_requested_titles_and_preview_pages_open_and_follow_the_logs_permission(client, conn, app):
+    mid = media(conn, "movie", "Heat", 949)
+    conn.execute("INSERT INTO auto_request (service, media_id, title, requested_at) VALUES ('radarr', ?, 'Heat', '2026-11-05 11:30:00')", (mid,))
+    conn.commit()
+    text = client.get("/system/requests").get_data(as_text=True)
+    assert "Heat" in text and "2026-11-05 11:30" in text and "Radarr" in text
+    assert "No previews have been made yet" in client.get("/system/previews").get_data(as_text=True)
+    assert "/system/previews" in client.get("/system/storage").get_data(as_text=True)
+    conn.execute("INSERT INTO profile (name, permissions, pin_hash) VALUES ('Kid', 'dashboard', 'x')")
+    conn.commit()
+    browser = app.test_client()
+    browser.set_cookie("synchub_profile", "0")
+    settings.set_value("access_guest_permissions", "dashboard")
+    assert browser.get("/system/requests").status_code == 403 and browser.get("/system/previews").status_code == 403

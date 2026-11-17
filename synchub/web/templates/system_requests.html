@@ -1,0 +1,29 @@
+<!-- synchub/web/templates/system_requests.html -->
+{% extends "base.html" %}
+{% block title %}Requested titles{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+    <h2 class="mb-1">Requested titles</h2>
+    <p class="text-body-secondary mb-0">Every title SyncHub asked Radarr or Sonarr for by itself, newest first. A dry run only logs what it would have asked, so those are not listed. {{ status.text }}.</p>
+</div>
+<div class="panel p-3 mb-3" id="requestLog">
+{% if rows %}
+    <div class="table-responsive">
+    <table class="table align-middle mb-0">
+        <thead><tr><th>Title</th><th>Asked</th><th>When</th><th>In Jellyfin now</th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+            <tr><td class="fw-bold">{{ r.title }}{% if r.year %} <span class="text-body-secondary fw-normal">({{ r.year }})</span>{% endif %}</td>
+                <td>{{ 'Radarr' if r.service == 'radarr' else 'Sonarr' }} ({{ r.label }})</td>
+                <td class="text-nowrap">{{ r.when }}</td>
+                <td>{% if r.in_jellyfin %}<span class="badge text-bg-success">Yes</span>{% else %}<span class="text-body-secondary">Not yet</span>{% endif %}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+{% else %}
+    <p class="text-body-secondary mb-0">Nothing has been requested automatically yet.</p>
+{% endif %}
+</div>
+{% endblock %}

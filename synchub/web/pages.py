@@ -5,7 +5,7 @@ import os
 from flask import abort, flash, g, jsonify, redirect, render_template, request, send_file, send_from_directory, url_for
 
 from config import BASE_DIR
-from synchub import access, automation, backup, catalog, data_usage, db, ddns, discover, posters, poor_quality, profiles, quality, ratings, search, settings, states, status, tasks, watch, watchlist, webhooks, workers
+from synchub import access, automation, backup, catalog, data_usage, db, ddns, discover, posters, poor_quality, previews, profiles, quality, ratings, search, settings, states, status, tasks, watch, watchlist, webhooks, workers
 from synchub.clients import ApiError, ConfigError
 from synchub.clients.tmdb import TmdbClient
 from synchub.library import episode_link, file_labels
@@ -131,6 +131,23 @@ def register(app):
         series = [(key, label, data_usage.chart_points(history, key)) for key, label in
                   (("data_bytes", "Everything in /data"), ("db_bytes", "Database"), ("previews_bytes", "Preview clips"), ("backups_bytes", "Backups"), ("logs_bytes", "Logs"))]
         return render_template("system_storage.html", usage=usage, history=history, series=series, growth=data_usage.growth(history), free_growth=data_usage.growth(history, "free_bytes"))
+
+    @app.route("/system/requests")
+    def system_requests_page():
+        """Every title SyncHub asked Radarr or Sonarr for on its own, and when."""
+        with db.connection() as conn:
+            rows = automation.request_log(conn)
+            status = automation.request_status(conn)
+        return render_template("system_requests.html", rows=rows, status=status)
+
+    @app.route("/system/previews")
+    def system_previews_page():
+        """All preview clips: which film, when, what was decided, and how much room each takes."""
+        with db.connection() as conn:
+            rows = previews.recent(conn, 1000)
+        for r in rows:
+            r["bytes"] = previews.folder_bytes(r["id"])
+        return render_template("system_previews.html", rows=rows, total=sum(r["bytes"] for r in rows))
 
     @app.route("/api/system/storage/docker")
     def api_system_storage_docker():

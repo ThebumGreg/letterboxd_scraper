@@ -524,3 +524,32 @@ def test_a_test_is_written_to_the_files_history(conn, big):
     finish(conn, compression_test.request(conn, big), result())
     kinds = [e["event_type"] for e in store.events_for(conn, big)]
     assert "compression_test_queued" in kinds and "compression_test_done" in kinds
+
+
+# ---------------------------------------------------------------- the alignment check (1.9.9)
+def test_the_score_command_can_shift_a_side_use_a_constant_rate_and_score_every_nth_frame():
+    graph = lambda *a, **k: agent.vmaf_clip_command("ffmpeg", "/w/c.mkv", "/m/f.mkv", 10.0, 15.0, 4, *a, **k)[-1 - 0:] and " ".join(agent.vmaf_clip_command("ffmpeg", "/w/c.mkv", "/m/f.mkv", 10.0, 15.0, 4, *a, **k))
+    plain = graph()
+    assert "trim=start_frame" not in plain and "fps=fps" not in plain and "n_subsample" not in plain
+    shifted = graph(shift=2)
+    assert "[0:v:0]trim=start_frame=2,setpts=PTS-STARTPTS" in shifted and "[1:v:0]setpts=PTS-STARTPTS" in shifted
+    assert "[1:v:0]trim=start_frame=1," in graph(shift=-1)
+    assert "fps=fps=24000/1001" in graph(fps="24000/1001") and "fps=fps=" not in graph(fps="24; rm -rf")
+    assert "n_subsample=8" in graph(subsample=8)
+
+
+def test_a_clip_whose_score_jumps_with_another_pairing_is_called_misaligned():
+    clip = {"probe": {"scores": {"as is": 74.0, "+1 frame": 95.2}, "best": "+1 frame", "best_vmaf": 95.2}}
+    assert "95.2 with +1 frame" in compression_test.misaligned(clip)
+    assert compression_test.misaligned({"probe": {"scores": {"as is": 90.0, "constant rate": 92.0}, "best": "constant rate", "best_vmaf": 92.0}}) is None
+    assert compression_test.misaligned({"probe": {"scores": {"as is": 90.0}, "best": "as is", "best_vmaf": 90.0}}) is None
+    assert compression_test.misaligned({}) is None
+
+
+def test_keeping_the_clips_is_a_setting_that_goes_into_the_plan(conn, big):
+    plan = lambda: jobs.get(conn, compression_test.get(conn, compression_test.request(conn, big))["job_id"])["plan"]
+    assert not plan().get("keep_clips")
+    settings.set_value("ctest_keep_clips", "1", conn=conn)
+    conn.execute("DELETE FROM job"); conn.commit()
+    conn.execute("DELETE FROM compression_test"); conn.commit()
+    assert plan().get("keep_clips") is True

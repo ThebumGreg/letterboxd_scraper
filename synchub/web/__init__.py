@@ -29,7 +29,7 @@ NAV = (
     )),
     ("System", (
         (None, "Run"), ("tools", "Tools & Operations"),
-        (None, "Monitor"), ("status_page", "System status"), ("system_library_page", "Library status"), ("system_storage_page", "SyncHub storage"), ("sessions_page", "Sessions"), ("activity_page", "What it's doing now"), ("logs_page", "Logs"), ("jellyfin_events_page", "Jellyfin events"), ("payloads_page", "Payloads"),
+        (None, "Monitor"), ("status_page", "System status"), ("system_library_page", "Library status"), ("system_storage_page", "SyncHub storage"), ("system_requests_page", "Requested titles"), ("system_previews_page", "Preview clips"), ("sessions_page", "Sessions"), ("activity_page", "What it's doing now"), ("logs_page", "Logs"), ("jellyfin_events_page", "Jellyfin events"), ("payloads_page", "Payloads"),
         (None, "Admin"), ("players_page", "Players"), ("ddns_page", "Dynamic DNS"), ("people_page", "People"),
         (None, "Remote"), ("tv_settings_page", "Remote Apps"), ("tv_setup_devices_page", "TVs"), ("tv_setup_advanced_page", "Remote Tools"),
     )),

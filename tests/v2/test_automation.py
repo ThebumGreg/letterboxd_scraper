@@ -318,3 +318,12 @@ def test_request_all_picks_seasons_with_aired_missing_episodes_but_not_specials(
         conn.execute("INSERT INTO item_state (target_type, target_id, state_code) VALUES ('episode', ?, 'in_library')", (s1a,))
         conn.execute("INSERT INTO item_state (target_type, target_id, state_code) VALUES ('episode', ?, 'in_library')", (s1b,))
         automation.request_all(conn, sonarr, mid, today="2026-06-15")
+
+
+def test_the_request_log_lists_what_was_asked_newest_first(conn):
+    m1, m2 = movie(conn, 1, "Old"), movie(conn, 2, "New")
+    conn.execute("INSERT INTO auto_request (service, media_id, title, requested_at) VALUES ('radarr', ?, 'Old', '2026-11-01 10:00:00')", (m1,))
+    conn.execute("INSERT INTO auto_request (service, media_id, title, requested_at) VALUES ('radarr', ?, 'New', '2026-11-05 11:30:00')", (m2,))
+    conn.commit()
+    log = automation.request_log(conn)
+    assert [r["title"] for r in log] == ["New", "Old"] and log[0]["when"] == "2026-11-05 11:30" and log[0]["label"] == "movie" and log[0]["in_jellyfin"] is False
