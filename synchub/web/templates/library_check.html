@@ -1,0 +1,79 @@
+<!-- synchub/web/templates/library_check.html -->
+{% extends "base.html" %}
+{% block title %}Library check{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+        <h2 class="mb-2">Library check</h2>
+        <p class="text-body-secondary mb-0">Where Radarr, Sonarr, Jellyfin and the files on your shares disagree. The file on the share is the truth; each problem says what is wrong and what to do. Nothing changes unless you press a button.</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('library_check_csv') }}"><i class="bi bi-download"></i> Download list</a>
+</div>
+<div id="checkMessage" class="alert d-none" role="status"></div>
+
+{% if not findings %}
+<div class="alert alert-success"><i class="bi bi-check-circle"></i> No problems found in what SyncHub has saved. If you just updated, run a Radarr/Sonarr sync first so the folders are saved.</div>
+{% else %}
+<div class="d-flex flex-wrap gap-2 mb-4">
+    {% for kind, label, text, count in summary %}<a class="btn btn-sm btn-outline-secondary" href="#kind-{{ kind }}" title="{{ text }}">{{ label }} <span class="badge bg-secondary">{{ count }}</span></a>{% endfor %}
+</div>
+{% for kind, label, text, count in summary %}
+<section class="mb-5" id="kind-{{ kind }}">
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+        <h4 class="h5 mb-0">{{ label }} <span class="badge bg-secondary">{{ count }}</span></h4>
+        {% if kind in ('not_in_jellyfin', 'missing_episodes') %}<button type="button" class="btn btn-sm btn-primary ms-auto" data-check-action="scan_jellyfin">Scan Jellyfin</button>{% endif %}
+    </div>
+    <p class="small text-body-secondary">{{ text }}</p>
+    <div class="table-responsive">
+        <table class="table table-sm align-middle">
+            <thead><tr><th>Title</th><th>What is wrong and what to do</th><th></th></tr></thead>
+            <tbody>
+            {% for f in findings if f.kind == kind %}
+                <tr>
+                    <td class="text-nowrap">{% if f.media_id %}<a href="{{ url_for('movie_details', media_id=f.media_id) if not f.get('show') else url_for('show_details', media_id=f.media_id) }}">{{ f.title }}</a>{% else %}{{ f.title }}{% endif %}{% if f.year %} <span class="text-body-secondary">({{ f.year }})</span>{% endif %}</td>
+                    <td>
+                        <div>{{ f.summary }}</div>
+                        <div class="small text-body-secondary mt-1"><strong>What to do:</strong> {{ f.fix }}</div>
+                        {% for line in f.detail %}<div class="small text-body-secondary text-break">{{ line }}</div>{% endfor %}
+                    </td>
+                    <td class="text-end">
+                        {% if f.action and f.action.type == 'radarr_repoint' %}<button type="button" class="btn btn-sm btn-outline-danger" data-check-action="radarr_repoint" data-radarr="{{ f.action.radarr_id }}" data-name="{{ f.title }}">{{ f.action.label }}</button>
+                        {% elif f.action and f.action.type == 'scan_jellyfin' %}<button type="button" class="btn btn-sm btn-outline-primary" data-check-action="scan_jellyfin">{{ f.action.label }}</button>
+                        {% else %}<span class="badge text-bg-warning" title="SyncHub cannot fix this safely">Needs you</span>{% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endfor %}
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const box = document.getElementById('checkMessage');
+    const say = (ok, text) => { box.className = 'alert alert-' + (ok ? 'success' : 'danger'); box.textContent = text; window.scrollTo({ top: 0, behavior: 'smooth' }); };
+    const post = async (url, body) => {
+        try {
+            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf }, body: JSON.stringify(body || {}) });
+            return await res.json();
+        } catch (e) { return { ok: false, message: 'Could not reach the server.' }; }
+    };
+    document.querySelectorAll('[data-check-action]').forEach((button) => {
+        button.addEventListener('click', async () => {
+            const action = button.dataset.checkAction;
+            if (action === 'radarr_repoint' && !confirm('Point Radarr at a new empty folder for "' + button.dataset.name + '"? The file is not moved or deleted; Radarr just stops claiming it. Then search for the right film in Radarr.')) return;
+            button.disabled = true;
+            const data = action === 'scan_jellyfin' ? await post('/api/library/check/scan-jellyfin') : await post('/api/library/check/radarr-repoint', { radarr_id: button.dataset.radarr });
+            say(data.ok, data.message);
+            if (!data.ok) button.disabled = false;
+        });
+    });
+})();
+</script>
+{% endblock %}

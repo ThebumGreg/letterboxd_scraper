@@ -23,7 +23,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-__version__ = "1.9.8"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
+__version__ = "1.9.9"      # kept equal to SyncHub's version (synchub/__init__.py); see docs/RELEASING.md
 PROTOCOL = 1
 API = "/api/player/v1"
 LOG_NAME = "player.log"

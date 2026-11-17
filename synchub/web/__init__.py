@@ -25,7 +25,7 @@ NAV = (
     ("Media", (                                                                 # these six are the tabs of one page (synchub/web/media.py)
         ("library_page", "Library"), ("workers_originals_page", "Cleanup"),
         ("workers_page", "Workers"), ("jobs_page", "Jobs"), ("storage_page", "Storage"), ("library_options_page", "Options"),
-        (None, "Matching"), ("resolution_center", "Resolution Center"),
+        (None, "Matching"), ("resolution_center", "Resolution Center"), ("library_check_page", "Library check"),
     )),
     ("System", (
         (None, "Run"), ("tools", "Tools & Operations"),
@@ -265,8 +265,8 @@ def create_app(start_scheduler=False, csrf=True):
 
     from synchub.library import file_labels
     app.jinja_env.globals["file_labels"] = file_labels            # the label words, tones and hints for the badges
-    from synchub.web import admin, api, fleet, library, notifications, pages, player_api, players_web, security, shares, tv, watchlist, worker_api, originals, sessions as sessions_web, versions as versions_web, quality_web, dashboard as dashboard_web, media as media_web
-    for module in (pages, api, admin, fleet, library, notifications, shares, security, tv, watchlist, worker_api, player_api, players_web, originals, sessions_web, versions_web, quality_web, dashboard_web, media_web):
+    from synchub.web import admin, api, fleet, library, notifications, pages, player_api, players_web, security, shares, tv, watchlist, worker_api, originals, sessions as sessions_web, versions as versions_web, quality_web, dashboard as dashboard_web, media as media_web, library_check as library_check_web
+    for module in (pages, api, admin, fleet, library, notifications, shares, security, tv, watchlist, worker_api, player_api, players_web, originals, sessions_web, versions_web, quality_web, dashboard_web, media_web, library_check_web):
         module.register(app)
     if csrf:
         csrf.exempt(app.view_functions["api_webhook"])
