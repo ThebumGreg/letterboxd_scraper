@@ -3,11 +3,11 @@ from config import DEFAULT_REQUEST_DELAY_RANGE, DEFAULT_USER_DELAY_RANGE
 from settings_validation import validate_setting
 from synchub import db
 
-SECRET_FIELDS = ("tmdb_api_key", "jellyfin_api_key", "radarr_api_key", "sonarr_api_key", "apprise_urls", "dynu_api_key", "pushover_app_token", "protect_api_key", "unifi_net_api_key")
+SECRET_FIELDS = ("tmdb_api_key", "jellyfin_api_key", "radarr_api_key", "sonarr_api_key", "apprise_urls", "dynu_api_key", "pushover_app_token", "webpush_vapid_private", "protect_api_key", "unifi_net_api_key")
 
 DEFAULTS = {
     "scraper_interval_hours": "24", "radarr_interval_hours": "6", "sonarr_interval_hours": "6", "jellyfin_interval_hours": "6",
-    "metadata_refresh_hours": "24", "queue_poll_seconds": "30", "synchub_url": "", "jellyfin_events_keep_days": "7", "ddns_interval_minutes": "1", "access_guest_permissions": "dashboard,tv", "guest_max_rating": "1", "access_session_days": "30", "backup_keep": "7", "premigrate_keep": "3",
+    "metadata_refresh_hours": "24", "queue_poll_seconds": "30", "synchub_url": "", "public_url": "", "webpush_vapid_private": "", "webpush_vapid_public": "", "jellyfin_events_keep_days": "7", "ddns_interval_minutes": "1", "access_guest_permissions": "dashboard,tv", "guest_max_rating": "1", "access_session_days": "30", "backup_keep": "7", "premigrate_keep": "3",
     "request_delay_min": str(DEFAULT_REQUEST_DELAY_RANGE[0]), "request_delay_max": str(DEFAULT_REQUEST_DELAY_RANGE[1]),
     "user_delay_min": str(DEFAULT_USER_DELAY_RANGE[0]), "user_delay_max": str(DEFAULT_USER_DELAY_RANGE[1]),
     "disable_jellyfin_connection": "0", "jellyfin_url": "", "jellyfin_server_id": "", "radarr_url": "", "sonarr_url": "",

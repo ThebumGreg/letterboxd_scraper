@@ -94,3 +94,7 @@ The tests use a pretend Pushover, so the first real send needs you:
 3. Episode events (built: later-episode and 'aired' notices with per-person timing, source and a mute per show; request progress and failure notices are still to do).
 4. Administrator events, check-ins, recovery messages, security alerts.
 5. Digests, further ideas, polish.
+
+## 9. Phone and browser push (Web Push)
+
+`providers/webpush.py`: a delivery method with no typed fields. A device subscribes from a person's own page (`static/js/push.js`, over https, from the Home Screen app on an iPhone), and SyncHub saves the subscription (`endpoint`, `p256dh`, `auth`) as a channel. Sending uses `pywebpush` and SyncHub's own VAPID key pair (`webpush_vapid_private` secret, `webpush_vapid_public`), with the Public HTTPS address as the VAPID subject. The address of a subscription must belong to Apple, Google, Mozilla or Microsoft's push services, so a person cannot make the server call anywhere else. 404 and 410 mean the device is gone (three in a row switch it off); 429 and 5xx are retried. Plan: `plans/https-and-ios-push-plan.md`.

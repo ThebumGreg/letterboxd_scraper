@@ -22,4 +22,4 @@ def for_people():
     return [p for p in _REGISTRY.values() if p.scope == "user"]
 
 
-from synchub.notifications.providers import apprise_provider, pushover  # noqa: E402,F401  (each registers itself)
+from synchub.notifications.providers import apprise_provider, pushover, webpush  # noqa: E402,F401  (each registers itself)

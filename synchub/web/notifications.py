@@ -1,8 +1,9 @@
 """A person's own notification settings: the delivery methods they add (such as Pushover), a test message, and what was sent to them."""
-from flask import jsonify, redirect, request, url_for
+from flask import jsonify, redirect, request, send_from_directory, url_for
 
 from synchub import access, db
 from synchub.notifications import dispatch, providers, store
+from synchub.notifications.providers import webpush
 from synchub.notifications.providers.base import BAD_SETUP, QUOTA, RETRY, ProviderError
 from synchub.notifications.throttle import Throttle
 from synchub.web import current_profile
@@ -32,10 +33,14 @@ def _person(conn):
     return profile, None
 
 
+def webpush_provider():
+    return providers.get("webpush")
+
+
 def _forms():
     """What the Add form is built from: each method a person may add, with the fields it needs."""
     return [{"key": p.key, "label": p.label, "fields": [{"name": f.name, "label": f.label, "secret": f.secret, "required": f.required, "help": f.help} for f in p.fields]}
-            for p in providers.for_people()]
+            for p in providers.for_people() if p.fields]
 
 
 def _provider_and_config(data):
@@ -57,10 +62,57 @@ def panels_context(conn):
     rules = [r for r in store.rules(conn, profile["id"]) if is_admin or r["audience"] == "user"] if profile else []
     pref = store.pref(conn, profile["id"]) if profile else store.DEFAULT_PREF
     return {"profile": profile, "problem": problem, "channels": channels, "history": history, "forms": _forms(), "state": dispatch.state(),
-            "rules": rules, "pref": pref, "is_admin": is_admin}
+            "rules": rules, "pref": pref, "is_admin": is_admin,
+            "push": {"public_url": webpush.public_url(), "here_is_https": request.is_secure}}
 
 
 def register(app):
+    @app.route("/sw.js")
+    def service_worker():
+        """The service worker must sit at the site's root to cover every page. It only receives push messages; it caches nothing."""
+        from config import BASE_DIR
+        response = send_from_directory(BASE_DIR / "static", "sw.js", mimetype="text/javascript")
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+    @app.route("/api/notifications/push/key")
+    def api_notifications_push_key():
+        """What a device needs to subscribe: SyncHub's public key. Refuses until the Public HTTPS address is set and the page itself came over https."""
+        with db.connection() as conn:
+            profile, problem = _person(conn)
+        if problem:
+            return _fail(problem, 403)
+        if not webpush.public_url():
+            return _fail(webpush.NOT_SET_UP, 409)
+        if not request.is_secure:
+            return _fail("Open SyncHub at its https address to turn this on. A plain http page cannot receive push notifications.", 409)
+        return jsonify(ok=True, key=webpush.vapid_keys()[1])
+
+    @app.route("/api/notifications/push/subscribe", methods=["POST"])
+    def api_notifications_push_subscribe():
+        """Saves this device's push subscription as a delivery method for the person using this request."""
+        with db.connection() as conn:
+            profile, problem = _person(conn)
+        if problem:
+            return _fail(problem, 403)
+        if not CHECKS.allow(profile["id"]):
+            return _fail("That is a lot of tries. Wait a minute and try again.", 429)
+        data = request.get_json(silent=True) or {}
+        sub = data.get("subscription") if isinstance(data.get("subscription"), dict) else {}
+        keys = sub.get("keys") if isinstance(sub.get("keys"), dict) else {}
+        try:
+            config = webpush_provider().validate({"endpoint": sub.get("endpoint"), "p256dh": keys.get("p256dh"), "auth": keys.get("auth")})
+            with db.connection() as conn:
+                same = [c for c in (store._channel(r) for r in conn.execute("SELECT * FROM notification_channel WHERE profile_id = ? AND provider = 'webpush'", (profile["id"],)))
+                        if c["config"].get("endpoint") == config["endpoint"]]
+                if same:                                           # the same device turning it on again: keep one entry, switch it back on
+                    store.set_enabled(conn, same[0]["id"], profile["id"], True)
+                    return jsonify(ok=True, message="This device is already added. It is switched on.", id=same[0]["id"])
+                channel_id = store.add_channel(conn, profile["id"], "webpush", data.get("label"), config)
+        except ProviderError as exc:
+            return _fail(str(exc))
+        return jsonify(ok=True, message="Added. Send a test to see it arrive.", id=channel_id)
+
     @app.route("/notifications")
     def notifications_page():
         """Kept for old links and bookmarks: a person's notifications are now on their own page under People."""

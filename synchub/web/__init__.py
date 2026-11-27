@@ -12,6 +12,11 @@ from synchub.web import system_tabs
 
 logger = logging.getLogger(__name__)
 
+def cookie_options():
+    """How this site's cookies are set: not readable by scripts, not sent from other sites, and only over https when the page itself came over https."""
+    return {"samesite": "Lax", "httponly": True, "secure": request.is_secure}
+
+
 PROFILE_COOKIE = "synchub_profile"      # a profile's ID, or "0" for "just looking": who is using this device
 PROFILE_COOKIE_DAYS = 365
 TOKEN_COOKIE = "synchub_token"          # signed proof that the site's access token was entered on this device (only when SYNCHUB_ACCESS_TOKEN is set)
@@ -132,6 +137,8 @@ def create_app(start_scheduler=False, csrf=True):
             logger.info(f"Removed {len(old)} older copies made before upgrades (the newest {backup.premigrate_keep_count()} are kept).")
     except Exception as exc:
         logger.warning(f"Could not save a copy of the database before upgrading it: {exc}")
+    from synchub import proxy
+    proxy.install(app)
     db.migrate()
     app.secret_key = os.getenv("SECRET_KEY") or access.persistent_secret()
     tasks.reset_stale()

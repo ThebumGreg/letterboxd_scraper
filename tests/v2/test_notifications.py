@@ -212,7 +212,7 @@ def test_the_payload_log_masks_the_token_and_the_recipient_in_form_data():
 
 
 def test_apprise_is_only_for_the_administrators_own_target(v2):
-    assert [p.key for p in providers.for_people()] == ["pushover"]
+    assert [p.key for p in providers.for_people()] == ["pushover", "webpush"]
     assert providers.get("apprise").scope == "admin"
     with pytest.raises(ProviderError, match="not available"):
         providers.get("carrier-pigeon")

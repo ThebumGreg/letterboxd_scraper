@@ -22,7 +22,7 @@ def _keys(data):
 
 
 def register(app):
-    from synchub.web import PIN_COOKIE
+    from synchub.web import PIN_COOKIE, cookie_options
 
     @app.route("/people")
     def people_page():
@@ -112,7 +112,7 @@ def register(app):
         if response.status_code == 200 and g.profile and g.profile["id"] == profile_id:
             with db.connection() as conn:                       # you changed your own: keep this device signed in
                 version = conn.execute("SELECT pin_version FROM profile WHERE id = ?", (profile_id,)).fetchone()["pin_version"]
-            response.set_cookie(PIN_COOKIE, access.issue_proof(current_app.secret_key, profile_id, version), max_age=access.session_days() * 86400, samesite="Lax", httponly=True)
+            response.set_cookie(PIN_COOKIE, access.issue_proof(current_app.secret_key, profile_id, version), max_age=access.session_days() * 86400, **cookie_options())
         return response
 
     @app.route("/api/access/profile/<int:profile_id>/pin/clear", methods=["POST"])
