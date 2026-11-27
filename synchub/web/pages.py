@@ -245,7 +245,7 @@ def register(app):
         """The site's access token (SYNCHUB_ACCESS_TOKEN): asked once per device, then remembered. With no token set there is nothing to ask."""
         from flask import current_app
         from synchub import access
-        from synchub.web import TOKEN_COOKIE, safe_next
+        from synchub.web import TOKEN_COOKIE, cookie_options, safe_next
         destination = safe_next(request.values.get("next"))
         if not access.access_token():
             return redirect(destination)
@@ -256,7 +256,7 @@ def register(app):
                 error, status = f"Too many wrong tries. Wait {wait} seconds.", 429
             elif access.token_matches(request.form.get("token", "").strip()):
                 response = redirect(destination)
-                response.set_cookie(TOKEN_COOKIE, access.issue_token_proof(current_app.secret_key), max_age=365 * 86400, samesite="Lax", httponly=True)
+                response.set_cookie(TOKEN_COOKIE, access.issue_token_proof(current_app.secret_key), max_age=365 * 86400, **cookie_options())
                 return response
             else:
                 access.login_failed(request.remote_addr)
@@ -275,7 +275,7 @@ def register(app):
         """'Who is watching?': pick a profile, or carry on as a guest. A profile with a PIN asks for it; either choice is remembered on this device."""
         from flask import current_app
         from synchub import access
-        from synchub.web import PIN_COOKIE, PROFILE_COOKIE, PROFILE_COOKIE_DAYS, safe_next
+        from synchub.web import PIN_COOKIE, cookie_options, PROFILE_COOKIE, PROFILE_COOKIE_DAYS, safe_next
         with db.connection() as conn:
             profile_list = profiles.list_all(conn)
         by_id = {str(p["id"]): p for p in profile_list}
@@ -310,9 +310,9 @@ def register(app):
             with db.connection() as conn:
                 days = access.session_days(conn)
             proof = access.issue_proof(current_app.secret_key, detail["id"], detail["pin_version"])
-        response.set_cookie(PROFILE_COOKIE, choice, max_age=PROFILE_COOKIE_DAYS * 86400, samesite="Lax", httponly=True)
+        response.set_cookie(PROFILE_COOKIE, choice, max_age=PROFILE_COOKIE_DAYS * 86400, **cookie_options())
         if proof:
-            response.set_cookie(PIN_COOKIE, proof, max_age=days * 86400, samesite="Lax", httponly=True)
+            response.set_cookie(PIN_COOKIE, proof, max_age=days * 86400, **cookie_options())
         else:
             response.delete_cookie(PIN_COOKIE)
         return response

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Update SyncHub only. No migration. Nothing changes unless you set the new option.
+
+- **HTTPS behind a reverse proxy.** New `SYNCHUB_TRUST_PROXY` (an address or network, such as Nginx Proxy Manager's): SyncHub believes `X-Forwarded-Proto/Host/For` only from those addresses. The profile, PIN and token cookies get the `Secure` flag when the page came over https. New Settings > Automation > "Public HTTPS address". DEPLOY.md has the Nginx Proxy Manager, DNS and firewall steps.
+
 ## 1.9.10
 
 Update SyncHub only (the workers are unchanged). No migration, no settings change. The System menu goes from 19 entries to 8; nothing was removed from the pages, they moved.

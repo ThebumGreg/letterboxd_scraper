@@ -326,6 +326,11 @@
                     <div class="form-text">Not "localhost", which would mean Radarr's own machine. For example http://192.168.1.50:5001, or http://synchub:5001 on a shared Docker network. Saved with the form below.</div>
                 </div>
                 <div class="mb-3">
+                    <label for="public_url" class="form-label">Public HTTPS address (optional)</label>
+                    <input type="url" class="form-control" id="public_url" name="public_url" value="{{ settings.public_url }}" placeholder="https://synchub.example.com">
+                    <div class="form-text">The https name you use through your reverse proxy (Nginx Proxy Manager) over the VPN. Notification taps open pages here. Radarr, Sonarr, workers and TV players keep using the address above. Saved with the form below.</div>
+                </div>
+                <div class="mb-3">
                     <label for="jellyfin_events_keep_days" class="form-label">Keep Jellyfin events for (days)</label>
                     <input type="number" class="form-control" id="jellyfin_events_keep_days" name="jellyfin_events_keep_days" value="{{ settings.get('jellyfin_events_keep_days') or 7 }}" min="0" step="1" required>
                     <div class="form-text">Everything Jellyfin's Webhook plugin sends is stored so it can be used later. Older events are deleted once a day. 0 keeps them for ever (playback progress is stored at most every 30 seconds per player, so growth is slow).</div>

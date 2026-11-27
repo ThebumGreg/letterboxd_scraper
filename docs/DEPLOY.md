@@ -210,6 +210,20 @@ The database that was there is kept beside it as `synchub.db.before-restore-<tim
 
 SyncHub is for your own network. Do not forward port 5001 to the internet. Give the profiles that can change things a **PIN**; profiles without one can be chosen by anyone on the network. Pages and actions are protected against forged requests (CSRF), PINs are stored hashed, and worker tokens are stored hashed. For access from outside, put a reverse proxy with HTTPS in front, or use a VPN.
 
+## HTTPS through Nginx Proxy Manager (VPN only)
+
+Plan and reasons: `plans/https-and-ios-push-plan.md` in the project files. Short version: browsers and phones use `https://synchub.<your domain>` over WireGuard; workers, TV players and Radarr/Sonarr keep using `http://UNRAID_IP:5001` on the LAN. Nothing is forwarded from the internet.
+
+1. **Certificate.** In NPM add an SSL certificate for `synchub.<your domain>` with the **DNS challenge** (Cloudflare) and an API token that can only edit that one zone. This needs no inbound connection.
+2. **Name.** In AdGuard (your home DNS) add a rewrite: `synchub.<your domain>` to NPM's LAN address (`NPM_IP`). Do not create a public DNS record for SyncHub, and do **not** add SyncHub to the Cloudflare tunnel.
+3. **Proxy host in NPM.** Domain `synchub.<your domain>`, scheme `http`, forward to `UNRAID_IP` port `5001`. Turn on **Websockets Support** and **Block Common Exploits**, SSL tab: your certificate, **Force SSL**, **HTTP/2**. Under Advanced add `proxy_buffering off;` (live pages stream). If NPM also serves things through the Cloudflare tunnel, put an **Access List** on this host that allows only your WireGuard and LAN subnets (or run a second NPM for SyncHub); the tunnel must never be able to reach this host.
+4. **Tell SyncHub to believe NPM.** In `.env` or the container's variables set `SYNCHUB_TRUST_PROXY=NPM_IP` (one address, several separated by commas, or a network such as `10.0.20.0/24`) and restart. SyncHub then believes the forwarded https headers **only** from that address; a worker or laptop talking to port 5001 directly cannot pretend to be https. With it unset nothing changes.
+5. **Firewall** (NPM on its own VLAN): WireGuard and LAN clients to NPM on TCP 443 (and 80 for the redirect); NPM to Unraid on TCP 5001 only, named by address; block the rest from the NPM VLAN to the LAN; NPM to the internet for Let's Encrypt and Cloudflare. Port 5001 stays open on the LAN for workers, TV players and the webhooks.
+6. **Settings, Automation, "Public HTTPS address"**: `https://synchub.<your domain>`. Notification taps open pages there.
+7. **Check.** Over WireGuard open the https address: a padlock, you can choose a profile, and saving Settings works. Cookies are marked `Secure` once a page arrives over https.
+
+If something is wrong: remove `SYNCHUB_TRUST_PROXY`; `http://UNRAID_IP:5001` keeps working as before. A save that fails with "The referrer does not match the host" means the proxy does not pass the `Host` header or `SYNCHUB_TRUST_PROXY` does not list NPM's address.
+
 ## Access token (optional login)
 
 SyncHub listens on every interface and, by default, has no login. To put one in front of it, set `SYNCHUB_ACCESS_TOKEN` in `.env` (any long random text, for example `openssl rand -hex 24`) and restart the container. Every page then asks for the token once per device and remembers it for a year. Changing the token signs every device out. Scripts can send `Authorization: Bearer <token>`.

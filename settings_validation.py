@@ -19,7 +19,7 @@ _INT_RANGES = {
     "library_default_profile": (1, 1_000_000), "quality_samples": (1, 24), "ctest_clips": (2, 8), "ctest_seconds": (10, 30), "ctest_margin": (0, 30), "max_queued_conversions": (0, 500), "quality_slice_seconds": (10, 120), "quality_flag_below": (1, 100), "quality_min_height": (0, 4320), "dash_presence_grace": (1, 30), "dash_welcome_seconds": (20, 900), "dash_welcome_away": (1, 240), "dash_welcome_gap": (0, 720),
 }
 _FLOAT_KEYS = {"cap_mbps_2160", "cap_mbps_1080", "cap_mbps_720", "cap_mbps_sd", "tv_cap_share", "size_trigger_factor", "trigger_mbps_2160", "trigger_mbps_1080", "trigger_mbps_720", "trigger_mbps_sd", "safety_gb_2160", "safety_gb_1080", "variant_min_gb", "request_delay_min", "request_delay_max", "user_delay_min", "user_delay_max", "movie_max_gb", "movie_target_gb", "tv_max_gb_per_hour", "tv_target_gb_per_hour"}
-_URL_KEYS = {"jellyfin_url", "radarr_url", "sonarr_url", "synchub_url"}
+_URL_KEYS = {"jellyfin_url", "radarr_url", "sonarr_url", "synchub_url", "public_url"}
 _PATH_KEYS = {"radarr_root_folder", "sonarr_root_folder"}
 _CHOICES = {"rate_mode": {"target", "quality"}, "audio_mode": {"keep", "add_compatible", "compatible_only"}, "naming_style": {"jellyfin", "current"}, "tv_metadata_provider": {"tmdb", "sonarr"}, "library_integrity_mode": {"metadata", "tail", "full"}, "download_pipeline": {"off", "review", "auto"}, "originals_where": {"share", "worker"}, "vmaf_mode": {"off", "warn", "hold"}, "quality_on_download": {"off", "flag"}, "quality_scan_order": {"newest", "oldest"}, "protect_quality": {"high", "medium", "low"}, "protect_stream_type": {"mp4", "rtsp", "hls"}, "dash_units": {"us", "metric"}, "dash_quote_source": {"quote", "joke", "fact", "history", "rotate"}, "size_preset": {"fast", "medium", "slow", "slower"}, "review_first": {"always", "until_trusted", "low_confidence_only", "never"}, "dolby_vision_profile_5": {"review", "hdr10"}, "dolby_vision_profile_7_8": {"review", "hdr10", "remux", "leave"},
             "source_delete_after_days": {"0", "7", "14", "30"}, "hidden_delete_after_days": {"0", "7", "14", "30", "60", "90"}, "arr_after_migration": {"none", "update_location", "unmonitor", "remove"}, "arr_apply_when": {"after_copy", "with_source_delete"}}
@@ -72,6 +72,10 @@ def validate_setting(key, value):
         if not value:
             return True, ""
         parsed = urlparse(value)
+        if key == "public_url" and parsed.scheme == "https" and parsed.netloc and not parsed.path.strip("/"):
+            return True, value.rstrip("/")
+        if key == "public_url":
+            return False, "The public HTTPS address must look like https://synchub.example.com (https, no path)."
         if parsed.scheme in ("http", "https") and parsed.netloc:
             return True, value
         return False, f"{key} must be a valid http(s) URL."
