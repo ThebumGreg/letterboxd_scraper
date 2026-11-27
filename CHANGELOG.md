@@ -1,10 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.9.11
 
-Update SyncHub only. No migration. Nothing changes unless you set the new option.
+Update SyncHub only (the workers are unchanged). No migration. Nothing changes unless you set the new options below. New requirement: `pywebpush` (in the image).
 
 - **HTTPS behind a reverse proxy.** New `SYNCHUB_TRUST_PROXY` (an address or network, such as Nginx Proxy Manager's): SyncHub believes `X-Forwarded-Proto/Host/For` only from those addresses. The profile, PIN and token cookies get the `Secure` flag when the page came over https. New Settings > Automation > "Public HTTPS address". DEPLOY.md has the Nginx Proxy Manager, DNS and firewall steps.
+- **Push notifications to a phone or browser** (the Home Screen app on an iPhone with iOS 16.4 or newer, Android, desktop). A new delivery method beside Pushover, using the same events, rules, quiet hours, grouping and history. On a person's own page, "This phone or browser" turns it on for the device in hand; it needs the Public HTTPS address and a page opened over https. SyncHub makes its own signing key the first time (the private half is a secret, kept with the backups). Only Apple, Google, Mozilla and Microsoft push addresses are accepted. A device that was removed is switched off after three refusals.
+- **Home Screen app files.** Real dark icons (192, 512, maskable, a 180 Apple touch icon, a badge), the iPhone Home Screen tags, and a service worker at `/sw.js` that only shows notifications and caches nothing, so it cannot serve stale pages.
 
 ## 1.9.10
 

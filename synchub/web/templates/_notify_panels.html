@@ -5,6 +5,26 @@
     {% if not state.pushover_ready %}<div class="alert alert-info" role="status">Pushover is not set up yet: the administrator has to enter the Pushover application token in Settings, Connections.</div>{% endif %}
     {% if state.paused %}<div class="alert alert-warning" role="status">Sending through Pushover is on hold: {{ state.paused }}</div>{% endif %}
 
+    {% if profile and not problem %}
+    <div class="panel p-3 p-md-4 mb-4" id="pushPanel" data-ready="{{ 'yes' if push.public_url else 'no' }}">
+        <h5 class="text-success mb-1">This phone or browser</h5>
+        <p class="small text-body-secondary mb-2">Get SyncHub's notifications on this device, with no extra app. It works through your phone's own push service (Apple, Google or Mozilla), so the VPN only has to be on while you set it up here.</p>
+        {% if not push.public_url %}
+        <div class="alert alert-info small" role="status">The administrator has to set the <strong>Public HTTPS address</strong> in Settings, Automation first.</div>
+        {% elif not push.here_is_https %}
+        <div class="alert alert-warning small" role="status">This page was opened over plain http. Open <strong>{{ push.public_url }}</strong> instead (over your VPN), then come back here.</div>
+        {% endif %}
+        <div id="pushSteps" class="small mb-3">
+            <div id="pushIos" hidden>
+                <strong>On an iPhone or iPad</strong> (iOS 16.4 or newer): in Safari open this page, tap <em>Share</em>, then <em>Add to Home Screen</em>. Open SyncHub from the new Home Screen icon, come back to this page and press the button below. Notifications cannot be turned on from a normal Safari tab.
+            </div>
+            <div id="pushOther" class="text-body-secondary">On a computer or an Android phone just press the button below and allow notifications.</div>
+        </div>
+        <button type="button" class="btn btn-success btn-sm" id="pushEnable"{% if not push.public_url or not push.here_is_https %} disabled{% endif %}>Turn on notifications on this device</button>
+        <span class="small ms-2" id="pushResult" role="status"></span>
+    </div>
+    {% endif %}
+
     {% if profile %}
     <div class="panel p-3 p-md-4 mb-4" id="channelsPanel">
         <h5 class="text-success mb-1">Where to send my notifications</h5>
