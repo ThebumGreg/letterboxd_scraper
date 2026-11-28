@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.9.13
+
+Tidy-up only: nothing you can see or use changes. Update SyncHub; the workers only need it if you want them to show the same number. No migration.
+
+- **Docs.** The README no longer carries an old version number (the version is at the bottom of every page) and its "Where to look" table now lists the HTTPS and phone push steps, the status report for Homepage and Uptime Kuma, and the quality checks. FEATURES.md describes phone and browser push. QUALITY.md had the share-path paragraphs above its own title; they are now a section of the page.
+- **Two flaky tests fixed at the cause.** The Library cache tests no longer depend on a 0.2 second sleep and a 0.3 second stopwatch: they count the waiting requests at the lock itself and hold the slow compute open with an event, so a busy machine cannot fail them.
+- **Dead code removed.** Four functions nothing called (`ratings.limit_for`, `runs.has_several`, `size_policy._float`, the Library page's `queue_rows`), `recommend.next_record_id` with its one test, an unused variable in the job claim code and six unused imports.
+
 ## 1.9.12
 
 Update SyncHub only (the workers are unchanged). No migration. Nothing changes unless you set `STATUS_TOKEN`.

@@ -1,5 +1,5 @@
 """The Library's worked-out recommendations are kept until something they depend on changes (migration 041's counter), and the profile lookups happen once."""
-from synchub import quality
+from synchub import db, quality
 from synchub.library import cache, profiles, recommend as rc, scan
 from tests.v2 import library_helpers as h
 
@@ -87,30 +87,36 @@ def test_background_bookkeeping_settings_leave_the_counter_alone(v2, conn):
 
 def test_requests_waiting_on_a_slow_compute_share_the_next_one_even_when_files_keep_changing(v2, conn, monkeypatch):
     """Every change moved the counter, so each waiting request found a result older than its own and worked it all out again, one after another.
-    No sleeps decide the order: the first compute is held open until all five waiters have arrived (counted where a request first reads the counter)."""
+    Nothing is timed: the first compute is held open until all five waiters have reached the lock that holds them (counted at the lock itself)."""
     import threading
     import time
     cache.clear()
     h.add(conn)
     runs, results = [], []
-    arrivals, all_here, lock = [], threading.Event(), threading.Lock()
-    real_generation = cache.generation
+    arrivals, all_here, count_lock = [], threading.Event(), threading.Lock()
 
-    def counting_generation(c):
-        value = real_generation(c)
-        with lock:
-            arrivals.append(1)
-            if len(arrivals) == 6:                                   # the first request and the five that wait behind it
-                all_here.set()
-        return value
+    class CountingLock:
+        """The key's lock, telling the test each time a request goes to take it."""
+        def __init__(self):
+            self.real = threading.Lock()
 
-    monkeypatch.setattr(cache, "generation", counting_generation)
+        def acquire(self, blocking=True, timeout=-1):
+            with count_lock:
+                arrivals.append(1)
+                if len(arrivals) == 6:                               # the first request and the five that wait behind it
+                    all_here.set()
+            return self.real.acquire(blocking, timeout)
+
+        def release(self):
+            self.real.release()
+
+    monkeypatch.setitem(cache._key_locks, (db.DB_FILE, "slow", ""), CountingLock())
 
     def slow():
         runs.append(1)
         if len(runs) == 1:
             assert all_here.wait(10), "the waiters never arrived"
-            time.sleep(0.2)                                          # they have read the counter; let them reach the lock before the first compute ends
+            time.sleep(0.05)                                         # the last of them has called acquire; let it settle into waiting
         return len(runs)
 
     def ask():
@@ -134,25 +140,29 @@ def test_requests_waiting_on_a_slow_compute_share_the_next_one_even_when_files_k
 
 def test_a_background_refresh_shows_the_last_result_instead_of_queueing_behind_a_slow_compute(v2, conn):
     import threading
-    import time
     cache.clear()
     h.add(conn)
     with v2.connection() as c:
         cache.get(c, "slowpoll", lambda: "old")
     conn.execute("UPDATE library_file SET size_bytes = size_bytes + 1")
     conn.commit()
-    started = threading.Event()
+    started, release = threading.Event(), threading.Event()
 
     def slow():
         started.set()
-        time.sleep(0.6)
+        release.wait(10)                                             # the slow compute stays open until the refresh below has had its answer
         return "new"
 
-    worker = threading.Thread(target=lambda: cache.get(v2.connect(), "slowpoll", slow))
+    def compute_slowly():
+        with v2.connection() as c:
+            cache.get(c, "slowpoll", slow)
+
+    worker = threading.Thread(target=compute_slowly)
     worker.start()
-    started.wait(2)
-    began = time.monotonic()
-    with v2.connection() as c:
-        assert cache.get(c, "slowpoll", lambda: "never", max_age=1) == "old"
-    assert time.monotonic() - began < 0.3
-    worker.join()
+    try:
+        assert started.wait(5)
+        with v2.connection() as c:                                   # queued behind the compute it would only return once released (10 s), and say "new"
+            assert cache.get(c, "slowpoll", lambda: "never", max_age=1) == "old"
+    finally:
+        release.set()
+        worker.join(10)

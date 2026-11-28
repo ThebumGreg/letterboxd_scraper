@@ -1,6 +1,6 @@
 # SyncHub
 
-**Version 1.4.0** ([what changed](CHANGELOG.md)). Keeps Letterboxd/Serializd watchlists, Jellyfin, Radarr and Sonarr in one place, shows what you have, what is on its way and what is missing, and can add wanted titles to Radarr/Sonarr. It is also a whole-house TV remote (Roku, Google TV / Android TV) that plays Jellyfin titles, and has profiles with PINs, page permissions and parental controls.
+Keeps Letterboxd/Serializd watchlists, Jellyfin, Radarr and Sonarr in one place, shows what you have, what is on its way and what is missing, and can add wanted titles to Radarr/Sonarr. It is also a whole-house TV remote (Roku, Google TV / Android TV) that plays Jellyfin titles, and has profiles with PINs, page permissions and parental controls. The running version is at the bottom of every page; [CHANGELOG.md](CHANGELOG.md) lists what changed in each one.
 
 **Where to look**
 
@@ -14,6 +14,9 @@
 | Follow a file from scan to finished film | [docs/LIBRARY_FLOW.md](docs/LIBRARY_FLOW.md) |
 | Use or extend the TV remote, or add camera feeds | [docs/TV_REMOTE.md](docs/TV_REMOTE.md), [docs/CAMERAS.md](docs/CAMERAS.md) |
 | Show a morning screen (time, weather, calendars, school) on a TV | [docs/TV_DASHBOARD.md](docs/TV_DASHBOARD.md) |
+| Put it behind HTTPS (Nginx Proxy Manager) or get phone push notifications | [docs/DEPLOY.md](docs/DEPLOY.md#https-through-nginx-proxy-manager-vpn-only), [docs/DESIGN_NOTIFICATIONS.md](docs/DESIGN_NOTIFICATIONS.md) |
+| Show SyncHub on Homepage or Uptime Kuma | [docs/STATUS.md](docs/STATUS.md) |
+| Understand quality checks and compression tests | [docs/QUALITY.md](docs/QUALITY.md) |
 | Publish a release | [docs/RELEASING.md](docs/RELEASING.md) |
 | Understand the design | [docs/DESIGN_V2.md](docs/DESIGN_V2.md) (data model), [docs/DESIGN_ENCODING.md](docs/DESIGN_ENCODING.md) (workers, Library, conversions, worker API), [docs/DESIGN_NOTIFICATIONS.md](docs/DESIGN_NOTIFICATIONS.md) |
 | What the worker program does | [agent/README.md](agent/README.md) |

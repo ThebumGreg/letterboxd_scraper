@@ -294,10 +294,6 @@ def films_with_many_files(conn, f, page):
     return out[(page - 1) * PAGE_SIZE: page * PAGE_SIZE], len(out)
 
 
-def queue_rows(conn, cfg, group, f):
-    return rows_in_queue(conn, rc.classify(conn, cfg, f["q"] or None, f["root"] or None), group, f)
-
-
 # The Size and Resolution filters of the list page: (value, label, lowest GB, highest GB) and (value, label) of the picture class the size rules use.
 SIZE_BUCKETS = (("under5", "Under 5 GB", 0, 5), ("5to15", "5 to 15 GB", 5, 15), ("15to30", "15 to 30 GB", 15, 30), ("30to60", "30 to 60 GB", 30, 60), ("over60", "Over 60 GB", 60, None))
 RESOLUTIONS = (("2160", "4K (2160p)"), ("1080", "1080p"), ("720", "720p"), ("sd", "Smaller than 720p"), ("unknown", "Not read yet"))

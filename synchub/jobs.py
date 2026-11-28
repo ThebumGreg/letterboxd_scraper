@@ -179,7 +179,6 @@ def claim(conn, worker, free_slots, free_bytes=None, now=None):
     room = min(int(free_slots or 0), worker["slots"] - busy)
     if room <= 0:
         return []
-    tags = set(worker["tags"])
     claimed = []
     others = []                                        # the other workers, read once and only when a job's class needs them
     def peers():

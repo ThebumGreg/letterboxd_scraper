@@ -15,7 +15,6 @@ import dataclasses
 import json
 from typing import List, Optional
 
-from synchub import settings
 
 GIB = 1024 ** 3
 BUDGET_SHARE = 0.99                  # the video gets 99 % of what is left of the target after audio and subtitles
@@ -63,13 +62,6 @@ class Decision:
         if self.action == COMPRESS and n:
             return f"Compress {n['size_gb']} GB to at most {n['target_gb']} GB (HEVC, video up to {n['target_video_kbps']} kbps)."
         return " ".join(self.reasons)
-
-
-def _float(key, default, conn=None):
-    try:
-        return max(0.0, float(settings.get(key, conn=conn)))
-    except (TypeError, ValueError):
-        return default
 
 
 def load(conn=None, profile=None):

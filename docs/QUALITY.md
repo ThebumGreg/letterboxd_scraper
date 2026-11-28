@@ -1,12 +1,3 @@
-The film is matched to its files through its Jellyfin item. Jellyfin reports the main file's path; SyncHub turns it into a share and a path with the share's **Jellyfin** settings on the Storage page. Under *How Jellyfin, Radarr and Sonarr see this folder* there are two ways to say it:
-
-- **Jellyfin** (one path): Jellyfin sees the whole share under one folder, for example `/data`.
-- **Jellyfin: other mounts of this share** (one per line): Jellyfin mounts parts of the share separately. Write each as `path Jellyfin sees = folder inside the share`, for example `/OldMovie = Old Movies`, `/media = Movies`, `/TV1 = TV Shows`. The longest matching line wins. These lines also tell Jellyfin where a finished file is.
-
-The other files of the film are the ones in the same folder named after it (`Heat (1995) - 1080p.mkv` beside `Heat (1995).mkv`), or every file in the folder when the folder is the film's own. A loose file in a shared folder such as `Old Movies/` matches only itself, never the other films beside it.
-
-**Radarr:** set the share's **Radarr** path to where Radarr sees the share root. If Radarr mounts `/mnt/user` at `/media`, the Media share is `/media/Media` and TFiles is `/media/TFiles`.
-
 # Quality checks
 
 SyncHub can rate how a film file looks **without** an original to compare with. A worker samples a few short parts of the file and measures what a viewer would notice. SyncHub turns the numbers into a score from 0 to 100, a grade (good, ok, poor, bad) and a short list of findings in plain words.
@@ -60,6 +51,17 @@ A quality check judges a file as it is. VMAF compares a converted copy with its 
 - **Test before converting** (Options > Quality, `ctest_before_convert`, on by default). A conversion that would compress waits for a test, using the check-first machinery (`convert_wait.compression_test_id`). *Pass* goes ahead. *Borderline* is held and asks you (Needs you). *Fail* holds the film. **Convert anyway** (`library_file.ctest_override`) lets the next approval through; it is tied to the profile, so a changed profile asks again. HDR pictures skip the gate.
 - **Mobile copy by hand.** *This is a mobile copy* on a file's Details, and *A mobile copy* in Sort out unexplained files, label the file without renaming anything on the share (`library_file.is_mobile`).
 - **Downloads.** *Replace it* is now *Approve*. An import that was "nothing to do" gets an *Approve (tidy)* button that renames and moves it like Library approval.
+
+## Matching a film to its files (share paths)
+
+The film is matched to its files through its Jellyfin item. Jellyfin reports the main file's path; SyncHub turns it into a share and a path with the share's **Jellyfin** settings on the Storage page. Under *How Jellyfin, Radarr and Sonarr see this folder* there are two ways to say it:
+
+- **Jellyfin** (one path): Jellyfin sees the whole share under one folder, for example `/data`.
+- **Jellyfin: other mounts of this share** (one per line): Jellyfin mounts parts of the share separately. Write each as `path Jellyfin sees = folder inside the share`, for example `/OldMovie = Old Movies`, `/media = Movies`, `/TV1 = TV Shows`. The longest matching line wins. These lines also tell Jellyfin where a finished file is.
+
+The other files of the film are the ones in the same folder named after it (`Heat (1995) - 1080p.mkv` beside `Heat (1995).mkv`), or every file in the folder when the folder is the film's own. A loose file in a shared folder such as `Old Movies/` matches only itself, never the other films beside it.
+
+**Radarr:** set the share's **Radarr** path to where Radarr sees the share root. If Radarr mounts `/mnt/user` at `/media`, the Media share is `/media/Media` and TFiles is `/media/TFiles`.
 
 ## Where checks start
 

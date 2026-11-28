@@ -1,8 +1,8 @@
 """Quality checks on the web: the Low quality page (what is flagged, what is waiting, the settings), and the buttons that check or accept a file."""
 from flask import Response, jsonify, render_template, request
 
-from synchub import ai_test, better_copy, compression_test, db, jobs, poor_quality, quality, settings, storage
-from synchub.library import recommend as rc, report, scan
+from synchub import ai_test, better_copy, compression_test, db, jobs, poor_quality, quality, settings
+from synchub.library import report
 from settings_validation import validate_setting
 
 PAGE_SIZE = 50

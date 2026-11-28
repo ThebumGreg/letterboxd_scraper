@@ -11,7 +11,7 @@ is listed as "Other" and left alone. Kept originals are managed on the Originals
 """
 import json
 
-from synchub import db, jobs, settings, workers
+from synchub import settings, workers
 
 USAGE_KEY = "worker_usage:{}"
 PURGE_KEY = "worker_purge:{}"

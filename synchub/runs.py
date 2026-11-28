@@ -4,7 +4,7 @@ Nothing is stored here: every run already has its own row (`quality_check`, `com
 them all and gives each a small dictionary the page can list and compare."""
 import json
 
-from synchub import compression_test, quality
+from synchub import compression_test
 
 KINDS = {"quality": "Picture quality", "damage": "Damage check", "ctest": "Compression test"}
 LIMIT = 30                                  # runs kept in the list per kind; older ones are still stored
@@ -69,7 +69,3 @@ def for_file(conn, rec):
     for row in conn.execute("SELECT * FROM compression_test WHERE library_file_id = ? ORDER BY id DESC LIMIT ?", (rec["id"], LIMIT)).fetchall():
         out["ctest"].append(_ctest_run(row, rec, key))
     return out
-
-
-def has_several(runs):
-    return any(len(v) > 1 for v in runs.values())

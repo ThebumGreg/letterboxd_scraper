@@ -576,14 +576,3 @@ def bulk_approve(conn, group, by, min_confidence=MEDIUM, match=None, root=None, 
     return done, skipped
 
 
-def next_record_id(conn, group, after_id=None, match=None, root=None, cfg=None):
-    """Id of the record to show next in `group`. With `after_id` still in the group (the
-    reviewer skipped it) this is the following one (wrapping); otherwise the first
-    undecided record. None if the group is empty."""
-    ids = [rec["id"] for rec, r in classify(conn, cfg, match, root) if r.group == group]
-    if not ids:
-        return None
-    if after_id in ids:
-        position = ids.index(after_id) + 1
-        return ids[position] if position < len(ids) else ids[0]
-    return ids[0]
