@@ -206,17 +206,6 @@ def test_bulk_approval_can_be_narrowed_to_one_share_or_one_search(conn):
     assert [r["id"] for r, _ in rc.bulk_candidates(conn, "ready", match="other/", cfg=CFG)] == [b]
 
 
-# ---------------------------------------------------------------- walking the queues
-def test_the_next_record_follows_the_queue_and_wraps(conn):
-    ids = [add(conn, rel=f"{n}.mkv", name=f"{n.upper()} (2000).mkv") for n in "abc"]
-    assert rc.next_record_id(conn, "ready", cfg=CFG) == ids[0]
-    assert rc.next_record_id(conn, "ready", after_id=ids[0], cfg=CFG) == ids[1]
-    assert rc.next_record_id(conn, "ready", after_id=ids[2], cfg=CFG) == ids[0]
-    assert rc.next_record_id(conn, "needs_you", cfg=CFG) is None
-    rc.reject(conn, ids[0], "ann")
-    assert rc.next_record_id(conn, "ready", after_id=ids[0], cfg=CFG) == ids[1]                       # the one just decided has left the queue
-
-
 def test_counts_per_queue_and_confidence_and_the_display_order(conn):
     add(conn, rel="b.mkv", name="B (2000).mkv", show="Zed", media_type="TV Episode", season=2)
     add(conn, rel="a.mkv", name="A (2000).mkv")

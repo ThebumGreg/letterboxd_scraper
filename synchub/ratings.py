@@ -56,13 +56,6 @@ def guest_limit(conn=None):
     return GUEST_DEFAULT if value is None else parse_level(value)
 
 
-def limit_for(conn, profile_row, has_profiles):
-    """The limit that applies to whoever is using the app. Before any profile exists nobody is limited (setup has to be possible)."""
-    if profile_row is not None:
-        return parse_level(profile_row["max_rating"])
-    return guest_limit(conn) if has_profiles else None
-
-
 # ---------------------------------------------------------------- reading TMDB
 def _first_certification(entries):
     """From a movie's US release list: the theatrical rating if there is one, else whichever other release carries one."""

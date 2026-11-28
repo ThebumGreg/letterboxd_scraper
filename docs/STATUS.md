@@ -20,7 +20,7 @@ Put it in `.env` next to `docker-compose.yml` as `STATUS_TOKEN=<the result>` (on
 ```json
 {
   "app": "synchub",
-  "version": "1.9.12 (a1b2c3d)",
+  "version": "1.9.13 (a1b2c3d)",
   "status": "ok",
   "checked_at": "2026-11-28T10:20:00Z",
   "uptime_seconds": 86400,
