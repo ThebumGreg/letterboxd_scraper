@@ -96,7 +96,7 @@ Do **not** make Docker depend on the mounts (`RequiresMountsFor=` in a `docker.s
 | Worker will not mount a share | `cifs-utils` missing on the PC; wrong IP, share name, user or password in `.env`; for SMB try `vers=3.1.1` or `vers=2.1` in the share's options (Storage page), then regenerate the files. |
 | Worker online but a share says "no marker file" | Mounted but not set up: `docker compose run --rm worker --init-roots`. Or **not mounted** and you are looking at an empty folder: fix the mount first. |
 | Worker stays offline after an upgrade; the worker log says "SyncHub does not accept this worker's token" and `docker compose run --rm worker --check` shows `[!!] SyncHub accepts the token` | SyncHub only keeps a hash of each token, so a token it no longer knows (replaced, revoked, or the worker was re-added) is refused for good. Workers page, Worker-1, **More → New token** (copy it, it is shown once); put it in `SYNCHUB_TOKEN=` in the worker's `.env`, then `docker compose up -d` and `docker compose run --rm worker --check`. See also docs/UPGRADE.md. |
-| Worker not online | Wrong address or firewall (`curl http://UNRAID_IP:5001/healthz` from the worker PC should answer `{"ok":true,...}`), or a replaced token (401 in `docker compose logs`). |
+| Worker not online | Wrong address or firewall (`curl http://UNRAID_IP:5001/healthz` from the worker PC should answer `{"status":"ok"}`), or a replaced token (401 in `docker compose logs`). |
 
 
 ### If the worker does not come online
@@ -115,7 +115,7 @@ docker logs --tail 100 synchub                      # on Unraid: migration error
 | The log or `--check` says | Cause and fix |
 |---|---|
 | `SyncHub does not accept this worker's token` / `[!!] SyncHub accepts the token` | SyncHub only keeps a hash of each token, so a replaced, revoked or re-added worker's old token is refused. On the Workers page use Worker-1, **More, New token** (shown once), put it in `SYNCHUB_TOKEN=` in `/opt/synchub-worker/.env`, then `sudo docker compose up -d` and run `--check` again. This happened on the first upgrade of worker-1. |
-| Connection refused / timed out | wrong `SYNCHUB_URL` in `.env`, or SyncHub is down: `curl http://UNRAID_IP:5001/healthz` from the worker should print `{"ok":true,...}` |
+| Connection refused / timed out | wrong `SYNCHUB_URL` in `.env`, or SyncHub is down: `curl http://UNRAID_IP:5001/healthz` from the worker should print `{"status":"ok"}` |
 | a share is "not mounted" / "stale file handle" | `sudo umount -f -l /mnt/tower/media`, `sudo mount -a`, `sudo docker compose restart` |
 | "Update the agent" in a failed job | the worker is older than SyncHub expects: update it (section 2) |
 

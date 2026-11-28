@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.9.12
+
+Update SyncHub only (the workers are unchanged). No migration. Nothing changes unless you set `STATUS_TOKEN`.
+
+- **Status report for dashboards and uptime monitors.** `GET /api/status` (off until `STATUS_TOKEN` is set, then `Authorization: Bearer <token>`) gives the version, uptime, database, workers and Jellyfin checks, and six counts: queued and running jobs, jobs failed in 24 hours, workers online and total, and when a job last finished. Read-only, kept for 15 seconds, no names, titles or paths. docs/STATUS.md has the Homepage block and the Uptime Kuma monitors.
+- `/healthz` now answers exactly `{"status":"ok"}` (or 503 `{"status":"down"}`); it used to say `{"ok":true,"schema":N}`. The Docker health check only reads the status code, so nothing else changes.
+
 ## 1.9.11
 
 Update SyncHub only (the workers are unchanged). No migration. Nothing changes unless you set the new options below. New requirement: `pywebpush` (in the image).
