@@ -199,14 +199,34 @@ def register(app):
 
     @app.route("/healthz")
     def healthz():
-        """For the container's health check: the app is up and the database answers. Reveals nothing else, so it needs no sign-in."""
+        """For the container's health check and uptime monitors: the app is up and the database answers. Reveals nothing else, so it needs no sign-in."""
         try:
-            with db.connection() as conn:
-                version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+            with db.connection(timeout=2) as conn:
+                conn.execute("SELECT 1").fetchone()
         except Exception as exc:
-            logger.warning(f"Health check failed: {exc}")
-            return jsonify(ok=False), 503
-        return jsonify(ok=True, schema=version)
+            logger.warning(f"Health check failed: {type(exc).__name__}")
+            response, code = jsonify(status="down"), 503
+        else:
+            response, code = jsonify(status="ok"), 200
+        response.status_code = code
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.route("/api/status")
+    def public_status():
+        """Read-only status for Homepage and Uptime Kuma. Off (404) until STATUS_TOKEN is set; then it needs `Authorization: Bearer <STATUS_TOKEN>`."""
+        from synchub import public_status as status
+        if not status.token():
+            response, code = jsonify(error="not found"), 404
+        elif not status.token_matches(request.headers.get("Authorization", "")):
+            response, code = jsonify(error="unauthorized"), 401
+        else:
+            logger.debug("Status report requested")
+            body = status.report()
+            response, code = jsonify(body), (503 if body["status"] == "down" else 200)
+        response.status_code = code
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.route("/poster/<int:media_id>")
     def poster(media_id):

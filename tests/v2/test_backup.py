@@ -253,7 +253,7 @@ def test_starting_the_app_on_an_older_database_upgrades_it_and_keeps_a_copy_and_
     [copy] = list((folder / "backups").glob("premigrate-v6-*.db"))
     assert backup.check(copy)["schema"] == 6 and rows(copy) == ["Alice"]
     assert rows(db.DB_FILE) == ["Alice"] and backup.check(db.DB_FILE)["schema"] == backup.latest_version()
-    assert app.test_client().get("/healthz").get_json()["schema"] == backup.latest_version()
+    assert app.test_client().get("/healthz").get_json() == {"status": "ok"}
     create_app(csrf=False)                                                                    # starting again does not make another
     assert len(list((folder / "backups").glob("premigrate-*.db"))) == 1
 
@@ -352,7 +352,7 @@ def test_the_health_check_answers_without_asking_who_you_are(app, v2, conn, monk
     conn.commit()
     monkeypatch.setattr(web, "_profile_rows", lambda c: pytest.fail("the health check must not look anyone up"))
     answer = app.test_client().get("/healthz")
-    assert answer.status_code == 200 and answer.get_json() == {"ok": True, "schema": backup.latest_version()}
+    assert answer.status_code == 200 and answer.get_json() == {"status": "ok"}
 
 
 def test_the_health_check_fails_when_the_database_does_not_answer(app, monkeypatch):
@@ -362,7 +362,7 @@ def test_the_health_check_fails_when_the_database_does_not_answer(app, monkeypat
             raise sqlite3.OperationalError("disk I/O error")
     monkeypatch.setattr(pages, "db", Broken())
     answer = app.test_client().get("/healthz")
-    assert answer.status_code == 503 and answer.get_json() == {"ok": False}
+    assert answer.status_code == 503 and answer.get_json() == {"status": "down"}
 
 
 # ---------------------------------------------------------------- the command line
